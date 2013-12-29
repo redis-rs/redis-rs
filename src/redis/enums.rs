@@ -14,5 +14,6 @@ pub enum Value {
     Data(~[u8]),
     Bulk(~[Value]),
     Error(Error, ~str),
+    Success,
     Status(~str),
 }

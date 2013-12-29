@@ -143,8 +143,11 @@ impl Client {
 
     // commands
 
-    pub fn select_db(&mut self, db: uint) {
-        self.send_command([StrArg("SELECT"), IntArg(db as int)]);
+    pub fn select_db(&mut self, db: uint) -> bool {
+        match self.execute([StrArg("SELECT"), IntArg(db as int)]) {
+            Success => { self.db = db; true },
+            _ => false,
+        }
     }
 
     pub fn ping(&mut self) -> bool {
@@ -177,6 +180,21 @@ impl Client {
         match self.get(key) {
             None => None,
             Some(x) => from_str(x),
+        }
+    }
+
+    pub fn set_bytes(&mut self, key: &str, value: &[u8]) -> bool {
+        match self.execute([StrArg("SET"), StrArg(key), BytesArg(value)]) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn set<T: ToStr>(&mut self, key: &str, value: T) -> bool {
+        let v = value.to_str();
+        match self.execute([StrArg("SET"), StrArg(key), StrArg(v)]) {
+            Success => true,
+            _ => false,
         }
     }
 }

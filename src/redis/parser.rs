@@ -86,7 +86,12 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn parse_status(&mut self) -> Value {
         let line = self.read_line();
-        Status(str::from_utf8_owned(line))
+        let s = str::from_utf8_owned(line);
+        if s == ~"OK" {
+            Success
+        } else {
+            Status(s)
+        }
     }
 
     fn parse_int(&mut self) -> Value {
