@@ -15,26 +15,12 @@ use parser::ByteIterator;
 
 use enums::*;
 
+mod macros;
+
 pub enum ConnectFailure {
     InvalidURI,
     HostNotFound,
     ConnectionRefused,
-}
-
-macro_rules! try_unwrap {
-    ($expr:expr, $exc:expr) => (
-        match ($expr) {
-            None => { return Err($exc) },
-            Some(x) => x,
-        }
-    )
-}
-
-macro_rules! push_byte_format {
-    ($container:expr, $($arg:tt)*) => ({
-        let encoded = format!($($arg)*);
-        push_bytes($container, encoded.as_bytes());
-    })
 }
 
 
@@ -73,18 +59,18 @@ impl Client {
 
     /// opens a connection to redis by URI
     pub fn open(uri: &str) -> Result<Client, ConnectFailure> {
-        let parsed_uri = try_unwrap!(from_str::<Url>(uri), InvalidURI);
-        let ip_addrs = try_unwrap!(get_host_addresses(parsed_uri.host), InvalidURI);
-        let ip_addr = try_unwrap!(ip_addrs.iter().next(), HostNotFound);
+        let parsed_uri = try_unwrap!(from_str::<Url>(uri), Err(InvalidURI));
+        let ip_addrs = try_unwrap!(get_host_addresses(parsed_uri.host), Err(InvalidURI));
+        let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
         let port = try_unwrap!(from_str::<u16>(parsed_uri.port.clone()
-            .unwrap_or(~"6379")), InvalidURI);
+            .unwrap_or(~"6379")), Err(InvalidURI));
         let db = from_str::<uint>(parsed_uri.path.trim_chars(&'/')).unwrap_or(0);
 
         let addr = SocketAddr {
             ip: *ip_addr,
             port: port
         };
-        let sock = try_unwrap!(TcpStream::connect(addr), ConnectionRefused);
+        let sock = try_unwrap!(TcpStream::connect(addr), Err(ConnectionRefused));
 
         let mut rv = Client {
             addr: addr,

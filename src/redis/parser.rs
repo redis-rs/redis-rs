@@ -4,6 +4,7 @@ use std::io::Reader;
 use std::str::from_utf8;
 
 use enums::*;
+mod macros;
 
 
 pub struct Parser<T> {
@@ -23,7 +24,8 @@ impl<T: Iterator<u8>> Parser<T> {
 
     /// parses a value from the iterator
     pub fn parse_value(&mut self) -> Value {
-        match self.next_byte() as char {
+        let b = try_unwrap!(self.iter.next(), Invalid);
+        match b as char {
             '+' => self.parse_status(),
             ':' => self.parse_int(),
             '$' => self.parse_data(),
@@ -33,59 +35,70 @@ impl<T: Iterator<u8>> Parser<T> {
         }
     }
 
-    fn next_byte(&mut self) -> u8 {
+    #[inline]
+    fn expect_char(&mut self, refchar: char) -> bool {
         match self.iter.next() {
-            Some(b) => b,
-            None => 0xffu8,
+            Some(c) => {
+                if (c as char == refchar) {
+                    return true;
+                }
+            },
+            _ => {}
         }
+        return false;
     }
 
-    fn eat_terminator(&mut self, current: u8) -> bool {
-        if (current as char == '\n') {
+    #[inline]
+    fn expect_newline(&mut self) -> bool {
+        let c = try_unwrap!(self.iter.next(), false) as char;
+        if c == '\n' {
             return true;
         }
-        if (current as char != '\r') {
+        if c != '\r' {
             return false;
         }
-        let next = self.next_byte();
-        if (next as char != '\n') {
-            return false;
-        }
-        return true;
+        return self.expect_char('\n');
     }
 
-    fn read_line(&mut self) -> ~[u8] {
+    fn read_line(&mut self) -> Option<~[u8]> {
         let mut rv = ~[];
 
         loop {
-            let b = self.next_byte();
-            if self.eat_terminator(b) {
-                break;
-            }
-            rv.push(b);
+            let b = try_unwrap!(self.iter.next(), None);
+            match b as char {
+                '\n' => { break; }
+                '\r' => {
+                    if self.expect_char('\n') {
+                        break;
+                    } else {
+                        return None;
+                    }
+                },
+                _ => { rv.push(b) }
+            };
         }
 
-        rv
+        Some(rv)
     }
 
-    fn read(&mut self, bytes: uint) -> ~[u8] {
+    fn read(&mut self, bytes: uint) -> Option<~[u8]> {
         let mut rv = ~[];
         rv.reserve_at_least(bytes);
 
         for _ in range(0, bytes) {
-            rv.push(self.next_byte());
+            rv.push(try_unwrap!(self.iter.next(), None));
         }
 
-        rv
+        Some(rv)
     }
 
-    fn read_int_line(&mut self) -> i64 {
-        let line = self.read_line();
-        from_str(from_utf8(line).trim()).unwrap_or(-1)
+    fn read_int_line(&mut self) -> Option<i64> {
+        let line = try_unwrap!(self.read_line(), None);
+        from_str(from_utf8(line).trim())
     }
 
     fn parse_status(&mut self) -> Value {
-        let line = self.read_line();
+        let line = try_unwrap!(self.read_line(), Invalid);
         let s = str::from_utf8_owned(line);
         if s == ~"OK" {
             Success
@@ -95,37 +108,43 @@ impl<T: Iterator<u8>> Parser<T> {
     }
 
     fn parse_int(&mut self) -> Value {
-        Int(self.read_int_line() as int)
+        let x = try_unwrap!(self.read_int_line(), Invalid);
+        Int(x as int)
     }
 
     fn parse_data(&mut self) -> Value {
-        let length = self.read_int_line();
+        let length = try_unwrap!(self.read_int_line(), Invalid);
         if length < 0 {
             Nil
         } else {
-            let rv = self.read(length as uint);
-            let b = self.next_byte();
-            self.eat_terminator(b);
-            Data(rv)
+            let data = try_unwrap!(self.read(length as uint), Invalid);
+            if !self.expect_newline() {
+                Invalid
+            } else {
+                Data(data)
+            }
         }
     }
 
     fn parse_bulk(&mut self) -> Value {
-        let length = self.read_int_line();
+        let length = try_unwrap!(self.read_int_line(), Invalid);
         if length < 0 {
             Nil
         } else {
             let mut rv = ~[];
             rv.reserve_at_least(length as uint);
             for _ in range(0, length) {
-                rv.push(self.parse_value());
+                match self.parse_value() {
+                    Invalid => { return Invalid; }
+                    value => rv.push(value)
+                };
             }
             Bulk(rv)
         }
     }
 
     fn parse_error(&mut self) -> Value {
-        let byte_line = self.read_line();
+        let byte_line = try_unwrap!(self.read_line(), Invalid);
         let line = str::from_utf8(byte_line);
         let mut pieces = line.splitn(' ', 1);
         let code = match pieces.next().unwrap() {
@@ -136,8 +155,8 @@ impl<T: Iterator<u8>> Parser<T> {
             "" => UnknownError,
             other => ExtensionError(other.to_owned()),
         };
-        let message = pieces.next().unwrap_or("An unknown error ocurred.").to_owned();
-        return Error(code, message);
+        let message = pieces.next().unwrap_or("An unknown error ocurred.");
+        return Error(code, message.to_owned());
     }
 }
 
