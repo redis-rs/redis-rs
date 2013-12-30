@@ -23,6 +23,16 @@ pub enum ConnectFailure {
     ConnectionRefused,
 }
 
+pub enum KeyType {
+    StringType,
+    ListType,
+    SetType,
+    ZSetType,
+    HashType,
+    UnknownType,
+    NilType,
+}
+
 
 fn value_to_string_list(val: &Value) -> ~[~str] {
     match *val {
@@ -88,7 +98,12 @@ impl Client {
     /// executes a low-level redis command
     pub fn execute(&mut self, args: &[CmdArg]) -> Value {
         self.send_command(args);
-        self.read_response()
+        match self.read_response() {
+            Error(ResponseError, msg) => {
+                fail!(format!("Redis command failed: {}", msg));
+            },
+            other => other,
+        }
     }
 
     fn pack_command(&self, args: &[CmdArg]) -> ~[u8] {
@@ -181,6 +196,65 @@ impl Client {
         match self.execute([StrArg("SET"), StrArg(key), StrArg(v)]) {
             Success => true,
             _ => false,
+        }
+    }
+
+    pub fn del(&mut self, key: &str) -> bool {
+        match self.execute([StrArg("DEL"), StrArg(key)]) {
+            Int(0) | Nil => false,
+            Int(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn del_many(&mut self, keys: &[&str]) -> uint {
+        let base_args = ~[StrArg("DEL")];
+        let extra_args = keys.iter().map(|&x| StrArg(x));
+        let args = base_args.move_iter().chain(extra_args).to_owned_vec();
+        match self.execute(args) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn exists(&mut self, key: &str) -> bool {
+        match self.execute([StrArg("EXISTS"), StrArg(key)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn expire(&mut self, key: &str, timeout: f32) -> bool {
+        let mut cmd;
+        let mut t;
+        let i_timeout = timeout as int;
+        if (i_timeout as f32 == timeout) {
+            cmd = "EXPIRE";
+            t = i_timeout;
+        } else {
+            cmd = "PEXPIRE";
+            t = (timeout * 1000.0) as int;
+        }
+        match self.execute([StrArg(cmd), StrArg(key), IntArg(t)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_type(&mut self, key: &str) -> KeyType {
+        match self.execute([StrArg("TYPE"), StrArg(key)]) {
+            Status(key) => {
+                match key.as_slice() {
+                    "none" => NilType,
+                    "string" => StringType,
+                    "list" => ListType,
+                    "set" => SetType,
+                    "zset" => ZSetType,
+                    "hash" => HashType,
+                    _ => UnknownType,
+                }
+            },
+            _ => UnknownType,
         }
     }
 }

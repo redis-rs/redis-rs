@@ -9,6 +9,8 @@ fn main() {
     client.set("bar", "test");
     println!("foo get: {:?}", client.get("foo"));
     println!("foo as int: {:?}", client.get_as::<int>("foo"));
-    println!("Ping: {:?}", client.ping());
-    println!("Keys: {:?}", client.keys("*"));
+    println!("ping: {:?}", client.ping());
+    println!("keys: {:?}", client.keys("*"));
+    println!("foo type: {:?}", client.get_type("foo"));
+    println!("foo exists: {:?}", client.exists("foo"));
 }
