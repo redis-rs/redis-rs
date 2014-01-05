@@ -13,4 +13,8 @@ fn main() {
     println!("keys: {:?}", client.keys("*"));
     println!("foo type: {:?}", client.get_type("foo"));
     println!("foo exists: {:?}", client.exists("foo"));
+
+    let info = client.info();
+    println!("info role: {:?}", info.find(&~"role"));
+    println!("info version: {:?}", info.find(&~"redis_version"));
 }
