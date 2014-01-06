@@ -13,7 +13,7 @@ pub use parser::Parser;
 pub use enums::*;
 
 pub use client::Client;
-pub use client::{CmdArg, StrArg, IntArg, BytesArg};
+pub use client::{CmdArg, StrArg, IntArg, FloatArg, BytesArg};
 pub use script::Script;
 
 mod parser;

@@ -59,6 +59,7 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(int),
+    FloatArg(f32),
     BytesArg(&'a [u8]),
 }
 
@@ -124,6 +125,11 @@ impl Client {
                 &IntArg(i) => {
                     let i_str = i.to_str();
                     buf = i_str.as_bytes().to_owned();
+                    buf.as_slice()
+                },
+                &FloatArg(f) => {
+                    let f_str = f.to_str();
+                    buf = f_str.as_bytes().to_owned();
                     buf.as_slice()
                 },
                 &BytesArg(b) => b,
@@ -214,6 +220,28 @@ impl Client {
         }
     }
 
+    pub fn setex_bytes(&mut self, key: &str, value: &[u8], timeout: f32) -> bool {
+        let mut cmd;
+        let mut t;
+        let i_timeout = timeout as int;
+        if (i_timeout as f32 == timeout) {
+            cmd = "SETEX";
+            t = i_timeout;
+        } else {
+            cmd = "PSETEX";
+            t = (timeout * 1000.0) as int;
+        }
+        match self.execute(cmd, [StrArg(key), IntArg(t), BytesArg(value)]) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn setex<T: ToStr>(&mut self, key: &str, value: T, timeout: f32) -> bool {
+        let v = value.to_str();
+        self.setex_bytes(key, v.as_bytes(), timeout)
+    }
+
     pub fn setnx_bytes(&mut self, key: &str, value: &[u8]) -> bool {
         match self.execute("SETNX", [StrArg(key), BytesArg(value)]) {
             Int(1) => true,
@@ -267,6 +295,14 @@ impl Client {
         }
     }
 
+    pub fn setbit(&mut self, key: &str, bit: uint, value: bool) -> bool {
+        let v = if value { 1 } else { 0 };
+        match self.execute("SETBIT", [StrArg(key), IntArg(bit as int), IntArg(v)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
     pub fn incr(&mut self, key: &str) -> int {
         match self.execute("INCR", [StrArg(key)]) {
             Int(x) => x,
@@ -278,6 +314,18 @@ impl Client {
         match self.execute("INCRBY", [StrArg(key), IntArg(step)]) {
             Int(x) => x,
             _ => 0,
+        }
+    }
+
+    pub fn incrby_float(&mut self, key: &str, step: f32) -> f32 {
+        match self.execute("INCRBYFLOAT", [StrArg(key), FloatArg(step)]) {
+            Data(x) => {
+                match from_str(from_utf8(x)) {
+                    Some(x) => x,
+                    None => 0.0,
+                }
+            },
+            _ => 0.0,
         }
     }
 
@@ -293,6 +341,10 @@ impl Client {
             Int(x) => x,
             _ => 0,
         }
+    }
+
+    pub fn decrby_float(&mut self, key: &str, step: f32) -> f32 {
+        self.incrby_float(key, -step)
     }
 
     pub fn exists(&mut self, key: &str) -> bool {
@@ -362,6 +414,9 @@ impl Client {
         match self.execute("INFO", []) {
             Data(bytes) => {
                 for line in from_utf8(bytes).lines_any() {
+                    if line.len() == 0 || line[0] == '#' as u8 {
+                        continue;
+                    }
                     let mut p = line.splitn(':', 1);
                     let key = p.next();
                     let value = p.next();
