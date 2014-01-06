@@ -322,6 +322,17 @@ impl Client {
         from_utf8_owned(self.getrange_bytes(key, start, end))
     }
 
+    pub fn setrange_bytes(&mut self, key: &str, offset: int, value: &[u8]) -> uint {
+        match self.execute("SETRANGE", [StrArg(key), IntArg(offset), BytesArg(value)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn setrange(&mut self, key: &str, offset: int, value: &str) -> uint {
+        self.setrange_bytes(key, offset, value.as_bytes())
+    }
+
     pub fn popcount(&mut self, key: &str) -> uint {
         match self.execute("POPCOUNT", [StrArg(key)]) {
             Int(x) => x as uint,
@@ -408,6 +419,19 @@ impl Client {
         match self.execute("PERSIST", [StrArg(key)]) {
             Int(1) => true,
             _ => false,
+        }
+    }
+
+    pub fn ttl(&mut self, key: &str) -> Option<f32> {
+        match self.execute("PTTL", [StrArg(key)]) {
+            Int(x) => {
+                if x < 0 {
+                    None
+                } else {
+                    Some(x as f32 / 1000.0)
+                }
+            },
+            _ => None
         }
     }
 
