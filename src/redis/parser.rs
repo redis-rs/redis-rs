@@ -108,8 +108,7 @@ impl<T: Iterator<u8>> Parser<T> {
     }
 
     fn parse_int(&mut self) -> Value {
-        let x = try_unwrap!(self.read_int_line(), Invalid);
-        Int(x as int)
+        Int(try_unwrap!(self.read_int_line(), Invalid))
     }
 
     fn parse_data(&mut self) -> Value {

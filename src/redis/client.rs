@@ -10,7 +10,9 @@ use std::from_str::from_str;
 use std::str::{from_utf8, from_utf8_owned};
 use std::container::Map;
 use std::hashmap::HashMap;
+
 use extra::url::Url;
+use extra::time;
 
 use parser::Parser;
 use parser::ByteIterator;
@@ -19,12 +21,6 @@ use enums::*;
 use script::Script;
 
 mod macros;
-
-pub enum ConnectFailure {
-    InvalidURI,
-    HostNotFound,
-    ConnectionRefused,
-}
 
 pub enum KeyType {
     StringType,
@@ -55,14 +51,6 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
     }
 }
 
-
-#[deriving(Clone, Eq)]
-pub enum CmdArg<'a> {
-    StrArg(&'a str),
-    IntArg(int),
-    FloatArg(f32),
-    BytesArg(&'a [u8]),
-}
 
 pub struct Client {
     priv addr: SocketAddr,
@@ -296,6 +284,18 @@ impl Client {
         }
     }
 
+    pub fn append_bytes(&mut self, key: &str, value: &[u8]) -> uint {
+        match self.execute("APPEND", [StrArg(key), BytesArg(value)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn append<T: ToStr>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_str();
+        self.append_bytes(key, v.as_bytes())
+    }
+
     pub fn setbit(&mut self, key: &str, bit: uint, value: bool) -> bool {
         let v = if value { 1 } else { 0 };
         match self.execute("SETBIT", [StrArg(key), IntArg(bit as int), IntArg(v)]) {
@@ -304,16 +304,48 @@ impl Client {
         }
     }
 
+    pub fn strlen(&mut self, key: &str) -> uint {
+        match self.execute("STRLEN", [StrArg(key)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn getrange_bytes(&mut self, key: &str, start: int, end: int) -> ~[u8] {
+        match self.execute("GETRANGE", [StrArg(key), IntArg(start), IntArg(end)]) {
+            Data(value) => value,
+            _ => ~[],
+        }
+    }
+
+    pub fn getrange(&mut self, key: &str, start: int, end: int) -> ~str {
+        from_utf8_owned(self.getrange_bytes(key, start, end))
+    }
+
+    pub fn popcount(&mut self, key: &str) -> uint {
+        match self.execute("POPCOUNT", [StrArg(key)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn popcount_range(&mut self, key: &str, start: int, end: int) -> uint {
+        match self.execute("POPCOUNT", [StrArg(key), IntArg(start), IntArg(end)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
     pub fn incr(&mut self, key: &str) -> int {
         match self.execute("INCR", [StrArg(key)]) {
-            Int(x) => x,
+            Int(x) => x as int,
             _ => 0,
         }
     }
 
     pub fn incrby(&mut self, key: &str, step: int) -> int {
         match self.execute("INCRBY", [StrArg(key), IntArg(step)]) {
-            Int(x) => x,
+            Int(x) => x as int,
             _ => 0,
         }
     }
@@ -332,14 +364,14 @@ impl Client {
 
     pub fn decr(&mut self, key: &str) -> int {
         match self.execute("DECR", [StrArg(key)]) {
-            Int(x) => x,
+            Int(x) => x as int,
             _ => 0,
         }
     }
 
     pub fn decrby(&mut self, key: &str, step: int) -> int {
         match self.execute("DECRBY", [StrArg(key), IntArg(step)]) {
-            Int(x) => x,
+            Int(x) => x as int,
             _ => 0,
         }
     }
@@ -467,5 +499,83 @@ impl Client {
             Success => true,
             _ => false,
         }
+    }
+
+    pub fn bgsave(&mut self) -> bool {
+        match self.execute("BGSAVE", []) {
+            Status(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn save(&mut self) -> bool {
+        match self.execute("SAVE", []) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn bgrewriteaof(&mut self) -> bool {
+        match self.execute("BGREWRITEAOF", []) {
+            Status(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn dbsize(&mut self) -> uint {
+        match self.execute("DBSIZE", []) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn lastsave(&mut self) -> time::Tm {
+        match self.execute("LASTSAVE", []) {
+            Int(x) => {
+                time::at_utc(time::Timespec::new(x, 0))
+            },
+            _ => {
+                time::empty_tm()
+            }
+        }
+    }
+
+    pub fn time(&mut self) -> time::Tm {
+        match self.execute("TIME", []) {
+            Bulk(ref items) => {
+                let mut i = items.iter();
+                let s = match i.next() {
+                    Some(&Data(ref bytes)) => {
+                        let s = from_utf8(*bytes);
+                        from_str::<i64>(s).unwrap_or(0)
+                    },
+                    _ => 0,
+                };
+                let ms = match i.next() {
+                    Some(&Data(ref bytes)) => {
+                        let s = from_utf8(*bytes);
+                        from_str::<i32>(s).unwrap_or(0)
+                    },
+                    _ => 0,
+                };
+                time::at_utc(time::Timespec::new(s, ms))
+            },
+            _ => time::empty_tm()
+        }
+    }
+
+    pub fn shutdown(&mut self, mode: ShutdownMode) {
+        let args = match mode {
+            ShutdownNormal => ~[],
+            ShutdownSave => ~[StrArg("SAVE")],
+            ShutdownNoSave => ~[StrArg("NOSAVE")],
+        };
+        self.send_command("SHUTDOWN", args);
+        // try to read a response but expect this to fail.
+        self.read_response();
+    }
+
+    pub fn flushdb(&mut self) {
+        self.execute("FLUSHDB", []);
     }
 }

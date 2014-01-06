@@ -23,4 +23,7 @@ fn main() {
     ");
     println!("script result: {:?}", client.call_script(
         &script, [], [redis::StrArg("42")]));
+
+    println!("last save: {}", client.lastsave().rfc822());
+    println!("server time: {}", client.time().rfc822());
 }
