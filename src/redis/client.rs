@@ -56,6 +56,7 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
 }
 
 
+#[deriving(Clone)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(int),
@@ -442,7 +443,7 @@ impl Client {
                            keys: &[&'a str], args: &[CmdArg<'a>]) -> Value {
         let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as int)];
         all_args.extend(&mut keys.iter().map(|&x| StrArg(x)));
-        all_args.extend(&mut args.iter().map(|&x| x));
+        all_args.push_all(args);
 
         loop {
             match self.execute("EVALSHA", all_args) {
