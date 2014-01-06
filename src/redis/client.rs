@@ -63,9 +63,7 @@ impl Client {
     /// opens a connection to redis by URI
     pub fn open(uri: &str) -> Result<Client, ConnectFailure> {
         let parsed_uri = try_unwrap!(from_str::<Url>(uri), Err(InvalidURI));
-        if parsed_uri.scheme != ~"redis" {
-            return Err(InvalidURI);
-        }
+        ensure!(parsed_uri.scheme == ~"redis", Err(InvalidURI));
 
         let ip_addrs = try_unwrap!(get_host_addresses(parsed_uri.host), Err(InvalidURI));
         let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
