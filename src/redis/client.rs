@@ -56,7 +56,7 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
 }
 
 
-#[deriving(Clone)]
+#[deriving(Clone, Eq)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(int),
