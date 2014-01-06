@@ -14,7 +14,10 @@ pub use enums::*;
 
 pub use client::Client;
 pub use client::{CmdArg, StrArg, IntArg, BytesArg};
+pub use script::Script;
 
 mod parser;
 mod client;
+mod script;
 mod enums;
+mod utils;

@@ -16,6 +16,7 @@ use parser::Parser;
 use parser::ByteIterator;
 
 use enums::*;
+use script::Script;
 
 mod macros;
 
@@ -149,6 +150,14 @@ impl Client {
     }
 
     // commands
+
+    pub fn auth(&mut self, password: &str) -> bool {
+        self.send_command("AUTH", [StrArg(password)]);
+        match self.read_response() {
+            Success => true,
+            _ => false,
+        }
+    }
 
     pub fn select_db(&mut self, db: uint) -> bool {
         match self.execute("SELECT", [IntArg(db as int)]) {
@@ -300,5 +309,35 @@ impl Client {
             _ => {}
         };
         rv as ~Map<~str, ~str>
+    }
+
+    pub fn load_script(&mut self, script: &Script) -> bool {
+        match self.execute("SCRIPT", [StrArg("LOAD"), BytesArg(script.code)]) {
+            Data(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn call_script<'a>(&mut self, script: &'a Script,
+                           keys: &[&'a str], args: &[CmdArg<'a>]) -> Value {
+        let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as int)];
+        all_args.extend(&mut keys.iter().map(|&x| StrArg(x)));
+        all_args.extend(&mut args.iter().map(|&x| x));
+
+        loop {
+            match self.execute("EVALSHA", all_args) {
+                Error(code, msg) => {
+                    match code {
+                        NoScriptError => {
+                            if !self.load_script(script) {
+                                fail!("Failed to load script");
+                            }
+                        }
+                        _ => { return Error(code, msg); }
+                    }
+                },
+                x => { return x; }
+            }
+        }
     }
 }

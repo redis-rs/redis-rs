@@ -17,4 +17,10 @@ fn main() {
     let info = client.info();
     println!("info role: {:?}", info.find(&~"role"));
     println!("info version: {:?}", info.find(&~"redis_version"));
+
+    let script = redis::Script::new("
+        return tonumber(ARGV[1]);
+    ");
+    println!("script result: {:?}", client.call_script(
+        &script, [], [redis::StrArg("42")]));
 }
