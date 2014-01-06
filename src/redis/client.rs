@@ -214,6 +214,21 @@ impl Client {
         }
     }
 
+    pub fn setnx_bytes(&mut self, key: &str, value: &[u8]) -> bool {
+        match self.execute("SETNX", [StrArg(key), BytesArg(value)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn setnx<T: ToStr>(&mut self, key: &str, value: T) -> bool {
+        let v = value.to_str();
+        match self.execute("SETNX", [StrArg(key), StrArg(v)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
     pub fn del(&mut self, key: &str) -> bool {
         match self.execute("DEL", [StrArg(key)]) {
             Int(0) | Nil => false,
@@ -226,6 +241,56 @@ impl Client {
         let args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
         match self.execute("DEL", args) {
             Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn getset_bytes(&mut self, key: &str, value: &[u8]) -> Option<~[u8]> {
+        match self.execute("GETSET", [StrArg(key), BytesArg(value)]) {
+            Data(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn getset(&mut self, key: &str, value: ~str) -> Option<~str> {
+        match self.execute("GETSET", [StrArg(key), StrArg(value)]) {
+            Data(x) => Some(from_utf8_owned(x)),
+            _ => None,
+        }
+    }
+
+    pub fn getset_as<T: ToStr+FromStr>(&mut self, key: &str, value: T) -> Option<T> {
+        let v = value.to_str();
+        match self.getset(key, v) {
+            Some(x) => from_str(x),
+            None => None,
+        }
+    }
+
+    pub fn incr(&mut self, key: &str) -> int {
+        match self.execute("INCR", [StrArg(key)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    pub fn incrby(&mut self, key: &str, step: int) -> int {
+        match self.execute("INCRBY", [StrArg(key), IntArg(step)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    pub fn decr(&mut self, key: &str) -> int {
+        match self.execute("DECR", [StrArg(key)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    pub fn decrby(&mut self, key: &str, step: int) -> int {
+        match self.execute("DECRBY", [StrArg(key), IntArg(step)]) {
+            Int(x) => x,
             _ => 0,
         }
     }
@@ -338,6 +403,13 @@ impl Client {
                 },
                 x => { return x; }
             }
+        }
+    }
+
+    pub fn flush_script_cache(&mut self) -> bool {
+        match self.execute("SCRIPT", [StrArg("FLUSH")]) {
+            Success => true,
+            _ => false,
         }
     }
 }
