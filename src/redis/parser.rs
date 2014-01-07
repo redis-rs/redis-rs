@@ -39,7 +39,7 @@ impl<T: Iterator<u8>> Parser<T> {
     fn expect_char(&mut self, refchar: char) -> bool {
         match self.iter.next() {
             Some(c) => {
-                if (c as char == refchar) {
+                if c as char == refchar {
                     return true;
                 }
             },

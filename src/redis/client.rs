@@ -85,7 +85,7 @@ impl Client {
             db: 0,
         };
 
-        if (db != 0) {
+        if db != 0 {
             rv.select_db(db);
         }
 
@@ -217,7 +217,7 @@ impl Client {
         let mut cmd;
         let mut t;
         let i_timeout = timeout as int;
-        if (i_timeout as f32 == timeout) {
+        if i_timeout as f32 == timeout {
             cmd = "SETEX";
             t = i_timeout;
         } else {
@@ -406,7 +406,7 @@ impl Client {
         let mut cmd;
         let mut t;
         let i_timeout = timeout as int;
-        if (i_timeout as f32 == timeout) {
+        if i_timeout as f32 == timeout {
             cmd = "EXPIRE";
             t = i_timeout;
         } else {
