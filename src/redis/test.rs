@@ -20,11 +20,9 @@ fn get_set_exists() {
 	assert!(client.set("foo", "test"));
 	assert!(client.get("foo") == Some(~"test"));
 	assert!(client.exists("foo"));
-	assert!(client.get_type("foo") == StringType);
 
 	assert!(client.set("bar", 42));
 	assert!(client.get_as::<int>("bar") == Some(42));
-	assert!(client.get_type("bar") == StringType);
 }
 
 #[test]
