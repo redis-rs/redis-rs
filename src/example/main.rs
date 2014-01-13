@@ -1,5 +1,4 @@
 #[crate_id = "redis-example#0.1"];
-#[crate_type = "app"];
 
 extern mod redis;
 
