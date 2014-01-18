@@ -929,6 +929,27 @@ impl Connection {
     }
 
     #[inline]
+    pub fn rpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
+        let mut timeout_s = timeout as int;
+        if (timeout_s <= 0) {
+            timeout_s = 0;
+        }
+        match self.execute("RPOPLPUSH", [StrArg(src), StrArg(dst),
+                                         IntArg(timeout_s)]) {
+            Data(ref payload) => Some(payload.to_owned()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn rpoplpush(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~str> {
+        match self.rpoplpush_bytes(src, dst, timeout) {
+            Some(x) => Some(from_utf8_owned(x)),
+            None => None,
+        }
+    }
+
+    #[inline]
     pub fn rpush_bytes(&mut self, key: &str, value: &[u8]) -> uint {
         match self.execute("RPUSH", [StrArg(key), BytesArg(value)]) {
             Int(x) => x as uint,
