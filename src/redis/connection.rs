@@ -116,7 +116,8 @@ impl Connection {
         }
     }
 
-    // high-level commands
+
+    // -- server commands
     pub fn auth(&mut self, password: &str) -> bool {
         self.send_command("AUTH", [StrArg(password)]);
         match self.read_response() {
@@ -139,10 +140,221 @@ impl Connection {
         }
     }
 
+    pub fn info(&mut self) -> ~Map<~str, ~str> {
+        let mut rv = ~HashMap::new();
+        match self.execute("INFO", []) {
+            Data(bytes) => {
+                for line in from_utf8(bytes).lines_any() {
+                    if line.len() == 0 || line[0] == '#' as u8 {
+                        continue;
+                    }
+                    let mut p = line.splitn(':', 1);
+                    let key = p.next();
+                    let value = p.next();
+                    if value.is_some() {
+                        rv.insert(key.unwrap().to_owned(),
+                                  value.unwrap().to_owned());
+                    }
+                }
+            },
+            _ => {}
+        };
+        rv as ~Map<~str, ~str>
+    }
+
+    pub fn bgsave(&mut self) -> bool {
+        match self.execute("BGSAVE", []) {
+            Status(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn save(&mut self) -> bool {
+        match self.execute("SAVE", []) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn bgrewriteaof(&mut self) -> bool {
+        match self.execute("BGREWRITEAOF", []) {
+            Status(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn dbsize(&mut self) -> uint {
+        match self.execute("DBSIZE", []) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    pub fn lastsave(&mut self) -> time::Tm {
+        match self.execute("LASTSAVE", []) {
+            Int(x) => {
+                time::at_utc(time::Timespec::new(x, 0))
+            },
+            _ => {
+                time::empty_tm()
+            }
+        }
+    }
+
+    pub fn time(&mut self) -> time::Tm {
+        match self.execute("TIME", []) {
+            Bulk(ref items) => {
+                let mut i = items.iter();
+                let s = match i.next() {
+                    Some(&Data(ref bytes)) => {
+                        let s = from_utf8(*bytes);
+                        from_str::<i64>(s).unwrap_or(0)
+                    },
+                    _ => 0,
+                };
+                let ms = match i.next() {
+                    Some(&Data(ref bytes)) => {
+                        let s = from_utf8(*bytes);
+                        from_str::<i32>(s).unwrap_or(0)
+                    },
+                    _ => 0,
+                };
+                time::at_utc(time::Timespec::new(s, ms))
+            },
+            _ => time::empty_tm()
+        }
+    }
+
+    pub fn shutdown(&mut self, mode: ShutdownMode) {
+        let args = match mode {
+            ShutdownNormal => ~[],
+            ShutdownSave => ~[StrArg("SAVE")],
+            ShutdownNoSave => ~[StrArg("NOSAVE")],
+        };
+        self.send_command("SHUTDOWN", args);
+        // try to read a response but expect this to fail.
+        self.read_response();
+    }
+
+    pub fn flushdb(&mut self) {
+        self.execute("FLUSHDB", []);
+    }
+
+    // -- key commands
+
     pub fn keys(&mut self, pattern: &str) -> ~[~str] {
         let resp = self.execute("KEYS", [StrArg(pattern)]);
         value_to_string_list(&resp)
     }
+
+    pub fn persist(&mut self, key: &str) -> bool {
+        match self.execute("PERSIST", [StrArg(key)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn expire(&mut self, key: &str, timeout: f32) -> bool {
+        let mut cmd;
+        let mut t;
+        let i_timeout = timeout as int;
+        if (i_timeout as f32 == timeout) {
+            cmd = "EXPIRE";
+            t = i_timeout;
+        } else {
+            cmd = "PEXPIRE";
+            t = (timeout * 1000.0) as int;
+        }
+        match self.execute(cmd, [StrArg(key), IntArg(t)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn ttl(&mut self, key: &str) -> Option<f32> {
+        match self.execute("PTTL", [StrArg(key)]) {
+            Int(x) => {
+                if x < 0 {
+                    None
+                } else {
+                    Some(x as f32 / 1000.0)
+                }
+            },
+            _ => None
+        }
+    }
+
+    pub fn rename(&mut self, key: &str, newkey: &str) -> bool {
+        match self.execute("RENAME", [StrArg(key), StrArg(newkey)]) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn renamenx(&mut self, key: &str, newkey: &str) -> bool {
+        match self.execute("RENAMENX", [StrArg(key), StrArg(newkey)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_type(&mut self, key: &str) -> KeyType {
+        match self.execute("TYPE", [StrArg(key)]) {
+            Status(key) => {
+                match key.as_slice() {
+                    "none" => NilType,
+                    "string" => StringType,
+                    "list" => ListType,
+                    "set" => SetType,
+                    "zset" => ZSetType,
+                    "hash" => HashType,
+                    _ => UnknownType,
+                }
+            },
+            _ => UnknownType,
+        }
+    }
+
+    // -- script commands
+
+    pub fn load_script(&mut self, script: &Script) -> bool {
+        match self.execute("SCRIPT", [StrArg("LOAD"), BytesArg(script.code)]) {
+            Data(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn call_script<'a>(&mut self, script: &'a Script,
+                           keys: &[&'a str], args: &[CmdArg<'a>]) -> Value {
+        let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as int)];
+        all_args.extend(&mut keys.iter().map(|&x| StrArg(x)));
+        all_args.push_all(args);
+
+        loop {
+            match self.execute("EVALSHA", all_args) {
+                Error(code, msg) => {
+                    match code {
+                        NoScriptError => {
+                            if !self.load_script(script) {
+                                fail!("Failed to load script");
+                            }
+                        }
+                        _ => { return Error(code, msg); }
+                    }
+                },
+                x => { return x; }
+            }
+        }
+    }
+
+    pub fn flush_script_cache(&mut self) -> bool {
+        match self.execute("SCRIPT", [StrArg("FLUSH")]) {
+            Success => true,
+            _ => false,
+        }
+    }
+
+    // -- key / value commands
 
     pub fn get_bytes(&mut self, key: &str) -> Option<~[u8]> {
         match self.execute("GET", [StrArg(key)]) {
@@ -369,208 +581,54 @@ impl Connection {
         }
     }
 
-    pub fn expire(&mut self, key: &str, timeout: f32) -> bool {
-        let mut cmd;
-        let mut t;
-        let i_timeout = timeout as int;
-        if (i_timeout as f32 == timeout) {
-            cmd = "EXPIRE";
-            t = i_timeout;
-        } else {
-            cmd = "PEXPIRE";
-            t = (timeout * 1000.0) as int;
-        }
-        match self.execute(cmd, [StrArg(key), IntArg(t)]) {
-            Int(1) => true,
-            _ => false,
-        }
-    }
+    // -- list commands
 
-    pub fn persist(&mut self, key: &str) -> bool {
-        match self.execute("PERSIST", [StrArg(key)]) {
-            Int(1) => true,
-            _ => false,
+    pub fn blpop_bytes(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~[u8])> {
+        let mut timeout_s = timeout as int;
+        if (timeout_s <= 0) {
+            timeout_s = 0;
         }
-    }
-
-    pub fn ttl(&mut self, key: &str) -> Option<f32> {
-        match self.execute("PTTL", [StrArg(key)]) {
-            Int(x) => {
-                if x < 0 {
-                    None
-                } else {
-                    Some(x as f32 / 1000.0)
-                }
+        let mut args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
+        args.push(IntArg(timeout_s));
+        match self.execute("BLPOP", args) {
+            Bulk(ref items) => {
+                let mut iter = items.iter();
+                let key = match try_unwrap!(iter.next(), None) {
+                    &Data(ref payload) => {
+                        from_utf8(*payload).to_owned()
+                    },
+                    _ => { return None; }
+                };
+                let value = match try_unwrap!(iter.next(), None) {
+                    &Data(ref payload) => {
+                        payload.to_owned()
+                    },
+                    _ => { return None; }
+                };
+                return Some((key, value));
             },
             _ => None
         }
     }
 
-    pub fn rename(&mut self, key: &str, newkey: &str) -> bool {
-        match self.execute("RENAME", [StrArg(key), StrArg(newkey)]) {
-            Success => true,
-            _ => false,
-        }
-    }
-
-    pub fn renamenx(&mut self, key: &str, newkey: &str) -> bool {
-        match self.execute("RENAMENX", [StrArg(key), StrArg(newkey)]) {
-            Int(1) => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_type(&mut self, key: &str) -> KeyType {
-        match self.execute("TYPE", [StrArg(key)]) {
-            Status(key) => {
-                match key.as_slice() {
-                    "none" => NilType,
-                    "string" => StringType,
-                    "list" => ListType,
-                    "set" => SetType,
-                    "zset" => ZSetType,
-                    "hash" => HashType,
-                    _ => UnknownType,
-                }
+    pub fn blpop(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~str)> {
+        match self.blpop_bytes(keys, timeout) {
+            Some((key, value)) => {
+                Some((key, from_utf8_owned(value)))
             },
-            _ => UnknownType,
+            None => None
         }
     }
 
-    pub fn info(&mut self) -> ~Map<~str, ~str> {
-        let mut rv = ~HashMap::new();
-        match self.execute("INFO", []) {
-            Data(bytes) => {
-                for line in from_utf8(bytes).lines_any() {
-                    if line.len() == 0 || line[0] == '#' as u8 {
-                        continue;
-                    }
-                    let mut p = line.splitn(':', 1);
-                    let key = p.next();
-                    let value = p.next();
-                    if value.is_some() {
-                        rv.insert(key.unwrap().to_owned(),
-                                  value.unwrap().to_owned());
-                    }
-                }
-            },
-            _ => {}
-        };
-        rv as ~Map<~str, ~str>
-    }
-
-    pub fn load_script(&mut self, script: &Script) -> bool {
-        match self.execute("SCRIPT", [StrArg("LOAD"), BytesArg(script.code)]) {
-            Data(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn call_script<'a>(&mut self, script: &'a Script,
-                           keys: &[&'a str], args: &[CmdArg<'a>]) -> Value {
-        let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as int)];
-        all_args.extend(&mut keys.iter().map(|&x| StrArg(x)));
-        all_args.push_all(args);
-
-        loop {
-            match self.execute("EVALSHA", all_args) {
-                Error(code, msg) => {
-                    match code {
-                        NoScriptError => {
-                            if !self.load_script(script) {
-                                fail!("Failed to load script");
-                            }
-                        }
-                        _ => { return Error(code, msg); }
-                    }
-                },
-                x => { return x; }
-            }
-        }
-    }
-
-    pub fn flush_script_cache(&mut self) -> bool {
-        match self.execute("SCRIPT", [StrArg("FLUSH")]) {
-            Success => true,
-            _ => false,
-        }
-    }
-
-    pub fn bgsave(&mut self) -> bool {
-        match self.execute("BGSAVE", []) {
-            Status(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn save(&mut self) -> bool {
-        match self.execute("SAVE", []) {
-            Success => true,
-            _ => false,
-        }
-    }
-
-    pub fn bgrewriteaof(&mut self) -> bool {
-        match self.execute("BGREWRITEAOF", []) {
-            Status(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn dbsize(&mut self) -> uint {
-        match self.execute("DBSIZE", []) {
+    pub fn rpush_bytes(&mut self, key: &str, value: &[u8]) -> uint {
+        match self.execute("RPUSH", [StrArg(key), BytesArg(value)]) {
             Int(x) => x as uint,
             _ => 0,
         }
     }
 
-    pub fn lastsave(&mut self) -> time::Tm {
-        match self.execute("LASTSAVE", []) {
-            Int(x) => {
-                time::at_utc(time::Timespec::new(x, 0))
-            },
-            _ => {
-                time::empty_tm()
-            }
-        }
-    }
-
-    pub fn time(&mut self) -> time::Tm {
-        match self.execute("TIME", []) {
-            Bulk(ref items) => {
-                let mut i = items.iter();
-                let s = match i.next() {
-                    Some(&Data(ref bytes)) => {
-                        let s = from_utf8(*bytes);
-                        from_str::<i64>(s).unwrap_or(0)
-                    },
-                    _ => 0,
-                };
-                let ms = match i.next() {
-                    Some(&Data(ref bytes)) => {
-                        let s = from_utf8(*bytes);
-                        from_str::<i32>(s).unwrap_or(0)
-                    },
-                    _ => 0,
-                };
-                time::at_utc(time::Timespec::new(s, ms))
-            },
-            _ => time::empty_tm()
-        }
-    }
-
-    pub fn shutdown(&mut self, mode: ShutdownMode) {
-        let args = match mode {
-            ShutdownNormal => ~[],
-            ShutdownSave => ~[StrArg("SAVE")],
-            ShutdownNoSave => ~[StrArg("NOSAVE")],
-        };
-        self.send_command("SHUTDOWN", args);
-        // try to read a response but expect this to fail.
-        self.read_response();
-    }
-
-    pub fn flushdb(&mut self) {
-        self.execute("FLUSHDB", []);
+    pub fn rpush<T: ToStr>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_str();
+        self.rpush_bytes(key, v.as_bytes())
     }
 }

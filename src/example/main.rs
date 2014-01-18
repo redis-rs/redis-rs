@@ -30,5 +30,13 @@ fn main() {
 
         println!("last save: {}", con.lastsave().rfc822());
         println!("server time: {}", con.time().rfc822());
+
+        println!("Waiting for item: {:?}", con.blpop(["foox"], 5.0));
+    }
+
+    // second task that puts an item into a list
+    do spawn {
+        let mut con = client.get_connection().unwrap();
+        con.rpush("foox", "hello");
     }
 }
