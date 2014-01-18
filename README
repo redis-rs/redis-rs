@@ -5,6 +5,10 @@ redis-rs // A High Level Redis Library for Rust
   multi-connection handling to allow different tasks to all
   connect to redis.  (Currently without pooling)
 
+To build:
+
+  $ rustpkg build redis
+
 
 Low-level example:
 
