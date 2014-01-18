@@ -37,6 +37,28 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
     }
 }
 
+fn value_to_key_value_tuple(val: &Value) -> Option<(~str, ~[u8])> {
+    match *val {
+        Bulk(ref items) => {
+            let mut iter = items.iter();
+            let key = match try_unwrap!(iter.next(), None) {
+                &Data(ref payload) => {
+                    from_utf8(*payload).to_owned()
+                },
+                _ => { return None; }
+            };
+            let value = match try_unwrap!(iter.next(), None) {
+                &Data(ref payload) => {
+                    payload.to_owned()
+                },
+                _ => { return None; }
+            };
+            return Some((key, value));
+        },
+        _ => None
+    }
+}
+
 pub struct Connection {
     priv addr: SocketAddr,
     priv sock: TcpStream,
@@ -583,32 +605,19 @@ impl Connection {
 
     // -- list commands
 
-    pub fn blpop_bytes(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~[u8])> {
+    fn blocking_pop_bytes(&mut self, cmd: &str, keys: &[&str],
+                          timeout: f32) -> Option<(~str, ~[u8])> {
         let mut timeout_s = timeout as int;
         if (timeout_s <= 0) {
             timeout_s = 0;
         }
         let mut args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
         args.push(IntArg(timeout_s));
-        match self.execute("BLPOP", args) {
-            Bulk(ref items) => {
-                let mut iter = items.iter();
-                let key = match try_unwrap!(iter.next(), None) {
-                    &Data(ref payload) => {
-                        from_utf8(*payload).to_owned()
-                    },
-                    _ => { return None; }
-                };
-                let value = match try_unwrap!(iter.next(), None) {
-                    &Data(ref payload) => {
-                        payload.to_owned()
-                    },
-                    _ => { return None; }
-                };
-                return Some((key, value));
-            },
-            _ => None
-        }
+        value_to_key_value_tuple(&self.execute(cmd, args))
+    }
+
+    pub fn blpop_bytes(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~[u8])> {
+        self.blocking_pop_bytes("BLPOP", keys, timeout)
     }
 
     pub fn blpop(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~str)> {
@@ -617,6 +626,49 @@ impl Connection {
                 Some((key, from_utf8_owned(value)))
             },
             None => None
+        }
+    }
+
+    pub fn blpop_as<T: FromStr>(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, T)> {
+        match self.blpop(keys, timeout) {
+            Some((key, value)) => {
+                Some((key, try_unwrap!(from_str(value), None)))
+            },
+            None => None
+        }
+    }
+
+    pub fn brpop_bytes(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~[u8])> {
+        self.blocking_pop_bytes("BRPOP", keys, timeout)
+    }
+
+    pub fn brpop(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~str)> {
+        match self.brpop_bytes(keys, timeout) {
+            Some((key, value)) => {
+                Some((key, from_utf8_owned(value)))
+            },
+            None => None
+        }
+    }
+
+    pub fn brpop_as<T: FromStr>(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, T)> {
+        match self.brpop(keys, timeout) {
+            Some((key, value)) => {
+                Some((key, try_unwrap!(from_str(value), None)))
+            },
+            None => None
+        }
+    }
+
+    pub fn brpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
+        let mut timeout_s = timeout as int;
+        if (timeout_s <= 0) {
+            timeout_s = 0;
+        }
+        match self.execute("BRPOPLPUSH", [StrArg(src), StrArg(dst),
+                                          IntArg(timeout_s)]) {
+            Data(ref payload) => Some(payload.to_owned()),
+            _ => None,
         }
     }
 
@@ -630,5 +682,26 @@ impl Connection {
     pub fn rpush<T: ToStr>(&mut self, key: &str, value: T) -> uint {
         let v = value.to_str();
         self.rpush_bytes(key, v.as_bytes())
+    }
+
+    pub fn lindex_bytes(&mut self, key: &str, index: i64) -> Option<~[u8]> {
+        match self.execute("LINDEX", [StrArg(key), IntArg(index as int)]) {
+            Data(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn lindex(&mut self, key: &str, index: i64) -> Option<~str> {
+        match self.lindex_bytes(key, index) {
+            Some(x) => Some(from_utf8_owned(x)),
+            None => None,
+        }
+    }
+
+    pub fn lindex_as<T: FromStr>(&mut self, key: &str, index: i64) -> Option<T> {
+        match self.lindex(key, index) {
+            Some(x) => from_str(x),
+            None => None,
+        }
     }
 }
