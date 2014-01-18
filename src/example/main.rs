@@ -3,6 +3,8 @@
 
 extern mod redis;
 
+use std::io::timer::sleep;
+
 fn main() {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 
@@ -37,6 +39,9 @@ fn main() {
     // second task that puts an item into a list
     do spawn {
         let mut con = client.get_connection().unwrap();
+        println!("Pushing an item in 1 sec");
+        sleep(1000);
         con.rpush("foox", "hello");
+        println!("Pushed");
     }
 }
