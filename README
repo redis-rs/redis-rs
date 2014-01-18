@@ -1,1 +1,46 @@
-Start of a library to connect to redis from rust.
+redis-rs // A High Level Redis Library for Rust
+
+  redis-rs provides both low level access to redis functionality
+  as well as high level wrappers around them.  It supports simple
+  multi-connection handling to allow different tasks to all
+  connect to redis.  (Currently without pooling)
+
+
+Low-level example:
+
+    extern mod redis;
+    use std::str::from_utf8;
+
+    fn main() {
+      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+      let mut con = client.get_connection().unwrap();
+      con.send_command("GET", [redis::StrArg("my_key")]);
+      match con.read_response() {
+	redis::Data(value) => {
+          println!("Got value: {}", from_utf8(value));
+        },
+        redis::Error(redis::ResponseError, msg) => {
+            fail!(format!("Redis command failed: {}", msg));
+        },
+	_ => {
+          println!("Did not get value :-(");
+	}
+      }
+    }
+
+High-level example:
+
+    extern mod redis;
+
+    fn main() {
+      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+      let mut con = client.get_connection().unwrap();
+      match con.get("my_key") {
+	Some(value) => {
+          println!("Got value: {}", value);
+	}
+	None => {
+	  println!("Did not get value :-(");
+	}
+      }
+    }

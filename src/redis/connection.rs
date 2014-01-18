@@ -145,20 +145,20 @@ impl Connection {
         rv
     }
 
-    fn send_command(&mut self, cmd: &str, args: &[CmdArg]) {
+    pub fn send_command(&mut self, cmd: &str, args: &[CmdArg]) {
         let cmd = self.pack_command(cmd, args);
         let w = &mut self.sock as &mut Writer;
         w.write(cmd);
     }
 
-    fn read_response(&mut self) -> Value {
+    pub fn read_response(&mut self) -> Value {
         let mut parser = Parser::new(ByteIterator {
             reader: &mut self.sock as &mut Reader,
         });
         parser.parse_value()
     }
 
-    fn execute(&mut self, cmd: &str, args: &[CmdArg]) -> Value {
+    pub fn execute(&mut self, cmd: &str, args: &[CmdArg]) -> Value {
         self.send_command(cmd, args);
         match self.read_response() {
             Error(ResponseError, msg) => {
