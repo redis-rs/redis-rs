@@ -14,9 +14,11 @@ pub use enums::*;
 
 pub use client::Client;
 pub use script::Script;
+pub use connection::Connection;
 
 mod parser;
 mod client;
 mod script;
 mod enums;
 mod utils;
+mod connection;

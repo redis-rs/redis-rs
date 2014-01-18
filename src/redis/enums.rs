@@ -20,6 +20,7 @@ pub enum Value {
     Status(~str),
 }
 
+#[deriving(Clone, Eq)]
 pub enum ConnectFailure {
     InvalidURI,
     HostNotFound,
@@ -34,8 +35,20 @@ pub enum CmdArg<'a> {
     BytesArg(&'a [u8]),
 }
 
+#[deriving(Clone, Eq)]
 pub enum ShutdownMode {
     ShutdownNormal,
     ShutdownSave,
     ShutdownNoSave,
+}
+
+#[deriving(Clone, Eq)]
+pub enum KeyType {
+    StringType,
+    ListType,
+    SetType,
+    ZSetType,
+    HashType,
+    UnknownType,
+    NilType,
 }
