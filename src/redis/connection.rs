@@ -77,6 +77,18 @@ fn value_to_key_value_tuple(val: &Value) -> Option<(~str, ~[u8])> {
     }
 }
 
+fn string_value_convert<T: FromStr>(val: &Value, default: T) -> T {
+    match *val {
+        Data(ref x) => {
+            match from_str(from_utf8(*x)) {
+                Some(x) => x,
+                None => default,
+            }
+        },
+        _ => default,
+    }
+}
+
 pub struct Connection {
     priv addr: SocketAddr,
     priv sock: TcpStream,
@@ -604,15 +616,8 @@ impl Connection {
 
     #[inline]
     pub fn incrby_float(&mut self, key: &str, step: f32) -> f32 {
-        match self.execute("INCRBYFLOAT", [StrArg(key), FloatArg(step)]) {
-            Data(x) => {
-                match from_str(from_utf8(x)) {
-                    Some(x) => x,
-                    None => 0.0,
-                }
-            },
-            _ => 0.0,
-        }
+        string_value_convert(&self.execute("INCRBYFLOAT",
+            [StrArg(key), FloatArg(step)]), 0.0f32)
     }
 
     #[inline]
@@ -976,4 +981,155 @@ impl Connection {
         let v = value.to_str();
         self.rpushx_bytes(key, v.as_bytes())
     }
+
+    // -- has commands
+
+    #[inline]
+    pub fn hdel(&mut self, key: &str) -> bool {
+        match self.execute("HDEL", [StrArg(key)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn hdel_many(&mut self, keys: &[&str]) -> uint {
+        let args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
+        match self.execute("HDEL", args) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn hexists(&mut self, key: &str, field: &str) -> bool {
+        match self.execute("HEXISTS", [StrArg(key), StrArg(field)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn hget_bytes(&mut self, key: &str, field: &str) -> Option<~[u8]> {
+        match self.execute("HGET", [StrArg(key), StrArg(field)]) {
+            Data(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn hget(&mut self, key: &str, field: &str) -> Option<~str> {
+        match self.hget_bytes(key, field) {
+            Some(x) => Some(from_utf8_owned(x)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub fn hget_as<T: FromStr>(&mut self, key: &str, field: &str) -> Option<T> {
+        match self.hget(key, field) {
+            Some(x) => from_str(x),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub fn hgetall_bytes(&mut self, key: &str, field: &str) -> ~[~[u8]] {
+        match self.execute("HGETALL", [StrArg(key), StrArg(field)]) {
+            Bulk(items) => {
+                let mut rv = ~[];
+                for item in items.move_iter() {
+                    match item {
+                        Data(x) => { rv.push(x); }
+                        _ => {}
+                    }
+                }
+                rv
+            }
+            _ => ~[],
+        }
+    }
+
+    #[inline]
+    pub fn hgetall(&mut self, key: &str, field: &str) -> ~[~str] {
+        self.hgetall_bytes(key, field).move_iter()
+            .map(|x| from_utf8_owned(x)).to_owned_vec()
+    }
+
+    #[inline]
+    pub fn hgetall_as<T: FromStr>(&mut self, key: &str, field: &str) -> ~[T] {
+        let mut rv = ~[];
+        for item in self.hgetall(key, field).move_iter() {
+            match from_str(item) {
+                Some(x) => { rv.push(x); }
+                None => {}
+            }
+        }
+        rv
+    }
+
+    #[inline]
+    pub fn hincrby(&mut self, key: &str, field: &str, step: int) -> int {
+        match self.execute("HINCRBY", [StrArg(key), StrArg(field), IntArg(step)]) {
+            Int(x) => x as int,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn hincr(&mut self, key: &str, field: &str) -> int {
+        self.hincrby(key, field, 1)
+    }
+
+    #[inline]
+    pub fn hincrby_float(&mut self, key: &str, field: &str, step: f32) -> f32 {
+        string_value_convert(&self.execute("HINCRBYFLOAT",
+            [StrArg(key), StrArg(field), FloatArg(step)]), 0.0f32)
+    }
+
+    #[inline]
+    pub fn hkeys(&mut self, key: &str) -> ~[~str] {
+        let resp = self.execute("HKEYS", [StrArg(key)]);
+        value_to_string_list(&resp)
+    }
+
+    #[inline]
+    pub fn hlen(&mut self, key: &str) -> uint {
+        match self.execute("HLEN", [StrArg(key)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    // XXX: mget mset hscan
+
+    #[inline]
+    pub fn hset_bytes(&mut self, key: &str, field: &str, value: &[u8]) -> bool {
+        match self.execute("HSET", [StrArg(key), StrArg(field), BytesArg(value)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn hset<T: ToStr>(&mut self, key: &str, field: &str, value: T) -> bool {
+        let v = value.to_str();
+        self.hset_bytes(key, field, v.as_bytes())
+    }
+
+    #[inline]
+    pub fn hsetnx_bytes(&mut self, key: &str, field: &str, value: &[u8]) -> bool {
+        match self.execute("HSETNX", [StrArg(key), StrArg(field), BytesArg(value)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn hsetnx<T: ToStr>(&mut self, key: &str, field: &str, value: T) -> bool {
+        let v = value.to_str();
+        self.hsetnx_bytes(key, field, v.as_bytes())
+    }
+
+    // XXX: hvals?
 }
