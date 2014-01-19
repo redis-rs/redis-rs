@@ -1132,4 +1132,28 @@ impl Connection {
     }
 
     // XXX: hvals?
+
+    // -- sets
+
+    #[inline]
+    pub fn sadd_bytes(&mut self, key: &str, member: &[u8]) -> bool {
+        match self.execute("SADD", [StrArg(key), BytesArg(member)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn sadd<T: ToStr>(&mut self, key: &str, member: T) -> bool {
+        let v = member.to_str();
+        self.sadd_bytes(key, v.as_bytes())
+    }
+
+    #[inline]
+    pub fn scard(&mut self, key: &str) -> uint {
+        match self.execute("SCARD", [StrArg(key)]) {
+            Int(x) => x as uint,
+            _ => 0,
+        }
+    }
 }
