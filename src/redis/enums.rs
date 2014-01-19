@@ -52,3 +52,22 @@ pub enum KeyType {
     UnknownType,
     NilType,
 }
+
+#[deriving(Clone, Eq)]
+pub enum RangeBoundary {
+    Open(f32),
+    Closed(f32),
+    Inf,
+    NegInf,
+}
+
+impl ToStr for RangeBoundary {
+    fn to_str(&self) -> ~str {
+        match *self {
+            Open(x) => format!("({}", x),
+            Closed(x) => x.to_str(),
+            Inf => ~"+inf",
+            NegInf => ~"-inf",
+        }
+    }
+}

@@ -11,7 +11,7 @@ pub struct ScanIterator<'a, T> {
     pre_args: ~[CmdArg<'a>],
     post_args: ~[CmdArg<'a>],
     cursor: i64,
-    conv_func: 'a |&Value| -> Option<T>,
+    conv_func: 'a |Value| -> Option<T>,
     end: bool,
     buffer: ~[Value],
 }
@@ -20,7 +20,7 @@ pub struct ScanIterator<'a, T> {
 impl<'a, T> ScanIterator<'a, T> {
     fn next_from_buffer(&mut self) -> Option<T> {
         while self.buffer.len() > 0 {
-            match (self.conv_func)(&self.buffer.pop()) {
+            match (self.conv_func)(self.buffer.pop()) {
                 Some(x) => { return Some(x); }
                 None => {}
             }

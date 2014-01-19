@@ -20,9 +20,9 @@ use scan::ScanIterator;
 mod macros;
 
 
-fn value_to_string_list(val: &Value) -> ~[~str] {
-    match *val {
-        Bulk(ref items) => {
+fn value_to_string_list(val: Value) -> ~[~str] {
+    match val {
+        Bulk(items) => {
             let mut rv = ~[];
             for item in items.iter() {
                 match item {
@@ -38,9 +38,9 @@ fn value_to_string_list(val: &Value) -> ~[~str] {
     }
 }
 
-fn value_to_byte_list(val: &Value) -> ~[~[u8]] {
-    match *val {
-        Bulk(ref items) => {
+fn value_to_byte_list(val: Value) -> ~[~[u8]] {
+    match val {
+        Bulk(items) => {
             let mut rv = ~[];
             for item in items.iter() {
                 match item {
@@ -56,9 +56,9 @@ fn value_to_byte_list(val: &Value) -> ~[~[u8]] {
     }
 }
 
-fn value_to_key_value_tuple(val: &Value) -> Option<(~str, ~[u8])> {
-    match *val {
-        Bulk(ref items) => {
+fn value_to_key_value_tuple(val: Value) -> Option<(~str, ~[u8])> {
+    match val {
+        Bulk(items) => {
             let mut iter = items.iter();
             let key = match try_unwrap!(iter.next(), None) {
                 &Data(ref payload) => {
@@ -78,8 +78,8 @@ fn value_to_key_value_tuple(val: &Value) -> Option<(~str, ~[u8])> {
     }
 }
 
-fn string_value_convert<T: FromStr>(val: &Value, default: T) -> T {
-    match *val {
+fn string_value_convert<T: FromStr>(val: Value, default: T) -> T {
+    match val {
         Data(ref x) => {
             match from_str(from_utf8(*x)) {
                 Some(x) => x,
@@ -90,10 +90,40 @@ fn string_value_convert<T: FromStr>(val: &Value, default: T) -> T {
     }
 }
 
-fn value_to_bytes(val: &Value) -> Option<~[u8]> {
-    match *val {
+fn value_to_bytes(val: Value) -> Option<~[u8]> {
+    match val {
         Data(ref x) => Some(x.to_owned()),
         _ => None,
+    }
+}
+
+fn value_to_byte_float_tuples(val: Value) -> ~[(~[u8], f32)] {
+    match val {
+        Bulk(items) => {
+            let mut rv = ~[];
+            let mut iter = items.move_iter();
+            loop {
+                let member = match iter.next() {
+                    Some(item) => {
+                        match item {
+                            Data(payload) => payload,
+                            _ => { break; }
+                        }
+                    }
+                    None => { break; }
+                };
+                let score = match iter.next() {
+                    Some(x) => { from_str::<f32>(from_utf8_owned(match x {
+                        Data(payload) => payload,
+                        _ => { break; }
+                    })).unwrap_or(0.0) }
+                    None => { break; }
+                };
+                rv.push((member, score));
+            }
+            rv
+        },
+        _ => ~[],
     }
 }
 
@@ -305,7 +335,7 @@ impl Connection {
     #[inline]
     pub fn keys(&mut self, pattern: &str) -> ~[~str] {
         let resp = self.execute("KEYS", [StrArg(pattern)]);
-        value_to_string_list(&resp)
+        value_to_string_list(resp)
     }
 
     #[inline]
@@ -647,7 +677,7 @@ impl Connection {
 
     #[inline]
     pub fn incrby_float(&mut self, key: &str, step: f32) -> f32 {
-        string_value_convert(&self.execute("INCRBYFLOAT",
+        string_value_convert(self.execute("INCRBYFLOAT",
             [StrArg(key), FloatArg(step)]), 0.0f32)
     }
 
@@ -691,7 +721,7 @@ impl Connection {
         }
         let mut args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
         args.push(IntArg(timeout_s));
-        value_to_key_value_tuple(&self.execute(cmd, args))
+        value_to_key_value_tuple(self.execute(cmd, args))
     }
 
     #[inline]
@@ -882,7 +912,7 @@ impl Connection {
 
     #[inline]
     pub fn lrange_bytes(&mut self, key: &str, start: i64, end: i64) -> ~[~[u8]] {
-        value_to_byte_list(&self.execute("LRANGE", [StrArg(key), IntArg(start), IntArg(end)]))
+        value_to_byte_list(self.execute("LRANGE", [StrArg(key), IntArg(start), IntArg(end)]))
     }
 
     #[inline]
@@ -1114,14 +1144,14 @@ impl Connection {
 
     #[inline]
     pub fn hincrby_float(&mut self, key: &str, field: &str, step: f32) -> f32 {
-        string_value_convert(&self.execute("HINCRBYFLOAT",
+        string_value_convert(self.execute("HINCRBYFLOAT",
             [StrArg(key), StrArg(field), FloatArg(step)]), 0.0f32)
     }
 
     #[inline]
     pub fn hkeys(&mut self, key: &str) -> ~[~str] {
         let resp = self.execute("HKEYS", [StrArg(key)]);
-        value_to_string_list(&resp)
+        value_to_string_list(resp)
     }
 
     #[inline]
@@ -1321,13 +1351,13 @@ impl Connection {
     #[inline]
     pub fn smembers_bytes(&mut self, key: &str) -> ~[~[u8]] {
         let resp = self.execute("SMEMBERS", [StrArg(key)]);
-        value_to_byte_list(&resp)
+        value_to_byte_list(resp)
     }
 
     #[inline]
     pub fn smembers(&mut self, key: &str) -> ~[~str] {
         let resp = self.execute("SMEMBERS", [StrArg(key)]);
-        value_to_string_list(&resp)
+        value_to_string_list(resp)
     }
 
     #[inline]
@@ -1402,4 +1432,230 @@ impl Connection {
             _ => 0,
         }
     }
+
+    // -- sorted sets
+
+    #[inline]
+    pub fn zadd_bytes(&mut self, key: &str, score: f32, member: &[u8]) -> bool {
+        match self.execute("ZADD", [StrArg(key), FloatArg(score), BytesArg(member)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn zadd<T: ToStr>(&mut self, key: &str, score: f32, member: T) -> bool {
+        let v = member.to_str();
+        self.zadd_bytes(key, score, v.as_bytes())
+    }
+
+    // XXX: many add
+
+    #[inline]
+    pub fn zcard(&mut self, key: &str) -> i64 {
+        match self.execute("ZCARD", [StrArg(key)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn zcount(&mut self, key: &str, min: RangeBoundary, max: RangeBoundary) -> i64 {
+        let min_s = min.to_str();
+        let max_s = max.to_str();
+        match self.execute("ZRANGE", [StrArg(key), StrArg(min_s), StrArg(max_s)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn zincr_bytes(&mut self, key: &str, member: &[u8]) -> i64 {
+        self.zincrby_bytes(key, 1.0, member)
+    }
+
+    #[inline]
+    pub fn zincrby_bytes(&mut self, key: &str, increment: f32, member: &[u8]) -> i64 {
+        match self.execute("ZINCRBY", [StrArg(key), FloatArg(increment),
+                                       BytesArg(member)]) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn zincr<T: ToStr>(&mut self, key: &str, member: T) -> i64 {
+        let v = member.to_str();
+        self.zincr_bytes(key, v.as_bytes())
+    }
+
+    #[inline]
+    pub fn zincrby<T: ToStr>(&mut self, key: &str, increment: f32, member: T) -> i64 {
+        let v = member.to_str();
+        self.zincrby_bytes(key, increment, v.as_bytes())
+    }
+
+    // XXX: interstore
+
+    #[inline]
+    pub fn zrange_bytes(&mut self, key: &str, start: i64, stop: i64) -> ~[~[u8]] {
+        value_to_byte_list(self.execute("ZRANGE",
+            [StrArg(key), IntArg(start), IntArg(stop)]))
+    }
+
+    #[inline]
+    pub fn zrange(&mut self, key: &str, start: i64, stop: i64) -> ~[~str] {
+        value_to_string_list(self.execute("ZRANGE",
+            [StrArg(key), IntArg(start), IntArg(stop)]))
+    }
+
+    pub fn zrange_bytes_withscores(&mut self, key: &str, start: i64, stop: i64) -> ~[(~[u8], f32)] {
+        value_to_byte_float_tuples(self.execute("ZRANGE",
+            [StrArg(key), IntArg(start), IntArg(stop), StrArg("WITHSCORES")]))
+    }
+
+    #[inline]
+    pub fn zrange_withscores(&mut self, key: &str, start: i64, stop: i64) -> ~[(~str, f32)] {
+        self.zrange_bytes_withscores(key, start, stop).move_iter()
+            .map(|(member, score)| (from_utf8_owned(member), score)).to_owned_vec()
+    }
+
+    fn zrangebyscore_operation(&mut self, cmd: &str,
+                               key: &str, min: RangeBoundary,
+                               max: RangeBoundary,
+                               withscores: bool,
+                               limit: Option<(i64, i64)>) -> Value {
+        let min_s = min.to_str();
+        let max_s = max.to_str();
+        let mut args = ~[StrArg(key), StrArg(min_s), StrArg(max_s)];
+        if withscores {
+            args.push(StrArg("WITHSCORES"));
+        }
+        match limit {
+            Some((offset, count)) => {
+                args.push(IntArg(offset));
+                args.push(IntArg(count));
+            },
+            None => {}
+        }
+        self.execute(cmd, args)
+    }
+
+    #[inline]
+    pub fn zrangebyscore_bytes(&mut self, key: &str, min: RangeBoundary,
+                               max: RangeBoundary,
+                               limit: Option<(i64, i64)>) -> ~[~[u8]] {
+        value_to_byte_list(self.zrangebyscore_operation(
+            "ZRANGEBYSCORE", key, min, max, false, limit))
+    }
+
+    #[inline]
+    pub fn zrangebyscore(&mut self, key: &str, min: RangeBoundary,
+                         max: RangeBoundary,
+                         limit: Option<(i64, i64)>) -> ~[~str] {
+        value_to_string_list(self.zrangebyscore_operation(
+            "ZRANGEBYSCORE", key, min, max, false, limit))
+    }
+
+    #[inline]
+    pub fn zrangebyscore_bytes_withscores(&mut self, key: &str, min: RangeBoundary,
+                                          max: RangeBoundary,
+                                          limit: Option<(i64, i64)>) -> ~[(~[u8], f32)] {
+        value_to_byte_float_tuples(self.zrangebyscore_operation(
+            "ZRANGEBYSCORE", key, min, max, true, limit))
+    }
+
+    #[inline]
+    pub fn zrangebyscore_withscores(&mut self, key: &str, min: RangeBoundary,
+                                    max: RangeBoundary,
+                                    limit: Option<(i64, i64)>) -> ~[(~str, f32)] {
+        self.zrangebyscore_bytes_withscores(key, min, max, limit).move_iter()
+            .map(|(member, score)| (from_utf8_owned(member), score)).to_owned_vec()
+    }
+
+    #[inline]
+    pub fn zrank_bytes(&mut self, key: &str, member: &[u8]) -> Option<i64> {
+        match self.execute("ZRANK", [StrArg(key), BytesArg(member)]) {
+            Int(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn zrank(&mut self, key: &str, member: &str) -> Option<i64> {
+        self.zrank_bytes(key, member.as_bytes())
+    }
+
+    #[inline]
+    pub fn zrem_bytes(&mut self, key: &str, member: &[u8]) -> bool {
+        match self.execute("ZREM", [StrArg(key), BytesArg(member)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn zrem(&mut self, key: &str, member: &str) -> bool {
+        self.zrem_bytes(key, member.as_bytes())
+    }
+
+    #[inline]
+    pub fn zrem_bytes_many(&mut self, key: &str, members: &[&[u8]]) -> i64 {
+        let mut args = ~[StrArg(key)];
+        args.extend(&mut members.iter().map(|&x| BytesArg(x)));
+        match self.execute("ZREM", args) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn zrem_many(&mut self, key: &str, members: &[&str]) -> i64 {
+        self.zrem_bytes_many(key, members.iter().map(|&x| x.as_bytes()).to_owned_vec())
+    }
+
+    // XXX: ZREMRANGEBYRANK ZREMRANGEBYSCORE ZREVRANGE ZREVRANGEBYSCORE ZREVRANK 
+
+    #[inline]
+    pub fn zscan_bytes<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~[u8]> {
+        ScanIterator {
+            con: self,
+            cmd: "ZSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| value_to_bytes(value),
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
+    pub fn zscan<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~str> {
+        ScanIterator {
+            con: self,
+            cmd: "ZSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| Some(string_value_convert(value, ~"")),
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
+    pub fn zscore_bytes(&mut self, key: &str, member: &[u8]) -> Option<i64> {
+        match self.execute("ZSCORE", [StrArg(key), BytesArg(member)]) {
+            Int(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn zscore(&mut self, key: &str, member: &str) -> Option<i64> {
+        self.zscore_bytes(key, member.as_bytes())
+    }
+
+    // XXX: ZUNIONSTORE
 }
