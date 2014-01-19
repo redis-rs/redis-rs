@@ -90,6 +90,13 @@ fn string_value_convert<T: FromStr>(val: &Value, default: T) -> T {
     }
 }
 
+fn value_to_bytes(val: &Value) -> Option<~[u8]> {
+    match *val {
+        Data(ref x) => Some(x.to_owned()),
+        _ => None,
+    }
+}
+
 pub struct Connection {
     priv addr: SocketAddr,
     priv sock: TcpStream,
@@ -1125,7 +1132,7 @@ impl Connection {
         }
     }
 
-    // XXX: mget mset hscan
+    // XXX: mget mset
 
     #[inline]
     pub fn hset_bytes(&mut self, key: &str, field: &str, value: &[u8]) -> bool {
@@ -1163,12 +1170,7 @@ impl Connection {
             pre_args: ~[StrArg(key)],
             post_args: ~[StrArg("MATCH"), StrArg(pattern)],
             cursor: 0,
-            conv_func: |value| {
-                match value {
-                    &Data(ref x) => Some(x.to_owned()),
-                    _ => None,
-                }
-            },
+            conv_func: |value| value_to_bytes(value),
             buffer: ~[],
             end: false,
         }
@@ -1208,6 +1210,195 @@ impl Connection {
     pub fn scard(&mut self, key: &str) -> uint {
         match self.execute("SCARD", [StrArg(key)]) {
             Int(x) => x as uint,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn sdiff_bytes(&mut self, keys: &[&str]) -> ~[~[u8]] {
+        let args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
+        match self.execute("SDIFF", args) {
+            Bulk(items) => {
+                let mut rv = ~[];
+                for item in items.move_iter() {
+                    match item {
+                        Data(x) => { rv.push(x); }
+                        _ => {}
+                    }
+                }
+                rv
+            }
+            _ => ~[],
+        }
+    }
+
+    #[inline]
+    pub fn sdiff(&mut self, keys: &[&str]) -> ~[~str] {
+        self.sdiff_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+    }
+
+    #[inline]
+    pub fn sdiff_as<T: FromStr>(&mut self, keys: &[&str]) -> ~[T] {
+        let mut rv = ~[];
+        for item in self.sdiff(keys).move_iter() {
+            match from_str(item) {
+                Some(x) => { rv.push(x); }
+                None => {}
+            }
+        }
+        rv
+    }
+
+    #[inline]
+    pub fn sdiffstore(&mut self, dst: &str, keys: &[&str]) -> i64 {
+        let mut args = ~[StrArg(dst)];
+        args.extend(&mut keys.iter().map(|&x| StrArg(x)));
+        match self.execute("SDIFFSTORE", args) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn sinter_bytes(&mut self, keys: &[&str]) -> ~[~[u8]] {
+        let args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
+        match self.execute("SINTER", args) {
+            Bulk(items) => {
+                let mut rv = ~[];
+                for item in items.move_iter() {
+                    match item {
+                        Data(x) => { rv.push(x); }
+                        _ => {}
+                    }
+                }
+                rv
+            }
+            _ => ~[],
+        }
+    }
+
+    #[inline]
+    pub fn sinter(&mut self, keys: &[&str]) -> ~[~str] {
+        self.sinter_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+    }
+
+    #[inline]
+    pub fn sinter_as<T: FromStr>(&mut self, keys: &[&str]) -> ~[T] {
+        let mut rv = ~[];
+        for item in self.sinter(keys).move_iter() {
+            match from_str(item) {
+                Some(x) => { rv.push(x); }
+                None => {}
+            }
+        }
+        rv
+    }
+
+    #[inline]
+    pub fn sinterstore(&mut self, dst: &str, keys: &[&str]) -> i64 {
+        let mut args = ~[StrArg(dst)];
+        args.extend(&mut keys.iter().map(|&x| StrArg(x)));
+        match self.execute("SINTERSTORE", args) {
+            Int(x) => x,
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn sismember_bytes(&mut self, key: &str, member: &[u8]) -> bool {
+        match self.execute("SISMEMBER", [StrArg(key), BytesArg(member)]) {
+            Int(1) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn isimember<T: ToStr>(&mut self, key: &str, member: T) -> bool {
+        let v = member.to_str();
+        self.sismember_bytes(key, v.as_bytes())
+    }
+
+    #[inline]
+    pub fn smembers_bytes(&mut self, key: &str) -> ~[~[u8]] {
+        let resp = self.execute("SMEMBERS", [StrArg(key)]);
+        value_to_byte_list(&resp)
+    }
+
+    #[inline]
+    pub fn smembers(&mut self, key: &str) -> ~[~str] {
+        let resp = self.execute("SMEMBERS", [StrArg(key)]);
+        value_to_string_list(&resp)
+    }
+
+    #[inline]
+    pub fn sscan_bytes<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~[u8]> {
+        ScanIterator {
+            con: self,
+            cmd: "SSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| value_to_bytes(value),
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
+    pub fn sscan<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~str> {
+        ScanIterator {
+            con: self,
+            cmd: "SSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| Some(string_value_convert(value, ~"")),
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
+    pub fn sunion_bytes(&mut self, keys: &[&str]) -> ~[~[u8]] {
+        let args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
+        match self.execute("SUNION", args) {
+            Bulk(items) => {
+                let mut rv = ~[];
+                for item in items.move_iter() {
+                    match item {
+                        Data(x) => { rv.push(x); }
+                        _ => {}
+                    }
+                }
+                rv
+            }
+            _ => ~[],
+        }
+    }
+
+    #[inline]
+    pub fn sunion(&mut self, keys: &[&str]) -> ~[~str] {
+        self.sunion_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+    }
+
+    #[inline]
+    pub fn sunion_as<T: FromStr>(&mut self, keys: &[&str]) -> ~[T] {
+        let mut rv = ~[];
+        for item in self.sunion(keys).move_iter() {
+            match from_str(item) {
+                Some(x) => { rv.push(x); }
+                None => {}
+            }
+        }
+        rv
+    }
+
+    #[inline]
+    pub fn sunionstore(&mut self, dst: &str, keys: &[&str]) -> i64 {
+        let mut args = ~[StrArg(dst)];
+        args.extend(&mut keys.iter().map(|&x| StrArg(x)));
+        match self.execute("SUNIONSTORE", args) {
+            Int(x) => x,
             _ => 0,
         }
     }
