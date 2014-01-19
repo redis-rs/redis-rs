@@ -22,3 +22,4 @@ mod script;
 mod enums;
 mod utils;
 mod connection;
+mod scan;

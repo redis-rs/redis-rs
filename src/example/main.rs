@@ -15,9 +15,17 @@ fn main() {
         println!("foo get: {:?}", con.get("foo"));
         println!("foo as int: {:?}", con.get_as::<int>("foo"));
         println!("ping: {:?}", con.ping());
-        println!("keys: {:?}", con.keys("*"));
         println!("foo type: {:?}", con.get_type("foo"));
         println!("foo exists: {:?}", con.exists("foo"));
+
+        // regular keys
+        println!("keys: {:?}", con.keys("*"));
+
+        // scan keys
+        println("scan over key space");
+        for item in con.scan("*") {
+            println!(" > {}", item);
+        }
 
         let info = con.info();
         println!("info role: {:?}", info.find(&~"role"));

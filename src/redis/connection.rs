@@ -15,6 +15,7 @@ use parser::Parser;
 use enums::*;
 use script::Script;
 use parser::ByteIterator;
+use scan::ScanIterator;
 
 mod macros;
 
@@ -294,11 +295,27 @@ impl Connection {
 
     // -- key commands
 
+    #[inline]
     pub fn keys(&mut self, pattern: &str) -> ~[~str] {
         let resp = self.execute("KEYS", [StrArg(pattern)]);
         value_to_string_list(&resp)
     }
 
+    #[inline]
+    pub fn scan<'a>(&'a mut self, pattern: &'a str) -> ScanIterator<'a, ~str> {
+        ScanIterator {
+            con: self,
+            cmd: "SCAN",
+            pre_args: ~[],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| Some(string_value_convert(value, ~"")),
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
     pub fn persist(&mut self, key: &str) -> bool {
         match self.execute("PERSIST", [StrArg(key)]) {
             Int(1) => true,
@@ -306,6 +323,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn expire(&mut self, key: &str, timeout: f32) -> bool {
         let mut cmd;
         let mut t;
@@ -323,6 +341,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn ttl(&mut self, key: &str) -> Option<f32> {
         match self.execute("PTTL", [StrArg(key)]) {
             Int(x) => {
@@ -336,6 +355,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn rename(&mut self, key: &str, newkey: &str) -> bool {
         match self.execute("RENAME", [StrArg(key), StrArg(newkey)]) {
             Success => true,
@@ -343,6 +363,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn renamenx(&mut self, key: &str, newkey: &str) -> bool {
         match self.execute("RENAMENX", [StrArg(key), StrArg(newkey)]) {
             Int(1) => true,
@@ -350,6 +371,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn get_type(&mut self, key: &str) -> KeyType {
         match self.execute("TYPE", [StrArg(key)]) {
             Status(key) => {
@@ -369,6 +391,7 @@ impl Connection {
 
     // -- script commands
 
+    #[inline]
     pub fn load_script(&mut self, script: &Script) -> bool {
         match self.execute("SCRIPT", [StrArg("LOAD"), BytesArg(script.code)]) {
             Data(_) => true,
@@ -399,6 +422,7 @@ impl Connection {
         }
     }
 
+    #[inline]
     pub fn flush_script_cache(&mut self) -> bool {
         match self.execute("SCRIPT", [StrArg("FLUSH")]) {
             Success => true,
@@ -1131,7 +1155,38 @@ impl Connection {
         self.hsetnx_bytes(key, field, v.as_bytes())
     }
 
-    // XXX: hvals?
+    #[inline]
+    pub fn hscan_bytes<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~[u8]> {
+        ScanIterator {
+            con: self,
+            cmd: "HSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| {
+                match value {
+                    &Data(ref x) => Some(x.to_owned()),
+                    _ => None,
+                }
+            },
+            buffer: ~[],
+            end: false,
+        }
+    }
+
+    #[inline]
+    pub fn hscan<'a>(&'a mut self, key: &'a str, pattern: &'a str) -> ScanIterator<'a, ~str> {
+        ScanIterator {
+            con: self,
+            cmd: "HSCAN",
+            pre_args: ~[StrArg(key)],
+            post_args: ~[StrArg("MATCH"), StrArg(pattern)],
+            cursor: 0,
+            conv_func: |value| Some(string_value_convert(value, ~"")),
+            buffer: ~[],
+            end: false,
+        }
+    }
 
     // -- sets
 
