@@ -14,7 +14,7 @@ mod macros;
 
 pub struct Client {
     priv addr: SocketAddr,
-    priv db: uint,
+    priv db: i64,
 }
 
 impl Client {
@@ -30,7 +30,7 @@ impl Client {
         let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
         let port = try_unwrap!(from_str::<u16>(parsed_uri.port.clone()
             .unwrap_or(~"6379")), Err(InvalidURI));
-        let db = from_str::<uint>(parsed_uri.path.trim_chars(&'/')).unwrap_or(0);
+        let db = from_str::<i64>(parsed_uri.path.trim_chars(&'/')).unwrap_or(0);
 
         let addr = SocketAddr {
             ip: *ip_addr,

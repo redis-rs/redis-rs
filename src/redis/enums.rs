@@ -30,7 +30,7 @@ pub enum ConnectFailure {
 #[deriving(Clone, Eq)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
-    IntArg(int),
+    IntArg(i64),
     FloatArg(f32),
     BytesArg(&'a [u8]),
 }

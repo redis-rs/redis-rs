@@ -92,12 +92,12 @@ fn string_value_convert<T: FromStr>(val: &Value, default: T) -> T {
 pub struct Connection {
     priv addr: SocketAddr,
     priv sock: TcpStream,
-    priv db: uint,
+    priv db: i64,
 }
 
 impl Connection {
 
-    pub fn new(addr: SocketAddr, db: uint) -> Result<Connection, ConnectFailure> {
+    pub fn new(addr: SocketAddr, db: i64) -> Result<Connection, ConnectFailure> {
         let sock = try_unwrap!(TcpStream::connect(addr), Err(ConnectionRefused));
 
         let mut rv = Connection {
@@ -178,8 +178,8 @@ impl Connection {
         }
     }
 
-    pub fn select_db(&mut self, db: uint) -> bool {
-        match self.execute("SELECT", [IntArg(db as int)]) {
+    pub fn select_db(&mut self, db: i64) -> bool {
+        match self.execute("SELECT", [IntArg(db)]) {
             Success => { self.db = db; true },
             _ => false,
         }
@@ -309,13 +309,13 @@ impl Connection {
     pub fn expire(&mut self, key: &str, timeout: f32) -> bool {
         let mut cmd;
         let mut t;
-        let i_timeout = timeout as int;
+        let i_timeout = timeout as i64;
         if (i_timeout as f32 == timeout) {
             cmd = "EXPIRE";
             t = i_timeout;
         } else {
             cmd = "PEXPIRE";
-            t = (timeout * 1000.0) as int;
+            t = (timeout * 1000.0) as i64;
         }
         match self.execute(cmd, [StrArg(key), IntArg(t)]) {
             Int(1) => true,
@@ -378,7 +378,7 @@ impl Connection {
 
     pub fn call_script<'a>(&mut self, script: &'a Script,
                            keys: &[&'a str], args: &[CmdArg<'a>]) -> Value {
-        let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as int)];
+        let mut all_args = ~[StrArg(script.sha), IntArg(keys.len() as i64)];
         all_args.extend(&mut keys.iter().map(|&x| StrArg(x)));
         all_args.push_all(args);
 
@@ -453,13 +453,13 @@ impl Connection {
     pub fn setex_bytes(&mut self, key: &str, value: &[u8], timeout: f32) -> bool {
         let mut cmd;
         let mut t;
-        let i_timeout = timeout as int;
+        let i_timeout = timeout as i64;
         if (i_timeout as f32 == timeout) {
             cmd = "SETEX";
             t = i_timeout;
         } else {
             cmd = "PSETEX";
-            t = (timeout * 1000.0) as int;
+            t = (timeout * 1000.0) as i64;
         }
         match self.execute(cmd, [StrArg(key), IntArg(t), BytesArg(value)]) {
             Success => true,
@@ -540,24 +540,24 @@ impl Connection {
     }
 
     #[inline]
-    pub fn setbit(&mut self, key: &str, bit: uint, value: bool) -> bool {
+    pub fn setbit(&mut self, key: &str, bit: i64, value: bool) -> bool {
         let v = if value { 1 } else { 0 };
-        match self.execute("SETBIT", [StrArg(key), IntArg(bit as int), IntArg(v)]) {
+        match self.execute("SETBIT", [StrArg(key), IntArg(bit), IntArg(v)]) {
             Int(1) => true,
             _ => false,
         }
     }
 
     #[inline]
-    pub fn strlen(&mut self, key: &str) -> uint {
+    pub fn strlen(&mut self, key: &str) -> i64 {
         match self.execute("STRLEN", [StrArg(key)]) {
-            Int(x) => x as uint,
+            Int(x) => x,
             _ => 0,
         }
     }
 
     #[inline]
-    pub fn getrange_bytes(&mut self, key: &str, start: int, end: int) -> ~[u8] {
+    pub fn getrange_bytes(&mut self, key: &str, start: i64, end: i64) -> ~[u8] {
         match self.execute("GETRANGE", [StrArg(key), IntArg(start), IntArg(end)]) {
             Data(value) => value,
             _ => ~[],
@@ -565,35 +565,35 @@ impl Connection {
     }
 
     #[inline]
-    pub fn getrange(&mut self, key: &str, start: int, end: int) -> ~str {
+    pub fn getrange(&mut self, key: &str, start: i64, end: i64) -> ~str {
         from_utf8_owned(self.getrange_bytes(key, start, end))
     }
 
     #[inline]
-    pub fn setrange_bytes(&mut self, key: &str, offset: int, value: &[u8]) -> uint {
+    pub fn setrange_bytes(&mut self, key: &str, offset: i64, value: &[u8]) -> i64 {
         match self.execute("SETRANGE", [StrArg(key), IntArg(offset), BytesArg(value)]) {
-            Int(x) => x as uint,
+            Int(x) => x,
             _ => 0,
         }
     }
 
     #[inline]
-    pub fn setrange(&mut self, key: &str, offset: int, value: &str) -> uint {
+    pub fn setrange(&mut self, key: &str, offset: i64, value: &str) -> i64 {
         self.setrange_bytes(key, offset, value.as_bytes())
     }
 
     #[inline]
-    pub fn popcount(&mut self, key: &str) -> uint {
+    pub fn popcount(&mut self, key: &str) -> i64 {
         match self.execute("POPCOUNT", [StrArg(key)]) {
-            Int(x) => x as uint,
+            Int(x) => x,
             _ => 0,
         }
     }
 
     #[inline]
-    pub fn popcount_range(&mut self, key: &str, start: int, end: int) -> uint {
+    pub fn popcount_range(&mut self, key: &str, start: i64, end: i64) -> i64 {
         match self.execute("POPCOUNT", [StrArg(key), IntArg(start), IntArg(end)]) {
-            Int(x) => x as uint,
+            Int(x) => x,
             _ => 0,
         }
     }
@@ -607,9 +607,9 @@ impl Connection {
     }
 
     #[inline]
-    pub fn incrby(&mut self, key: &str, step: int) -> int {
+    pub fn incrby(&mut self, key: &str, step: i64) -> i64 {
         match self.execute("INCRBY", [StrArg(key), IntArg(step)]) {
-            Int(x) => x as int,
+            Int(x) => x,
             _ => 0,
         }
     }
@@ -629,9 +629,9 @@ impl Connection {
     }
 
     #[inline]
-    pub fn decrby(&mut self, key: &str, step: int) -> int {
+    pub fn decrby(&mut self, key: &str, step: i64) -> i64 {
         match self.execute("DECRBY", [StrArg(key), IntArg(step)]) {
-            Int(x) => x as int,
+            Int(x) => x,
             _ => 0,
         }
     }
@@ -654,7 +654,7 @@ impl Connection {
     #[inline]
     fn blocking_pop_bytes(&mut self, cmd: &str, keys: &[&str],
                           timeout: f32) -> Option<(~str, ~[u8])> {
-        let mut timeout_s = timeout as int;
+        let mut timeout_s = timeout as i64;
         if (timeout_s <= 0) {
             timeout_s = 0;
         }
@@ -715,7 +715,7 @@ impl Connection {
 
     #[inline]
     pub fn brpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
-        let mut timeout_s = timeout as int;
+        let mut timeout_s = timeout as i64;
         if (timeout_s <= 0) {
             timeout_s = 0;
         }
@@ -736,7 +736,7 @@ impl Connection {
 
     #[inline]
     pub fn lindex_bytes(&mut self, key: &str, index: i64) -> Option<~[u8]> {
-        match self.execute("LINDEX", [StrArg(key), IntArg(index as int)]) {
+        match self.execute("LINDEX", [StrArg(key), IntArg(index)]) {
             Data(value) => Some(value),
             _ => None,
         }
@@ -850,18 +850,18 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lrange_bytes(&mut self, key: &str, start: int, end: int) -> ~[~[u8]] {
+    pub fn lrange_bytes(&mut self, key: &str, start: i64, end: i64) -> ~[~[u8]] {
         value_to_byte_list(&self.execute("LRANGE", [StrArg(key), IntArg(start), IntArg(end)]))
     }
 
     #[inline]
-    pub fn lrange(&mut self, key: &str, start: int, end: int) -> ~[~str] {
+    pub fn lrange(&mut self, key: &str, start: i64, end: i64) -> ~[~str] {
         let items = self.lrange_bytes(key, start, end);
         items.move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
     }
 
     #[inline]
-    pub fn lrange_as<T: FromStr>(&mut self, key: &str, start: int, end: int) -> ~[T] {
+    pub fn lrange_as<T: FromStr>(&mut self, key: &str, start: i64, end: i64) -> ~[T] {
         let items = self.lrange(key, start, end);
         let mut rv = ~[];
         for item in items.move_iter() {
@@ -874,21 +874,21 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lrem_bytes(&mut self, key: &str, count: int, value: &[u8]) -> uint {
+    pub fn lrem_bytes(&mut self, key: &str, count: i64, value: &[u8]) -> i64 {
         match self.execute("LREM", [StrArg(key), IntArg(count), BytesArg(value)]) {
-            Int(x) => x as uint,
+            Int(x) => x,
             _ => 0,
         }
     }
 
     #[inline]
-    pub fn lrem<T: ToStr>(&mut self, key: &str, count: int, value: T) -> uint {
+    pub fn lrem<T: ToStr>(&mut self, key: &str, count: i64, value: T) -> i64 {
         let v = value.to_str();
         self.lrem_bytes(key, count, v.as_bytes())
     }
 
     #[inline]
-    pub fn lset_bytes(&mut self, key: &str, index: int, value: &[u8]) -> bool {
+    pub fn lset_bytes(&mut self, key: &str, index: i64, value: &[u8]) -> bool {
         match self.execute("LSET", [StrArg(key), IntArg(index), BytesArg(value)]) {
             Success => true,
             _ => true,
@@ -896,13 +896,13 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lset<T: ToStr>(&mut self, key: &str, index: int, value: T) -> bool {
+    pub fn lset<T: ToStr>(&mut self, key: &str, index: i64, value: T) -> bool {
         let v = value.to_str();
         self.lset_bytes(key, index, v.as_bytes())
     }
 
     #[inline]
-    pub fn ltrim(&mut self, key: &str, start: int, stop: int) -> bool {
+    pub fn ltrim(&mut self, key: &str, start: i64, stop: i64) -> bool {
         match self.execute("LTRIM", [StrArg(key), IntArg(start), IntArg(stop)]) {
             Success => true,
             _ => false,
@@ -935,7 +935,7 @@ impl Connection {
 
     #[inline]
     pub fn rpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
-        let mut timeout_s = timeout as int;
+        let mut timeout_s = timeout as i64;
         if (timeout_s <= 0) {
             timeout_s = 0;
         }
@@ -1069,15 +1069,15 @@ impl Connection {
     }
 
     #[inline]
-    pub fn hincrby(&mut self, key: &str, field: &str, step: int) -> int {
+    pub fn hincrby(&mut self, key: &str, field: &str, step: i64) -> i64 {
         match self.execute("HINCRBY", [StrArg(key), StrArg(field), IntArg(step)]) {
-            Int(x) => x as int,
+            Int(x) => x,
             _ => 0,
         }
     }
 
     #[inline]
-    pub fn hincr(&mut self, key: &str, field: &str) -> int {
+    pub fn hincr(&mut self, key: &str, field: &str) -> i64 {
         self.hincrby(key, field, 1)
     }
 
