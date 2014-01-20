@@ -1463,7 +1463,7 @@ impl Connection {
     pub fn zcount(&mut self, key: &str, min: RangeBoundary, max: RangeBoundary) -> i64 {
         let min_s = min.to_str();
         let max_s = max.to_str();
-        match self.execute("ZRANGE", [StrArg(key), StrArg(min_s), StrArg(max_s)]) {
+        match self.execute("ZCOUNT", [StrArg(key), StrArg(min_s), StrArg(max_s)]) {
             Int(x) => x,
             _ => 0,
         }
