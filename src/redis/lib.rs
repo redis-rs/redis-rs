@@ -1,5 +1,6 @@
 #[crate_id = "redis#0.1"];
 #[crate_type = "lib"];
+#[license = "BSD"];
 #[comment = "Bindings and wrapper functions for redis."];
 
 #[deny(non_camel_case_types)];
