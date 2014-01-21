@@ -37,7 +37,8 @@ impl Drop for RedisServer {
         io_error::cond.trap(|_e| {}).inside(|| {
             self.process.signal(SIGTERM as int);
         });
-        self.process.wait();
+        let rv = self.process.wait();
+        assert!(rv.success());
     }
 }
 
