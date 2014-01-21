@@ -2,8 +2,9 @@ extern mod extra;
 
 use std::io::net::ip::SocketAddr;
 use std::io::net::get_host_addresses;
-use std::from_str::from_str;
+use std::io::io_error;
 use std::io::net::tcp::TcpStream;
+use std::from_str::from_str;
 
 use extra::url::Url;
 
@@ -36,7 +37,18 @@ impl Client {
             ip: *ip_addr,
             port: port
         };
-        let _ = try_unwrap!(TcpStream::connect(addr), Err(ConnectionRefused));
+
+        // pretty ugly way to figure out if we failed to connect.  Is there a
+        // nicer way?
+        let mut failed = false;
+        io_error::cond.trap(|_e| {
+            failed = true;
+        }).inside(|| {
+            let _ = try_unwrap!(TcpStream::connect(addr), failed = true);
+        });
+        if failed {
+            return Err(ConnectionRefused);
+        }
 
         Ok(Client {
             addr: addr,
