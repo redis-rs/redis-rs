@@ -9,6 +9,10 @@ To build:
 
   $ rustpkg build redis
 
+To test:
+
+  $ make test
+
 
 Low-level example:
 
