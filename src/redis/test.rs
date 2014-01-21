@@ -57,7 +57,7 @@ impl TestContext {
         loop {
             match redis::Client::open(url) {
                 Ok(x) => { client = x; break; }
-                Err(redis::ConnectionRefused) => { std::io::timer::sleep(10); }
+                Err(redis::ConnectionRefused) => { std::io::timer::sleep(1); }
                 _ => { fail!("Error on connect"); }
             }
         }
