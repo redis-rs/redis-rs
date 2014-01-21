@@ -1,6 +1,7 @@
 extern mod redis;
 
 use std::io::process;
+use std::io::io_error;
 use std::libc::SIGTERM;
 
 pub static SERVER_PORT: int = 38991;
@@ -33,7 +34,9 @@ impl RedisServer {
 impl Drop for RedisServer {
 
     fn drop(&mut self) {
-        self.process.signal(SIGTERM as int);
+        io_error::cond.trap(|_e| {}).inside(|| {
+            self.process.signal(SIGTERM as int);
+        });
     }
 }
 
