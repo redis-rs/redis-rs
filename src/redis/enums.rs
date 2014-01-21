@@ -1,3 +1,5 @@
+use std::str::from_utf8;
+
 #[deriving(Clone, Eq)]
 pub enum Error {
     ResponseError,
@@ -18,6 +20,41 @@ pub enum Value {
     Error(Error, ~str),
     Success,
     Status(~str),
+}
+
+impl ToPrimitive for Value {
+    fn to_i64(&self) -> Option<i64> {
+        match *self {
+            Int(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        match *self {
+            Int(x) => Some(x as u64),
+            _ => None,
+        }
+    }
+}
+
+impl ToStr for Value {
+
+    fn to_str(&self) -> ~str {
+        match *self {
+            Nil | Invalid => ~"",
+            Int(x) => x.to_str(),
+            Data(ref x) => from_utf8(*x).to_owned(),
+            Bulk(ref items) => {
+                items.iter().map(|x| x.to_str()).to_owned_vec().concat()
+            },
+            Error(ref ty, ref msg) => {
+                format!("Error {:?}: {}", ty, *msg)
+            },
+            Success => { ~"OK" },
+            Status(ref msg) => msg.to_owned(),
+        }
+    }
 }
 
 #[deriving(Clone, Eq)]

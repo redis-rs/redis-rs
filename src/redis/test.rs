@@ -96,8 +96,11 @@ fn test_basics() {
     let mut con = ctx.connection();
     con.set("foo", "bar");
     assert!(con.get("foo") == Some(~"bar"));
-    con.del("foo");
+    con.rename("foo", "bar");
     assert!(con.get("foo") == None);
+    assert!(con.get("bar") == Some(~"bar"));
+    con.del("bar");
+    assert!(con.get("bar") == None);
 }
 
 #[test]
@@ -122,6 +125,9 @@ fn test_script() {
     let script = redis::Script::new("
         return tonumber(ARGV[1]) + 1;
     ");
+    assert!(con.call_script(&script, [], [redis::StrArg("42")]) == redis::Int(43));
+
+    con.flush_script_cache();
     assert!(con.call_script(&script, [], [redis::StrArg("42")]) == redis::Int(43));
 }
 
@@ -151,22 +157,14 @@ fn test_scan() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    for x in range(0, 100) {
+    for x in range(0, 1000) {
         con.set(format!("key:{}", x), x);
     }
 
-    let mut found = [false, .. 100];
+    let mut found = [false, .. 1000];
     for item in con.scan("key:*") {
-        let mut iter = item.split(':');
-        if iter.next().is_none() {
-            continue;
-        }
-        match iter.next() {
-            Some(value) => {
-                found[from_str::<uint>(value).unwrap()] = true;
-            }
-            None => {},
-        }
+        let num = item.split(':').nth(1).unwrap();
+        found[from_str::<uint>(num).unwrap()] = true;
     }
 
     for x in range(0, 100) {
