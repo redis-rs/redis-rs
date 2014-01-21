@@ -4,7 +4,7 @@ before_install:
   - sudo apt-get update
 
 install:
-  - sudo apt-get install rust-nightly redis
+  - sudo apt-get install rust-nightly redis-server
 
 script:
   - rustpkg build redis
