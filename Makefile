@@ -32,13 +32,13 @@ clean:
 $(BUILD_FOLDER):
 	mkdir -p $(BUILD_FOLDER)
 
+$(CRATE): build $(CRATE_LIBFILE)
+	$(RUSTC) $(RUSTFLAGS) --dep-info=$(CRATE_DEPS) $(CRATE_LIBFILE) -o $(CRATE)
+
 $(CRATE_TESTRUNNER): $(CRATE_TESTFILE) $(CRATE)
 	$(RUSTC) $(RUSTFLAGS) --dep-info=$(CRATE_TESTRUNNER_DEPS) \
 		-L $(BUILD_FOLDER) --test $(CRATE_TESTFILE) \
 		-o $(CRATE_TESTRUNNER)
-
-$(CRATE): build $(CRATE_LIBFILE)
-	$(RUSTC) $(RUSTFLAGS) --dep-info=$(CRATE_DEPS) $(CRATE_LIBFILE) -o $(CRATE)
 
 # Dependencies
 -include $(CRATE_DEPS)
