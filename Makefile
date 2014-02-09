@@ -10,6 +10,7 @@ $(eval $(call RUST_CRATE,EXAMPLE,src/example/main.rs))
 
 # Inter-crate dependencies
 $(TEST_OUT): $(LIB_OUT)
+$(EXAMPLE_OUT): $(LIB_OUT)
 
 # Convenience targets
 lib: $(LIB_OUT)
