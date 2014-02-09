@@ -27,7 +27,10 @@ fn value_to_string_list(val: Value) -> ~[~str] {
             for item in items.iter() {
                 match item {
                     &Data(ref payload) => {
-                        rv.push(from_utf8(*payload).to_owned());
+                        match from_utf8(*payload) {
+                            Some(x) => { rv.push(x.to_owned()); }
+                            None => {}
+                        }
                     },
                     _ => {}
                 }
@@ -62,7 +65,7 @@ fn value_to_key_value_tuple(val: Value) -> Option<(~str, ~[u8])> {
             let mut iter = items.iter();
             let key = match try_unwrap!(iter.next(), None) {
                 &Data(ref payload) => {
-                    from_utf8(*payload).to_owned()
+                    (try_unwrap!(from_utf8(*payload), None)).to_owned()
                 },
                 _ => { return None; }
             };
@@ -81,7 +84,7 @@ fn value_to_key_value_tuple(val: Value) -> Option<(~str, ~[u8])> {
 fn string_value_convert<T: FromStr>(val: Value, default: T) -> T {
     match val {
         Data(ref x) => {
-            match from_str(from_utf8(*x)) {
+            match from_str(try_unwrap!(from_utf8(*x), default)) {
                 Some(x) => x,
                 None => default,
             }
@@ -103,22 +106,11 @@ fn value_to_byte_float_tuples(val: Value) -> ~[(~[u8], f32)] {
             let mut rv = ~[];
             let mut iter = items.move_iter();
             loop {
-                let member = match iter.next() {
-                    Some(item) => {
-                        match item {
-                            Data(payload) => payload,
-                            _ => { break; }
-                        }
-                    }
+                let member = match iter.next().unwrap_or(Nil).get_bytes() {
+                    Some(x) => x,
                     None => { break; }
                 };
-                let score = match iter.next() {
-                    Some(x) => { from_str::<f32>(from_utf8_owned(match x {
-                        Data(payload) => payload,
-                        _ => { break; }
-                    })).unwrap_or(0.0) }
-                    None => { break; }
-                };
+                let score = iter.next().unwrap_or(Nil).get_as::<f32>().unwrap_or(0.0);
                 rv.push((member, score));
             }
             rv
@@ -136,7 +128,10 @@ pub struct Connection {
 impl Connection {
 
     pub fn new(addr: SocketAddr, db: i64) -> Result<Connection, ConnectFailure> {
-        let sock = try_unwrap!(TcpStream::connect(addr), Err(ConnectionRefused));
+        let sock = match TcpStream::connect(addr) {
+            Ok(x) => x,
+            Err(_) => { return Err(ConnectionRefused) },
+        };
 
         let mut rv = Connection {
             addr: addr,
@@ -144,7 +139,7 @@ impl Connection {
             db: 0,
         };
 
-        if (db != 0) {
+        if db != 0 {
             rv.select_db(db);
         }
 
@@ -186,7 +181,8 @@ impl Connection {
     pub fn send_command(&mut self, cmd: &str, args: &[CmdArg]) {
         let cmd = self.pack_command(cmd, args);
         let w = &mut self.sock as &mut Writer;
-        w.write(cmd);
+        // XXX: error checking
+        let _ = w.write(cmd);
     }
 
     pub fn read_response(&mut self) -> Value {
@@ -234,7 +230,7 @@ impl Connection {
         let mut rv = ~HashMap::new();
         match self.execute("INFO", []) {
             Data(bytes) => {
-                for line in from_utf8(bytes).lines_any() {
+                for line in from_utf8(bytes).unwrap_or("").lines_any() {
                     if line.len() == 0 || line[0] == '#' as u8 {
                         continue;
                     }
@@ -293,20 +289,14 @@ impl Connection {
 
     pub fn time(&mut self) -> time::Tm {
         match self.execute("TIME", []) {
-            Bulk(ref items) => {
-                let mut i = items.iter();
+            Bulk(items) => {
+                let mut i = items.move_iter();
                 let s = match i.next() {
-                    Some(&Data(ref bytes)) => {
-                        let s = from_utf8(*bytes);
-                        from_str::<i64>(s).unwrap_or(0)
-                    },
+                    Some(x) => x.get_as::<i64>().unwrap_or(0),
                     _ => 0,
                 };
                 let ms = match i.next() {
-                    Some(&Data(ref bytes)) => {
-                        let s = from_utf8(*bytes);
-                        from_str::<i32>(s).unwrap_or(0)
-                    },
+                    Some(x) => x.get_as::<i32>().unwrap_or(0),
                     _ => 0,
                 };
                 time::at_utc(time::Timespec::new(s, ms))
@@ -365,7 +355,7 @@ impl Connection {
         let mut cmd;
         let mut t;
         let i_timeout = timeout as i64;
-        if (i_timeout as f32 == timeout) {
+        if i_timeout as f32 == timeout {
             cmd = "EXPIRE";
             t = i_timeout;
         } else {
@@ -481,7 +471,7 @@ impl Connection {
     pub fn get(&mut self, key: &str) -> Option<~str> {
         match self.get_bytes(key) {
             None => None,
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
         }
     }
 
@@ -515,7 +505,7 @@ impl Connection {
         let mut cmd;
         let mut t;
         let i_timeout = timeout as i64;
-        if (i_timeout as f32 == timeout) {
+        if i_timeout as f32 == timeout {
             cmd = "SETEX";
             t = i_timeout;
         } else {
@@ -581,7 +571,7 @@ impl Connection {
     pub fn getset<T: ToStr+FromStr>(&mut self, key: &str, value: T) -> Option<T> {
         let v = value.to_str();
         match self.getset_bytes(key, v.as_bytes()) {
-            Some(x) => from_str(from_utf8_owned(x)),
+            Some(x) => from_str(from_utf8_owned(x).unwrap_or(~"")),
             None => None,
         }
     }
@@ -627,7 +617,7 @@ impl Connection {
 
     #[inline]
     pub fn getrange(&mut self, key: &str, start: i64, end: i64) -> ~str {
-        from_utf8_owned(self.getrange_bytes(key, start, end))
+        from_utf8_owned(self.getrange_bytes(key, start, end)).unwrap_or(~"")
     }
 
     #[inline]
@@ -716,7 +706,7 @@ impl Connection {
     fn blocking_pop_bytes(&mut self, cmd: &str, keys: &[&str],
                           timeout: f32) -> Option<(~str, ~[u8])> {
         let mut timeout_s = timeout as i64;
-        if (timeout_s <= 0) {
+        if timeout_s <= 0 {
             timeout_s = 0;
         }
         let mut args = keys.iter().map(|&x| StrArg(x)).to_owned_vec();
@@ -733,7 +723,7 @@ impl Connection {
     pub fn blpop(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~str)> {
         match self.blpop_bytes(keys, timeout) {
             Some((key, value)) => {
-                Some((key, from_utf8_owned(value)))
+                Some((key, from_utf8_owned(value).unwrap_or(~"")))
             },
             None => None
         }
@@ -758,7 +748,7 @@ impl Connection {
     pub fn brpop(&mut self, keys: &[&str], timeout: f32) -> Option<(~str, ~str)> {
         match self.brpop_bytes(keys, timeout) {
             Some((key, value)) => {
-                Some((key, from_utf8_owned(value)))
+                Some((key, from_utf8_owned(value).unwrap_or(~"")))
             },
             None => None
         }
@@ -777,7 +767,7 @@ impl Connection {
     #[inline]
     pub fn brpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
         let mut timeout_s = timeout as i64;
-        if (timeout_s <= 0) {
+        if timeout_s <= 0 {
             timeout_s = 0;
         }
         match self.execute("BRPOPLPUSH", [StrArg(src), StrArg(dst),
@@ -790,7 +780,7 @@ impl Connection {
     #[inline]
     pub fn brpoplpush(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~str> {
         match self.brpoplpush_bytes(src, dst, timeout) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -806,7 +796,7 @@ impl Connection {
     #[inline]
     pub fn lindex(&mut self, key: &str, index: i64) -> Option<~str> {
         match self.lindex_bytes(key, index) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -869,7 +859,7 @@ impl Connection {
     #[inline]
     pub fn lpop(&mut self, key: &str) -> Option<~str> {
         match self.lpop_bytes(key) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -918,7 +908,7 @@ impl Connection {
     #[inline]
     pub fn lrange(&mut self, key: &str, start: i64, end: i64) -> ~[~str] {
         let items = self.lrange_bytes(key, start, end);
-        items.move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+        items.move_iter().map(|x| from_utf8_owned(x).unwrap_or(~"")).to_owned_vec()
     }
 
     #[inline]
@@ -981,7 +971,7 @@ impl Connection {
     #[inline]
     pub fn rpop(&mut self, key: &str) -> Option<~str> {
         match self.rpop_bytes(key) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -997,7 +987,7 @@ impl Connection {
     #[inline]
     pub fn rpoplpush_bytes(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~[u8]> {
         let mut timeout_s = timeout as i64;
-        if (timeout_s <= 0) {
+        if timeout_s <= 0 {
             timeout_s = 0;
         }
         match self.execute("RPOPLPUSH", [StrArg(src), StrArg(dst),
@@ -1010,7 +1000,7 @@ impl Connection {
     #[inline]
     pub fn rpoplpush(&mut self, src: &str, dst: &str, timeout: f32) -> Option<~str> {
         match self.rpoplpush_bytes(src, dst, timeout) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -1081,7 +1071,7 @@ impl Connection {
     #[inline]
     pub fn hget(&mut self, key: &str, field: &str) -> Option<~str> {
         match self.hget_bytes(key, field) {
-            Some(x) => Some(from_utf8_owned(x)),
+            Some(x) => from_utf8_owned(x),
             None => None,
         }
     }
@@ -1114,7 +1104,7 @@ impl Connection {
     #[inline]
     pub fn hgetall(&mut self, key: &str, field: &str) -> ~[~str] {
         self.hgetall_bytes(key, field).move_iter()
-            .map(|x| from_utf8_owned(x)).to_owned_vec()
+            .map(|x| from_utf8_owned(x).unwrap_or(~"")).to_owned_vec()
     }
 
     #[inline]
@@ -1264,7 +1254,8 @@ impl Connection {
 
     #[inline]
     pub fn sdiff(&mut self, keys: &[&str]) -> ~[~str] {
-        self.sdiff_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+        self.sdiff_bytes(keys).move_iter()
+            .map(|x| from_utf8_owned(x).unwrap_or(~"")).to_owned_vec()
     }
 
     #[inline]
@@ -1309,7 +1300,8 @@ impl Connection {
 
     #[inline]
     pub fn sinter(&mut self, keys: &[&str]) -> ~[~str] {
-        self.sinter_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+        self.sinter_bytes(keys).move_iter()
+            .map(|x| from_utf8_owned(x).unwrap_or(~"")).to_owned_vec()
     }
 
     #[inline]
@@ -1408,7 +1400,8 @@ impl Connection {
 
     #[inline]
     pub fn sunion(&mut self, keys: &[&str]) -> ~[~str] {
-        self.sunion_bytes(keys).move_iter().map(|x| from_utf8_owned(x)).to_owned_vec()
+        self.sunion_bytes(keys).move_iter()
+            .map(|x| from_utf8_owned(x).unwrap_or(~"")).to_owned_vec()
     }
 
     #[inline]
@@ -1517,7 +1510,7 @@ impl Connection {
     #[inline]
     pub fn zrange_withscores(&mut self, key: &str, start: i64, stop: i64) -> ~[(~str, f32)] {
         self.zrange_bytes_withscores(key, start, stop).move_iter()
-            .map(|(member, score)| (from_utf8_owned(member), score)).to_owned_vec()
+            .map(|(member, score)| (from_utf8_owned(member).unwrap_or(~""), score)).to_owned_vec()
     }
 
     fn zrangebyscore_operation(&mut self, cmd: &str,
@@ -1570,7 +1563,7 @@ impl Connection {
                                     max: RangeBoundary,
                                     limit: Option<(i64, i64)>) -> ~[(~str, f32)] {
         self.zrangebyscore_bytes_withscores(key, min, max, limit).move_iter()
-            .map(|(member, score)| (from_utf8_owned(member), score)).to_owned_vec()
+            .map(|(member, score)| (from_utf8_owned(member).unwrap_or(~""), score)).to_owned_vec()
     }
 
     #[inline]

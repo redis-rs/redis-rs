@@ -1,13 +1,12 @@
 extern mod redis;
 
 use std::io::process;
-use std::io::io_error;
 use std::libc::SIGTERM;
 
 pub static SERVER_PORT: int = 38991;
 
 struct RedisServer {
-    priv process: process::Process,
+    process: process::Process,
 }
 
 impl RedisServer {
@@ -23,9 +22,10 @@ impl RedisServer {
                  process::Ignored],
         }).unwrap();
         let input = format!("
+            bind 127.0.0.1
             port {port}
         ", port=SERVER_PORT);
-        process.io[0].get_mut_ref().write(input.as_bytes());
+        let _ = process.io[0].get_mut_ref().write(input.as_bytes());
         process.io[0] = None;
         RedisServer { process: process }
     }
@@ -34,9 +34,7 @@ impl RedisServer {
 impl Drop for RedisServer {
 
     fn drop(&mut self) {
-        io_error::cond.trap(|_e| {}).inside(|| {
-            self.process.signal(SIGTERM as int);
-        });
+        let _ = self.process.signal(SIGTERM as int);
         let rv = self.process.wait();
         assert!(rv.success());
     }
@@ -137,17 +135,17 @@ fn test_blpop() {
     let client = ctx.client;
     let (port, chan) = Chan::new();
 
-    do spawn {
+    spawn(proc() {
         let mut con = client.get_connection().unwrap();
         let rv = con.blpop(["q"], 5.0);
         assert!(rv == Some((~"q", ~"awesome")));
         chan.send(());
-    }
+    });
 
-    do spawn {
+    spawn(proc() {
         let mut con = client.get_connection().unwrap();
         con.rpush("q", "awesome");
-    }
+    });
 
     port.recv();
 }

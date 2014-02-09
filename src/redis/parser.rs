@@ -39,7 +39,7 @@ impl<T: Iterator<u8>> Parser<T> {
     fn expect_char(&mut self, refchar: char) -> bool {
         match self.iter.next() {
             Some(c) => {
-                if (c as char == refchar) {
+                if c as char == refchar {
                     return true;
                 }
             },
@@ -83,7 +83,7 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn read(&mut self, bytes: uint) -> Option<~[u8]> {
         let mut rv = ~[];
-        rv.reserve_at_least(bytes);
+        rv.reserve(bytes);
 
         for _ in range(0, bytes) {
             rv.push(try_unwrap!(self.iter.next(), None));
@@ -94,12 +94,12 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn read_int_line(&mut self) -> Option<i64> {
         let line = try_unwrap!(self.read_line(), None);
-        from_str(from_utf8(line).trim())
+        from_str(try_unwrap!(from_utf8(line), None).trim())
     }
 
     fn parse_status(&mut self) -> Value {
         let line = try_unwrap!(self.read_line(), Invalid);
-        let s = str::from_utf8_owned(line);
+        let s = try_unwrap!(str::from_utf8_owned(line), Invalid);
         if s == ~"OK" {
             Success
         } else {
@@ -131,7 +131,7 @@ impl<T: Iterator<u8>> Parser<T> {
             Nil
         } else {
             let mut rv = ~[];
-            rv.reserve_at_least(length as uint);
+            rv.reserve(length as uint);
             for _ in range(0, length) {
                 match self.parse_value() {
                     Invalid => { return Invalid; }
@@ -144,7 +144,7 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn parse_error(&mut self) -> Value {
         let byte_line = try_unwrap!(self.read_line(), Invalid);
-        let line = str::from_utf8(byte_line);
+        let line = try_unwrap!(str::from_utf8(byte_line), Invalid);
         let mut pieces = line.splitn(' ', 1);
         let code = match pieces.next().unwrap() {
             "ERR" => ResponseError,
@@ -171,6 +171,6 @@ pub fn parse_redis_value(bytes: &[u8]) -> Value {
 impl<'a> Iterator<u8> for ByteIterator<'a> {
     #[inline]
     fn next(&mut self) -> Option<u8> {
-        self.reader.read_byte()
+        self.reader.read_byte().ok()
     }
 }

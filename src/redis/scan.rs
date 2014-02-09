@@ -1,5 +1,3 @@
-use std::str::from_utf8;
-
 use connection::Connection;
 use enums::*;
 
@@ -19,13 +17,18 @@ pub struct ScanIterator<'a, T> {
 
 impl<'a, T> ScanIterator<'a, T> {
     fn next_from_buffer(&mut self) -> Option<T> {
-        while self.buffer.len() > 0 {
-            match (self.conv_func)(self.buffer.pop()) {
-                Some(x) => { return Some(x); }
-                None => {}
+        loop {
+            match self.buffer.pop() {
+                Some(x) => {
+                    match (self.conv_func)(x) {
+                        Some(x) => { return Some(x); }
+                        None => {}
+                    }
+                }
+                None => { break; }
             }
         }
-        return None;
+        None
     }
 
     fn read_from_connection(&mut self) -> bool {
@@ -45,12 +48,8 @@ impl<'a, T> ScanIterator<'a, T> {
         match self.con.execute(self.cmd, args) {
             Bulk(items) => {
                 let mut iter = items.move_iter();
-                let new_cursor = match try_unwrap!(iter.next(), false) {
-                    Data(payload) => {
-                        from_str::<i64>(from_utf8(payload)).unwrap_or(0)
-                    },
-                    _ => { return false; }
-                };
+                let new_cursor = (try_unwrap!(iter.next(), false))
+                    .get_as::<i64>().unwrap_or(0);
 
                 match try_unwrap!(iter.next(), false) {
                     Bulk(mut buffer) => {

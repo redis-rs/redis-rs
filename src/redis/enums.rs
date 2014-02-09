@@ -1,4 +1,4 @@
-use std::str::from_utf8;
+use std::str::from_utf8_owned;
 
 #[deriving(Clone, Eq)]
 pub enum Error {
@@ -20,41 +20,6 @@ pub enum Value {
     Error(Error, ~str),
     Success,
     Status(~str),
-}
-
-impl ToPrimitive for Value {
-    fn to_i64(&self) -> Option<i64> {
-        match *self {
-            Int(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    fn to_u64(&self) -> Option<u64> {
-        match *self {
-            Int(x) => Some(x as u64),
-            _ => None,
-        }
-    }
-}
-
-impl ToStr for Value {
-
-    fn to_str(&self) -> ~str {
-        match *self {
-            Nil | Invalid => ~"",
-            Int(x) => x.to_str(),
-            Data(ref x) => from_utf8(*x).to_owned(),
-            Bulk(ref items) => {
-                items.iter().map(|x| x.to_str()).to_owned_vec().concat()
-            },
-            Error(ref ty, ref msg) => {
-                format!("Error {:?}: {}", ty, *msg)
-            },
-            Success => { ~"OK" },
-            Status(ref msg) => msg.to_owned(),
-        }
-    }
 }
 
 #[deriving(Clone, Eq)]
@@ -105,6 +70,31 @@ impl ToStr for RangeBoundary {
             Closed(x) => x.to_str(),
             Inf => ~"+inf",
             NegInf => ~"-inf",
+        }
+    }
+}
+
+impl Value {
+
+    pub fn get_bytes(self) -> Option<~[u8]> {
+        match self {
+            Data(payload) => Some(payload),
+            _ => None,
+        }
+    }
+
+    pub fn get_string(self) -> Option<~str> {
+        match self {
+            Status(x) => Some(x),
+            Data(payload) => from_utf8_owned(payload),
+            _ => None,
+        }
+    }
+
+    pub fn get_as<T: FromStr>(self) -> Option<T> {
+        match self.get_string() {
+            Some(x) => from_str(x),
+            None => None,
         }
     }
 }
