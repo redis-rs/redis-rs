@@ -1,67 +1,24 @@
-RUSTC?=rustc
-RUSTFLAGS?=
-OUTPUT_PATH?=build
+include rust.mk
 
-CRATE_LIB_SRC=src/redis/lib.rs
-CRATE_LIB_FILENAME=$(shell $(RUSTC) --crate-file-name $(CRATE_LIB_SRC))
-CRATE_LIB_DEPFILE=$(OUTPUT_PATH)/.$(CRATE_LIB_FILENAME).deps.mk
-CRATE_LIB=$(OUTPUT_PATH)/$(CRATE_LIB_FILENAME)
+# Crates
+$(eval $(call RUST_CRATE,LIB,src/redis/lib.rs))
+$(eval $(call RUST_CRATE,TEST,src/redis/test.rs,--test))
+$(eval $(call RUST_CRATE,EXAMPLE,src/example/main.rs))
 
-CRATE_TEST_SRC=src/redis/test.rs
-CRATE_TEST_FILENAME=$(shell $(RUSTC) --crate-file-name $(CRATE_TEST_SRC))
-CRATE_TEST_DEPFILE=$(OUTPUT_PATH)/.$(CRATE_TEST_FILENAME).deps.mk
-CRATE_TEST=$(OUTPUT_PATH)/$(CRATE_TEST_FILENAME)
-
-CRATE_EXAMPLE_SRC=src/example/main.rs
-CRATE_EXAMPLE_FILENAME=$(shell $(RUSTC) --crate-file-name $(CRATE_EXAMPLE_SRC))
-CRATE_EXAMPLE_DEPFILE=$(OUTPUT_PATH)/.$(CRATE_EXAMPLE_FILENAME).deps.mk
-CRATE_EXAMPLE=$(OUTPUT_PATH)/$(CRATE_EXAMPLE_FILENAME)
+# Crate dependencies
+$(TEST_OUT): $(LIB_OUT)
 
 # Convenience functions
-all: compile
+all: lib
+	
+lib: $(LIB_OUT)
 
-compile: $(CRATE_LIB)
+example: $(EXAMPLE_OUT)
+	@./$(EXAMPLE_OUT)
 
-example: $(CRATE_EXAMPLE)
-	@./$(CRATE_EXAMPLE)
+test: $(TEST_OUT)
+	@RUST_TEST_TASKS=1 ./$(TEST_OUT)
 
-test: $(CRATE_TEST)
-	@RUST_TEST_TASKS=1 ./$(CRATE_TEST)
+clean: $(LIB_CLEAN) $(EXAMPLE_CLEAN) $(TEST_CLEAN)
 
-clean:
-	@rm -f $(CRATE_LIB_DEPFILE)
-	@rm -f $(CRATE_TEST_DEPFILE)
-	@rm -f $(CRATE_EXAMPLE_DEPFILE)
-	@rm -f $(CRATE_LIB)
-	@rm -f $(CRATE_TEST)
-	@rm -f $(CRATE_EXAMPLE)
-
-.PHONY: all compile example test clean
-
-# Build steps
-$(CRATE_LIB): $(CRATE_LIB_SRC)
-	@mkdir -p $(OUTPUT_PATH)
-	@$(RUSTC) $(RUSTFLAGS) \
-		--dep-info=$(CRATE_LIB_DEPFILE) \
-		-o $(CRATE_LIB) \
-		$(CRATE_LIB_SRC)
-
-$(CRATE_TEST): $(CRATE_TEST_SRC) $(CRATE_LIB)
-	@mkdir -p $(OUTPUT_PATH)
-	@$(RUSTC) $(RUSTFLAGS) \
-		--dep-info=$(CRATE_TEST_DEPFILE) \
-		-o $(CRATE_TEST) \
-		-L $(OUTPUT_PATH) \
-		--test $(CRATE_TEST_SRC)
-
-$(CRATE_EXAMPLE): $(CRATE_EXAMPLE_SRC) $(CRATE_LIB)
-	@mkdir -p $(OUTPUT_PATH)
-	@$(RUSTC) $(RUSTFLAGS) \
-		--dep-info=$(CRATE_EXAMPLE_DEPFILE) \
-		-o $(CRATE_EXAMPLE) \
-		-L $(OUTPUT_PATH) \
-		$(CRATE_EXAMPLE_SRC)
-
-# Dependencies
--include $(CRATE_LIB_DEPFILE)
--include $(CRATE_TEST_DEPFILE)
+.PHONY: all lib example test clean
