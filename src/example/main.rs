@@ -8,7 +8,7 @@ fn main() {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 
     // for fun do it in a task
-    do spawn {
+    spawn(proc() {
         let mut con = client.get_connection().unwrap();
         con.set("foo", 42);
         con.set("bar", "test");
@@ -22,7 +22,7 @@ fn main() {
         println!("keys: {:?}", con.keys("*"));
 
         // scan keys
-        println("scan over key space");
+        println!("scan over key space");
         for item in con.scan("*") {
             println!(" > {}", item);
         }
@@ -42,13 +42,13 @@ fn main() {
 
         // now wait for an item another task puts in.
         println!("Waiting for item: {:?}", con.blpop(["foox"], 5.0));
-    }
+    });
 
     // second task that puts an item into a list
-    do spawn {
+    spawn(proc() {
         let mut con = client.get_connection().unwrap();
         println!("Pushing an item in 1 sec");
         con.rpush("foox", "hello");
         println!("Pushed");
-    }
+    });
 }
