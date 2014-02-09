@@ -1,8 +1,10 @@
-# Rust make helpers to make everybody happy.
-
-# Default variables.  Can be overridden in the main makefile.
+# The rust compiler to use
 RUSTC?=rustc
+
+# The flags to pass to the rust compiler
 RUSTFLAGS?=
+
+# The output directory to place the binaries in
 RUST_OUT_DIR?=build
 
 # Rust crate helper
