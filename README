@@ -7,11 +7,15 @@ redis-rs // A High Level Redis Library for Rust
 
 To build:
 
-  $ rustpkg build redis
+  $ make
 
 To test:
 
   $ make test
+
+To compile and run the example:
+
+  $ make example
 
 
 Low-level example:
@@ -53,7 +57,7 @@ Scanning over all keys iteratively:
     fn main() {
       let client = redis::Client::open("redis://127.0.0.1/").unwrap();
       let mut con = client.get_connection().unwrap();
-      println("iterate over all keys starting with 'key:':");
+      println!("iterate over all keys starting with 'key:':");
       for item in con.scan("key:*") {
         println!(" > {}", item);
         // note that keys might appear more than once due to how redis
