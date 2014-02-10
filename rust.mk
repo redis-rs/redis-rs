@@ -22,7 +22,7 @@ RUST_OUT_DIR?=build
 #
 define RUST_CRATE
 
-$(1)_FILENAME=$$(shell $(RUSTC) --crate-file-name $(2))
+$(1)_FILENAME=$$(shell $(RUSTC) $(RUSTFLAGS) --crate-file-name $(3) $(2))
 $(1)_DEPFILE=$$(RUST_OUT_DIR)/.$$($(1)_FILENAME).deps.mk
 $(1)_OUT=$$(RUST_OUT_DIR)/$$($(1)_FILENAME)
 $(1)_CLEAN=__rust_clean_$(1)_CLEAN
@@ -34,7 +34,7 @@ $$($(1)_OUT): $(2)
 		--dep-info=$$($(1)_DEPFILE) \
 		-o $$($(1)_OUT) \
 		-L $$(RUST_OUT_DIR) \
-		$(2) $(3)
+		$(3) $(2)
 
 .PHONY: __rust_clean_$(1)_CLEAN
 __rust_clean_$(1)_CLEAN:
