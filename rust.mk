@@ -27,7 +27,7 @@ $(1)_DEPFILE=$$(RUST_OUT_DIR)/.$$($(1)_FILENAME).deps.mk
 $(1)_OUT=$$(RUST_OUT_DIR)/$$($(1)_FILENAME)
 $(1)_CLEAN=__rust_clean_$(1)_CLEAN
 
-$$($(1)_OUT): $(2)
+$$($(1)_OUT): $(2) $$(shell which $(RUSTC))
 	@echo "Compiling $$< -> $$@"
 	@mkdir -p $$(RUST_OUT_DIR)
 	@$$(RUSTC) $$(RUSTFLAGS) \
