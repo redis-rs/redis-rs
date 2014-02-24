@@ -7,7 +7,10 @@
 #[feature(macro_rules)];
 #[feature(globs)];
 
-extern mod extra;
+extern crate extra;
+extern crate time;
+extern crate collections;
+extern crate serialize;
 
 pub use parser::parse_redis_value;
 pub use parser::Parser;

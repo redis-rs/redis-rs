@@ -1,7 +1,7 @@
 #[crate_id = "redis-example#0.1"];
 #[crate_type = "bin"];
 
-extern mod redis;
+extern crate redis;
 
 
 fn main() {

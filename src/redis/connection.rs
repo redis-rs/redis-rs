@@ -1,16 +1,13 @@
-extern mod extra;
-
 use std::io::Reader;
 use std::io::Writer;
 use std::vec::bytes::push_bytes;
 use std::str::{from_utf8, from_utf8_owned};
 use std::io::net::ip::SocketAddr;
 use std::container::Map;
-use std::hashmap::HashMap;
+use collections::HashMap;
 use std::io::net::tcp::TcpStream;
 
-use extra::time;
-
+use time;
 use parser::Parser;
 use enums::*;
 use script::Script;

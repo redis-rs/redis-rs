@@ -1,5 +1,5 @@
 use utils::sha1;
-use extra::hex::ToHex;
+use serialize::hex::ToHex;
 
 pub struct Script {
     code: ~[u8],

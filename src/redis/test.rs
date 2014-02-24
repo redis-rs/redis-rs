@@ -1,4 +1,4 @@
-extern mod redis;
+extern crate redis;
 
 use std::io::process;
 use std::libc::SIGTERM;
@@ -12,21 +12,19 @@ struct RedisServer {
 impl RedisServer {
 
     fn new() -> RedisServer {
-        let mut process = process::Process::new(process::ProcessConfig {
+        let mut process = process::Process::configure(process::ProcessConfig {
             program: "redis-server",
             args: [~"-"],
-            env: None,
-            cwd: None,
-            io: [process::CreatePipe(true, false),
-                 process::Ignored,
-                 process::Ignored],
+            stdout: process::Ignored,
+            stderr: process::Ignored,
+            .. process::ProcessConfig::new()
         }).unwrap();
         let input = format!("
             bind 127.0.0.1
             port {port}
         ", port=SERVER_PORT);
-        let _ = process.io[0].get_mut_ref().write(input.as_bytes());
-        process.io[0] = None;
+        let _ = process.stdin.get_mut_ref().write(input.as_bytes());
+        process.stdin = None;
         RedisServer { process: process }
     }
 }
