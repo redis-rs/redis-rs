@@ -30,7 +30,7 @@ Low-level example:
       con.send_command("GET", [redis::StrArg("my_key")]);
       match con.read_response() {
 	redis::Data(value) => {
-          println!("Got value: {}", from_utf8(value));
+          println!("Got value: {}", from_utf8(value).unwrap());
         },
         redis::Error(redis::ResponseError, msg) => {
             fail!(format!("Redis command failed: {}", msg));
