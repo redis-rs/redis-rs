@@ -21,7 +21,7 @@ To compile and run the example:
 
 Low-level example:
 
-    extern mod redis;
+    extern crate redis;
     use std::str::from_utf8;
 
     fn main() {
@@ -43,7 +43,7 @@ Low-level example:
 
 High-level example:
 
-    extern mod redis;
+    extern crate redis;
 
     fn main() {
       let client = redis::Client::open("redis://127.0.0.1/").unwrap();
@@ -53,7 +53,7 @@ High-level example:
 
 Scanning over all keys iteratively:
 
-    extern mod redis;
+    extern crate redis;
 
     fn main() {
       let client = redis::Client::open("redis://127.0.0.1/").unwrap();
