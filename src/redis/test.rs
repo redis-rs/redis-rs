@@ -131,7 +131,7 @@ fn test_script() {
 fn test_blpop() {
     let ctx = TestContext::new();
     let client = ctx.client;
-    let (port, chan) = Chan::new();
+    let (port, chan) = comm::channel();
 
     spawn(proc() {
         let mut con = client.get_connection().unwrap();

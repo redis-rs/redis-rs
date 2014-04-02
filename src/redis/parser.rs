@@ -8,7 +8,7 @@ mod macros;
 
 
 pub struct Parser<T> {
-    priv iter: T,
+    iter: T,
 }
 
 pub struct ByteIterator<'a> {
