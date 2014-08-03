@@ -149,7 +149,7 @@ impl Connection {
 
         push_byte_format!(&mut rv, "${}\r\n", cmd.len());
         push_bytes(&mut rv, cmd.as_bytes());
-        push_bytes(&mut rv, bytes!("\r\n"));
+        push_bytes(&mut rv, b"\r\n");
 
         for arg in args.iter() {
             let mut buf;
@@ -169,7 +169,7 @@ impl Connection {
             };
             push_byte_format!(&mut rv, "${}\r\n", encoded_arg.len());
             push_bytes(&mut rv, encoded_arg);
-            push_bytes(&mut rv, bytes!("\r\n"));
+            push_bytes(&mut rv, b"\r\n");
         }
 
         rv
