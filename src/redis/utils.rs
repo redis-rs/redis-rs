@@ -40,9 +40,9 @@ impl Sha1 {
         }
     }
 
-    pub fn digest(&mut self) -> ~[u8] {
+    pub fn digest(&mut self) -> [u8, ..20] {
         unsafe {
-            let mut res = ~[0u8, ..20];
+            let mut res = [0u8, ..20];
             EVP_DigestFinal(self.ctx, res.as_mut_ptr(), ptr::null());
             res
         }
@@ -58,7 +58,7 @@ impl Drop for Sha1 {
     }
 }
 
-pub fn sha1(data: &[u8]) -> ~[u8] {
+pub fn sha1(data: &[u8]) -> [u8, ..20] {
     let mut hasher = Sha1::new();
     hasher.update(data);
     hasher.digest()
