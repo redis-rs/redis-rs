@@ -4,12 +4,12 @@ use enums::*;
 pub struct ScanIterator<'a, T> {
     pub con: &'a mut Connection,
     pub cmd: &'static str,
-    pub pre_args: ~[CmdArg<'a>],
-    pub post_args: ~[CmdArg<'a>],
+    pub pre_args: Vec<CmdArg<'a>>,
+    pub post_args: Vec<CmdArg<'a>>,
     pub cursor: i64,
     pub conv_func: 'a |Value| -> Option<T>,
     pub end: bool,
-    pub buffer: ~[Value],
+    pub buffer: Vec<Value>,
 }
 
 impl<'a, T> ScanIterator<'a, T> {
@@ -33,16 +33,16 @@ impl<'a, T> ScanIterator<'a, T> {
             return false;
         }
 
-        let mut args = ~[];
+        let mut args = vec![];
         if self.pre_args.len() > 0 {
-            args.push_all(self.pre_args);
+            args.push_all(self.pre_args.as_slice());
         }
         args.push(IntArg(self.cursor));
         if self.post_args.len() > 0 {
-            args.push_all(self.post_args);
+            args.push_all(self.post_args.as_slice());
         }
 
-        match self.con.execute(self.cmd, args) {
+        match self.con.execute(self.cmd, args.as_slice()) {
             Bulk(items) => {
                 let mut iter = items.move_iter();
                 let new_cursor = (try_unwrap!(iter.next(), false))

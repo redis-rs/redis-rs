@@ -9,7 +9,7 @@ pub enum Error {
     BusyLoadingError,
     NoScriptError,
     UnknownError,
-    ExtensionError(~str),
+    ExtensionError(String),
 }
 
 #[deriving(Clone, Eq, Show)]
@@ -17,11 +17,11 @@ pub enum Value {
     Invalid,
     Nil,
     Int(i64),
-    Data(~[u8]),
-    Bulk(~[Value]),
-    Error(Error, ~str),
+    Data(Vec<u8>),
+    Bulk(Vec<Value>),
+    Error(Error, String),
     Success,
-    Status(~str),
+    Status(String),
 }
 
 #[deriving(Clone, Eq, Show)]
@@ -78,14 +78,14 @@ impl fmt::Show for RangeBoundary {
 
 impl Value {
 
-    pub fn get_bytes(self) -> Option<~[u8]> {
+    pub fn get_bytes(self) -> Option<Vec<u8>> {
         match self {
             Data(payload) => Some(payload),
             _ => None,
         }
     }
 
-    pub fn get_string(self) -> Option<~str> {
+    pub fn get_string(self) -> Option<String> {
         match self {
             Status(x) => Some(x),
             Data(payload) => from_utf8_owned(payload),
@@ -95,7 +95,7 @@ impl Value {
 
     pub fn get_as<T: FromStr>(self) -> Option<T> {
         match self.get_string() {
-            Some(x) => from_str(x),
+            Some(x) => from_str(x.as_slice()),
             None => None,
         }
     }

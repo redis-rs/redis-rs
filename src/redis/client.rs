@@ -20,16 +20,16 @@ impl Client {
     /// resolution currently only happens initially.
     pub fn open(uri: &str) -> Result<Client, ConnectFailure> {
         let parsed_uri = try_unwrap!(from_str::<Url>(uri), Err(InvalidURI));
-        ensure!(parsed_uri.scheme == ~"redis", Err(InvalidURI));
+        ensure!(parsed_uri.scheme == "redis".to_string(), Err(InvalidURI));
 
-        let ip_addrs = match get_host_addresses(parsed_uri.host) {
+        let ip_addrs = match get_host_addresses(parsed_uri.host.as_slice()) {
             Ok(x) => x,
             Err(_) => { return Err(InvalidURI); }
         };
         let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
-        let port = try_unwrap!(from_str::<u16>(parsed_uri.port.clone()
-            .unwrap_or(~"6379")), Err(InvalidURI));
-        let db = from_str::<i64>(parsed_uri.path.trim_chars(&'/')).unwrap_or(0);
+        let port = try_unwrap!(from_str::<u16>((parsed_uri.port.clone()
+            .unwrap_or("6379".to_string())).as_slice()), Err(InvalidURI));
+        let db = from_str::<i64>(parsed_uri.path.as_slice().trim_chars('/')).unwrap_or(0);
 
         let addr = SocketAddr {
             ip: *ip_addr,

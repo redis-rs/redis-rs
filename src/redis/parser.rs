@@ -58,8 +58,8 @@ impl<T: Iterator<u8>> Parser<T> {
         return self.expect_char('\n');
     }
 
-    fn read_line(&mut self) -> Option<~[u8]> {
-        let mut rv = ~[];
+    fn read_line(&mut self) -> Option<Vec<u8>> {
+        let mut rv = vec![];
 
         loop {
             let b = try_unwrap!(self.iter.next(), None);
@@ -79,8 +79,8 @@ impl<T: Iterator<u8>> Parser<T> {
         Some(rv)
     }
 
-    fn read(&mut self, bytes: uint) -> Option<~[u8]> {
-        let mut rv = ~[];
+    fn read(&mut self, bytes: uint) -> Option<Vec<u8>> {
+        let mut rv = vec![];
         rv.reserve(bytes);
 
         for _ in range(0, bytes) {
@@ -92,13 +92,13 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn read_int_line(&mut self) -> Option<i64> {
         let line = try_unwrap!(self.read_line(), None);
-        from_str(try_unwrap!(from_utf8(line), None).trim())
+        from_str(try_unwrap!(from_utf8(line.as_slice()), None).trim())
     }
 
     fn parse_status(&mut self) -> Value {
         let line = try_unwrap!(self.read_line(), Invalid);
         let s = try_unwrap!(str::from_utf8_owned(line), Invalid);
-        if s == ~"OK" {
+        if s == "OK".to_string() {
             Success
         } else {
             Status(s)
@@ -128,7 +128,7 @@ impl<T: Iterator<u8>> Parser<T> {
         if length < 0 {
             Nil
         } else {
-            let mut rv = ~[];
+            let mut rv = vec![];
             rv.reserve(length as uint);
             for _ in range(0, length) {
                 match self.parse_value() {
@@ -142,7 +142,7 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn parse_error(&mut self) -> Value {
         let byte_line = try_unwrap!(self.read_line(), Invalid);
-        let line = try_unwrap!(str::from_utf8(byte_line), Invalid);
+        let line = try_unwrap!(from_utf8(byte_line.as_slice()), Invalid);
         let mut pieces = line.splitn(' ', 1);
         let code = match pieces.next().unwrap() {
             "ERR" => ResponseError,
@@ -150,10 +150,10 @@ impl<T: Iterator<u8>> Parser<T> {
             "LOADING" => BusyLoadingError,
             "NOSCRIPT" => NoScriptError,
             "" => UnknownError,
-            other => ExtensionError(other.to_owned()),
+            other => ExtensionError(other.to_string()),
         };
         let message = pieces.next().unwrap_or("An unknown error ocurred.");
-        return Error(code, message.to_owned());
+        return Error(code, message.to_string());
     }
 }
 

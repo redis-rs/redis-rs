@@ -28,8 +28,8 @@ fn main() {
         }
 
         let info = con.info();
-        println!("info role: {}", info.find(&~"role"));
-        println!("info version: {}", info.find(&~"redis_version"));
+        println!("info role: {}", info.find(&String::from_str("role")));
+        println!("info version: {}", info.find(&String::from_str("redis_version")));
 
         let script = redis::Script::new("
             return tonumber(ARGV[1]);
