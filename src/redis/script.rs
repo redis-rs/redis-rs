@@ -2,8 +2,8 @@ use utils::sha1;
 use serialize::hex::ToHex;
 
 pub struct Script {
-    code: ~[u8],
-    sha: ~str,
+    pub code: ~[u8],
+    pub sha: ~str,
 }
 
 impl Script {

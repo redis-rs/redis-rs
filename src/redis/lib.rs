@@ -20,6 +20,7 @@ pub use enums::*;
 pub use client::Client;
 pub use script::Script;
 pub use connection::Connection;
+pub use scan::ScanIterator;
 
 mod macros;
 mod parser;

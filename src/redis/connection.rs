@@ -113,9 +113,9 @@ fn value_to_byte_float_tuples(val: Value) -> ~[(~[u8], f32)] {
 }
 
 pub struct Connection {
-    priv addr: SocketAddr,
-    priv sock: TcpStream,
-    priv db: i64,
+    addr: SocketAddr,
+    sock: TcpStream,
+    db: i64,
 }
 
 impl Connection {

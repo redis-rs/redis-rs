@@ -9,8 +9,8 @@ use enums::*;
 use connection::Connection;
 
 pub struct Client {
-    priv addr: SocketAddr,
-    priv db: i64,
+    addr: SocketAddr,
+    db: i64,
 }
 
 impl Client {

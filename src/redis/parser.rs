@@ -6,11 +6,11 @@ use std::str::from_utf8;
 use enums::*;
 
 pub struct Parser<T> {
-    priv iter: T,
+    iter: T,
 }
 
 pub struct ByteIterator<'a> {
-    reader: &'a mut Reader,
+    pub reader: &'a mut Reader,
 }
 
 impl<T: Iterator<u8>> Parser<T> {

@@ -2,16 +2,15 @@ use connection::Connection;
 use enums::*;
 
 pub struct ScanIterator<'a, T> {
-    con: &'a mut Connection,
-    cmd: &'static str,
-    pre_args: ~[CmdArg<'a>],
-    post_args: ~[CmdArg<'a>],
-    cursor: i64,
-    conv_func: 'a |Value| -> Option<T>,
-    end: bool,
-    buffer: ~[Value],
+    pub con: &'a mut Connection,
+    pub cmd: &'static str,
+    pub pre_args: ~[CmdArg<'a>],
+    pub post_args: ~[CmdArg<'a>],
+    pub cursor: i64,
+    pub conv_func: 'a |Value| -> Option<T>,
+    pub end: bool,
+    pub buffer: ~[Value],
 }
-
 
 impl<'a, T> ScanIterator<'a, T> {
     fn next_from_buffer(&mut self) -> Option<T> {

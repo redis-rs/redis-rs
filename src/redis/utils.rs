@@ -21,7 +21,7 @@ pub type EVP_MD_CTX = *libc::c_void;
 pub type EVP_MD = *libc::c_void;
 
 pub struct Sha1 {
-    priv ctx: EVP_MD_CTX,
+    ctx: EVP_MD_CTX,
 }
 
 impl Sha1 {
