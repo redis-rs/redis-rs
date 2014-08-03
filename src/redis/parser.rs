@@ -4,8 +4,6 @@ use std::io::Reader;
 use std::str::from_utf8;
 
 use enums::*;
-mod macros;
-
 
 pub struct Parser<T> {
     priv iter: T,

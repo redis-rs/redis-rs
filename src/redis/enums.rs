@@ -1,4 +1,5 @@
 use std::str::from_utf8_owned;
+use std::from_str::FromStr;
 
 #[deriving(Clone, Eq)]
 pub enum Error {

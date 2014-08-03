@@ -7,7 +7,8 @@
 #![feature(macro_rules)]
 #![feature(globs)]
 
-extern crate extra;
+extern crate url;
+extern crate libc;
 extern crate time;
 extern crate collections;
 extern crate serialize;
@@ -20,6 +21,7 @@ pub use client::Client;
 pub use script::Script;
 pub use connection::Connection;
 
+mod macros;
 mod parser;
 mod client;
 mod script;

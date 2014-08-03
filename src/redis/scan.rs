@@ -1,8 +1,6 @@
 use connection::Connection;
 use enums::*;
 
-mod macros;
-
 pub struct ScanIterator<'a, T> {
     con: &'a mut Connection,
     cmd: &'static str,
