@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::from_utf8_owned;
 use std::from_str::FromStr;
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum Error {
     ResponseError,
     ExecAbortError,
@@ -12,7 +12,7 @@ pub enum Error {
     ExtensionError(String),
 }
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum Value {
     Invalid,
     Nil,
@@ -24,14 +24,14 @@ pub enum Value {
     Status(String),
 }
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum ConnectFailure {
     InvalidURI,
     HostNotFound,
     ConnectionRefused,
 }
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(i64),
@@ -39,14 +39,14 @@ pub enum CmdArg<'a> {
     BytesArg(&'a [u8]),
 }
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum ShutdownMode {
     ShutdownNormal,
     ShutdownSave,
     ShutdownNoSave,
 }
 
-#[deriving(Clone, Eq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum KeyType {
     StringType,
     ListType,
@@ -57,7 +57,7 @@ pub enum KeyType {
     NilType,
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq)]
 pub enum RangeBoundary {
     Open(f32),
     Closed(f32),

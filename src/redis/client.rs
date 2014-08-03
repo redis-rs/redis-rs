@@ -37,7 +37,7 @@ impl Client {
         };
 
         // make sure we can connect.
-        match TcpStream::connect(addr) {
+        match TcpStream::connect(addr.ip.to_str().as_slice(), addr.port) {
             Err(_) => { return Err(ConnectionRefused); }
             Ok(_) => {}
         }

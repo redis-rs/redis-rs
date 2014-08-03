@@ -7,7 +7,7 @@ pub struct ScanIterator<'a, T> {
     pub pre_args: Vec<CmdArg<'a>>,
     pub post_args: Vec<CmdArg<'a>>,
     pub cursor: i64,
-    pub conv_func: 'a |Value| -> Option<T>,
+    pub conv_func: |Value|: 'a -> Option<T>,
     pub end: bool,
     pub buffer: Vec<Value>,
 }

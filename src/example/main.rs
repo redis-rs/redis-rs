@@ -10,7 +10,7 @@ fn main() {
     // for fun do it in a task
     spawn(proc() {
         let mut con = client.get_connection().unwrap();
-        con.set("foo", 42);
+        con.set("foo", 42u32);
         con.set("bar", "test");
         println!("foo get: {}", con.get("foo"));
         println!("foo as int: {}", con.get_as::<int>("foo"));

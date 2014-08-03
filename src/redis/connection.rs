@@ -121,7 +121,7 @@ pub struct Connection {
 impl Connection {
 
     pub fn new(addr: SocketAddr, db: i64) -> Result<Connection, ConnectFailure> {
-        let sock = match TcpStream::connect(addr) {
+        let sock = match TcpStream::connect(addr.ip.to_str().as_slice(), addr.port) {
             Ok(x) => x,
             Err(_) => { return Err(ConnectionRefused) },
         };
