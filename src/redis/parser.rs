@@ -97,7 +97,7 @@ impl<T: Iterator<u8>> Parser<T> {
 
     fn parse_status(&mut self) -> Value {
         let line = try_unwrap!(self.read_line(), Invalid);
-        let s = try_unwrap!(str::from_utf8_owned(line), Invalid);
+        let s = try_unwrap!(str::from_utf8_owned(line).ok(), Invalid);
         if s == "OK".to_string() {
             Success
         } else {

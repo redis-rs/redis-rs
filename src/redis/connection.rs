@@ -464,7 +464,7 @@ impl Connection {
     pub fn get(&mut self, key: &str) -> Option<String> {
         match self.get_bytes(key) {
             None => None,
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
         }
     }
 
@@ -773,7 +773,7 @@ impl Connection {
     #[inline]
     pub fn brpoplpush(&mut self, src: &str, dst: &str, timeout: f32) -> Option<String> {
         match self.brpoplpush_bytes(src, dst, timeout) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }
@@ -789,7 +789,7 @@ impl Connection {
     #[inline]
     pub fn lindex(&mut self, key: &str, index: i64) -> Option<String> {
         match self.lindex_bytes(key, index) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }
@@ -852,7 +852,7 @@ impl Connection {
     #[inline]
     pub fn lpop(&mut self, key: &str) -> Option<String> {
         match self.lpop_bytes(key) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }
@@ -964,7 +964,7 @@ impl Connection {
     #[inline]
     pub fn rpop(&mut self, key: &str) -> Option<String> {
         match self.rpop_bytes(key) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }
@@ -993,7 +993,7 @@ impl Connection {
     #[inline]
     pub fn rpoplpush(&mut self, src: &str, dst: &str, timeout: f32) -> Option<String> {
         match self.rpoplpush_bytes(src, dst, timeout) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }
@@ -1064,7 +1064,7 @@ impl Connection {
     #[inline]
     pub fn hget(&mut self, key: &str, field: &str) -> Option<String> {
         match self.hget_bytes(key, field) {
-            Some(x) => from_utf8_owned(x),
+            Some(x) => from_utf8_owned(x).ok(),
             None => None,
         }
     }

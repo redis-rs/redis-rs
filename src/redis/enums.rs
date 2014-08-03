@@ -88,7 +88,7 @@ impl Value {
     pub fn get_string(self) -> Option<String> {
         match self {
             Status(x) => Some(x),
-            Data(payload) => from_utf8_owned(payload),
+            Data(payload) => from_utf8_owned(payload).ok(),
             _ => None,
         }
     }
