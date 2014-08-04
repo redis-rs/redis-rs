@@ -1,7 +1,8 @@
 extern crate redis;
+extern crate libc;
 
 use std::io::process;
-use std::libc::SIGTERM;
+use libc::SIGTERM;
 
 pub static SERVER_PORT: int = 38991;
 
@@ -12,13 +13,11 @@ struct RedisServer {
 impl RedisServer {
 
     fn new() -> RedisServer {
-        let mut process = process::Process::configure(process::ProcessConfig {
-            program: "redis-server",
-            args: [~"-"],
-            stdout: process::Ignored,
-            stderr: process::Ignored,
-            .. process::ProcessConfig::new()
-        }).unwrap();
+        let mut process = process::Command::new("redis-server")
+                                           .arg("-")
+                                           .stdout(process::Ignored)
+                                           .stderr(process::Ignored)
+                                           .spawn().unwrap();
         let input = format!("
             bind 127.0.0.1
             port {port}
@@ -34,7 +33,7 @@ impl Drop for RedisServer {
     fn drop(&mut self) {
         let _ = self.process.signal(SIGTERM as int);
         let rv = self.process.wait();
-        assert!(rv.success());
+        assert!(rv.is_ok());
     }
 }
 
@@ -51,7 +50,7 @@ impl TestContext {
 
         let mut client;
         loop {
-            match redis::Client::open(url) {
+            match redis::Client::open(url.as_slice()) {
                 Ok(x) => { client = x; break; }
                 Err(redis::ConnectionRefused) => { std::io::timer::sleep(1); }
                 _ => { fail!("Error on connect"); }
@@ -83,7 +82,7 @@ fn test_info() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let info = con.info();
-    assert!(*info.find(&~"tcp_port").unwrap() == SERVER_PORT.to_str());
+    assert!(*info.find(&String::from_str("tcp_port")).unwrap() == SERVER_PORT.to_string());
 }
 
 #[test]
@@ -91,10 +90,10 @@ fn test_basics() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     con.set("foo", "bar");
-    assert!(con.get("foo") == Some(~"bar"));
+    assert!(con.get("foo") == Some(String::from_str("bar")));
     con.rename("foo", "bar");
     assert!(con.get("foo") == None);
-    assert!(con.get("bar") == Some(~"bar"));
+    assert!(con.get("bar") == Some(String::from_str("bar")));
     con.del("bar");
     assert!(con.get("bar") == None);
 }
@@ -103,13 +102,13 @@ fn test_basics() {
 fn test_types() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    con.set("foo", 42);
+    con.set("foo", 42u32);
     con.set("bar", "test");
     assert!(con.get_type("foo") == redis::StringType);
     assert!(con.get_type("bar") == redis::StringType);
-    assert!(con.get("foo") == Some(~"42"));
+    assert!(con.get("foo") == Some(String::from_str("42")));
     assert!(con.get_as::<int>("foo") == Some(42));
-    assert!(con.get("bar") == Some(~"test"));
+    assert!(con.get("bar") == Some(String::from_str("test")));
     assert!(con.exists("foo") == true);
     assert!(con.exists("invalid") == false);
 }
@@ -131,12 +130,12 @@ fn test_script() {
 fn test_blpop() {
     let ctx = TestContext::new();
     let client = ctx.client;
-    let (port, chan) = Chan::new();
+    let (chan, port) = channel();
 
     spawn(proc() {
         let mut con = client.get_connection().unwrap();
         let rv = con.blpop(["q"], 5.0);
-        assert!(rv == Some((~"q", ~"awesome")));
+        assert!(rv == Some((String::from_str("q"), String::from_str("awesome"))));
         chan.send(());
     });
 
@@ -153,17 +152,17 @@ fn test_scan() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    for x in range(0, 1000) {
-        con.set(format!("key:{}", x), x);
+    for x in range(0u, 1000) {
+        con.set(format!("key:{}", x).as_slice(), x);
     }
 
     let mut found = [false, .. 1000];
     for item in con.scan("key:*") {
-        let num = item.split(':').nth(1).unwrap();
+        let num = item.as_slice().split(':').nth(1).unwrap();
         found[from_str::<uint>(num).unwrap()] = true;
     }
 
-    for x in range(0, 100) {
+    for x in range(0u, 100) {
         assert!(found[x] == true);
     }
 }

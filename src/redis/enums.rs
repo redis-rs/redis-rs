@@ -1,35 +1,37 @@
+use std::fmt;
 use std::str::from_utf8_owned;
+use std::from_str::FromStr;
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum Error {
     ResponseError,
     ExecAbortError,
     BusyLoadingError,
     NoScriptError,
     UnknownError,
-    ExtensionError(~str),
+    ExtensionError(String),
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum Value {
     Invalid,
     Nil,
     Int(i64),
-    Data(~[u8]),
-    Bulk(~[Value]),
-    Error(Error, ~str),
+    Data(Vec<u8>),
+    Bulk(Vec<Value>),
+    Error(Error, String),
     Success,
-    Status(~str),
+    Status(String),
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum ConnectFailure {
     InvalidURI,
     HostNotFound,
     ConnectionRefused,
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(i64),
@@ -37,14 +39,14 @@ pub enum CmdArg<'a> {
     BytesArg(&'a [u8]),
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum ShutdownMode {
     ShutdownNormal,
     ShutdownSave,
     ShutdownNoSave,
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum KeyType {
     StringType,
     ListType,
@@ -55,7 +57,7 @@ pub enum KeyType {
     NilType,
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone, PartialEq)]
 pub enum RangeBoundary {
     Open(f32),
     Closed(f32),
@@ -63,37 +65,37 @@ pub enum RangeBoundary {
     NegInf,
 }
 
-impl ToStr for RangeBoundary {
-    fn to_str(&self) -> ~str {
+impl fmt::Show for RangeBoundary {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Open(x) => format!("({}", x),
-            Closed(x) => x.to_str(),
-            Inf => ~"+inf",
-            NegInf => ~"-inf",
+            Open(x) => write!(f, "({}", x),
+            Closed(x) => write!(f, "{}", x),
+            Inf => write!(f, "+inf"),
+            NegInf => write!(f, "-inf"),
         }
     }
 }
 
 impl Value {
 
-    pub fn get_bytes(self) -> Option<~[u8]> {
+    pub fn get_bytes(self) -> Option<Vec<u8>> {
         match self {
             Data(payload) => Some(payload),
             _ => None,
         }
     }
 
-    pub fn get_string(self) -> Option<~str> {
+    pub fn get_string(self) -> Option<String> {
         match self {
             Status(x) => Some(x),
-            Data(payload) => from_utf8_owned(payload),
+            Data(payload) => from_utf8_owned(payload).ok(),
             _ => None,
         }
     }
 
     pub fn get_as<T: FromStr>(self) -> Option<T> {
         match self.get_string() {
-            Some(x) => from_str(x),
+            Some(x) => from_str(x.as_slice()),
             None => None,
         }
     }

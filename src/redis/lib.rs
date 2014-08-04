@@ -1,13 +1,14 @@
-#[crate_id = "redis#0.1"];
-#[crate_type = "lib"];
-#[license = "BSD"];
-#[comment = "Bindings and wrapper functions for redis."];
+#![crate_id = "redis#0.1"]
+#![crate_type = "lib"]
+#![license = "BSD"]
+#![comment = "Bindings and wrapper functions for redis."]
 
-#[deny(non_camel_case_types)];
-#[feature(macro_rules)];
-#[feature(globs)];
+#![deny(non_camel_case_types)]
+#![feature(macro_rules)]
+#![feature(globs)]
 
-extern crate extra;
+extern crate url;
+extern crate libc;
 extern crate time;
 extern crate collections;
 extern crate serialize;
@@ -19,7 +20,9 @@ pub use enums::*;
 pub use client::Client;
 pub use script::Script;
 pub use connection::Connection;
+pub use scan::ScanIterator;
 
+mod macros;
 mod parser;
 mod client;
 mod script;
