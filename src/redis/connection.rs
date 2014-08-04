@@ -121,7 +121,7 @@ pub struct Connection {
 impl Connection {
 
     pub fn new(addr: SocketAddr, db: i64) -> Result<Connection, ConnectFailure> {
-        let sock = match TcpStream::connect(addr.ip.to_str().as_slice(), addr.port) {
+        let sock = match TcpStream::connect(addr.ip.to_string().as_slice(), addr.port) {
             Ok(x) => x,
             Err(_) => { return Err(ConnectionRefused) },
         };
@@ -152,12 +152,12 @@ impl Connection {
             let encoded_arg = match arg {
                 &StrArg(s) => s.as_bytes(),
                 &IntArg(i) => {
-                    let i_str = i.to_str();
+                    let i_str = i.to_string();
                     buf = i_str.as_bytes().to_owned();
                     buf.as_slice()
                 },
                 &FloatArg(f) => {
-                    let f_str = f.to_str();
+                    let f_str = f.to_string();
                     buf = f_str.as_bytes().to_owned();
                     buf.as_slice()
                 },
@@ -224,7 +224,7 @@ impl Connection {
         match self.execute("INFO", []) {
             Data(bytes) => {
                 for line in from_utf8(bytes.as_slice()).unwrap_or("").lines_any() {
-                    if line.len() == 0 || line[0] == '#' as u8 {
+                    if line.len() == 0 || line.char_at(0) == '#' {
                         continue;
                     }
                     let mut p = line.splitn(':', 1);
@@ -485,8 +485,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn set<T: ToStr>(&mut self, key: &str, value: T) -> bool {
-        let v = value.to_str();
+    pub fn set<T: ToString>(&mut self, key: &str, value: T) -> bool {
+        let v = value.to_string();
         match self.execute("SET", [StrArg(key), StrArg(v.as_slice())]) {
             Success => true,
             _ => false,
@@ -512,8 +512,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn setex<T: ToStr>(&mut self, key: &str, value: T, timeout: f32) -> bool {
-        let v = value.to_str();
+    pub fn setex<T: ToString>(&mut self, key: &str, value: T, timeout: f32) -> bool {
+        let v = value.to_string();
         self.setex_bytes(key, v.as_bytes(), timeout)
     }
 
@@ -526,8 +526,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn setnx<T: ToStr>(&mut self, key: &str, value: T) -> bool {
-        let v = value.to_str();
+    pub fn setnx<T: ToString>(&mut self, key: &str, value: T) -> bool {
+        let v = value.to_string();
         match self.execute("SETNX", [StrArg(key), StrArg(v.as_slice())]) {
             Int(1) => true,
             _ => false,
@@ -561,8 +561,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn getset<T: ToStr+FromStr>(&mut self, key: &str, value: T) -> Option<T> {
-        let v = value.to_str();
+    pub fn getset<T: ToString+FromStr>(&mut self, key: &str, value: T) -> Option<T> {
+        let v = value.to_string();
         match self.getset_bytes(key, v.as_bytes()) {
             Some(x) => from_str(from_utf8_owned(x).unwrap_or(String::new()).as_slice()),
             None => None,
@@ -578,8 +578,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn append<T: ToStr>(&mut self, key: &str, value: T) -> uint {
-        let v = value.to_str();
+    pub fn append<T: ToString>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_string();
         self.append_bytes(key, v.as_bytes())
     }
 
@@ -817,8 +817,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn linsert_before<T: ToStr>(&mut self, key: &str, pivot: &str, value: T) -> int {
-        let v = value.to_str();
+    pub fn linsert_before<T: ToString>(&mut self, key: &str, pivot: &str, value: T) -> int {
+        let v = value.to_string();
         self.linsert_before_bytes(key, pivot.as_bytes(), v.as_bytes())
     }
 
@@ -828,8 +828,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn linsert_after<T: ToStr>(&mut self, key: &str, pivot: &str, value: T) -> int {
-        let v = value.to_str();
+    pub fn linsert_after<T: ToString>(&mut self, key: &str, pivot: &str, value: T) -> int {
+        let v = value.to_string();
         self.linsert_after_bytes(key, pivot.as_bytes(), v.as_bytes())
     }
 
@@ -874,8 +874,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lpush<T: ToStr>(&mut self, key: &str, value: T) -> uint {
-        let v = value.to_str();
+    pub fn lpush<T: ToString>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_string();
         self.lpush_bytes(key, v.as_bytes())
     }
 
@@ -888,8 +888,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lpushx<T: ToStr>(&mut self, key: &str, value: T) -> uint {
-        let v = value.to_str();
+    pub fn lpushx<T: ToString>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_string();
         self.lpushx_bytes(key, v.as_bytes())
     }
 
@@ -926,8 +926,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lrem<T: ToStr>(&mut self, key: &str, count: i64, value: T) -> i64 {
-        let v = value.to_str();
+    pub fn lrem<T: ToString>(&mut self, key: &str, count: i64, value: T) -> i64 {
+        let v = value.to_string();
         self.lrem_bytes(key, count, v.as_bytes())
     }
 
@@ -940,8 +940,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn lset<T: ToStr>(&mut self, key: &str, index: i64, value: T) -> bool {
-        let v = value.to_str();
+    pub fn lset<T: ToString>(&mut self, key: &str, index: i64, value: T) -> bool {
+        let v = value.to_string();
         self.lset_bytes(key, index, v.as_bytes())
     }
 
@@ -1007,8 +1007,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn rpush<T: ToStr>(&mut self, key: &str, value: T) -> uint {
-        let v = value.to_str();
+    pub fn rpush<T: ToString>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_string();
         self.rpush_bytes(key, v.as_bytes())
     }
 
@@ -1021,8 +1021,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn rpushx<T: ToStr>(&mut self, key: &str, value: T) -> uint {
-        let v = value.to_str();
+    pub fn rpushx<T: ToString>(&mut self, key: &str, value: T) -> uint {
+        let v = value.to_string();
         self.rpushx_bytes(key, v.as_bytes())
     }
 
@@ -1156,8 +1156,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn hset<T: ToStr>(&mut self, key: &str, field: &str, value: T) -> bool {
-        let v = value.to_str();
+    pub fn hset<T: ToString>(&mut self, key: &str, field: &str, value: T) -> bool {
+        let v = value.to_string();
         self.hset_bytes(key, field, v.as_bytes())
     }
 
@@ -1170,8 +1170,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn hsetnx<T: ToStr>(&mut self, key: &str, field: &str, value: T) -> bool {
-        let v = value.to_str();
+    pub fn hsetnx<T: ToString>(&mut self, key: &str, field: &str, value: T) -> bool {
+        let v = value.to_string();
         self.hsetnx_bytes(key, field, v.as_bytes())
     }
 
@@ -1214,8 +1214,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn sadd<T: ToStr>(&mut self, key: &str, member: T) -> bool {
-        let v = member.to_str();
+    pub fn sadd<T: ToString>(&mut self, key: &str, member: T) -> bool {
+        let v = member.to_string();
         self.sadd_bytes(key, v.as_bytes())
     }
 
@@ -1328,8 +1328,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn isimember<T: ToStr>(&mut self, key: &str, member: T) -> bool {
-        let v = member.to_str();
+    pub fn isimember<T: ToString>(&mut self, key: &str, member: T) -> bool {
+        let v = member.to_string();
         self.sismember_bytes(key, v.as_bytes())
     }
 
@@ -1430,8 +1430,8 @@ impl Connection {
     }
 
     #[inline]
-    pub fn zadd<T: ToStr>(&mut self, key: &str, score: f32, member: T) -> bool {
-        let v = member.to_str();
+    pub fn zadd<T: ToString>(&mut self, key: &str, score: f32, member: T) -> bool {
+        let v = member.to_string();
         self.zadd_bytes(key, score, v.as_bytes())
     }
 
@@ -1447,8 +1447,8 @@ impl Connection {
 
     #[inline]
     pub fn zcount(&mut self, key: &str, min: RangeBoundary, max: RangeBoundary) -> i64 {
-        let min_s = min.to_str();
-        let max_s = max.to_str();
+        let min_s = min.to_string();
+        let max_s = max.to_string();
         match self.execute("ZCOUNT", [StrArg(key), StrArg(min_s.as_slice()), StrArg(max_s.as_slice())]) {
             Int(x) => x,
             _ => 0,
@@ -1470,14 +1470,14 @@ impl Connection {
     }
 
     #[inline]
-    pub fn zincr<T: ToStr>(&mut self, key: &str, member: T) -> i64 {
-        let v = member.to_str();
+    pub fn zincr<T: ToString>(&mut self, key: &str, member: T) -> i64 {
+        let v = member.to_string();
         self.zincr_bytes(key, v.as_bytes())
     }
 
     #[inline]
-    pub fn zincrby<T: ToStr>(&mut self, key: &str, increment: f32, member: T) -> i64 {
-        let v = member.to_str();
+    pub fn zincrby<T: ToString>(&mut self, key: &str, increment: f32, member: T) -> i64 {
+        let v = member.to_string();
         self.zincrby_bytes(key, increment, v.as_bytes())
     }
 
@@ -1511,8 +1511,8 @@ impl Connection {
                                max: RangeBoundary,
                                withscores: bool,
                                limit: Option<(i64, i64)>) -> Value {
-        let min_s = min.to_str();
-        let max_s = max.to_str();
+        let min_s = min.to_string();
+        let max_s = max.to_string();
         let mut args = vec![StrArg(key), StrArg(min_s.as_slice()), StrArg(max_s.as_slice())];
         if withscores {
             args.push(StrArg("WITHSCORES"));

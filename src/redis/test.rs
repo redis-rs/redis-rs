@@ -82,7 +82,7 @@ fn test_info() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let info = con.info();
-    assert!(*info.find(&String::from_str("tcp_port")).unwrap() == SERVER_PORT.to_str());
+    assert!(*info.find(&String::from_str("tcp_port")).unwrap() == SERVER_PORT.to_string());
 }
 
 #[test]

@@ -27,9 +27,8 @@ impl Client {
             Err(_) => { return Err(InvalidURI); }
         };
         let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
-        let port = try_unwrap!(from_str::<u16>((parsed_uri.port.clone()
-            .unwrap_or("6379".to_string())).as_slice()), Err(InvalidURI));
-        let db = from_str::<i64>(parsed_uri.path.as_slice().trim_chars('/')).unwrap_or(0);
+        let port = parsed_uri.port.clone().unwrap_or(6379u16);
+        let db = from_str::<i64>(parsed_uri.path.path.as_slice().trim_chars('/')).unwrap_or(0);
 
         let addr = SocketAddr {
             ip: *ip_addr,
@@ -37,7 +36,7 @@ impl Client {
         };
 
         // make sure we can connect.
-        match TcpStream::connect(addr.ip.to_str().as_slice(), addr.port) {
+        match TcpStream::connect(addr.ip.to_string().as_slice(), addr.port) {
             Err(_) => { return Err(ConnectionRefused); }
             Ok(_) => {}
         }
