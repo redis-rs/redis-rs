@@ -4,7 +4,7 @@ before_install:
 
 install:
   - curl https://static.rust-lang.org/rustup.sh | sudo bash
-  - sudo apt-get install rust-nightly redis-server
+  - sudo apt-get install redis-server
 
 script:
   - make test
