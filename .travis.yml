@@ -1,9 +1,9 @@
 before_install:
-  - yes | sudo add-apt-repository ppa:hansjorg/rust
   - yes | sudo add-apt-repository ppa:chris-lea/redis-server
   - sudo apt-get update
 
 install:
+  - curl https://static.rust-lang.org/rustup.sh | sudo bash
   - sudo apt-get install rust-nightly redis-server
 
 script:
