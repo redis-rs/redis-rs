@@ -1,29 +1,51 @@
-#[crate_id = "redis#0.1"];
-#[crate_type = "lib"];
-#[license = "BSD"];
-#[comment = "Bindings and wrapper functions for redis."];
+#![crate_name = "redis"]
+#![crate_type = "lib"]
+#![license = "BSD"]
+#![comment = "Bindings and wrapper functions for redis."]
 
-#[deny(non_camel_case_types)];
-#[feature(macro_rules)];
-#[feature(globs)];
+#![deny(non_camel_case_types)]
 
-extern crate extra;
-extern crate time;
-extern crate collections;
-extern crate serialize;
+#![feature(macro_rules)]
 
-pub use parser::parse_redis_value;
-pub use parser::Parser;
-pub use enums::*;
+extern crate url;
 
+/* public api */
+pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
-pub use script::Script;
 pub use connection::Connection;
 
+/* public enums */
+pub use enums::{
+    RedisErrorKind,
+        ResponseError,
+        ExecAbortError,
+        BusyLoadingError,
+        NoScriptError,
+        ExtensionError,
+        InternalIoError,
+
+    RedisValue,
+        Nil,
+        Int,
+        Data,
+        Bulk,
+        Okay,
+        Status,
+
+    RedisError,
+
+    CmdArg,
+        StrArg,
+        IntArg,
+        FloatArg,
+        BytesArg,
+
+    RedisResult,
+};
+
+pub mod macros;
+
+mod enums;
 mod parser;
 mod client;
-mod script;
-mod enums;
-mod utils;
 mod connection;
-mod scan;

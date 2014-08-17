@@ -1,3 +1,5 @@
 build
 lib
 .rust
+Cargo.lock
+target

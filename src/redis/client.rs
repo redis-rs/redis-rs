@@ -1,58 +1,44 @@
-use std::io::net::ip::SocketAddr;
-use std::io::net::get_host_addresses;
-use std::io::net::tcp::TcpStream;
-use std::from_str::from_str;
+use url::Url;
+use std::io::{IoResult, IoError, InvalidInput};
 
-use extra::url::Url;
-
-use enums::*;
 use connection::Connection;
 
-mod macros;
 
 pub struct Client {
-    priv addr: SocketAddr,
-    priv db: i64,
+    host: String,
+    port: u16,
+    db: i64,
 }
 
 impl Client {
 
-    /// creates a client.  The client will immediately connect but it will
-    /// close the connection again until get_connection() is called.  The name
-    /// resolution currently only happens initially.
-    pub fn open(uri: &str) -> Result<Client, ConnectFailure> {
-        let parsed_uri = try_unwrap!(from_str::<Url>(uri), Err(InvalidURI));
-        ensure!(parsed_uri.scheme == ~"redis", Err(InvalidURI));
-
-        let ip_addrs = match get_host_addresses(parsed_uri.host) {
-            Ok(x) => x,
-            Err(_) => { return Err(InvalidURI); }
-        };
-        let ip_addr = try_unwrap!(ip_addrs.iter().next(), Err(HostNotFound));
-        let port = try_unwrap!(from_str::<u16>(parsed_uri.port.clone()
-            .unwrap_or(~"6379")), Err(InvalidURI));
-        let db = from_str::<i64>(parsed_uri.path.trim_chars(&'/')).unwrap_or(0);
-
-        let addr = SocketAddr {
-            ip: *ip_addr,
-            port: port
-        };
-
-        // make sure we can connect.
-        match TcpStream::connect(addr) {
-            Err(_) => { return Err(ConnectionRefused); }
-            Ok(_) => {}
-        }
+    pub fn open(uri: &str) -> IoResult<Client> {
+        let u = try_unwrap!(from_str::<Url>(uri), Err(IoError {
+            kind: InvalidInput,
+            desc: "Redis URL did not parse",
+            detail: None,
+        }));
+        ensure!(u.scheme.as_slice() == "redis", Err(IoError {
+            kind: InvalidInput,
+            desc: "URL provided is not a redis URL",
+            detail: None,
+        }));
 
         Ok(Client {
-            addr: addr,
-            db: db,
+            host: u.host,
+            port: u.port.unwrap_or(6379),
+            db: match u.path.to_string().as_slice().trim_chars('/') {
+                "" => 0,
+                path => try_unwrap!(from_str::<i64>(path), Err(IoError {
+                    kind: InvalidInput,
+                    desc: "Path is not a valid redis database number",
+                    detail: None,
+                }))
+            },
         })
     }
 
-    /// returns an independent connection for this client.  This currently
-    /// does not put it into a pool.
-    pub fn get_connection(&self) -> Result<Connection, ConnectFailure> {
-        Connection::new(self.addr, self.db)
+    pub fn get_connection(&self) -> IoResult<Connection> {
+        Connection::new(self.host.as_slice(), self.port, self.db)
     }
 }

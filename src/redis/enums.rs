@@ -1,35 +1,34 @@
-use std::str::from_utf8_owned;
+use std::io::IoError;
 
-#[deriving(Clone, Eq)]
-pub enum Error {
+
+#[deriving(PartialEq, Eq, Clone, Show)]
+pub enum RedisErrorKind {
     ResponseError,
     ExecAbortError,
     BusyLoadingError,
     NoScriptError,
-    UnknownError,
-    ExtensionError(~str),
+    ExtensionError(String),
+    InternalIoError(IoError),
 }
 
-#[deriving(Clone, Eq)]
-pub enum Value {
-    Invalid,
+#[deriving(PartialEq, Eq, Clone, Show)]
+pub enum RedisValue {
     Nil,
     Int(i64),
-    Data(~[u8]),
-    Bulk(~[Value]),
-    Error(Error, ~str),
-    Success,
-    Status(~str),
+    Data(Vec<u8>),
+    Bulk(Vec<RedisValue>),
+    Okay,
+    Status(String),
 }
 
-#[deriving(Clone, Eq)]
-pub enum ConnectFailure {
-    InvalidURI,
-    HostNotFound,
-    ConnectionRefused,
+#[deriving(PartialEq, Eq, Clone, Show)]
+pub struct RedisError {
+    pub kind: RedisErrorKind,
+    pub desc: &'static str,
+    pub detail: Option<String>,
 }
 
-#[deriving(Clone, Eq)]
+#[deriving(Clone)]
 pub enum CmdArg<'a> {
     StrArg(&'a str),
     IntArg(i64),
@@ -37,64 +36,16 @@ pub enum CmdArg<'a> {
     BytesArg(&'a [u8]),
 }
 
-#[deriving(Clone, Eq)]
-pub enum ShutdownMode {
-    ShutdownNormal,
-    ShutdownSave,
-    ShutdownNoSave,
-}
+pub type RedisResult = Result<RedisValue, RedisError>;
 
-#[deriving(Clone, Eq)]
-pub enum KeyType {
-    StringType,
-    ListType,
-    SetType,
-    ZSetType,
-    HashType,
-    UnknownType,
-    NilType,
-}
 
-#[deriving(Clone, Eq)]
-pub enum RangeBoundary {
-    Open(f32),
-    Closed(f32),
-    Inf,
-    NegInf,
-}
+impl RedisError {
 
-impl ToStr for RangeBoundary {
-    fn to_str(&self) -> ~str {
-        match *self {
-            Open(x) => format!("({}", x),
-            Closed(x) => x.to_str(),
-            Inf => ~"+inf",
-            NegInf => ~"-inf",
-        }
-    }
-}
-
-impl Value {
-
-    pub fn get_bytes(self) -> Option<~[u8]> {
-        match self {
-            Data(payload) => Some(payload),
-            _ => None,
-        }
-    }
-
-    pub fn get_string(self) -> Option<~str> {
-        match self {
-            Status(x) => Some(x),
-            Data(payload) => from_utf8_owned(payload),
-            _ => None,
-        }
-    }
-
-    pub fn get_as<T: FromStr>(self) -> Option<T> {
-        match self.get_string() {
-            Some(x) => from_str(x),
-            None => None,
+    pub fn simple(kind: RedisErrorKind, desc: &'static str) -> RedisError {
+        RedisError {
+            kind: kind,
+            desc: desc,
+            detail: None,
         }
     }
 }
