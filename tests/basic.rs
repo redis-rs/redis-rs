@@ -96,3 +96,11 @@ fn test_getset() {
     con.execute("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
     assert_eq!(con.execute("GET", [redis::StrArg("foo")]), Ok(redis::Data(b"42".to_vec())));
 }
+
+#[test]
+fn test_incr() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    con.execute("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
+    assert_eq!(con.execute("INCR", [redis::StrArg("foo")]), Ok(redis::Int(43)));
+}
