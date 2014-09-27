@@ -68,7 +68,7 @@ impl TestContext {
                 Ok(x) => { con = x; break; },
             }
         }
-        con.execute_raw("FLUSHDB", []).unwrap();
+        let _ : () = redis::cmd("FLUSHDB").execute(&mut con).unwrap();
 
         TestContext {
             server: server,
@@ -83,34 +83,7 @@ impl TestContext {
 
 
 #[test]
-fn test_ping() {
-    let ctx = TestContext::new();
-    let mut con = ctx.connection();
-    con.execute_raw("PING", []).unwrap();
-}
-
-#[test]
-fn test_getset() {
-    let ctx = TestContext::new();
-    let mut con = ctx.connection();
-    con.execute_raw("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
-    assert_eq!(con.execute_raw("GET", [redis::StrArg("foo")]), Ok(redis::Data(b"42".to_vec())));
-}
-
-#[test]
 fn test_incr() {
-    let ctx = TestContext::new();
-    let mut con = ctx.connection();
-    con.execute_raw("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
-
-    assert_eq!(con.execute_raw("INCR", [redis::StrArg("foo")]), Ok(redis::Int(43)));
-
-    let v: i32 = con.execute("INCR", [redis::StrArg("foo")]).unwrap();
-    assert_eq!(v, 44);
-}
-
-#[test]
-fn test_new_api() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 

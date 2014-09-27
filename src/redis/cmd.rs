@@ -21,8 +21,7 @@ impl Cmd {
         for item in self.args.iter() {
             cmd.push_all(item.as_slice());
         }
-        try!(con.send_bytes(cmd.as_slice()));
-        match con.read_response() {
+        match con.send_request(cmd.as_slice()) {
             Ok(val) => FromRedisValue::from_redis_value(&val),
             Err(e) => Err(e),
         }

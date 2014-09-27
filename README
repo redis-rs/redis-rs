@@ -1,9 +1,8 @@
 redis-rs // A High Level Redis Library for Rust
 
-  redis-rs provides both low level access to redis functionality
-  as well as high level wrappers around them.  It supports simple
-  multi-connection handling to allow different tasks to all
-  connect to redis.  (Currently without pooling)
+  redis-rs provides convenient access to redis functionality.  It's currently
+  being re-designed to a nicer API that takes advantage to changes in newer
+  Rust versions.
 
 To build:
 
@@ -12,56 +11,3 @@ To build:
 To test:
 
   $ make test
-
-To compile and run the example:
-
-  $ make example
-  $ ./build/redis-example
-
-
-Low-level example:
-
-    extern crate redis;
-    use std::str::from_utf8;
-
-    fn main() {
-      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-      let mut con = client.get_connection().unwrap();
-      con.send_command("GET", [redis::StrArg("my_key")]);
-      match con.read_response() {
-	redis::Data(value) => {
-          println!("Got value: {}", from_utf8(value).unwrap());
-        },
-        redis::Error(redis::ResponseError, msg) => {
-            fail!(format!("Redis command failed: {}", msg));
-        },
-	_ => {
-          println!("Did not get value :-(");
-	}
-      }
-    }
-
-High-level example:
-
-    extern crate redis;
-
-    fn main() {
-      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-      let mut con = client.get_connection().unwrap();
-      println!("Got value: {}", con.get("my_key").unwrap_or("<no value>"));
-    }
-
-Scanning over all keys iteratively:
-
-    extern crate redis;
-
-    fn main() {
-      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-      let mut con = client.get_connection().unwrap();
-      println!("iterate over all keys starting with 'key:':");
-      for item in con.scan("key:*") {
-        println!(" > {}", item);
-        // note that keys might appear more than once due to how redis
-        // stateless cursors are implemented.
-      }
-    }

@@ -34,14 +34,6 @@ pub struct Error {
 }
 
 
-#[deriving(Clone)]
-pub enum CmdArg<'a> {
-    StrArg(&'a str),
-    IntArg(i64),
-    FloatArg(f32),
-    BytesArg(&'a [u8]),
-}
-
 pub type RedisResult<T> = Result<T, Error>;
 
 
@@ -230,7 +222,7 @@ impl FromRedisValue for Value {
 }
 
 impl FromRedisValue for () {
-    fn from_redis_value(v: &Value) -> RedisResult<()> {
+    fn from_redis_value(_v: &Value) -> RedisResult<()> {
         Ok(())
     }
 }

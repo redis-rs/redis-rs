@@ -35,12 +35,6 @@ pub use types::{
 
     Error,
 
-    CmdArg,
-        StrArg,
-        IntArg,
-        FloatArg,
-        BytesArg,
-
     RedisResult,
 
     /* conversion traits */
