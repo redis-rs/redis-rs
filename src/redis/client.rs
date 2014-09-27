@@ -1,7 +1,7 @@
 use url::Url;
 use std::io::{IoResult, IoError, InvalidInput};
 
-use connection::Connection;
+use connection::{Connection, connect};
 
 
 pub struct Client {
@@ -10,8 +10,27 @@ pub struct Client {
     db: i64,
 }
 
+/// The client acts as connector to the redis server.  By itself it does not
+/// do much other than providing a convenient way to fetch a connection from
+/// it.  In the future the plan is to provide a connection pool in the client.
+///
+/// When opening a client a URL in the following format should be used:
+///
+/// ```plain
+/// redis://host:port/db
+/// ```
+///
+/// Example usage::
+///
+/// ```rust,no_run
+/// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// let con = client.get_connection().unwrap();
+/// ```
 impl Client {
 
+    /// Connects to a redis server and returns a client.  This does not
+    /// actually open a connection yet but it does perform some basic
+    /// checks on the URL that might make the operation fail.
     pub fn open(uri: &str) -> IoResult<Client> {
         let u = try_unwrap!(from_str::<Url>(uri), Err(IoError {
             kind: InvalidInput,
@@ -38,7 +57,12 @@ impl Client {
         })
     }
 
+    /// Instructs the client to actually connect to redis and returns a
+    /// connection object.  The connection object can be used to send
+    /// commands to the server.  This can fail with a variety of errors
+    /// (like unreachable host) so it's important that you handle those
+    /// errors.
     pub fn get_connection(&self) -> IoResult<Connection> {
-        Connection::new(self.host.as_slice(), self.port, self.db)
+        connect(self.host.as_slice(), self.port, self.db)
     }
 }

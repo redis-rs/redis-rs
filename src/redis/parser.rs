@@ -23,10 +23,36 @@ macro_rules! try_io {
     )
 }
 
+/// The parser can be used to parse redis responses into values.  Generally
+/// you normally do not use this directly as it's already done for you by
+/// the client but in some more complex situations it might be useful to be
+/// able to parse the redis responses.
 impl<'a, T: Reader> Parser<T> {
 
+    /// Creates a new parser that parses the data behind the reader.  More
+    /// than one value can be behind the reader in which case the parser can
+    /// be invoked multiple times.  In other words: the stream does not have
+    /// to be terminated.
     pub fn new(reader: T) -> Parser<T> {
         Parser { reader: reader }
+    }
+
+    /* public api */
+
+    /// parses a single value out of the stream.  If there are multiple
+    /// values you can call this multiple times.  If the reader is not yet
+    /// ready this will block.
+    pub fn parse_value(&mut self) -> RedisResult<Value> {
+        let b = try_io!(self.reader.read_byte());
+        match b as char {
+            '+' => self.parse_status(),
+            ':' => self.parse_int(),
+            '$' => self.parse_data(),
+            '*' => self.parse_bulk(),
+            '-' => self.parse_error(),
+            _ => Err(Error::simple(ResponseError,
+                                        "Invalid response when parsing value")),
+        }
     }
 
     /* internal helpers */
@@ -98,21 +124,6 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
-    /* public api */
-
-    pub fn parse_value(&mut self) -> RedisResult<Value> {
-        let b = try_io!(self.reader.read_byte());
-        match b as char {
-            '+' => self.parse_status(),
-            ':' => self.parse_int(),
-            '$' => self.parse_data(),
-            '*' => self.parse_bulk(),
-            '-' => self.parse_error(),
-            _ => Err(Error::simple(ResponseError,
-                                        "Invalid response when parsing value")),
-        }
-    }
-
     fn parse_status(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
         if line.as_slice() == "OK" {
@@ -171,7 +182,10 @@ impl<'a, T: Reader> Parser<T> {
 }
 
 
-/// Parses bytes into a redis value
+/// Parses bytes into a redis value.
+///
+/// This is the most straightforward way to parse something into a low
+/// level redis value isntead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
     let mut parser = Parser::new(BufReader::new(bytes));
     parser.parse_value()

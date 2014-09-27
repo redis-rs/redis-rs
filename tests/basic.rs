@@ -57,7 +57,7 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(url.as_slice()).unwrap();
-        let mut con;
+        let con;
 
         loop {
             match client.get_connection() {
@@ -68,7 +68,7 @@ impl TestContext {
                 Ok(x) => { con = x; break; },
             }
         }
-        let _ : () = redis::cmd("FLUSHDB").execute(&mut con).unwrap();
+        redis::cmd("FLUSHDB").execute(&con);
 
         TestContext {
             server: server,
@@ -83,11 +83,35 @@ impl TestContext {
 
 
 #[test]
+fn test_getset() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(42i).execute(&con);
+    assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42i));
+
+    redis::cmd("SET").arg("bar").arg("foo").execute(&con);
+    assert_eq!(redis::cmd("GET").arg("bar").query(&con), Ok(b"foo".to_vec()));
+}
+
+#[test]
 fn test_incr() {
     let ctx = TestContext::new();
-    let mut con = ctx.connection();
+    let con = ctx.connection();
 
-    let _: () = redis::cmd("SET").arg("foo").arg(42i).execute(&mut con).unwrap();
-    let v: i32 = redis::cmd("INCR").arg("foo").execute(&mut con).unwrap();
-    assert_eq!(v, 43);
+    redis::cmd("SET").arg("foo").arg(42i).execute(&con);
+    assert_eq!(redis::cmd("INCR").arg("foo").query(&con), Ok(43i));
+}
+
+#[test]
+fn test_info() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let info : redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
+    assert_eq!(info.find(&"role"), Some(&redis::Status("master".to_string())));
+    assert_eq!(info.get("role"), Some("master".to_string()));
+    assert_eq!(info.get("loading"), Some(false));
+    assert!(info.len() > 0);
+    assert!(info.contains_key(&"role"));
 }
