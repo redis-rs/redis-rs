@@ -21,7 +21,7 @@ impl RedisServer {
             .stderr(process::Ignored)
             .spawn().unwrap();
         {
-            let mut stdin = process.stdin.take_unwrap();
+            let mut stdin = process.stdin.take().unwrap();
             stdin.write_str(format!("
                 bind 127.0.0.1
                 port {port}
@@ -68,7 +68,7 @@ impl TestContext {
                 Ok(x) => { con = x; break; },
             }
         }
-        con.execute("FLUSHDB", []).unwrap();
+        con.execute_raw("FLUSHDB", []).unwrap();
 
         TestContext {
             server: server,
@@ -86,21 +86,35 @@ impl TestContext {
 fn test_ping() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    con.execute("PING", []).unwrap();
+    con.execute_raw("PING", []).unwrap();
 }
 
 #[test]
 fn test_getset() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    con.execute("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
-    assert_eq!(con.execute("GET", [redis::StrArg("foo")]), Ok(redis::Data(b"42".to_vec())));
+    con.execute_raw("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
+    assert_eq!(con.execute_raw("GET", [redis::StrArg("foo")]), Ok(redis::Data(b"42".to_vec())));
 }
 
 #[test]
 fn test_incr() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    con.execute("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
-    assert_eq!(con.execute("INCR", [redis::StrArg("foo")]), Ok(redis::Int(43)));
+    con.execute_raw("SET", [redis::StrArg("foo"), redis::StrArg("42")]).unwrap();
+
+    assert_eq!(con.execute_raw("INCR", [redis::StrArg("foo")]), Ok(redis::Int(43)));
+
+    let v: i32 = con.execute("INCR", [redis::StrArg("foo")]).unwrap();
+    assert_eq!(v, 44);
+}
+
+#[test]
+fn test_new_api() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = redis::cmd("SET").arg("foo").arg(42i).execute(&mut con).unwrap();
+    let v: i32 = redis::cmd("INCR").arg("foo").execute(&mut con).unwrap();
+    assert_eq!(v, 43);
 }

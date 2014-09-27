@@ -1,8 +1,9 @@
 use std::io::{Reader, Writer, IoResult, IoError, ConnectionFailed};
 use std::io::net::tcp::TcpStream;
-use enums::{CmdArg, StrArg, IntArg, FloatArg, BytesArg,
-            RedisResult, Okay, RedisError, InternalIoError};
 
+use types::{CmdArg, StrArg, IntArg, FloatArg, BytesArg,
+            RedisResult, Okay, Error, Value, InternalIoError,
+            FromRedisValue};
 use parser::Parser;
 
 
@@ -22,8 +23,8 @@ impl Connection {
         };
 
         if db != 0 {
-            match rv.execute("SELECT", [IntArg(db)]) {
-                Ok(Okay) => {},
+            match rv.execute::<Value>("SELECT", [IntArg(db)]) {
+                Ok(Okay) => {}
                 _ => { return Err(IoError {
                     kind: ConnectionFailed,
                     desc: "Redis server refused to switch database",
@@ -66,12 +67,11 @@ impl Connection {
         rv
     }
 
-    pub fn send_command(&mut self, cmd: &str, args: &[CmdArg]) -> RedisResult {
-        let cmd = self.pack_command(cmd, args);
+    pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = &mut self.sock as &mut Writer;
-        match w.write(cmd.as_slice()) {
+        match w.write(bytes) {
             Err(err) => {
-                Err(RedisError::simple(
+                Err(Error::simple(
                     InternalIoError(err),
                     "Could not send command because of an IO error"))
             },
@@ -79,14 +79,26 @@ impl Connection {
         }
     }
 
-    pub fn read_response(&mut self) -> RedisResult {
+    pub fn read_response(&mut self) -> RedisResult<Value> {
         let mut parser = Parser::new(&mut self.sock as &mut Reader);
         parser.parse_value()
     }
 
-    pub fn execute(&mut self, cmd: &str, args: &[CmdArg]) -> RedisResult {
+    fn send_command(&mut self, cmd: &str, args: &[CmdArg]) -> RedisResult<Value> {
+        let c = self.pack_command(cmd, args);
+        self.send_bytes(c.as_slice())
+    }
+
+    pub fn execute_raw(&mut self, cmd: &str, args: &[CmdArg]) -> RedisResult<Value> {
         try!(self.send_command(cmd, args));
         self.read_response()
+    }
+
+    pub fn execute<T: FromRedisValue>(&mut self, cmd: &str, args: &[CmdArg]) -> RedisResult<T> {
+        match self.execute_raw(cmd, args) {
+            Ok(val) => FromRedisValue::from_redis_value(&val),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn get_db(&self) -> i64 {

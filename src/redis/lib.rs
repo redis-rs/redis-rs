@@ -13,10 +13,11 @@ extern crate url;
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use connection::Connection;
+pub use cmd::{cmd, Cmd};
 
-/* public enums */
-pub use enums::{
-    RedisErrorKind,
+pub use types::{
+    /* public types */
+    ErrorKind,
         ResponseError,
         ExecAbortError,
         BusyLoadingError,
@@ -24,7 +25,7 @@ pub use enums::{
         ExtensionError,
         InternalIoError,
 
-    RedisValue,
+    Value,
         Nil,
         Int,
         Data,
@@ -32,7 +33,7 @@ pub use enums::{
         Okay,
         Status,
 
-    RedisError,
+    Error,
 
     CmdArg,
         StrArg,
@@ -41,11 +42,16 @@ pub use enums::{
         BytesArg,
 
     RedisResult,
+
+    /* conversion traits */
+    FromRedisValue,
+    ToRedisArg
 };
 
 pub mod macros;
 
-mod enums;
 mod parser;
 mod client;
 mod connection;
+mod types;
+mod cmd;

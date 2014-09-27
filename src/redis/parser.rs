@@ -1,7 +1,7 @@
 use std::io::{Reader, BufReader};
 use std::str::from_utf8;
 
-use enums::{RedisResult, Nil, Int, Data, Bulk, Okay, Status, RedisError,
+use types::{RedisResult, Nil, Int, Data, Bulk, Okay, Status, Error, Value,
             ResponseError, ExecAbortError, BusyLoadingError,
             NoScriptError, ExtensionError, InternalIoError};
 
@@ -14,7 +14,7 @@ macro_rules! try_io {
     ($expr:expr) => (
         match $expr {
             Err(err) => {
-                return Err(RedisError::simple(
+                return Err(Error::simple(
                     InternalIoError(err),
                     "Operation failed because of an IO error"));
             },
@@ -32,25 +32,25 @@ impl<'a, T: Reader> Parser<T> {
     /* internal helpers */
 
     #[inline]
-    fn expect_char(&mut self, refchar: char) -> Result<(), RedisError> {
+    fn expect_char(&mut self, refchar: char) -> Result<(), Error> {
         if try_io!(self.reader.read_byte()) as char == refchar {
             Ok(())
         } else {
-            Err(RedisError::simple(ResponseError, "Invalid byte in response"))
+            Err(Error::simple(ResponseError, "Invalid byte in response"))
         }
     }
 
     #[inline]
-    fn expect_newline(&mut self) -> Result<(), RedisError> {
+    fn expect_newline(&mut self) -> Result<(), Error> {
         match try_io!(self.reader.read_byte()) as char {
             '\n' => { Ok(()) }
             '\r' => { self.expect_char('\n') }
-            _ => { Err(RedisError::simple(
+            _ => { Err(Error::simple(
                 ResponseError, "Invalid byte in response")) }
         }
     }
 
-    fn read_line(&mut self) -> Result<Vec<u8>, RedisError> {
+    fn read_line(&mut self) -> Result<Vec<u8>, Error> {
         let mut rv = vec![];
 
         loop {
@@ -68,10 +68,10 @@ impl<'a, T: Reader> Parser<T> {
         Ok(rv)
     }
 
-    fn read_string_line(&mut self) -> Result<String, RedisError> {
+    fn read_string_line(&mut self) -> Result<String, Error> {
         match String::from_utf8(try!(self.read_line())) {
             Err(_) => {
-                Err(RedisError::simple(
+                Err(Error::simple(
                     ResponseError,
                         "Expected valid string, got garbage"))
             }
@@ -79,7 +79,7 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
-    fn read(&mut self, bytes: uint) -> Result<Vec<u8>, RedisError> {
+    fn read(&mut self, bytes: uint) -> Result<Vec<u8>, Error> {
         let mut rv = vec![];
         rv.reserve(bytes);
 
@@ -90,17 +90,17 @@ impl<'a, T: Reader> Parser<T> {
         Ok(rv)
     }
 
-    fn read_int_line(&mut self) -> Result<i64, RedisError> {
+    fn read_int_line(&mut self) -> Result<i64, Error> {
         let line = try!(self.read_string_line());
         match from_str::<i64>(line.as_slice().trim()) {
-            None => Err(RedisError::simple(ResponseError, "Expected integer, got garbage")),
+            None => Err(Error::simple(ResponseError, "Expected integer, got garbage")),
             Some(value) => Ok(value)
         }
     }
 
     /* public api */
 
-    pub fn parse_value(&mut self) -> RedisResult {
+    pub fn parse_value(&mut self) -> RedisResult<Value> {
         let b = try_io!(self.reader.read_byte());
         match b as char {
             '+' => self.parse_status(),
@@ -108,12 +108,12 @@ impl<'a, T: Reader> Parser<T> {
             '$' => self.parse_data(),
             '*' => self.parse_bulk(),
             '-' => self.parse_error(),
-            _ => Err(RedisError::simple(ResponseError,
+            _ => Err(Error::simple(ResponseError,
                                         "Invalid response when parsing value")),
         }
     }
 
-    fn parse_status(&mut self) -> RedisResult {
+    fn parse_status(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
         if line.as_slice() == "OK" {
             Ok(Okay)
@@ -122,11 +122,11 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
-    fn parse_int(&mut self) -> RedisResult {
+    fn parse_int(&mut self) -> RedisResult<Value> {
         Ok(Int(try!(self.read_int_line())))
     }
 
-    fn parse_data(&mut self) -> RedisResult {
+    fn parse_data(&mut self) -> RedisResult<Value> {
         let length = try!(self.read_int_line());
         if length < 0 {
             Ok(Nil)
@@ -137,7 +137,7 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
-    fn parse_bulk(&mut self) -> RedisResult {
+    fn parse_bulk(&mut self) -> RedisResult<Value> {
         let length = try!(self.read_int_line());
         if length < 0 {
             Ok(Nil)
@@ -151,7 +151,7 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
-    fn parse_error(&mut self) -> RedisResult {
+    fn parse_error(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
         let mut pieces = line.as_slice().splitn(1, ' ');
         let kind = match pieces.next().unwrap() {
@@ -162,7 +162,7 @@ impl<'a, T: Reader> Parser<T> {
             other => ExtensionError(other.to_string()),
         };
         let message = pieces.next().unwrap_or("An unknown error ocurred.");
-        Err(RedisError {
+        Err(Error {
             kind: kind,
             desc: "A error was signalled by the server",
             detail: Some(message.to_string()),
@@ -172,7 +172,7 @@ impl<'a, T: Reader> Parser<T> {
 
 
 /// Parses bytes into a redis value
-pub fn parse_redis_value(bytes: &[u8]) -> RedisResult {
+pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
     let mut parser = Parser::new(BufReader::new(bytes));
     parser.parse_value()
 }

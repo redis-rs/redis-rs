@@ -3,6 +3,6 @@ name = "redis-rs"
 version = "0.2.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 
-[[lib]]
+[lib]
 name = "redis"
 path = "src/redis/lib.rs"
