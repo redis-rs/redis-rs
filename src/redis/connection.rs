@@ -11,6 +11,7 @@ struct ActualConnection {
     sock: TcpStream,
 }
 
+/// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: RefCell<ActualConnection>,
     db: i64,

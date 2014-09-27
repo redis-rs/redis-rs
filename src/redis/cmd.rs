@@ -1,6 +1,7 @@
 use types::{ToRedisArg, FromRedisValue, RedisResult};
 use connection::Connection;
 
+/// Represents redis commands.
 pub struct Cmd {
     args: Vec<Vec<u8>>
 }

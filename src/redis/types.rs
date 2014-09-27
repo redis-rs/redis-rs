@@ -1,10 +1,12 @@
 use std::fmt;
+use std::hash::Hash;
 use std::io::IoError;
 use std::from_str::from_str;
 use std::str::from_utf8;
-use std::collections::{HashMap, Collection};
+use std::collections::{HashMap, HashSet};
 
 
+/// An enum of all error kinds.
 #[deriving(PartialEq, Eq, Clone, Show)]
 pub enum ErrorKind {
     ResponseError,
@@ -17,6 +19,7 @@ pub enum ErrorKind {
 }
 
 
+/// Internal low-level redis value enum.
 #[deriving(PartialEq, Eq, Clone)]
 pub enum Value {
     Nil,
@@ -57,6 +60,7 @@ impl fmt::Show for Value {
 }
 
 
+/// Represents a redis error.
 #[deriving(PartialEq, Eq, Clone, Show)]
 pub struct Error {
     pub kind: ErrorKind,
@@ -65,6 +69,7 @@ pub struct Error {
 }
 
 
+/// Library generic result type.
 pub type RedisResult<T> = Result<T, Error>;
 
 
@@ -80,13 +85,14 @@ impl Error {
 }
 
 
+/// Used to convert a value into a redis argument string.
 pub trait ToRedisArg {
     fn to_redis_arg(&self) -> Vec<u8>;
 }
 
 
 macro_rules! invalid_type_error(
-    ($t:ty, $v:expr, $det:expr) => ({
+    ($v:expr, $det:expr) => ({
         return Err(Error {
             kind: TypeError,
             desc: "Response was of incompatible type",
@@ -186,14 +192,14 @@ macro_rules! from_redis_value_for_num_internal(
                     match from_utf8(bytes[]) {
                         Some(s) => match from_str(s.as_slice()) {
                             Some(rv) => Ok(rv),
-                            None => invalid_type_error!($t, v,
+                            None => invalid_type_error!(v,
                                 "Could not convert from string.")
                         },
-                        None => invalid_type_error!($t, v,
+                        None => invalid_type_error!(v,
                             "Invalid UTF-8 string."),
                     }
                 },
-                _ => invalid_type_error!($t, v,
+                _ => invalid_type_error!(v,
                     "Response type not convertible to numeric.")
             }
         }
@@ -240,12 +246,12 @@ impl FromRedisValue for bool {
                 if s.as_slice() == "1" { Ok(true) }
                 else if s.as_slice() == "0" { Ok(false) }
                 else {
-                    invalid_type_error!(bool, v,
+                    invalid_type_error!(v,
                         "Response status not valid boolean");
                 }
             }
             &Okay => Ok(true),
-            _ => invalid_type_error!(bool, v,
+            _ => invalid_type_error!(v,
                 "Response type not bool compatible."),
         }
     }
@@ -257,13 +263,13 @@ impl FromRedisValue for String {
             &Data(ref bytes) => {
                 match from_utf8(bytes[]) {
                     Some(s) => Ok(s.to_string()),
-                    None => invalid_type_error!(String, v,
+                    None => invalid_type_error!(v,
                         "Invalid UTF-8 string."),
                 }
             },
             &Okay => Ok("OK".to_string()),
             &Status(ref val) => Ok(val.to_string()),
-            _ => invalid_type_error!(String, v,
+            _ => invalid_type_error!(v,
                 "Response type not string compatible."),
         }
     }
@@ -277,7 +283,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             &Data(ref bytes) => {
                 match FromRedisValue::from_byte_vec(bytes.as_slice()) {
                     Some(x) => Ok(x),
-                    None => invalid_type_error!(Vec<T>, v,
+                    None => invalid_type_error!(v,
                         "Response type not vector compatible.")
                 }
             },
@@ -294,8 +300,44 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             &Nil => {
                 Ok(vec![])
             },
-            _ => invalid_type_error!(Vec<T>, v,
+            _ => invalid_type_error!(v,
                 "Response type not vector compatible.")
+        }
+    }
+}
+
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V>> {
+        match v {
+            &Bulk(ref items) => {
+                let mut rv = HashMap::new();
+                let mut iter = items.iter();
+                loop {
+                    let k = unwrap_or!(iter.next(), break);
+                    let v = unwrap_or!(iter.next(), break);
+                    rv.insert(try!(FromRedisValue::from_redis_value(k)),
+                              try!(FromRedisValue::from_redis_value(v)));
+                }
+                Ok(rv)
+            },
+            _ => invalid_type_error!(v,
+                "Response type not hashmap compatible")
+        }
+    }
+}
+
+impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
+        match v {
+            &Bulk(ref items) => {
+                let mut rv = HashSet::new();
+                for item in items.iter() {
+                    rv.insert(try!(FromRedisValue::from_redis_value(item)));
+                }
+                Ok(rv)
+            },
+            _ => invalid_type_error!(v,
+                "Response type not hashmap compatible")
         }
     }
 }
@@ -312,6 +354,7 @@ impl FromRedisValue for () {
     }
 }
 
+/// An info dictionary type.
 pub struct InfoDict {
     map: HashMap<String, Value>,
 }
@@ -342,12 +385,9 @@ impl InfoDict {
                 continue;
             }
             let mut p = line.splitn(1, ':');
-            let key = p.next();
-            let value = p.next();
-            if value.is_some() {
-                map.insert(key.unwrap().to_string(),
-                           Status(value.unwrap().to_string()));
-            }
+            let k = unwrap_or!(p.next(), continue).to_string();
+            let v = unwrap_or!(p.next(), continue).to_string();
+            map.insert(k, Status(v));
         }
         InfoDict { map: map }
     }

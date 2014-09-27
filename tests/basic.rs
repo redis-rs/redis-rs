@@ -5,6 +5,7 @@ use std::io::process;
 use std::io::{IoError, ConnectionRefused};
 use std::time::Duration;
 use std::io::timer::sleep;
+use std::collections::{HashMap, HashSet};
 
 pub static SERVER_PORT: int = 38991;
 
@@ -114,4 +115,39 @@ fn test_info() {
     assert_eq!(info.get("loading"), Some(false));
     assert!(info.len() > 0);
     assert!(info.contains_key(&"role"));
+}
+
+#[test]
+fn test_hash_ops() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("HSET").arg("foo").arg("key_1").arg(1i).execute(&con);
+    redis::cmd("HSET").arg("foo").arg("key_2").arg(2i).execute(&con);
+
+    let h : HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
+    assert_eq!(h.len(), 2);
+    assert_eq!(h.find_equiv(&"key_1"), Some(&1i32));
+    assert_eq!(h.find_equiv(&"key_2"), Some(&2i32));
+}
+
+#[test]
+fn test_set_ops() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SADD").arg("foo").arg(1i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(2i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(3i).execute(&con);
+
+    let mut s : Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    s.sort();
+    assert_eq!(s.len(), 3);
+    assert_eq!(s[], [1, 2, 3][]);
+
+    let set : HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    assert_eq!(set.len(), 3);
+    assert!(set.contains(&1i32));
+    assert!(set.contains(&2i32));
+    assert!(set.contains(&3i32));
 }

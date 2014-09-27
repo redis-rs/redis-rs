@@ -6,6 +6,7 @@ use types::{RedisResult, Nil, Int, Data, Bulk, Okay, Status, Error, Value,
             NoScriptError, ExtensionError, InternalIoError};
 
 
+/// The internal redis response parser.
 pub struct Parser<T> {
     reader: T,
 }

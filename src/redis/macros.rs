@@ -6,11 +6,11 @@ macro_rules! ensure {
     )
 }
 
-macro_rules! try_unwrap {
-    ($expr:expr, $err_result:expr) => (
+macro_rules! unwrap_or {
+    ($expr:expr, $or:expr) => (
         match $expr {
             Some(x) => x,
-            None => { return $err_result },
+            None => { $or; }
         }
     )
 }

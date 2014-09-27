@@ -4,6 +4,7 @@ use std::io::{IoResult, IoError, InvalidInput};
 use connection::{Connection, connect};
 
 
+/// The client type.
 pub struct Client {
     host: String,
     port: u16,
@@ -32,7 +33,7 @@ impl Client {
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
     pub fn open(uri: &str) -> IoResult<Client> {
-        let u = try_unwrap!(from_str::<Url>(uri), Err(IoError {
+        let u = unwrap_or!(from_str::<Url>(uri), return Err(IoError {
             kind: InvalidInput,
             desc: "Redis URL did not parse",
             detail: None,
@@ -48,7 +49,7 @@ impl Client {
             port: u.port.unwrap_or(6379),
             db: match u.path.to_string().as_slice().trim_chars('/') {
                 "" => 0,
-                path => try_unwrap!(from_str::<i64>(path), Err(IoError {
+                path => unwrap_or!(from_str::<i64>(path), return Err(IoError {
                     kind: InvalidInput,
                     desc: "Path is not a valid redis database number",
                     detail: None,

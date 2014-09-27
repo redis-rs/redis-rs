@@ -12,6 +12,26 @@
 //!     assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
 //! }
 //! ```
+//!
+//! Because redis inherently is mostly type-less and the protocol is not
+//! exactly friendly to developers, this library provides flexible support
+//! for casting values to the intended results.  This is driven through the
+//! `FromRedisValue` trait.
+//!
+//! The `query` method of a `Cmd` can conver the value to what you expect
+//! the function to return:
+//!
+//! ```rust,no_run
+//! # use std::collections::{HashMap, HashSet};
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let count : i32 = redis::cmd("GET").arg("my_counter").query(&con).unwrap();
+//! let name : String = redis::cmd("GET").arg("my_name").query(&con).unwrap();
+//! let bin : Vec<u8> = redis::cmd("GET").arg("my_binary").query(&con).unwrap();
+//! let map : HashMap<String, i32> = redis::cmd("HGETALL").arg("my_hash").query(&con).unwrap();
+//! let keys : Vec<String> = redis::cmd("KEYS").query(&con).unwrap();
+//! let mems : HashSet<i32> = redis::cmd("SMEMBERS").arg("s").query(&con).unwrap();
+//! ```
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
@@ -21,6 +41,7 @@
 #![deny(non_camel_case_types)]
 
 #![feature(macro_rules)]
+#![feature(default_type_params)]
 
 extern crate url;
 
