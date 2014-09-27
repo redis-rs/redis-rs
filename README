@@ -11,3 +11,18 @@ To build:
 To test:
 
   $ make test
+
+To make the docs:
+
+  $ make doc
+
+How the API looks:
+
+  extern crate redis;
+
+  fn main() {
+      let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+      let con = client.get_connection().unwrap();
+      redis::cmd("SET").arg("my_key").arg(42i).execute(&con);
+      assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
+  }
