@@ -168,6 +168,9 @@ impl<'a> ToRedisArg for &'a [u8] {
 ///
 /// This trait is well supported throughout the library and you can
 /// implement it for your own types if you want.
+///
+/// In addition to what you can see from the docs, this is also implemented
+/// for tuples up to size 12 and for Vec<u8>.
 pub trait FromRedisValue {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
@@ -353,6 +356,49 @@ impl FromRedisValue for () {
         Ok(())
     }
 }
+
+
+macro_rules! from_redis_value_for_tuple(
+    () => ();
+    ($($name:ident,)+) => (
+        #[doc(hidden)]
+        impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
+            // we have local variables named T1 as dummies and those
+            // variables are unused.
+            #[allow(non_snake_case, unused_variable)]
+            fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
+                match v {
+                    &Bulk(ref items) => {
+                        // hacky way to count the tuple size
+                        let mut n = 0;
+                        $(let $name = (); n += 1;)*
+                        if items.len() != n {
+                            invalid_type_error!(v, "Bulk response of wrong dimension")
+                        }
+
+                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                        // postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); try!(FromRedisValue::from_redis_value(
+                             &items[{ i += 1; i - 1 }]))},)*))
+                    }
+                    _ => invalid_type_error!(v, "Not a bulk response")
+                }
+            }
+        }
+        from_redis_value_for_tuple_peel!($($name,)*)
+    )
+)
+
+/// This chips of the leading one and recurses for the rest.  So if the first
+/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
+/// of size 1 (does not implement down to unit).
+macro_rules! from_redis_value_for_tuple_peel(
+    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*))
+)
+
+from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+
 
 /// An info dictionary type.
 pub struct InfoDict {

@@ -151,3 +151,19 @@ fn test_set_ops() {
     assert!(set.contains(&2i32));
     assert!(set.contains(&3i32));
 }
+
+#[test]
+fn test_scan() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SADD").arg("foo").arg(1i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(2i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(3i).execute(&con);
+
+    let (cur, mut s) : (i32, Vec<i32>) = redis::cmd("SSCAN").arg("foo").arg(0i).query(&con).unwrap();
+    s.sort();
+    assert_eq!(cur, 0i32);
+    assert_eq!(s.len(), 3);
+    assert_eq!(s[], [1, 2, 3][]);
+}
