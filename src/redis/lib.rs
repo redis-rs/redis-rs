@@ -2,6 +2,14 @@
 //! a general purpose interface to Redis and also provides specific helpers for
 //! commonly used functionality.
 //!
+//! # Basic Operation
+//!
+//! To open a connection you need to create a client and then to fetch a
+//! connection from it.  In the future there will be a connection pool for
+//! those, currently each connection is separate and not pooled.
+//!
+//! Queries are then performed through the `execute` and `query` methods.
+//!
 //! ```rust,no_run
 //! extern crate redis;
 //!
@@ -13,14 +21,18 @@
 //! }
 //! ```
 //!
+//! ## Type Conversions
+//!
 //! Because redis inherently is mostly type-less and the protocol is not
 //! exactly friendly to developers, this library provides flexible support
 //! for casting values to the intended results.  This is driven through the
-//! `FromRedisValue` trait.
+//! `FromRedisValue` and `ToRedisArgs` traits.
 //!
-//! The `query` method of a `Cmd` can convert the value to what you expect
-//! the function to return.  This is quite flexible, allows vectors, tuples,
-//! hashsets and maps as well as optional values:
+//! The `arg` method of the command will accept a wide range of types through
+//! the `ToRedisArgs` trait and the `query` method of a command can convert the
+//! value to what you expect the function to return through the `FromRedisValue`
+//! trait.  This is quite flexible and allows vectors, tuples, hashsets, hashmaps
+//! as well as optional values:
 //!
 //! ```rust,no_run
 //! # use std::collections::{HashMap, HashSet};
@@ -36,6 +48,29 @@
 //! let mems : HashSet<i32> = redis::cmd("SMEMBERS").arg("s").query(&con).unwrap();
 //! let (k1, k2) : (String, String) = redis::cmd("MGET").arg("k1").arg("k2").query(&con).unwrap();
 //! ```
+//!
+//! ## Iteration Protocol
+//!
+//! In addition to sending a single query you iterators are also supported.  When
+//! used with regular bulk responses they don't give you much over querying and
+//! converting into a vector (both use a vector internally) but they can also
+//! be used with `SCAN` like commands in which case iteration will send more
+//! queries until the cursor is exhausted:
+//!
+//! ```rust,no_run
+//! # use std::collections::{HashMap, HashSet};
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let mut cmd = redis::cmd("SSCAN");
+//! let mut iter : redis::Iter<int> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+//! for x in iter {
+//!     // do something with the item
+//! }
+//! ```
+//!
+//! As you can see the cursor argument needs to be defined with `cursor_arg` instead
+//! of `arg` so that the library knows which argument needs updating as the
+//! query is run for more items.
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
