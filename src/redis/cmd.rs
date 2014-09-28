@@ -90,7 +90,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 /// for lifetimes of temporaries, sometimes you need to hold on to
 /// the initially generated command:
 ///
-/// ```rust
+/// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let mut cmd = redis::cmd("SMEMBERS");
