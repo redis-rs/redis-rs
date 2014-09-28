@@ -18,14 +18,17 @@
 //! for casting values to the intended results.  This is driven through the
 //! `FromRedisValue` trait.
 //!
-//! The `query` method of a `Cmd` can conver the value to what you expect
-//! the function to return:
+//! The `query` method of a `Cmd` can convert the value to what you expect
+//! the function to return.  This is quite flexible, allows vectors, tuples,
+//! hashsets and maps as well as optional values:
 //!
 //! ```rust,no_run
 //! # use std::collections::{HashMap, HashSet};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let count : i32 = redis::cmd("GET").arg("my_counter").query(&con).unwrap();
+//! let count = redis::cmd("GET").arg("my_counter").query(&con).unwrap_or(0i32);
+//! let k : Option<String> = redis::cmd("GET").arg("missing_key").query(&con).unwrap();
 //! let name : String = redis::cmd("GET").arg("my_name").query(&con).unwrap();
 //! let bin : Vec<u8> = redis::cmd("GET").arg("my_binary").query(&con).unwrap();
 //! let map : HashMap<String, i32> = redis::cmd("HGETALL").arg("my_hash").query(&con).unwrap();
@@ -82,13 +85,6 @@ pub use types::{
 
     /* utility types */
     InfoDict,
-    RngB,
-        RngI,
-        RngF,
-        RngIx,
-        RngFx,
-        RngNegInf,
-        RngPosInf,
 
     /* conversion traits */
     FromRedisValue,

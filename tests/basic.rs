@@ -180,6 +180,9 @@ fn test_optionals() {
         .arg("foo").arg("missing").query(&con).unwrap();
     assert_eq!(a, Some(1i32));
     assert_eq!(b, None);
+
+    let a = redis::cmd("GET").arg("missing").query(&con).unwrap_or(0i32);
+    assert_eq!(a, 0i32);
 }
 
 #[test]
