@@ -1,7 +1,10 @@
 test:
 	@RUST_TEST_TASKS=1 cargo test
 
-doc:
+docs:
 	@cargo doc
 
-.PHONY: test doc
+upload-docs: docs
+	@./upload-docs.sh
+
+.PHONY: test docs
