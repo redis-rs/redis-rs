@@ -26,3 +26,7 @@ How the API looks:
       redis::cmd("SET").arg("my_key").arg(42i).execute(&con);
       assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
   }
+
+Documentation can be found here:
+
+  http://mitsuhiko.github.io/redis-rs/redis/
