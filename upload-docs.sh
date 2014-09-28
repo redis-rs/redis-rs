@@ -8,6 +8,11 @@ git init
 
 # Copy over the documentation
 cp -r ../target/doc/* .
+cat <<EOF > index.html
+<!doctype html>
+<title>redis-rs</title>
+<meta http-equiv="refresh" content="0; ./redis/">
+EOF
 
 # Add, commit and push files
 git add -f --all .
