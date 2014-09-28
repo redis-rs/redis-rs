@@ -58,7 +58,6 @@
 //! queries until the cursor is exhausted:
 //!
 //! ```rust,no_run
-//! # use std::collections::{HashMap, HashSet};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let mut cmd = redis::cmd("SSCAN");
