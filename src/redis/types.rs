@@ -19,6 +19,37 @@ pub enum ErrorKind {
     InternalIoError(IoError),
 }
 
+/// A utility enum that can represent redis range boundaries.  This is primarily
+/// useful for functions such as ZRANGEBYSCORE.
+#[deriving(PartialEq, Clone)]
+pub enum RngB {
+    /// an inclusive integer boundary
+    RngI(i64),
+    /// an inclusive floating point boundary
+    RngF(f64),
+    /// an exclusive integer boundary
+    RngIx(i64),
+    /// an exclusive floating point boundary
+    RngFx(f64),
+    /// negative infinity
+    RngNegInf,
+    /// positive infinity
+    RngPosInf,
+}
+
+impl fmt::Show for RngB {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &RngI(val) => write!(fmt, "{}", val),
+            &RngF(val) => write!(fmt, "{}", val),
+            &RngIx(val) => write!(fmt, "({}", val),
+            &RngFx(val) => write!(fmt, "({}", val),
+            &RngNegInf => write!(fmt, "-inf"),
+            &RngPosInf => write!(fmt, "+inf"),
+        }
+    }
+}
+
 
 /// Internal low-level redis value enum.
 #[deriving(PartialEq, Eq, Clone)]
@@ -204,6 +235,7 @@ string_based_to_redis_impl!(f32)
 string_based_to_redis_impl!(f64)
 string_based_to_redis_impl!(int)
 string_based_to_redis_impl!(uint)
+string_based_to_redis_impl!(RngB)
 
 
 impl ToRedisArg for String {

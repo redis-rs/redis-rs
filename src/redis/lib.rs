@@ -82,6 +82,13 @@ pub use types::{
 
     /* utility types */
     InfoDict,
+    Rng,
+        RngI,
+        RngF,
+        RngIx,
+        RngFx,
+        RngNegInf,
+        RngPosInf,
 
     /* conversion traits */
     FromRedisValue,
