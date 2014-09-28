@@ -44,6 +44,8 @@
 #![feature(macro_rules)]
 #![feature(default_type_params)]
 
+#![experimental]
+
 extern crate url;
 
 /* public api */
