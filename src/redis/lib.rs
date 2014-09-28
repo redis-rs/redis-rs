@@ -56,7 +56,7 @@ extern crate serialize;
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use connection::Connection;
-pub use cmd::{cmd, Cmd};
+pub use cmd::{cmd, Cmd, Iter};
 
 #[doc(hidden)]
 pub use types::{

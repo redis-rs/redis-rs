@@ -10,12 +10,20 @@ use serialize::json;
 /// An enum of all error kinds.
 #[deriving(PartialEq, Eq, Clone, Show)]
 pub enum ErrorKind {
+    /// The server generated an invalid response.
     ResponseError,
+    /// Operation failed because of a type mismatch.
     TypeError,
+    /// A script execution was aborted.
     ExecAbortError,
+    /// The server cannot response because it's loading a dump.
     BusyLoadingError,
+    /// A script that was requested does not actually exist.
     NoScriptError,
+    /// A error that is unknown to the library.  This might be used
+    /// by future redis servers or custom extensions.
     ExtensionError(String),
+    /// An IO error was encountered while talking to the server.
     InternalIoError(IoError),
 }
 
@@ -23,12 +31,56 @@ pub enum ErrorKind {
 /// Internal low-level redis value enum.
 #[deriving(PartialEq, Eq, Clone)]
 pub enum Value {
+    /// A nil response from the server.
     Nil,
+    /// An integer response.  Note that there are a few situations
+    /// in which redis actually returns a string for an integer which
+    /// is why this library generally treats integers and strings
+    /// the same for all numeric responses.
     Int(i64),
+    /// An arbitary binary data.
     Data(Vec<u8>),
+    /// A bulk response of more data.  This is generally used by redis
+    /// to express nested structures.
     Bulk(Vec<Value>),
-    Okay,
+    /// A status response.
     Status(String),
+    /// A status response which represents the string "OK".
+    Okay,
+}
+
+/// Values are generally not used directly unless you are using the
+/// more low level functionality in the library.  For the most part
+/// this is hidden with the help of the `FromRedisValue` trait.
+///
+/// While on the redis protocol there is an error type this is already
+/// separated at an early point so the value only holds the remaining
+/// types.
+impl Value {
+
+    /// Checks if the return value looks like it fulfils the cursor
+    /// protocol.  That means the result is a bulk item of length
+    /// two with the first one being a cursor and the second a
+    /// bulk response.
+    pub fn looks_like_cursor(&self) -> bool {
+        match self {
+            &Bulk(ref items) => {
+                if items.len() != 2 {
+                    return false;
+                }
+                match items[0] {
+                    Data(_) => {},
+                    _ => { return false; }
+                };
+                match items[1] {
+                    Bulk(_) => {},
+                    _ => { return false; }
+                }
+                return true;
+            }
+            _ => { return false; }
+        }
+    }
 }
 
 impl fmt::Show for Value {

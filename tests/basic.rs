@@ -201,3 +201,24 @@ fn test_json() {
         U64(3),
     ]));
 }
+
+#[test]
+fn test_scanning() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+    let mut unseen = HashSet::new();
+
+    for x in range(0u, 1000u) {
+        redis::cmd("SADD").arg("foo").arg(x).execute(&con);
+        unseen.insert(x);
+    }
+
+    let mut cmd = redis::cmd("SSCAN");
+    let mut iter = cmd.arg("foo").cursor_arg(0).iter(&con).unwrap();
+
+    for x in iter {
+        unseen.remove(&x);
+    }
+
+    assert_eq!(unseen.len(), 0);
+}
