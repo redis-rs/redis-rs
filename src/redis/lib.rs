@@ -82,7 +82,7 @@ pub use types::{
 
     /* utility types */
     InfoDict,
-    Rng,
+    RngB,
         RngI,
         RngF,
         RngIx,
