@@ -1,16 +1,44 @@
-use types::{ToRedisArg, FromRedisValue, RedisResult};
+use types::{ToRedisArgs, FromRedisValue, RedisResult};
 use connection::Connection;
+
+enum Arg {
+    SimpleArg(Vec<u8>),
+    CursorArg,
+}
+
+
+fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
+    let mut cmd = vec![];
+    cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
+
+    {
+        let encode = |item: &[u8]| {
+            cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
+            cmd.push_all(item);
+            cmd.push_all(b"\r\n");
+        };
+
+        for item in args.iter() {
+            match *item {
+                CursorArg => encode(cursor.to_string().as_bytes()),
+                SimpleArg(ref val) => encode(val[]),
+            }
+        }
+    }
+
+    cmd
+}
 
 /// Represents redis commands.
 pub struct Cmd {
-    args: Vec<Vec<u8>>,
-    scan_arg: u16,
+    args: Vec<Arg>,
+    cursor: Option<u64>,
 }
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
-    cursor: i64,
+    cursor: u64,
     con: &'a Connection,
     cmd: &'a Cmd,
 }
@@ -31,7 +59,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
             self.cursor), return None);
         let rv = unwrap_or!(self.con.send_packed_command(
             pcmd[]).ok(), return None);
-        let (cur, mut batch) : (i64, Vec<T>) = unwrap_or!(
+        let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
             FromRedisValue::from_redis_value(&rv).ok(), return None);
         batch.reverse();
 
@@ -65,18 +93,32 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 /// ```rust
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
-/// let mut cmd = redis::cmd("SET");
-/// let mut iter = cmd.arg("...").arg("...").iter(&con);
+/// let mut cmd = redis::cmd("SMEMBERS");
+/// let mut iter : redis::Iter<i32> = cmd.arg("my_set").iter(&con).unwrap();
 /// ```
 impl Cmd {
     /// Creates a new empty command.
     pub fn new() -> Cmd {
-        Cmd { args: vec![], scan_arg: 0 }
+        Cmd { args: vec![], cursor: None }
     }
 
-    /// Appends an argument to the command.
-    pub fn arg<T: ToRedisArg>(&mut self, arg: T) -> &mut Cmd {
-        self.args.push(arg.to_redis_arg());
+    /// Appends an argument to the command.  The argument passed must
+    /// be a type that implements `ToRedisArgs`.  Most primitive types as
+    /// well as vectors of primitive types implement it.
+    ///
+    /// For instance all of the following are valid:
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let con = client.get_connection().unwrap();
+    /// redis::cmd("SET").arg(["my_key", "my_value"][]);
+    /// redis::cmd("SET").arg("my_key").arg(42i);
+    /// redis::cmd("SET").arg("my_key").arg(b"my_value");
+    /// ```
+    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
+        for item in arg.to_redis_args().into_iter() {
+            self.args.push(SimpleArg(item));
+        }
         self
     }
 
@@ -94,42 +136,32 @@ impl Cmd {
     ///     // do something with the item
     /// }
     /// ```
-    pub fn cursor_arg(&mut self, start: u64) -> &mut Cmd {
+    pub fn cursor_arg(&mut self, cursor: u64) -> &mut Cmd {
         assert!(!self.in_scan_mode());
-        self.scan_arg = self.args.len() as u16;
-        self.arg(start)
+        self.cursor = Some(cursor);
+        self.args.push(CursorArg);
+        self
     }
 
     /// Returns the packed command as a byte vector.
     pub fn get_packed_command(&self) -> Vec<u8> {
-        let mut cmd = vec![];
-        cmd.push_all(format!("*{}\r\n", self.args.len()).as_bytes());
-        for item in self.args.iter() {
-            cmd.push_all(item.as_slice());
-        }
-        cmd
+        encode_command(&self.args, self.cursor.unwrap_or(0))
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
     /// provided value.  If the command is not in scan mode, `None`
     /// is returned.
-    fn get_packed_command_with_cursor(&self, cursor: i64) -> Option<Vec<u8>> {
+    fn get_packed_command_with_cursor(&self, cursor: u64) -> Option<Vec<u8>> {
         if !self.in_scan_mode() {
-            return None;
+            None
+        } else {
+            Some(encode_command(&self.args, cursor))
         }
-        let mut args = self.args.clone();
-        *args.get_mut(self.scan_arg as uint) = cursor.to_redis_arg();
-        let mut cmd = vec![];
-        cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
-        for item in args.iter() {
-            cmd.push_all(item.as_slice());
-        }
-        Some(cmd)
     }
 
     /// Returns true if the command is in scan mode.
     pub fn in_scan_mode(&self) -> bool {
-        self.scan_arg > 0
+        self.cursor.is_some()
     }
 
     /// Sends the command as query to the connection and converts the
@@ -165,7 +197,7 @@ impl Cmd {
         let mut cursor = 0;
 
         if rv.looks_like_cursor() {
-            let (next, b) : (i64, Vec<T>) = try!(FromRedisValue::from_redis_value(&rv));
+            let (next, b) : (u64, Vec<T>) = try!(FromRedisValue::from_redis_value(&rv));
             batch = b;
             cursor = next;
         } else {
@@ -191,7 +223,7 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
-    /// let _ : () = redis::cmd("PING").execute(&con).unwrap();
+    /// let _ : () = redis::cmd("PING").query(&con).unwrap();
     /// ```
     pub fn execute(&self, con: &Connection) {
         let _ : () = self.query(con).unwrap();

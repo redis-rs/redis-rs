@@ -204,9 +204,27 @@ impl Collection for InfoDict {
 }
 
 
-/// Used to convert a value into a redis argument string.
-pub trait ToRedisArg {
-    fn to_redis_arg(&self) -> Vec<u8>;
+/// Used to convert a value into one or multiple redis argument
+/// strings.  Most values will produce exactly one item but in
+/// some cases it might make sense to produce more than one.
+pub trait ToRedisArgs {
+    /// This converts the value into a vector of bytes.  Each item
+    /// is a single argument.  Most items generate a vector of a
+    /// single item.
+    ///
+    /// The exception to this rule currently are vectors of items.
+    fn to_redis_args(&self) -> Vec<Vec<u8>>;
+
+    /// This only exists internally as a workaround for the lack of
+    /// specialization.
+    #[doc(hidden)]
+    fn make_arg_vec(items: &[Self]) -> Vec<Vec<u8>> {
+        let mut rv = vec![];
+        for item in items.iter() {
+            rv.push_all(item.to_redis_args().as_slice());
+        }
+        rv
+    }
 }
 
 
@@ -220,31 +238,29 @@ macro_rules! invalid_type_error(
     })
 )
 
-macro_rules! format_for_redis(
-    ($v:expr) => ({
-        let mut rv = vec![];
-        let b = $v;
-        rv.push_all(format!("${}\r\n", b.len()).as_bytes());
-        rv.push_all(b[]);
-        rv.push_all(b"\r\n");
-        rv
-    })
-)
-
 macro_rules! string_based_to_redis_impl(
     ($t:ty) => (
-        impl ToRedisArg for $t {
-            fn to_redis_arg(&self) -> Vec<u8> {
+        impl ToRedisArgs for $t {
+            fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let s = self.to_string();
-                format_for_redis!(s.as_bytes())
+                vec![s.as_bytes().to_vec()]
             }
         }
     )
 )
 
 
-string_based_to_redis_impl!(bool)
-string_based_to_redis_impl!(u8)
+impl ToRedisArgs for u8 {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let s = self.to_string();
+        vec![s.as_bytes().to_vec()]
+    }
+
+    fn make_arg_vec(items: &[u8]) -> Vec<Vec<u8>> {
+        vec![items.to_vec()]
+    }
+}
+
 string_based_to_redis_impl!(i8)
 string_based_to_redis_impl!(i16)
 string_based_to_redis_impl!(u16)
@@ -256,35 +272,36 @@ string_based_to_redis_impl!(f32)
 string_based_to_redis_impl!(f64)
 string_based_to_redis_impl!(int)
 string_based_to_redis_impl!(uint)
+string_based_to_redis_impl!(bool)
 
 
-impl ToRedisArg for String {
-    fn to_redis_arg(&self) -> Vec<u8> {
-        format_for_redis!(self.as_bytes())
+impl ToRedisArgs for String {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        vec![self.as_bytes().to_vec()]
     }
 }
 
-impl<'a> ToRedisArg for &'a str {
-    fn to_redis_arg(&self) -> Vec<u8> {
-        format_for_redis!(self.as_bytes())
+impl<'a> ToRedisArgs for &'a str {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        vec![self.as_bytes().to_vec()]
     }
 }
 
-impl ToRedisArg for Vec<u8> {
-    fn to_redis_arg(&self) -> Vec<u8> {
-        format_for_redis!(self.to_vec())
+impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_vec(self.as_slice())
     }
 }
 
-impl<'a> ToRedisArg for &'a [u8] {
-    fn to_redis_arg(&self) -> Vec<u8> {
-        format_for_redis!(self.to_vec())
+impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_vec(*self)
     }
 }
 
-impl ToRedisArg for json::Json {
-    fn to_redis_arg(&self) -> Vec<u8> {
-        json::encode(self).into_bytes()
+impl ToRedisArgs for json::Json {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        vec![json::encode(self).into_bytes()]
     }
 }
 

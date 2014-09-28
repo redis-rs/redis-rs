@@ -85,6 +85,18 @@ impl TestContext {
 
 
 #[test]
+fn test_args() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SET").arg("key1").arg(b"foo").execute(&con);
+    redis::cmd("SET").arg(["key2", "bar"][]).execute(&con);
+
+    assert_eq!(redis::cmd("MGET").arg(["key1", "key2"][]).query(&con),
+               Ok(("foo".to_string(), b"bar".to_vec())));
+}
+
+#[test]
 fn test_getset() {
     let ctx = TestContext::new();
     let con = ctx.connection();

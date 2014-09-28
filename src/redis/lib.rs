@@ -88,7 +88,7 @@ pub use types::{
 
     /* conversion traits */
     FromRedisValue,
-    ToRedisArg
+    ToRedisArgs,
 };
 
 pub mod macros;
