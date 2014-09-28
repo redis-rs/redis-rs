@@ -47,6 +47,7 @@
 #![experimental]
 
 extern crate url;
+extern crate serialize;
 
 /* public api */
 pub use parser::{parse_redis_value, Parser};

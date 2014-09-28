@@ -1,5 +1,6 @@
 extern crate redis;
 extern crate libc;
+extern crate serialize;
 
 use std::io::process;
 use std::io::{IoError, ConnectionRefused};
@@ -166,4 +167,34 @@ fn test_scan() {
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
     assert_eq!(s[], [1, 2, 3][]);
+}
+
+#[test]
+fn test_optionals() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(1i).execute(&con);
+
+    let (a, b) : (Option<i32>, Option<i32>) = redis::cmd("MGET")
+        .arg("foo").arg("missing").query(&con).unwrap();
+    assert_eq!(a, Some(1i32));
+    assert_eq!(b, None);
+}
+
+#[test]
+fn test_json() {
+    use serialize::json::{Json, List, U64};
+
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg("[1, 2, 3]").execute(&con);
+
+    let json : Json = redis::cmd("GET").arg("foo").query(&con).unwrap();
+    assert_eq!(json, List(vec![
+        U64(1),
+        U64(2),
+        U64(3),
+    ]));
 }

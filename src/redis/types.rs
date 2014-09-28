@@ -4,6 +4,7 @@ use std::io::IoError;
 use std::from_str::from_str;
 use std::str::from_utf8;
 use std::collections::{HashMap, HashSet};
+use serialize::json;
 
 
 /// An enum of all error kinds.
@@ -85,6 +86,72 @@ impl Error {
 }
 
 
+/// An info dictionary type.
+pub struct InfoDict {
+    map: HashMap<String, Value>,
+}
+
+/// This type provides convenient access to key/value data returned by
+/// the "INFO" command.  It acts like a regular mapping but also has
+/// a convenience method `get` which can return data in the appropriate
+/// type.
+///
+/// For instance this can be used to query the server for the role it's
+/// in (master, slave) etc:
+///
+/// ```rust,no_run
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let con = client.get_connection().unwrap();
+/// let info : redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
+/// let role : String = info.get("role").unwrap();
+/// ```
+impl InfoDict {
+    /// Creates a new info dictionary from a string in the response of
+    /// the INFO command.  Each line is a key, value pair with the
+    /// key and value separated by a colon (`:`).  Lines starting with a
+    /// hash (`#`) are ignored.
+    pub fn new(kvpairs: &str) -> InfoDict {
+        let mut map = HashMap::new();
+        for line in kvpairs.lines_any() {
+            if line.len() == 0 || line.starts_with("#") {
+                continue;
+            }
+            let mut p = line.splitn(1, ':');
+            let k = unwrap_or!(p.next(), continue).to_string();
+            let v = unwrap_or!(p.next(), continue).to_string();
+            map.insert(k, Status(v));
+        }
+        InfoDict { map: map }
+    }
+
+    /// Fetches a value by key and converts it into the given type.
+    /// Typical types are `String`, `bool` and integer types.
+    pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
+        match self.find(&key) {
+            Some(ref x) => FromRedisValue::from_redis_value(*x).ok(),
+            None => None,
+        }
+    }
+}
+
+impl<'a> Map<&'a str, Value> for InfoDict {
+
+    fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
+        self.map.find_equiv(key)
+    }
+
+    fn contains_key<'x>(&'x self, key: &&str) -> bool {
+        self.find(key).is_some()
+    }
+}
+
+impl Collection for InfoDict {
+    fn len(&self) -> uint {
+        self.map.len()
+    }
+}
+
+
 /// Used to convert a value into a redis argument string.
 pub trait ToRedisArg {
     fn to_redis_arg(&self) -> Vec<u8>;
@@ -125,6 +192,10 @@ macro_rules! string_based_to_redis_impl(
 
 
 string_based_to_redis_impl!(bool)
+string_based_to_redis_impl!(u8)
+string_based_to_redis_impl!(i8)
+string_based_to_redis_impl!(i16)
+string_based_to_redis_impl!(u16)
 string_based_to_redis_impl!(i32)
 string_based_to_redis_impl!(u32)
 string_based_to_redis_impl!(i64)
@@ -156,6 +227,12 @@ impl ToRedisArg for Vec<u8> {
 impl<'a> ToRedisArg for &'a [u8] {
     fn to_redis_arg(&self) -> Vec<u8> {
         format_for_redis!(self.to_vec())
+    }
+}
+
+impl ToRedisArg for json::Json {
+    fn to_redis_arg(&self) -> Vec<u8> {
+        json::encode(self).into_bytes()
     }
 }
 
@@ -229,6 +306,7 @@ impl FromRedisValue for u8 {
     }
 }
 
+from_redis_value_for_num!(i8)
 from_redis_value_for_num!(i16)
 from_redis_value_for_num!(u16)
 from_redis_value_for_num!(i32)
@@ -400,54 +478,6 @@ macro_rules! from_redis_value_for_tuple_peel(
 from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 
-/// An info dictionary type.
-pub struct InfoDict {
-    map: HashMap<String, Value>,
-}
-
-/// This type provides convenient access to key/value data returned by
-/// the "INFO" command.  It acts like a regular mapping but also has
-/// a convenience method `get` which can return data in the appropriate
-/// type.
-///
-/// For instance this can be used to query the server for the role it's
-/// in (master, slave) etc:
-///
-/// ```rust,no_run
-/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
-/// let info : redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
-/// let role : String = info.get("role").unwrap();
-/// ```
-impl InfoDict {
-    /// Creates a new info dictionary from a string in the response of
-    /// the INFO command.  Each line is a key, value pair with the
-    /// key and value separated by a colon (`:`).  Lines starting with a
-    /// hash (`#`) are ignored.
-    pub fn new(kvpairs: &str) -> InfoDict {
-        let mut map = HashMap::new();
-        for line in kvpairs.lines_any() {
-            if line.len() == 0 || line.starts_with("#") {
-                continue;
-            }
-            let mut p = line.splitn(1, ':');
-            let k = unwrap_or!(p.next(), continue).to_string();
-            let v = unwrap_or!(p.next(), continue).to_string();
-            map.insert(k, Status(v));
-        }
-        InfoDict { map: map }
-    }
-
-    /// Fetches a value by key and converts it into the given type.
-    /// Typical types are `String`, `bool` and integer types.
-    pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
-        match self.find(&key) {
-            Some(ref x) => FromRedisValue::from_redis_value(*x).ok(),
-            None => None,
-        }
-    }
-}
-
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
         let s : String = try!(FromRedisValue::from_redis_value(v));
@@ -455,19 +485,27 @@ impl FromRedisValue for InfoDict {
     }
 }
 
-impl<'a> Map<&'a str, Value> for InfoDict {
-
-    fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
-        self.map.find_equiv(key)
-    }
-
-    fn contains_key<'x>(&'x self, key: &&str) -> bool {
-        self.find(key).is_some()
+impl FromRedisValue for json::Json {
+    fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
+        let rv = match v {
+            &Data(ref b) => json::from_str(unwrap_or!(
+                from_utf8(b[]), invalid_type_error!(v, "Invalid UTF-8"))),
+            &Status(ref s) => json::from_str(s.as_slice()),
+            _ => invalid_type_error!(v, "Not JSON compatible"),
+        };
+        match rv {
+            Ok(value) => Ok(value),
+            Err(_) => invalid_type_error!(v, "Not valid JSON"),
+        }
     }
 }
 
-impl Collection for InfoDict {
-    fn len(&self) -> uint {
-        self.map.len()
+impl<T: FromRedisValue> FromRedisValue for Option<T> {
+    fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
+        match v {
+            &Nil => { return Ok(None); }
+            _ => {}
+        }
+        Ok(Some(try!(FromRedisValue::from_redis_value(v))))
     }
 }
