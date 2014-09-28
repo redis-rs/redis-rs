@@ -31,6 +31,7 @@
 //! let map : HashMap<String, i32> = redis::cmd("HGETALL").arg("my_hash").query(&con).unwrap();
 //! let keys : Vec<String> = redis::cmd("KEYS").query(&con).unwrap();
 //! let mems : HashSet<i32> = redis::cmd("SMEMBERS").arg("s").query(&con).unwrap();
+//! let (k1, k2) : (String, String) = redis::cmd("MGET").arg("k1").arg("k2").query(&con).unwrap();
 //! ```
 
 #![crate_name = "redis"]
