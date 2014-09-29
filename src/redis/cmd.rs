@@ -1,4 +1,4 @@
-use types::{ToRedisArgs, FromRedisValue, RedisResult};
+use types::{ToRedisArgs, FromRedisValue, RedisResult, Bulk};
 use connection::Connection;
 
 enum Arg {
@@ -33,6 +33,12 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
 pub struct Cmd {
     args: Vec<Arg>,
     cursor: Option<u64>,
+    is_ignored: bool,
+}
+
+/// Represents a redis command pipeline.
+pub struct Pipeline {
+    commands: Vec<Cmd>,
 }
 
 /// Represents a redis iterator.
@@ -99,7 +105,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 impl Cmd {
     /// Creates a new empty command.
     pub fn new() -> Cmd {
-        Cmd { args: vec![], cursor: None }
+        Cmd { args: vec![], cursor: None, is_ignored: false }
     }
 
     /// Appends an argument to the command.  The argument passed must
@@ -230,6 +236,124 @@ impl Cmd {
     }
 }
 
+
+/// A pipeline allows you to send multiple commands in one go to the
+/// redis server.  API wise it's very similar to just using a command
+/// but it allows multiple commands to be chained and some features such
+/// as iteration are not available.
+/// 
+/// Basic example:
+///
+/// ```rust,no_run
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let con = client.get_connection().unwrap();
+/// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
+///     .cmd("SET").arg("key_1").arg(42i).ignore()
+///     .cmd("SET").arg("key_2").arg(43i).ignore()
+///     .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+/// ```
+///
+/// As you can see with `cmd` you can start a new command.  By default
+/// each command produces a value but for some you can ignore them by
+/// calling `ignore` on the command.  That way it will be skipped in the
+/// return value which is useful for `SET` commands and others, which
+/// do not have a useful return value.
+impl Pipeline {
+
+    /// Creates an empty pipeline.  For consistency with the `cmd`
+    /// api a `pipe` function is provided as alias.
+    pub fn new() -> Pipeline {
+        Pipeline { commands: vec![] }
+    }
+
+    /// Starts a new command.  Functions such as `arg` then become
+    /// available to add more arguments to that command.
+    pub fn cmd<'a>(&mut self, name: &'a str) -> &mut Pipeline {
+        self.commands.push(cmd(name));
+        self
+    }
+
+    fn get_last_command(&mut self) -> &mut Cmd {
+        let idx = match self.commands.len() {
+            0 => fail!("No command on stack"),
+            x => x - 1,
+        };
+        self.commands.get_mut(idx)
+    }
+
+    /// Adds an argument to the last started command.  This works similar
+    /// to the `arg` method of the `Cmd` object.
+    ///
+    /// Note that this function fails the task if executed on an empty pipeline.
+    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Pipeline {
+        {
+            let cmd = self.get_last_command();
+            cmd.arg(arg);
+        }
+        self
+    }
+
+    /// Instructs the pipeline to ignore the return value of this command.
+    /// It will still be ensured that it is not an error, but any successful
+    /// result is just thrown away.  This makes result processing through
+    /// tuples much easier because you do not need to handle all the items
+    /// you do not care about.
+    ///
+    /// Note that this function fails the task if executed on an empty pipeline.
+    pub fn ignore(&mut self) -> &mut Pipeline {
+        {
+            let cmd = self.get_last_command();
+            cmd.is_ignored = true;
+        }
+        self
+    }
+
+    /// Executes the pipeline and fetches the return values.  Since most
+    /// pipelines return different types it's recommended to use tuple
+    /// matching to process the results:
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let con = client.get_connection().unwrap();
+    /// let (k1, k2) : (i32, i32) = redis::pipe()
+    ///     .cmd("SET").arg("key_1").arg(42i).ignore()
+    ///     .cmd("SET").arg("key_2").arg(43i).ignore()
+    ///     .cmd("GET").arg("key_1")
+    ///     .cmd("GET").arg("key_2").query(&con).unwrap();
+    /// ```
+    pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
+        let mut rv = vec![];
+        if self.commands.len() > 0 {
+            let mut pcmd = vec![];
+            for cmd in self.commands.iter() {
+                pcmd.push_all(cmd.get_packed_command()[]);
+            }
+            let resp = try!(con.send_packed_commands(
+                pcmd.as_slice(), self.commands.len()));
+            for (idx, result) in resp.into_iter().enumerate() {
+                if !self.commands[idx].is_ignored {
+                    rv.push(result);
+                }
+            }
+        }
+        FromRedisValue::from_redis_value(&Bulk(rv))
+    }
+
+    /// This is a shortcut to `query()` that does not return a value and
+    /// will fail the task if the query of the pipeline fails.
+    ///
+    /// This is equivalent to a call of query like this:
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let con = client.get_connection().unwrap();
+    /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
+    /// ```
+    pub fn execute(&self, con: &Connection) {
+        let _ : () = self.query(con).unwrap();
+    }
+}
+
 /// Shortcut function to creating a command with a single argument.
 ///
 /// The first argument of a redis command is always the name of the command
@@ -239,8 +363,13 @@ impl Cmd {
 /// ```rust
 /// redis::cmd("PING");
 /// ```
-pub fn cmd(name: &'static str) -> Cmd {
+pub fn cmd<'a>(name: &'a str) -> Cmd {
     let mut rv = Cmd::new();
     rv.arg(name);
     rv
+}
+
+/// Shortcut for creating a new pipeline.
+pub fn pipe() -> Pipeline {
+    Pipeline::new()
 }

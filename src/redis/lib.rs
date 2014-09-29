@@ -70,6 +70,24 @@
 //! As you can see the cursor argument needs to be defined with `cursor_arg` instead
 //! of `arg` so that the library knows which argument needs updating as the
 //! query is run for more items.
+//!
+//! ## Pipelining
+//!
+//! In addition to simple queries you can also send command pipelines.  This
+//! is provided through the `pipe` function.  It works very similar to sending
+//! individual commands but you can send more than one in one go.  This also
+//! allows you to ignore individual results so that matching on the end result
+//! is easier:
+//!
+//! ```rust,no_run
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
+//!     .cmd("SET").arg("key_1").arg(42i).ignore()
+//!     .cmd("SET").arg("key_2").arg(43i).ignore()
+//!     .cmd("GET").arg("key_1")
+//!     .cmd("GET").arg("key_2").query(&con).unwrap();
+//! ```
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
@@ -90,7 +108,7 @@ extern crate serialize;
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use connection::Connection;
-pub use cmd::{cmd, Cmd, Iter};
+pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter};
 
 #[doc(hidden)]
 pub use types::{
