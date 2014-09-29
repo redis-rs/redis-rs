@@ -177,6 +177,8 @@ impl PubSub {
     /// Fetches the next message from the pubsub connection.  Blocks until
     /// a message becomes available.  This currently does not provide a
     /// wait not to block :(
+    ///
+    /// The return value is in the format ``(channel, message)``.
     pub fn get_message<C: FromRedisValue, M: FromRedisValue>(&self) -> RedisResult<(C, M)> {
         loop {
             unsafe {
