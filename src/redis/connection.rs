@@ -46,11 +46,15 @@ impl ActualConnection {
         self.read_response()
     }
 
-    pub fn send_packed_commands(&mut self, cmd: &[u8], count: uint) -> RedisResult<Vec<Value>> {
+    pub fn send_packed_commands(&mut self, cmd: &[u8],
+            offset: uint, count: uint) -> RedisResult<Vec<Value>> {
         try!(self.send_bytes(cmd));
         let mut rv = vec![];
-        for _ in range(0, count) {
-            rv.push(try!(self.read_response()));
+        for idx in range(0, offset + count) {
+            let item = try!(self.read_response());
+            if idx >= offset {
+                rv.push(item);
+            }
         }
         Ok(rv)
     }
@@ -92,8 +96,9 @@ impl Connection {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
-    pub fn send_packed_commands(&self, cmd: &[u8], count: uint) -> RedisResult<Vec<Value>> {
-        self.con.borrow_mut().send_packed_commands(cmd, count)
+    pub fn send_packed_commands(&self, cmd: &[u8],
+            offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        self.con.borrow_mut().send_packed_commands(cmd, offset, count)
     }
 
     /// Returns the database this connection is bound to.

@@ -8,28 +8,6 @@ enum Arg {
 }
 
 
-fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
-    let mut cmd = vec![];
-    cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
-
-    {
-        let encode = |item: &[u8]| {
-            cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
-            cmd.push_all(item);
-            cmd.push_all(b"\r\n");
-        };
-
-        for item in args.iter() {
-            match *item {
-                CursorArg => encode(cursor.to_string().as_bytes()),
-                SimpleArg(ref val) => encode(val[]),
-            }
-        }
-    }
-
-    cmd
-}
-
 /// Represents redis commands.
 pub struct Cmd {
     args: Vec<Arg>,
@@ -75,6 +53,42 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
         self.batch = batch;
         self.batch.pop()
     }
+}
+
+fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
+    let mut cmd = vec![];
+    cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
+
+    {
+        let encode = |item: &[u8]| {
+            cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
+            cmd.push_all(item);
+            cmd.push_all(b"\r\n");
+        };
+
+        for item in args.iter() {
+            match *item {
+                CursorArg => encode(cursor.to_string().as_bytes()),
+                SimpleArg(ref val) => encode(val[]),
+            }
+        }
+    }
+
+    cmd
+}
+
+fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
+    let mut rv = vec![];
+    if atomic {
+        rv.push_all(cmd("MULTI").get_packed_command()[]);
+    }
+    for cmd in cmds.iter() {
+        rv.push_all(cmd.get_packed_command()[]);
+    }
+    if atomic {
+        rv.push_all(cmd("EXEC").get_packed_command()[]);
+    }
+    rv
 }
 
 /// A command acts as a builder interface to creating encoded redis
@@ -328,49 +342,33 @@ impl Pipeline {
         self
     }
 
-    fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
+    fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
         let mut rv = vec![];
-        let mut pcmd = vec![];
-        for cmd in self.commands.iter() {
-            pcmd.push_all(cmd.get_packed_command()[]);
-        }
-        let resp = try!(con.send_packed_commands(
-            pcmd.as_slice(), self.commands.len()));
         for (idx, result) in resp.into_iter().enumerate() {
             if !self.commands[idx].is_ignored {
                 rv.push(result);
             }
         }
-        Ok(Bulk(rv))
+        Bulk(rv)
+    }
+
+    fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
+        Ok(self.make_pipeline_results(try!(con.send_packed_commands(
+            encode_pipeline(self.commands[], false)[],
+            0, self.commands.len()))))
     }
 
     fn execute_transaction(&self, con: &Connection) -> RedisResult<Value> {
-        let mut rv = vec![];
-        let mut pcmd = vec![];
-        pcmd.push_all(cmd("MULTI").get_packed_command()[]);
-        for cmd in self.commands.iter() {
-            pcmd.push_all(cmd.get_packed_command()[]);
-        }
-        pcmd.push_all(cmd("EXEC").get_packed_command()[]);
-
-        let multi_resp = try!(con.send_packed_commands(
-            pcmd.as_slice(), self.commands.len() + 2));
-        let resp = match multi_resp[self.commands.len() + 1] {
-            // XXX: can i get rid of this clone?
-            Bulk(ref items) => items.clone(),
+        let mut resp = try!(con.send_packed_commands(
+            encode_pipeline(self.commands[], true)[],
+            self.commands.len() + 1, 1));
+        Ok(self.make_pipeline_results(match resp.pop() {
+            Some(Bulk(items)) => items,
             _ => {
                 return Err(Error::simple(ResponseError,
                     "Invalid response when parsing multi response"));
             }
-        };
-
-        for (idx, result) in resp.into_iter().enumerate() {
-            if !self.commands[idx].is_ignored {
-                rv.push(result);
-            }
-        }
-
-        Ok(Bulk(rv))
+        }))
     }
 
     /// Executes the pipeline and fetches the return values.  Since most
