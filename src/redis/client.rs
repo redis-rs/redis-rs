@@ -1,7 +1,7 @@
 use url::Url;
 use std::io::{IoResult, IoError, InvalidInput};
 
-use connection::{Connection, connect};
+use connection::{Connection, connect, PubSub, connect_pubsub};
 
 
 /// The client type.
@@ -65,5 +65,14 @@ impl Client {
     /// errors.
     pub fn get_connection(&self) -> IoResult<Connection> {
         connect(self.host.as_slice(), self.port, self.db)
+    }
+
+    /// Returns a PubSub connection.  A pubsub connection can be used to
+    /// listen to messages coming in through the redis publish/subscribe
+    /// system.
+    ///
+    /// Note that redis' pubsub operates across all databases.
+    pub fn get_pubsub(&self) -> IoResult<PubSub> {
+        connect_pubsub(self.host.as_slice(), self.port)
     }
 }

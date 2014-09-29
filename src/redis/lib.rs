@@ -104,6 +104,11 @@
 //!     .cmd("GET").arg("key_1")
 //!     .cmd("GET").arg("key_2").query(&con).unwrap();
 //! ```
+//!
+//! ## PubSub
+//!
+//! Pubsub is currently work in progress but provided through the `PubSub`
+//! connection object.
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
@@ -123,7 +128,7 @@ extern crate serialize;
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
-pub use connection::Connection;
+pub use connection::{Connection, PubSub};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter};
 
 #[doc(hidden)]

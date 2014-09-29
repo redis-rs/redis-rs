@@ -5,6 +5,7 @@ extern crate serialize;
 use std::io::process;
 use std::io::{IoError, ConnectionRefused};
 use std::time::Duration;
+use std::sync::Future;
 use std::io::timer::sleep;
 use std::collections::{HashMap, HashSet};
 
@@ -80,6 +81,10 @@ impl TestContext {
 
     fn connection(&self) -> redis::Connection {
         self.client.get_connection().unwrap()
+    }
+
+    fn pubsub(&self) -> redis::PubSub {
+        self.client.get_pubsub().unwrap()
     }
 }
 
@@ -274,4 +279,24 @@ fn test_pipeline_transaction() {
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
+}
+
+#[test]
+fn test_pubsub() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let mut pubsub = ctx.pubsub();
+    pubsub.subscribe("foo").unwrap();
+
+    let mut rv = Future::spawn(proc() {
+        sleep(Duration::milliseconds(100));
+        assert_eq!(pubsub.get_message().unwrap(), ("foo".to_string(), 42i));
+        assert_eq!(pubsub.get_message().unwrap(), ("foo".to_string(), 23i));
+        true
+    });
+
+    redis::cmd("PUBLISH").arg("foo").arg(42i).execute(&con);
+    redis::cmd("PUBLISH").arg("foo").arg(23i).execute(&con);
+    assert_eq!(rv.get(), true);
 }

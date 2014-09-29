@@ -1,9 +1,11 @@
 use std::io::{Reader, Writer, IoResult, IoError, ConnectionFailed};
 use std::io::net::tcp::TcpStream;
 use std::cell::RefCell;
+use std::collections::HashSet;
 
 use cmd::cmd;
-use types::{RedisResult, Okay, Error, Value, InternalIoError};
+use types::{RedisResult, Okay, Error, Value, InternalIoError,
+            ToRedisArgs, FromRedisValue};
 use parser::Parser;
 
 
@@ -15,6 +17,12 @@ struct ActualConnection {
 pub struct Connection {
     con: RefCell<ActualConnection>,
     db: i64,
+}
+
+/// Represents a pubsub connection.
+pub struct PubSub {
+    con: Connection,
+    channels: HashSet<Vec<u8>>,
 }
 
 impl ActualConnection {
@@ -57,6 +65,13 @@ pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
         }
     }
     Ok(rv)
+}
+
+pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
+    Ok(PubSub {
+        con: try!(connect(host, port, 0)),
+        channels: HashSet::new(),
+    })
 }
 
 
@@ -112,5 +127,65 @@ impl Connection {
     /// Returns the database this connection is bound to.
     pub fn get_db(&self) -> i64 {
         self.db
+    }
+}
+
+
+/// The pubsub object provides convenient access to the redis pubsub
+/// system.  Once created you can subscribe and unsubscribe from channels
+/// and listen in on messages.
+///
+/// Example:
+///
+/// ```rust,no_run
+/// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// let mut pubsub = client.pubsub();
+/// pubsub.subscribe("channel_1").unwrap();
+/// pubsub.subscribe("channel_2").unwrap();
+///
+/// loop {
+///     let (channel, message) : (String, String) = pubsub.get_message();
+///     println!("channel '{}': {}", channel, message);
+/// }
+/// ```
+impl PubSub {
+
+    fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
+        let mut chan = vec![];
+        for item in channel.to_redis_args().iter() {
+            chan.push_all(item[]);
+        }
+        chan
+    }
+
+    /// Subscribes to a new channel.
+    pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        let chan = self.get_channel(&channel);
+        let _ : () = try!(cmd("SUBSCRIBE").arg(chan[]).query(&self.con));
+        self.channels.insert(chan);
+        Ok(())
+    }
+
+    /// Unsubscribes from a channel.
+    pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        let chan = self.get_channel(&channel);
+        let _ : () = try!(cmd("UNSUBSCRIBE").arg(chan[]).query(&self.con));
+        self.channels.remove(&chan);
+        Ok(())
+    }
+
+    /// Fetches the next message from the pubsub connection.  Blocks until
+    /// a message becomes available.  This currently does not provide a
+    /// wait not to block :(
+    pub fn get_message<C: FromRedisValue, M: FromRedisValue>(&self) -> RedisResult<(C, M)> {
+        loop {
+            unsafe {
+                let (msg_type, channel, msg) : (String, C, M) =
+                    try!(FromRedisValue::from_redis_value(&try!(self.con.recv_response())));
+                if msg_type.as_slice() == "message" {
+                    return Ok((channel, msg))
+                }
+            }
+        }
     }
 }
