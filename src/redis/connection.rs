@@ -139,12 +139,12 @@ impl Connection {
 ///
 /// ```rust,no_run
 /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// let mut pubsub = client.pubsub();
+/// let mut pubsub = client.get_pubsub().unwrap();
 /// pubsub.subscribe("channel_1").unwrap();
 /// pubsub.subscribe("channel_2").unwrap();
 ///
 /// loop {
-///     let (channel, message) : (String, String) = pubsub.get_message();
+///     let (channel, message) : (String, String) = pubsub.get_message().unwrap();
 ///     println!("channel '{}': {}", channel, message);
 /// }
 /// ```
