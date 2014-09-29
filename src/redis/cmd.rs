@@ -43,7 +43,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 
         let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
             self.cursor), return None);
-        let rv = unwrap_or!(self.con.send_packed_command(
+        let rv = unwrap_or!(self.con.req_packed_command(
             pcmd[]).ok(), return None);
         let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
             FromRedisValue::from_redis_value(&rv).ok(), return None);
@@ -191,7 +191,7 @@ impl Cmd {
     /// you can retrieve data.
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
-        match con.send_packed_command(pcmd.as_slice()) {
+        match con.req_packed_command(pcmd.as_slice()) {
             Ok(val) => FromRedisValue::from_redis_value(&val),
             Err(e) => Err(e),
         }
@@ -214,7 +214,7 @@ impl Cmd {
     pub fn iter<'a, T: FromRedisValue>(&'a mut self, con: &'a Connection)
             -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
-        let rv = try!(con.send_packed_command(pcmd.as_slice()));
+        let rv = try!(con.req_packed_command(pcmd.as_slice()));
         let mut batch : Vec<T>;
         let mut cursor = 0;
 
@@ -353,13 +353,13 @@ impl Pipeline {
     }
 
     fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
-        Ok(self.make_pipeline_results(try!(con.send_packed_commands(
+        Ok(self.make_pipeline_results(try!(con.req_packed_commands(
             encode_pipeline(self.commands[], false)[],
             0, self.commands.len()))))
     }
 
     fn execute_transaction(&self, con: &Connection) -> RedisResult<Value> {
-        let mut resp = try!(con.send_packed_commands(
+        let mut resp = try!(con.req_packed_commands(
             encode_pipeline(self.commands[], true)[],
             self.commands.len() + 1, 1));
         Ok(self.make_pipeline_results(match resp.pop() {

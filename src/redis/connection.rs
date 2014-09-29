@@ -24,7 +24,7 @@ impl ActualConnection {
         Ok(ActualConnection { sock: sock })
     }
 
-    fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+    pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = &mut self.sock as &mut Writer;
         match w.write(bytes) {
             Err(err) => {
@@ -36,27 +36,9 @@ impl ActualConnection {
         }
     }
 
-    fn read_response(&mut self) -> RedisResult<Value> {
+    pub fn read_response(&mut self) -> RedisResult<Value> {
         let mut parser = Parser::new(&mut self.sock as &mut Reader);
         parser.parse_value()
-    }
-
-    pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        try!(self.send_bytes(cmd));
-        self.read_response()
-    }
-
-    pub fn send_packed_commands(&mut self, cmd: &[u8],
-            offset: uint, count: uint) -> RedisResult<Vec<Value>> {
-        try!(self.send_bytes(cmd));
-        let mut rv = vec![];
-        for idx in range(0, offset + count) {
-            let item = try!(self.read_response());
-            if idx >= offset {
-                rv.push(item);
-            }
-        }
-        Ok(rv)
     }
 }
 
@@ -88,17 +70,43 @@ pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
 impl Connection {
 
     /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the response from it.
-    pub fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        self.con.borrow_mut().send_packed_command(cmd)
+    /// reads the single response from it.
+    pub fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+        let mut con = self.con.borrow_mut();
+        try!(con.send_bytes(cmd));
+        con.read_response()
+    }
+
+    /// Sends an already encoded (packed) command into the TCP socket and
+    /// does not read a response.  This is useful for commands like
+    /// `MONITOR` which yield multiple items.  This needs to be used with
+    /// care because it changes the state of the connection.
+    pub unsafe fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<()> {
+        try!(self.con.borrow_mut().send_bytes(cmd));
+        Ok(())
+    }
+
+    /// Fetches a single response from the connection.  This is useful
+    /// if used in combination with `send_packed_command`.
+    pub unsafe fn recv_response(&self) -> RedisResult<Value> {
+        self.con.borrow_mut().read_response()
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
-    pub fn send_packed_commands(&self, cmd: &[u8],
+    pub fn req_packed_commands(&self, cmd: &[u8],
             offset: uint, count: uint) -> RedisResult<Vec<Value>> {
-        self.con.borrow_mut().send_packed_commands(cmd, offset, count)
+        let mut con = self.con.borrow_mut();
+        try!(con.send_bytes(cmd));
+        let mut rv = vec![];
+        for idx in range(0, offset + count) {
+            let item = try!(con.read_response());
+            if idx >= offset {
+                rv.push(item);
+            }
+        }
+        Ok(rv)
     }
 
     /// Returns the database this connection is bound to.
