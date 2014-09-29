@@ -88,6 +88,22 @@
 //!     .cmd("GET").arg("key_1")
 //!     .cmd("GET").arg("key_2").query(&con).unwrap();
 //! ```
+//!
+//! If you want the pipeline to be wrapped in a `MULTI`/`EXEC` block you can
+//! easily do that by switching the pipeline into `atomic` mode.  From the
+//! caller's point of view nothing changes, the pipeline itself will take
+//! care of the rest for you:
+//!
+//! ```rust,no_run
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
+//!     .atomic()
+//!     .cmd("SET").arg("key_1").arg(42i).ignore()
+//!     .cmd("SET").arg("key_2").arg(43i).ignore()
+//!     .cmd("GET").arg("key_1")
+//!     .cmd("GET").arg("key_2").query(&con).unwrap();
+//! ```
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
