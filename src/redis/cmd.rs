@@ -1,4 +1,5 @@
-use types::{ToRedisArgs, FromRedisValue, RedisResult, Bulk};
+use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
+            ResponseError, Bulk};
 use connection::Connection;
 
 enum Arg {
@@ -39,6 +40,7 @@ pub struct Cmd {
 /// Represents a redis command pipeline.
 pub struct Pipeline {
     commands: Vec<Cmd>,
+    transaction_mode: bool,
 }
 
 /// Represents a redis iterator.
@@ -263,7 +265,7 @@ impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
     pub fn new() -> Pipeline {
-        Pipeline { commands: vec![] }
+        Pipeline { commands: vec![], transaction_mode: false }
     }
 
     /// Starts a new command.  Functions such as `arg` then become
@@ -308,6 +310,69 @@ impl Pipeline {
         self
     }
 
+    /// This enables atomic mode.  In atomic mode the whole pipeline is
+    /// enclosed in `MULTI`/`EXEC`.  From the user's point of view nothing
+    /// changes however.  This is easier than using `MULTI`/`EXEC` yourself
+    /// as the format does not change.
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let con = client.get_connection().unwrap();
+    /// let (k1, k2) : (i32, i32) = redis::pipe()
+    ///     .atomic()
+    ///     .cmd("GET").arg("key_1")
+    ///     .cmd("GET").arg("key_2").query(&con).unwrap();
+    /// ```
+    pub fn atomic(&mut self) -> &mut Pipeline {
+        self.transaction_mode = true;
+        self
+    }
+
+    fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
+        let mut rv = vec![];
+        let mut pcmd = vec![];
+        for cmd in self.commands.iter() {
+            pcmd.push_all(cmd.get_packed_command()[]);
+        }
+        let resp = try!(con.send_packed_commands(
+            pcmd.as_slice(), self.commands.len()));
+        for (idx, result) in resp.into_iter().enumerate() {
+            if !self.commands[idx].is_ignored {
+                rv.push(result);
+            }
+        }
+        Ok(Bulk(rv))
+    }
+
+    fn execute_transaction(&self, con: &Connection) -> RedisResult<Value> {
+        let mut rv = vec![];
+        let mut pcmd = vec![];
+        pcmd.push_all(cmd("MULTI").get_packed_command()[]);
+        for cmd in self.commands.iter() {
+            pcmd.push_all(cmd.get_packed_command()[]);
+        }
+        pcmd.push_all(cmd("EXEC").get_packed_command()[]);
+
+        let multi_resp = try!(con.send_packed_commands(
+            pcmd.as_slice(), self.commands.len() + 2));
+        let resp = match multi_resp[self.commands.len() + 1] {
+            // XXX: can i get rid of this clone?
+            Bulk(ref items) => items.clone(),
+            _ => {
+                return Err(Error::simple(ResponseError,
+                    "Invalid response when parsing multi response"));
+            }
+        };
+
+        for (idx, result) in resp.into_iter().enumerate() {
+            if !self.commands[idx].is_ignored {
+                rv.push(result);
+            }
+        }
+
+        Ok(Bulk(rv))
+    }
+
     /// Executes the pipeline and fetches the return values.  Since most
     /// pipelines return different types it's recommended to use tuple
     /// matching to process the results:
@@ -322,21 +387,15 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
-        let mut rv = vec![];
-        if self.commands.len() > 0 {
-            let mut pcmd = vec![];
-            for cmd in self.commands.iter() {
-                pcmd.push_all(cmd.get_packed_command()[]);
+        FromRedisValue::from_redis_value(&(
+            if self.commands.len() == 0 {
+                Bulk(vec![])
+            } else if self.transaction_mode {
+                try!(self.execute_transaction(con))
+            } else {
+                try!(self.execute_pipelined(con))
             }
-            let resp = try!(con.send_packed_commands(
-                pcmd.as_slice(), self.commands.len()));
-            for (idx, result) in resp.into_iter().enumerate() {
-                if !self.commands[idx].is_ignored {
-                    rv.push(result);
-                }
-            }
-        }
-        FromRedisValue::from_redis_value(&Bulk(rv))
+        ))
     }
 
     /// This is a shortcut to `query()` that does not return a value and

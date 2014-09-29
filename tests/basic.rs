@@ -260,3 +260,18 @@ fn test_empty_pipeline() {
 
     let _ : () = redis::pipe().query(&con).unwrap();
 }
+
+#[test]
+fn test_pipeline_transaction() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let ((k1, k2),) : ((i32, i32),) = redis::pipe()
+        .atomic()
+        .cmd("SET").arg("key_1").arg(42i).ignore()
+        .cmd("SET").arg("key_2").arg(43i).ignore()
+        .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+
+    assert_eq!(k1, 42);
+    assert_eq!(k2, 43);
+}
