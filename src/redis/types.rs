@@ -180,7 +180,7 @@ impl InfoDict {
     /// Typical types are `String`, `bool` and integer types.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
         match self.find(&key) {
-            Some(ref x) => FromRedisValue::from_redis_value(*x).ok(),
+            Some(ref x) => from_redis_value(*x).ok(),
             None => None,
         }
     }
@@ -440,7 +440,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             &Bulk(ref items) => {
                 let mut rv = vec![];
                 for item in items.iter() {
-                    match FromRedisValue::from_redis_value(item) {
+                    match from_redis_value(item) {
                         Ok(val) => rv.push(val),
                         Err(_) => {},
                     }
@@ -465,8 +465,8 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
                 loop {
                     let k = unwrap_or!(iter.next(), break);
                     let v = unwrap_or!(iter.next(), break);
-                    rv.insert(try!(FromRedisValue::from_redis_value(k)),
-                              try!(FromRedisValue::from_redis_value(v)));
+                    rv.insert(try!(from_redis_value(k)),
+                              try!(from_redis_value(v)));
                 }
                 Ok(rv)
             },
@@ -482,7 +482,7 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
             &Bulk(ref items) => {
                 let mut rv = HashSet::new();
                 for item in items.iter() {
-                    rv.insert(try!(FromRedisValue::from_redis_value(item)));
+                    rv.insert(try!(from_redis_value(item)));
                 }
                 Ok(rv)
             },
@@ -526,7 +526,7 @@ macro_rules! from_redis_value_for_tuple(
                         // this is pretty ugly too.  The { i += 1; i - 1} is rust's
                         // postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); try!(FromRedisValue::from_redis_value(
+                        Ok(($({let $name = (); try!(from_redis_value(
                              &items[{ i += 1; i - 1 }]))},)*))
                     }
                     _ => invalid_type_error!(v, "Not a bulk response")
@@ -549,7 +549,7 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
-        let s : String = try!(FromRedisValue::from_redis_value(v));
+        let s : String = try!(from_redis_value(v));
         Ok(InfoDict::new(s.as_slice()))
     }
 }
@@ -575,6 +575,12 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
             &Nil => { return Ok(None); }
             _ => {}
         }
-        Ok(Some(try!(FromRedisValue::from_redis_value(v))))
+        Ok(Some(try!(from_redis_value(v))))
     }
+}
+
+/// A shortcut function to invoke `FromRedisValue::from_redis_value`
+/// to make the API slightly nicer.
+pub fn from_redis_value<T: FromRedisValue>(v: &Value) -> RedisResult<T> {
+    FromRedisValue::from_redis_value(v)
 }

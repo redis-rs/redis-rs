@@ -1,5 +1,5 @@
 use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
-            ResponseError, Bulk};
+            ResponseError, Bulk, from_redis_value};
 use connection::Connection;
 
 enum Arg {
@@ -46,7 +46,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
         let rv = unwrap_or!(self.con.req_packed_command(
             pcmd[]).ok(), return None);
         let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
-            FromRedisValue::from_redis_value(&rv).ok(), return None);
+            from_redis_value(&rv).ok(), return None);
         batch.reverse();
 
         self.cursor = cur;
@@ -192,7 +192,7 @@ impl Cmd {
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
         match con.req_packed_command(pcmd.as_slice()) {
-            Ok(val) => FromRedisValue::from_redis_value(&val),
+            Ok(val) => from_redis_value(&val),
             Err(e) => Err(e),
         }
     }
@@ -219,11 +219,11 @@ impl Cmd {
         let mut cursor = 0;
 
         if rv.looks_like_cursor() {
-            let (next, b) : (u64, Vec<T>) = try!(FromRedisValue::from_redis_value(&rv));
+            let (next, b) : (u64, Vec<T>) = try!(from_redis_value(&rv));
             batch = b;
             cursor = next;
         } else {
-            batch = try!(FromRedisValue::from_redis_value(&rv));
+            batch = try!(from_redis_value(&rv));
         }
 
         batch.reverse();
@@ -385,7 +385,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
-        FromRedisValue::from_redis_value(&(
+        from_redis_value(&(
             if self.commands.len() == 0 {
                 Bulk(vec![])
             } else if self.transaction_mode {

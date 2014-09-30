@@ -108,7 +108,24 @@
 //! ## PubSub
 //!
 //! Pubsub is currently work in progress but provided through the `PubSub`
-//! connection object.
+//! connection object.  Due to the fact that Rust does not have support
+//! for async IO in libnative yet, the API does not provide a way to
+//! read messages with any form of timeout yet.
+//!
+//! Example usage:
+//!
+//! ```rust,no_run
+//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! let mut pubsub = client.get_pubsub().unwrap();
+//! pubsub.subscribe("channel_1").unwrap();
+//! pubsub.subscribe("channel_2").unwrap();
+//!
+//! loop {
+//!     let msg = pubsub.get_message().unwrap();
+//!     let payload : String = msg.get_payload().unwrap();
+//!     println!("channel '{}': {}", msg.get_channel_name(), payload);
+//! }
+//! ```
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
@@ -128,7 +145,7 @@ extern crate serialize;
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
-pub use connection::{Connection, PubSub};
+pub use connection::{Connection, PubSub, Msg};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter};
 
 #[doc(hidden)]
@@ -162,6 +179,9 @@ pub use types::{
     /* conversion traits */
     FromRedisValue,
     ToRedisArgs,
+
+    /* utility functions */
+    from_redis_value,
 };
 
 pub mod macros;

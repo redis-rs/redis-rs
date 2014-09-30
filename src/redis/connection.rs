@@ -2,10 +2,11 @@ use std::io::{Reader, Writer, IoResult, IoError, ConnectionFailed};
 use std::io::net::tcp::TcpStream;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::str;
 
 use cmd::cmd;
-use types::{RedisResult, Okay, Error, Value, InternalIoError,
-            ToRedisArgs, FromRedisValue};
+use types::{RedisResult, Okay, Error, Value, Data, Nil, InternalIoError,
+            ToRedisArgs, FromRedisValue, from_redis_value};
 use parser::Parser;
 
 
@@ -23,6 +24,14 @@ pub struct Connection {
 pub struct PubSub {
     con: Connection,
     channels: HashSet<Vec<u8>>,
+    pchannels: HashSet<Vec<u8>>,
+}
+
+/// Represents a pubsub message.
+pub struct Msg {
+    payload: Value,
+    channel: Value,
+    pattern: Option<Value>,
 }
 
 impl ActualConnection {
@@ -71,6 +80,7 @@ pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
     Ok(PubSub {
         con: try!(connect(host, port, 0)),
         channels: HashSet::new(),
+        pchannels: HashSet::new(),
     })
 }
 
@@ -144,8 +154,9 @@ impl Connection {
 /// pubsub.subscribe("channel_2").unwrap();
 ///
 /// loop {
-///     let (channel, message) : (String, String) = pubsub.get_message().unwrap();
-///     println!("channel '{}': {}", channel, message);
+///     let msg = pubsub.get_message().unwrap();
+///     let payload : String = msg.get_payload().unwrap();
+///     println!("channel '{}': {}", msg.get_channel_name(), payload);
 /// }
 /// ```
 impl PubSub {
@@ -166,6 +177,14 @@ impl PubSub {
         Ok(())
     }
 
+    /// Subscribes to a new channel with a pattern.
+    pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        let chan = self.get_channel(&pchannel);
+        let _ : () = try!(cmd("PSUBSCRIBE").arg(chan[]).query(&self.con));
+        self.pchannels.insert(chan);
+        Ok(())
+    }
+
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
@@ -174,20 +193,103 @@ impl PubSub {
         Ok(())
     }
 
+    /// Unsubscribes from a channel with a pattern.
+    pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        let chan = self.get_channel(&pchannel);
+        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(chan[]).query(&self.con));
+        self.pchannels.remove(&chan);
+        Ok(())
+    }
+
     /// Fetches the next message from the pubsub connection.  Blocks until
     /// a message becomes available.  This currently does not provide a
     /// wait not to block :(
     ///
-    /// The return value is in the format ``(channel, message)``.
-    pub fn get_message<C: FromRedisValue, M: FromRedisValue>(&self) -> RedisResult<(C, M)> {
+    /// The message itself is still generic and can be converted into an
+    /// appropriate type through the helper methods on it.
+    pub fn get_message(&self) -> RedisResult<Msg> {
         loop {
             unsafe {
-                let (msg_type, channel, msg) : (String, C, M) =
-                    try!(FromRedisValue::from_redis_value(&try!(self.con.recv_response())));
+                let raw_msg : Vec<Value> = try!(from_redis_value(
+                    &try!(self.con.recv_response())));
+                let mut iter = raw_msg.into_iter();
+                let msg_type : String = try!(from_redis_value(
+                    &unwrap_or!(iter.next(), continue)));
+                let mut pattern = None;
+                let mut payload;
+                let mut channel;
+
                 if msg_type.as_slice() == "message" {
-                    return Ok((channel, msg))
+                    channel = unwrap_or!(iter.next(), continue);
+                    payload = unwrap_or!(iter.next(), continue);
+                } else if msg_type.as_slice() == "pmessage" {
+                    pattern = Some(unwrap_or!(iter.next(), continue));
+                    channel = unwrap_or!(iter.next(), continue);
+                    payload = unwrap_or!(iter.next(), continue);
+                } else {
+                    continue;
                 }
+
+                return Ok(Msg {
+                    payload: payload,
+                    channel: channel,
+                    pattern: pattern,
+                })
             }
+        }
+    }
+}
+
+
+/// This holds the data that comes from listening to a pubsub
+/// connection.  It only contains actual message data.
+impl Msg {
+
+    /// Returns the channel this message came on.
+    pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
+        from_redis_value(&self.channel)
+    }
+
+    /// Convenience method to get a string version of the channel.  Unless
+    /// your channel contains non utf-8 bytes you can always use this
+    /// method.  If the channel is not a valid string (which really should
+    /// not happen) then the return value is `"?"`.
+    pub fn get_channel_name<'a>(&'a self) -> &'a str {
+        match self.channel {
+            Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
+            _ => "?"
+        }
+    }
+
+    /// Returns the message's payload in a specific format.
+    pub fn get_payload<T: FromRedisValue>(&self) -> RedisResult<T> {
+        from_redis_value(&self.payload)
+    }
+
+    /// Returns the bytes that are the message's payload.  This can be used
+    /// as an alternative to the `get_payload` function if you are interested
+    /// in the raw bytes in it.
+    pub fn get_payload_bytes<'a>(&'a self) -> &'a [u8] {
+        match self.channel {
+            Data(ref bytes) => bytes[],
+            _ => b""
+        }
+    }
+
+    /// Returns true if the message was constructed from a pattern
+    /// subscription.
+    pub fn from_pattern(&self) -> bool {
+        self.pattern.is_some()
+    }
+
+    /// If the message was constructed from a message pattern this can be
+    /// used to find out which one.  It's recommended to match against
+    /// an `Option<String>` so that you do not need to use `from_pattern`
+    /// to figure out if a pattern was set.
+    pub fn get_pattern<T: FromRedisValue>(&self) -> RedisResult<T> {
+        match self.pattern {
+            None => from_redis_value(&Nil),
+            Some(ref x) => from_redis_value(x),
         }
     }
 }

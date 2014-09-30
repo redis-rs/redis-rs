@@ -291,8 +291,15 @@ fn test_pubsub() {
 
     let mut rv = Future::spawn(proc() {
         sleep(Duration::milliseconds(100));
-        assert_eq!(pubsub.get_message().unwrap(), ("foo".to_string(), 42i));
-        assert_eq!(pubsub.get_message().unwrap(), ("foo".to_string(), 23i));
+
+        let msg = pubsub.get_message().unwrap();
+        assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+        assert_eq!(msg.get_payload(), Ok(42i));
+
+        let msg = pubsub.get_message().unwrap();
+        assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+        assert_eq!(msg.get_payload(), Ok(23i));
+
         true
     });
 
