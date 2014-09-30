@@ -2,15 +2,16 @@ use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
             ResponseError, Bulk, from_redis_value};
 use connection::Connection;
 
-enum Arg {
+enum Arg<'a> {
     SimpleArg(Vec<u8>),
     CursorArg,
+    BorrowedArg(&'a [u8]),
 }
 
 
 /// Represents redis commands.
 pub struct Cmd {
-    args: Vec<Arg>,
+    args: Vec<Arg<'static>>,
     cursor: Option<u64>,
     is_ignored: bool,
 }
@@ -70,6 +71,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
             match *item {
                 CursorArg => encode(cursor.to_string().as_bytes()),
                 SimpleArg(ref val) => encode(val[]),
+                BorrowedArg(ptr) => encode(ptr),
             }
         }
     }
@@ -443,7 +445,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(&args.iter().map(|x| SimpleArg(x.clone())).collect(), 0)
+    encode_command(&args.iter().map(|x| BorrowedArg(x[])).collect(), 0)
 }
 
 /// Shortcut for creating a new pipeline.
