@@ -426,6 +426,26 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
     rv
 }
 
+/// Packs a bunch of commands into a request.  This is generally a quite
+/// useless function as this functionality is nicely wrapped through the
+/// `Cmd` object, but in some cases it can be useful.  The return value
+/// of this can then be send to the low level `Connection` functions.
+///
+/// Example:
+///
+/// ```rust
+/// # use redis::ToRedisArgs;
+/// let mut args = vec![];
+/// args.push_all("SET".to_redis_args()[]);
+/// args.push_all("my_key".to_redis_args()[]);
+/// args.push_all(42i.to_redis_args()[]);
+/// let cmd = redis::pack_command(args[]);
+/// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
+/// ```
+pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
+    encode_command(&args.iter().map(|x| SimpleArg(x.clone())).collect(), 0)
+}
+
 /// Shortcut for creating a new pipeline.
 pub fn pipe() -> Pipeline {
     Pipeline::new()
