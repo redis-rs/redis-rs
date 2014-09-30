@@ -106,14 +106,14 @@ impl Connection {
     /// does not read a response.  This is useful for commands like
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
-    pub unsafe fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<()> {
+    pub fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<()> {
         try!(self.con.borrow_mut().send_bytes(cmd));
         Ok(())
     }
 
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
-    pub unsafe fn recv_response(&self) -> RedisResult<Value> {
+    pub fn recv_response(&self) -> RedisResult<Value> {
         self.con.borrow_mut().read_response()
     }
 
@@ -209,33 +209,31 @@ impl PubSub {
     /// appropriate type through the helper methods on it.
     pub fn get_message(&self) -> RedisResult<Msg> {
         loop {
-            unsafe {
-                let raw_msg : Vec<Value> = try!(from_redis_value(
-                    &try!(self.con.recv_response())));
-                let mut iter = raw_msg.into_iter();
-                let msg_type : String = try!(from_redis_value(
-                    &unwrap_or!(iter.next(), continue)));
-                let mut pattern = None;
-                let mut payload;
-                let mut channel;
+            let raw_msg : Vec<Value> = try!(from_redis_value(
+                &try!(self.con.recv_response())));
+            let mut iter = raw_msg.into_iter();
+            let msg_type : String = try!(from_redis_value(
+                &unwrap_or!(iter.next(), continue)));
+            let mut pattern = None;
+            let mut payload;
+            let mut channel;
 
-                if msg_type.as_slice() == "message" {
-                    channel = unwrap_or!(iter.next(), continue);
-                    payload = unwrap_or!(iter.next(), continue);
-                } else if msg_type.as_slice() == "pmessage" {
-                    pattern = Some(unwrap_or!(iter.next(), continue));
-                    channel = unwrap_or!(iter.next(), continue);
-                    payload = unwrap_or!(iter.next(), continue);
-                } else {
-                    continue;
-                }
-
-                return Ok(Msg {
-                    payload: payload,
-                    channel: channel,
-                    pattern: pattern,
-                })
+            if msg_type.as_slice() == "message" {
+                channel = unwrap_or!(iter.next(), continue);
+                payload = unwrap_or!(iter.next(), continue);
+            } else if msg_type.as_slice() == "pmessage" {
+                pattern = Some(unwrap_or!(iter.next(), continue));
+                channel = unwrap_or!(iter.next(), continue);
+                payload = unwrap_or!(iter.next(), continue);
+            } else {
+                continue;
             }
+
+            return Ok(Msg {
+                payload: payload,
+                channel: channel,
+                pattern: pattern,
+            })
         }
     }
 }
