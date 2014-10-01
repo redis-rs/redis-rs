@@ -95,9 +95,9 @@ fn test_args() {
     let con = ctx.connection();
 
     redis::cmd("SET").arg("key1").arg(b"foo").execute(&con);
-    redis::cmd("SET").arg(["key2", "bar"][]).execute(&con);
+    redis::cmd("SET").arg(["key2", "bar"].as_slice()).execute(&con);
 
-    assert_eq!(redis::cmd("MGET").arg(["key1", "key2"][]).query(&con),
+    assert_eq!(redis::cmd("MGET").arg(["key1", "key2"].as_slice()).query(&con),
                Ok(("foo".to_string(), b"bar".to_vec())));
 }
 
@@ -161,7 +161,7 @@ fn test_set_ops() {
     let mut s : Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
     s.sort();
     assert_eq!(s.len(), 3);
-    assert_eq!(s[], [1, 2, 3][]);
+    assert_eq!(s.as_slice(), [1, 2, 3].as_slice());
 
     let set : HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
     assert_eq!(set.len(), 3);
@@ -183,7 +183,7 @@ fn test_scan() {
     s.sort();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
-    assert_eq!(s[], [1, 2, 3][]);
+    assert_eq!(s.as_slice(), [1, 2, 3].as_slice());
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_pipeline() {
     let ((k1, k2),) : ((i32, i32),) = redis::pipe()
         .cmd("SET").arg("key_1").arg(42i).ignore()
         .cmd("SET").arg("key_2").arg(43i).ignore()
-        .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+        .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
@@ -275,7 +275,7 @@ fn test_pipeline_transaction() {
         .atomic()
         .cmd("SET").arg("key_1").arg(42i).ignore()
         .cmd("SET").arg("key_2").arg(43i).ignore()
-        .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+        .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);

@@ -164,7 +164,7 @@ impl PubSub {
     fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
         let mut chan = vec![];
         for item in channel.to_redis_args().iter() {
-            chan.push_all(item[]);
+            chan.push_all(item.as_slice());
         }
         chan
     }
@@ -172,7 +172,7 @@ impl PubSub {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("SUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("SUBSCRIBE").arg(chan.as_slice()).query(&self.con));
         self.channels.insert(chan);
         Ok(())
     }
@@ -180,7 +180,7 @@ impl PubSub {
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PSUBSCRIBE").arg(chan.as_slice()).query(&self.con));
         self.pchannels.insert(chan);
         Ok(())
     }
@@ -188,7 +188,7 @@ impl PubSub {
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("UNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("UNSUBSCRIBE").arg(chan.as_slice()).query(&self.con));
         self.channels.remove(&chan);
         Ok(())
     }
@@ -196,7 +196,7 @@ impl PubSub {
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(chan.as_slice()).query(&self.con));
         self.pchannels.remove(&chan);
         Ok(())
     }
@@ -254,7 +254,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name<'a>(&'a self) -> &'a str {
         match self.channel {
-            Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
+            Data(ref bytes) => str::from_utf8(bytes.as_slice()).unwrap_or("?"),
             _ => "?"
         }
     }
@@ -269,7 +269,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes<'a>(&'a self) -> &'a [u8] {
         match self.channel {
-            Data(ref bytes) => bytes[],
+            Data(ref bytes) => bytes.as_slice(),
             _ => b""
         }
     }

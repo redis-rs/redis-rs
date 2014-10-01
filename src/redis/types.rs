@@ -89,7 +89,7 @@ impl fmt::Show for Value {
             &Nil => write!(fmt, "nil"),
             &Int(val) => write!(fmt, "int({})", val),
             &Data(ref val) => {
-                match from_utf8(val[]) {
+                match from_utf8(val.as_slice()) {
                     Some(x) => write!(fmt, "string-data('{}')", x.escape_default()),
                     None => write!(fmt, "binary-data({})", val),
                 }
@@ -338,7 +338,7 @@ macro_rules! from_redis_value_for_num_internal(
             match v {
                 &Int(val) => Ok(val as $t),
                 &Data(ref bytes) => {
-                    match from_utf8(bytes[]) {
+                    match from_utf8(bytes.as_slice()) {
                         Some(s) => match from_str(s.as_slice()) {
                             Some(rv) => Ok(rv),
                             None => invalid_type_error!(v,
@@ -411,7 +411,7 @@ impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match v {
             &Data(ref bytes) => {
-                match from_utf8(bytes[]) {
+                match from_utf8(bytes.as_slice()) {
                     Some(s) => Ok(s.to_string()),
                     None => invalid_type_error!(v,
                         "Invalid UTF-8 string."),
@@ -558,7 +558,7 @@ impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match v {
             &Data(ref b) => json::from_str(unwrap_or!(
-                from_utf8(b[]), invalid_type_error!(v, "Invalid UTF-8"))),
+                from_utf8(b.as_slice()), invalid_type_error!(v, "Invalid UTF-8"))),
             &Status(ref s) => json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };

@@ -45,7 +45,7 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
         let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
             self.cursor), return None);
         let rv = unwrap_or!(self.con.req_packed_command(
-            pcmd[]).ok(), return None);
+            pcmd.as_slice()).ok(), return None);
         let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
             from_redis_value(&rv).ok(), return None);
         batch.reverse();
@@ -70,7 +70,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
         for item in args.iter() {
             match *item {
                 CursorArg => encode(cursor.to_string().as_bytes()),
-                SimpleArg(ref val) => encode(val[]),
+                SimpleArg(ref val) => encode(val.as_slice()),
                 BorrowedArg(ptr) => encode(ptr),
             }
         }
@@ -82,13 +82,13 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
     if atomic {
-        rv.push_all(cmd("MULTI").get_packed_command()[]);
+        rv.push_all(cmd("MULTI").get_packed_command().as_slice());
     }
     for cmd in cmds.iter() {
-        rv.push_all(cmd.get_packed_command()[]);
+        rv.push_all(cmd.get_packed_command().as_slice());
     }
     if atomic {
-        rv.push_all(cmd("EXEC").get_packed_command()[]);
+        rv.push_all(cmd("EXEC").get_packed_command().as_slice());
     }
     rv
 }
@@ -135,7 +135,7 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
-    /// redis::cmd("SET").arg(["my_key", "my_value"][]);
+    /// redis::cmd("SET").arg(["my_key", "my_value"].as_slice());
     /// redis::cmd("SET").arg("my_key").arg(42i);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
     /// ```
@@ -259,7 +259,7 @@ impl Cmd {
 /// redis server.  API wise it's very similar to just using a command
 /// but it allows multiple commands to be chained and some features such
 /// as iteration are not available.
-/// 
+///
 /// Basic example:
 ///
 /// ```rust,no_run
@@ -268,7 +268,7 @@ impl Cmd {
 /// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
 ///     .cmd("SET").arg("key_1").arg(42i).ignore()
 ///     .cmd("SET").arg("key_2").arg(43i).ignore()
-///     .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+///     .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 /// ```
 ///
 /// As you can see with `cmd` you can start a new command.  By default
@@ -356,13 +356,13 @@ impl Pipeline {
 
     fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(try!(con.req_packed_commands(
-            encode_pipeline(self.commands[], false)[],
+            encode_pipeline(self.commands.as_slice(), false).as_slice(),
             0, self.commands.len()))))
     }
 
     fn execute_transaction(&self, con: &Connection) -> RedisResult<Value> {
         let mut resp = try!(con.req_packed_commands(
-            encode_pipeline(self.commands[], true)[],
+            encode_pipeline(self.commands.as_slice(), true).as_slice(),
             self.commands.len() + 1, 1));
         Ok(self.make_pipeline_results(match resp.pop() {
             Some(Bulk(items)) => items,
@@ -438,14 +438,14 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// ```rust
 /// # use redis::ToRedisArgs;
 /// let mut args = vec![];
-/// args.push_all("SET".to_redis_args()[]);
-/// args.push_all("my_key".to_redis_args()[]);
-/// args.push_all(42i.to_redis_args()[]);
-/// let cmd = redis::pack_command(args[]);
+/// args.push_all("SET".to_redis_args().as_slice());
+/// args.push_all("my_key".to_redis_args().as_slice());
+/// args.push_all(42i.to_redis_args().as_slice());
+/// let cmd = redis::pack_command(args.as_slice());
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(&args.iter().map(|x| BorrowedArg(x[])).collect(), 0)
+    encode_command(&args.iter().map(|x| BorrowedArg(x.as_slice())).collect(), 0)
 }
 
 /// Shortcut for creating a new pipeline.
