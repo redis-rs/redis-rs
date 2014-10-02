@@ -175,6 +175,7 @@
 
 #![feature(macro_rules)]
 #![feature(default_type_params)]
+#![feature(slicing_syntax)]
 
 #![experimental]
 
