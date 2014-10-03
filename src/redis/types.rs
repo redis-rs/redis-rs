@@ -299,11 +299,48 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     }
 }
 
+impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        match self {
+            &Some(ref x) => x.to_redis_args(),
+            &None => vec![],
+        }
+    }
+}
+
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         vec![json::encode(self).into_bytes()]
     }
 }
+
+macro_rules! to_redis_args_for_tuple(
+    () => ();
+    ($($name:ident,)+) => (
+        #[doc(hidden)]
+        impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
+            // we have local variables named T1 as dummies and those
+            // variables are unused.
+            #[allow(non_snake_case, unused_variable)]
+            fn to_redis_args(&self) -> Vec<Vec<u8>> {
+                let ($(ref $name,)*) = *self;
+                let mut rv = vec![];
+                $(rv.push_all($name.to_redis_args()[]);)*
+                rv
+            }
+        }
+        to_redis_args_for_tuple_peel!($($name,)*)
+    )
+)
+
+/// This chips of the leading one and recurses for the rest.  So if the first
+/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
+/// of size 1 (does not implement down to unit).
+macro_rules! to_redis_args_for_tuple_peel(
+    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*))
+)
+
+to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 
 /// This trait is used to convert a redis value into a more appropriate

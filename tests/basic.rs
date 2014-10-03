@@ -307,3 +307,17 @@ fn test_pubsub() {
     redis::cmd("PUBLISH").arg("foo").arg(23i).execute(&con);
     assert_eq!(rv.get(), true);
 }
+
+#[test]
+fn test_tuple_args() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("HMSET").arg("my_key").arg([
+        ("field_1", 42i),
+        ("field_2", 23i),
+    ][]).execute(&con);
+
+    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_1").query(&con), Ok(42i));
+    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_2").query(&con), Ok(23i));
+}
