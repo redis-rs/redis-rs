@@ -3,25 +3,12 @@ use std::str::from_utf8;
 
 use types::{RedisResult, Nil, Int, Data, Bulk, Okay, Status, Error, Value,
             ResponseError, ExecAbortError, BusyLoadingError,
-            NoScriptError, ExtensionError, InternalIoError};
+            NoScriptError, ExtensionError};
 
 
 /// The internal redis response parser.
 pub struct Parser<T> {
     reader: T,
-}
-
-macro_rules! try_io {
-    ($expr:expr) => (
-        match $expr {
-            Err(err) => {
-                return Err(Error::simple(
-                    InternalIoError(err),
-                    "Operation failed because of an IO error"));
-            },
-            Ok(x) => x,
-        }
-    )
 }
 
 /// The parser can be used to parse redis responses into values.  Generally

@@ -14,3 +14,17 @@ macro_rules! unwrap_or {
         }
     )
 }
+
+macro_rules! try_io {
+    ($expr:expr) => (
+        match $expr {
+            Ok(x) => x,
+            Err(err) => {
+                use types::{Error, InternalIoError};
+                return Err(Error::simple(
+                    InternalIoError(err),
+                    "Operation failed because of an IO error"));
+            }
+        }
+    )
+}
