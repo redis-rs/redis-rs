@@ -1,6 +1,6 @@
 [package]
 name = "redis-rs"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 
 [lib]

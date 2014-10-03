@@ -1,7 +1,7 @@
 use url::Url;
-use std::io::{IoResult, IoError, InvalidInput};
 
 use connection::{Connection, connect, PubSub, connect_pubsub};
+use types::{RedisResult, Error, InvalidClientConfig};
 
 
 /// The client type.
@@ -32,28 +32,19 @@ impl Client {
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
-    pub fn open(uri: &str) -> IoResult<Client> {
-        let u = unwrap_or!(from_str::<Url>(uri), return Err(IoError {
-            kind: InvalidInput,
-            desc: "Redis URL did not parse",
-            detail: None,
-        }));
-        ensure!(u.scheme.as_slice() == "redis", Err(IoError {
-            kind: InvalidInput,
-            desc: "URL provided is not a redis URL",
-            detail: None,
-        }));
+    pub fn open(uri: &str) -> RedisResult<Client> {
+        let u = unwrap_or!(from_str::<Url>(uri), return Err(Error::simple(
+            InvalidClientConfig, "Redis URL did not parse")));
+        ensure!(u.scheme.as_slice() == "redis", Err(Error::simple(
+            InvalidClientConfig, "URL provided is not a redis URL")));
 
         Ok(Client {
             host: u.host,
             port: u.port.unwrap_or(6379),
             db: match u.path.to_string().as_slice().trim_chars('/') {
                 "" => 0,
-                path => unwrap_or!(from_str::<i64>(path), return Err(IoError {
-                    kind: InvalidInput,
-                    desc: "Path is not a valid redis database number",
-                    detail: None,
-                }))
+                path => unwrap_or!(from_str::<i64>(path), return Err(Error::simple(
+                    InvalidClientConfig, "Path is not a valid redis database number")))
             },
         })
     }
@@ -63,8 +54,8 @@ impl Client {
     /// commands to the server.  This can fail with a variety of errors
     /// (like unreachable host) so it's important that you handle those
     /// errors.
-    pub fn get_connection(&self) -> IoResult<Connection> {
-        connect(self.host.as_slice(), self.port, self.db)
+    pub fn get_connection(&self) -> RedisResult<Connection> {
+        Ok(try_io!(connect(self.host.as_slice(), self.port, self.db)))
     }
 
     /// Returns a PubSub connection.  A pubsub connection can be used to
@@ -72,7 +63,7 @@ impl Client {
     /// system.
     ///
     /// Note that redis' pubsub operates across all databases.
-    pub fn get_pubsub(&self) -> IoResult<PubSub> {
-        connect_pubsub(self.host.as_slice(), self.port)
+    pub fn get_pubsub(&self) -> RedisResult<PubSub> {
+        Ok(try_io!(connect_pubsub(self.host.as_slice(), self.port)))
     }
 }

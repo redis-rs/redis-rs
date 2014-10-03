@@ -64,7 +64,9 @@ impl TestContext {
 
         loop {
             match client.get_connection() {
-                Err(IoError { kind: ConnectionRefused, .. }) => {
+                Err(redis::Error {
+                    kind: redis::InternalIoError(IoError {
+                        kind: ConnectionRefused, .. }), ..}) => {
                     sleep(Duration::milliseconds(1));
                 },
                 Err(err) => { fail!("Could not connect: {}", err); }

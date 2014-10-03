@@ -20,6 +20,9 @@ pub enum ErrorKind {
     BusyLoadingError,
     /// A script that was requested does not actually exist.
     NoScriptError,
+    /// An error that was caused because the parameter to the
+    /// client were wrong.
+    InvalidClientConfig,
     /// A error that is unknown to the library.  This might be used
     /// by future redis servers or custom extensions.
     ExtensionError(String),
