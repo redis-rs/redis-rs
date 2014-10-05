@@ -1,5 +1,5 @@
 use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
-            ResponseError, Bulk, from_redis_value};
+            ResponseError, Bulk, Nil, from_redis_value};
 use connection::Connection;
 
 enum Arg<'a> {
@@ -364,13 +364,12 @@ impl Pipeline {
         let mut resp = try!(con.req_packed_commands(
             encode_pipeline(self.commands[], true)[],
             self.commands.len() + 1, 1));
-        Ok(self.make_pipeline_results(match resp.pop() {
-            Some(Bulk(items)) => items,
-            _ => {
-                return Err(Error::simple(ResponseError,
-                    "Invalid response when parsing multi response"));
-            }
-        }))
+        match resp.pop() {
+            Some(Nil) => Ok(Nil),
+            Some(Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            _ => Err(Error::simple(ResponseError,
+                "Invalid response when parsing multi response"))
+        }
     }
 
     /// Executes the pipeline and fetches the return values.  Since most
