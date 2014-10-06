@@ -110,6 +110,7 @@
 //! Transactions are available through atomic pipelines.  In order to use
 //! them in a more simple way you can use the `transaction` function of a
 //! connection:
+//!
 //! ```rust,no_run
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
