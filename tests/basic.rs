@@ -290,6 +290,7 @@ fn test_real_transaction() {
 
     let key = "the_key";
     let _ : () = redis::cmd("SET").arg(key).arg(42i).query(&con).unwrap();
+
     loop {
         let _ : () = redis::cmd("WATCH").arg(key).query(&con).unwrap();
         let val : int = redis::cmd("GET").arg(key).query(&con).unwrap();
@@ -307,6 +308,24 @@ fn test_real_transaction() {
             }
         }
     }
+}
+
+#[test]
+fn test_real_transaction_highlevel() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let key = "the_key";
+    let _ : () = redis::cmd("SET").arg(key).arg(42i).query(&con).unwrap();
+
+    let response : (int,) = con.transaction([key][], |pipe| {
+        let val : int = try!(redis::cmd("GET").arg(key).query(&con));
+        pipe
+            .cmd("SET").arg(key).arg(val + 1).ignore()
+            .cmd("GET").arg(key).query(&con)
+    }).unwrap();
+
+    assert_eq!(response, (43i,));
 }
 
 #[test]

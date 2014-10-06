@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str;
 
-use cmd::cmd;
+use cmd::{cmd, pipe, Pipeline};
 use types::{RedisResult, Okay, Error, Value, Data, Nil, InternalIoError,
             ToRedisArgs, FromRedisValue, from_redis_value};
 use parser::Parser;
@@ -132,6 +132,53 @@ impl Connection {
             }
         }
         Ok(rv)
+    }
+
+    /// This function simplifies transaction management slightly.  What it
+    /// does is automatically watching keys and then going into a transaction
+    /// loop util it succeeds.  Once it goes through the results are
+    /// returned.
+    ///
+    /// To use the transaction two pieces of information are needed: a list
+    /// of all the keys that need to be watched for modifications and a
+    /// closure with the code that should be execute in the context of the
+    /// transaction.  The closure is invoked with a fresh pipeline in atomic
+    /// mode.  To use the transaction the function needs to return the result
+    /// from querying the pipeline with the connection.
+    ///
+    /// The end result of the transaction is then available as the return
+    /// value from the function call.
+    ///
+    /// Example:
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let con = client.get_connection().unwrap();
+    /// let key = "the_key";
+    /// let (new_val,) : (int,) = con.transaction([key][], |pipe| {
+    ///     let old_val : int = try!(redis::cmd("GET").arg(key).query(&con));
+    ///     pipe
+    ///         .cmd("SET").arg(key).arg(old_val + 1).ignore()
+    ///         .cmd("GET").arg(key).query(&con)
+    /// }).unwrap();
+    /// println!("The incremented number is: {}", new_val);
+    /// ```
+    pub fn transaction<K: ToRedisArgs, T: FromRedisValue>(&self,
+            keys: &[K], func: |&mut Pipeline| -> RedisResult<Option<T>>) -> RedisResult<T> {
+        loop {
+            let _ : () = try!(cmd("WATCH").arg(keys).query(self));
+            let mut p = pipe();
+            let response : Option<T> = try!(func(p.atomic()));
+            match response {
+                None => { continue; }
+                Some(response) => {
+                    // make sure no watch is left in the connection, even if
+                    // someone forgot to use the pipeline.
+                    let _ : () = try!(cmd("UNWATCH").query(self));
+                    return Ok(response);
+                }
+            }
+        }
     }
 
     /// Returns the database this connection is bound to.
