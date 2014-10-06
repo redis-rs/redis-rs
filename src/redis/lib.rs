@@ -105,6 +105,26 @@
 //!     .cmd("GET").arg("key_2").query(&con).unwrap();
 //! ```
 //!
+//! ## Transactions
+//!
+//! Transactions are available through atomic pipelines.  In order to use
+//! them in a more simple way you can use the `transaction` function of a
+//! connection:
+//! ```rust,no_run
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let key = "the_key";
+//! let (new_val,) : (int,) = con.transaction([key][], |pipe| {
+//!     let old_val : int = try!(redis::cmd("GET").arg(key).query(&con));
+//!     pipe
+//!         .cmd("SET").arg(key).arg(old_val + 1).ignore()
+//!         .cmd("GET").arg(key).query(&con)
+//! }).unwrap();
+//! println!("The incremented number is: {}", new_val);
+//! ```
+//!
+//! For more information see the `transaction` function.
+//!
 //! ## PubSub
 //!
 //! Pubsub is currently work in progress but provided through the `PubSub`
