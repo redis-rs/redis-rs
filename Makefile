@@ -5,7 +5,7 @@ test:
 	@RUST_TEST_TASKS=1 cargo test
 
 docs:
-	@cargo doc
+	@cargo doc --no-deps
 
 upload-docs: docs
 	@./upload-docs.sh

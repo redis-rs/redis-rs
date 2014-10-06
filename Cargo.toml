@@ -3,6 +3,9 @@ name = "redis-rs"
 version = "0.3.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 
+[dependencies.rust-crypto]
+git = "https://github.com/DaGenix/rust-crypto.git"
+
 [lib]
 name = "redis"
 path = "src/redis/lib.rs"

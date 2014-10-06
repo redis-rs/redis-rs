@@ -147,6 +147,24 @@
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
 //! ```
+//!
+//! ## Scripts
+//!
+//! Lua scripts are supported through the `Script` type in a convenient
+//! way (it does not support pipelining currently).  It will automatically
+//! load the script if it does not exist and invoke it.
+//!
+//! Example:
+//!
+//! ```rust,no_run
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let script = redis::Script::new(r"
+//!     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
+//! ");
+//! let result : int = script.arg(1i).arg(2i).invoke(&con).unwrap();
+//! assert_eq!(result, 3);
+//! ```
 
 #![crate_name = "redis"]
 #![crate_type = "lib"]
@@ -162,10 +180,12 @@
 
 extern crate url;
 extern crate serialize;
+extern crate "rust-crypto" as crypto;
 
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
+pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, PubSub, Msg};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 
@@ -211,4 +231,5 @@ mod parser;
 mod client;
 mod connection;
 mod types;
+mod script;
 mod cmd;

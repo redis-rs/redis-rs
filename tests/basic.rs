@@ -356,6 +356,21 @@ fn test_pubsub() {
 }
 
 #[test]
+fn test_script() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let script = redis::Script::new(r"
+       return {redis.call('GET', KEYS[1]), ARGV[1]}
+    ");
+
+    let _ : () = redis::cmd("SET").arg("my_key").arg("foo").query(&con).unwrap();
+    let response = script.key("my_key").arg(42i).invoke(&con);
+
+    assert_eq!(response, Ok(("foo".to_string(), 42i)));
+}
+
+#[test]
 fn test_tuple_args() {
     let ctx = TestContext::new();
     let con = ctx.connection();
