@@ -63,9 +63,10 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     Ok(())
 }
 
-/// Demonstrates how to do an atomic increment.
-fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
+/// Demonstrates how to do an atomic increment in a very low level way.
+fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<()> {
     let key = "the_key";
+    println!("Run low-level atomic increment:");
 
     // set the initial value so we have something to test with.
     let _ : () = try!(redis::cmd("SET").arg(key).arg(42i).query(con));
@@ -90,11 +91,35 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
             None => { continue; }
             Some(response) => {
                 let (new_val,) = response;
-                println!("New value: {}", new_val);
+                println!("  New value: {}", new_val);
                 break;
             }
         }
     }
+
+    Ok(())
+}
+
+/// Demonstrates how to do an atomic increment with transaction support.
+fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
+    let key = "the_key";
+    println!("Run high-level atomic increment:");
+
+    // set the initial value so we have something to test with.
+    let _ : () = try!(redis::cmd("SET").arg(key).arg(42i).query(con));
+
+    // run the transaction block.
+    let (new_val,) : (int,) = con.transaction([key][], |pipe| {
+        // load the old value, so we know what to increment.
+        let val : int = try!(redis::cmd("GET").arg(key).query(con));
+        // increment
+        pipe
+            .cmd("SET").arg(key).arg(val + 1).ignore()
+            .cmd("GET").arg(key).query(con)
+    }).unwrap();
+
+    // and print the result
+    println!("New value: {}", new_val);
 
     Ok(())
 }
@@ -114,6 +139,7 @@ fn do_redis_code() -> redis::RedisResult<()>
     try!(do_show_scanning(&con));
 
     // shows an atomic increment.
+    try!(do_atomic_increment_lowlevel(&con));
     try!(do_atomic_increment(&con));
 
     Ok(())
