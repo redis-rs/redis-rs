@@ -24,7 +24,7 @@ pub struct Script {
 ///     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 /// ");
 /// let result = script.arg(1i).arg(2i).invoke(&con);
-/// assert_eq!(result, Ok(3));
+/// assert_eq!(result, Ok(3i));
 /// ```
 impl Script {
 
@@ -44,6 +44,7 @@ impl Script {
     }
 
     /// Creates a script invocation object with a key filled in.
+    #[inline]
     pub fn key<'a, T: ToRedisArgs>(&'a self, key: T) -> ScriptInvocation<'a> {
         ScriptInvocation {
             script: self,
@@ -53,6 +54,7 @@ impl Script {
     }
 
     /// Creates a script invocation object with an argument filled in.
+    #[inline]
     pub fn arg<'a, T: ToRedisArgs>(&'a self, arg: T) -> ScriptInvocation<'a> {
         ScriptInvocation {
             script: self,
@@ -64,11 +66,13 @@ impl Script {
     /// Returns an empty script invocation object.  This is primarily useful
     /// for programmatically adding arguments and keys because the type will
     /// not change.  Normally you can use `arg` and `key` directly.
+    #[inline]
     pub fn prepare_invoke<'a>(&'a self) -> ScriptInvocation<'a> {
         ScriptInvocation { script: self, args: vec![], keys: vec![] }
     }
 
     /// Invokes the script directly without arguments.
+    #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         ScriptInvocation {
             script: self,
@@ -93,6 +97,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Adds a regular argument to the invocation.  This ends up as `ARGV[i]`
     /// in the script.
+    #[inline]
     pub fn arg<T: ToRedisArgs>(&'a mut self, arg: T) -> &'a mut ScriptInvocation {
         self.args.push_all(arg.to_redis_args()[]);
         self
@@ -100,12 +105,14 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Adds a key argument to the invocation.  This ends up as `KEYS[i]`
     /// in the script.
+    #[inline]
     pub fn key<T: ToRedisArgs>(&'a mut self, key: T) -> &'a mut ScriptInvocation {
         self.keys.push_all(key.to_redis_args()[]);
         self
     }
 
     /// Invokes the script and returns the result.
+    #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")

@@ -139,6 +139,7 @@ impl Cmd {
     /// redis::cmd("SET").arg("my_key").arg(42i);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
     /// ```
+    #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
         for item in arg.to_redis_args().into_iter() {
             self.args.push(SimpleArg(item));
@@ -160,6 +161,7 @@ impl Cmd {
     ///     // do something with the item
     /// }
     /// ```
+    #[inline]
     pub fn cursor_arg(&mut self, cursor: u64) -> &mut Cmd {
         assert!(!self.in_scan_mode());
         self.cursor = Some(cursor);
@@ -168,6 +170,7 @@ impl Cmd {
     }
 
     /// Returns the packed command as a byte vector.
+    #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         encode_command(&self.args, self.cursor.unwrap_or(0))
     }
@@ -175,6 +178,7 @@ impl Cmd {
     /// Like `get_packed_command` but replaces the cursor with the
     /// provided value.  If the command is not in scan mode, `None`
     /// is returned.
+    #[inline]
     fn get_packed_command_with_cursor(&self, cursor: u64) -> Option<Vec<u8>> {
         if !self.in_scan_mode() {
             None
@@ -184,6 +188,7 @@ impl Cmd {
     }
 
     /// Returns true if the command is in scan mode.
+    #[inline]
     pub fn in_scan_mode(&self) -> bool {
         self.cursor.is_some()
     }
@@ -191,6 +196,7 @@ impl Cmd {
     /// Sends the command as query to the connection and converts the
     /// result to the target redis value.  This is the general way how
     /// you can retrieve data.
+    #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
         match con.req_packed_command(pcmd.as_slice()) {
@@ -213,6 +219,7 @@ impl Cmd {
     /// This way you can use the function the same for responses in the
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
+    #[inline]
     pub fn iter<'a, T: FromRedisValue>(&'a mut self, con: &'a Connection)
             -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
@@ -249,6 +256,7 @@ impl Cmd {
     /// # let con = client.get_connection().unwrap();
     /// let _ : () = redis::cmd("PING").query(&con).unwrap();
     /// ```
+    #[inline]
     pub fn execute(&self, con: &Connection) {
         let _ : () = self.query(con).unwrap();
     }
@@ -286,11 +294,13 @@ impl Pipeline {
 
     /// Starts a new command.  Functions such as `arg` then become
     /// available to add more arguments to that command.
+    #[inline]
     pub fn cmd<'a>(&mut self, name: &'a str) -> &mut Pipeline {
         self.commands.push(cmd(name));
         self
     }
 
+    #[inline]
     fn get_last_command(&mut self) -> &mut Cmd {
         let idx = match self.commands.len() {
             0 => fail!("No command on stack"),
@@ -303,6 +313,7 @@ impl Pipeline {
     /// to the `arg` method of the `Cmd` object.
     ///
     /// Note that this function fails the task if executed on an empty pipeline.
+    #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Pipeline {
         {
             let cmd = self.get_last_command();
@@ -318,6 +329,7 @@ impl Pipeline {
     /// you do not care about.
     ///
     /// Note that this function fails the task if executed on an empty pipeline.
+    #[inline]
     pub fn ignore(&mut self) -> &mut Pipeline {
         {
             let cmd = self.get_last_command();
@@ -339,6 +351,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_1")
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
+    #[inline]
     pub fn atomic(&mut self) -> &mut Pipeline {
         self.transaction_mode = true;
         self
@@ -385,6 +398,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_1")
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
+    #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
         from_redis_value(&(
             if self.commands.len() == 0 {
@@ -407,6 +421,7 @@ impl Pipeline {
     /// # let con = client.get_connection().unwrap();
     /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
     /// ```
+    #[inline]
     pub fn execute(&self, con: &Connection) {
         let _ : () = self.query(con).unwrap();
     }
