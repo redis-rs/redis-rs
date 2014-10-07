@@ -24,7 +24,7 @@ those, currently each connection is separate and not pooled.
 
 Queries are then performed through the `execute` and `query` methods.
 
-```rust,no_run
+```rust
 extern crate redis;
 
 fn main() {
