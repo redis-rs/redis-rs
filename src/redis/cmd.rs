@@ -135,7 +135,7 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
-    /// redis::cmd("SET").arg(["my_key", "my_value"][]);
+    /// redis::cmd("SET").arg(["my_key", "my_value"].as_slice());
     /// redis::cmd("SET").arg("my_key").arg(42i);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
     /// ```
@@ -276,7 +276,7 @@ impl Cmd {
 /// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
 ///     .cmd("SET").arg("key_1").arg(42i).ignore()
 ///     .cmd("SET").arg("key_2").arg(43i).ignore()
-///     .cmd("MGET").arg(["key_1", "key_2"][]).query(&con).unwrap();
+///     .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 /// ```
 ///
 /// As you can see with `cmd` you can start a new command.  By default
@@ -452,10 +452,10 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// ```rust
 /// # use redis::ToRedisArgs;
 /// let mut args = vec![];
-/// args.push_all("SET".to_redis_args()[]);
-/// args.push_all("my_key".to_redis_args()[]);
-/// args.push_all(42i.to_redis_args()[]);
-/// let cmd = redis::pack_command(args[]);
+/// args.push_all("SET".to_redis_args().as_slice());
+/// args.push_all("my_key".to_redis_args().as_slice());
+/// args.push_all(42i.to_redis_args().as_slice());
+/// let cmd = redis::pack_command(args.as_slice());
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {

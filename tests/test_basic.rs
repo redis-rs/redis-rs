@@ -1,3 +1,5 @@
+#![feature(slicing_syntax)]
+
 extern crate redis;
 extern crate libc;
 extern crate serialize;

@@ -115,7 +115,7 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (int,) = con.transaction([key][], |pipe| {
+//! let (new_val,) : (int,) = con.transaction([key].as_slice(), |pipe| {
 //!     let old_val : int = try!(redis::cmd("GET").arg(key).query(&con));
 //!     pipe
 //!         .cmd("SET").arg(key).arg(old_val + 1).ignore()
