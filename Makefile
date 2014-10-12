@@ -7,7 +7,7 @@ test:
 bench:
 	@RUST_TEST_TASKS=1 cargo bench
 
-docs:
+docs: build
 	@cargo doc --no-deps
 
 upload-docs: docs

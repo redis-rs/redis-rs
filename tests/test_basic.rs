@@ -4,6 +4,8 @@ extern crate redis;
 extern crate libc;
 extern crate serialize;
 
+use redis::{Commands, PipelineCommands};
+
 use std::io::process;
 use std::io::{IoError, ConnectionRefused};
 use std::time::Duration;
@@ -384,4 +386,23 @@ fn test_tuple_args() {
 
     assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_1").query(&con), Ok(42i));
     assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_2").query(&con), Ok(23i));
+}
+
+#[test]
+fn test_nice_api() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.set("my_key", 42i), Ok(()));
+    assert_eq!(con.get("my_key"), Ok(42i));
+
+    let (k1, k2) : (i32, i32) = redis::pipe()
+        .atomic()
+        .set("key_1", 42i).ignore()
+        .set("key_2", 43i).ignore()
+        .get("key_1")
+        .get("key_2").query(&con).unwrap();
+
+    assert_eq!(k1, 42);
+    assert_eq!(k2, 43);
 }

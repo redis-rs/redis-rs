@@ -2,6 +2,7 @@ use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
             ResponseError, Bulk, Nil, from_redis_value};
 use connection::Connection;
 
+#[deriving(Clone)]
 enum Arg<'a> {
     SimpleArg(Vec<u8>),
     CursorArg,
@@ -10,6 +11,7 @@ enum Arg<'a> {
 
 
 /// Represents redis commands.
+#[deriving(Clone)]
 pub struct Cmd {
     args: Vec<Arg<'static>>,
     cursor: Option<u64>,
@@ -297,6 +299,13 @@ impl Pipeline {
     #[inline]
     pub fn cmd<'a>(&mut self, name: &'a str) -> &mut Pipeline {
         self.commands.push(cmd(name));
+        self
+    }
+
+    /// Adds a command to the pipeline.
+    #[inline]
+    pub fn add_command(&mut self, cmd: &Cmd) -> &mut Pipeline {
+        self.commands.push(cmd.clone());
         self
     }
 

@@ -21,6 +21,21 @@
 //! }
 //! ```
 //!
+//! In addition to that, some convenience methods for common operations are
+//! implemented through `Commands` and `PipelineCommands`.  The above example
+//! is the same as this:
+//!
+//! ```rust,no_run
+//! extern crate redis;
+//! use redis::Commands;
+//!
+//! fn main() {
+//!     let client = redis::Client::open("redis://127.0.0.1/");
+//!     let _ : () = client.set("my_key", 42i).unwrap();
+//!     assert_eq!(client.get("my_key"), Ok(42i));
+//! }
+//! ```
+//!
 //! ## Type Conversions
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
@@ -189,6 +204,7 @@ pub use client::Client;
 pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, PubSub, Msg};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
+pub use commands::{Commands, PipelineCommands};
 
 #[doc(hidden)]
 pub use types::{
@@ -226,7 +242,7 @@ pub use types::{
     from_redis_value,
 };
 
-pub mod macros;
+mod macros;
 
 mod parser;
 mod client;
@@ -234,3 +250,4 @@ mod connection;
 mod types;
 mod script;
 mod cmd;
+mod commands;
