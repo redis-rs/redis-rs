@@ -85,6 +85,11 @@ implement_commands!(
         cmd("SET").arg(key).arg(value)
     }
 
+    #[doc="Sets multiple keys to their values."]
+    fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) {
+        cmd("MSET").arg(items)
+    }
+
     #[doc="Set the value and expiration of a key."]
     fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: uint) {
         cmd("SETEX").arg(key).arg(value).arg(seconds)
@@ -93,6 +98,11 @@ implement_commands!(
     #[doc="Set the value of a key, only if the key does not exist"]
     fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("SETNX").arg(key).arg(value)
+    }
+
+    #[doc="Sets multiple keys to their values failing if at least one already exists."]
+    fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) {
+        cmd("MSETNX").arg(items)
     }
 
     #[doc="Set the string value of a key and return its old value."]
@@ -196,6 +206,161 @@ implement_commands!(
     #[doc="Get the length of the value stored in a key."]
     fn strlen<K: ToRedisArgs>(key: K) {
         cmd("STRLEN").arg(key)
+    }
+
+    // hash operations
+
+    #[doc="Gets a single (or multiple) fields from a hash."]
+    fn hget<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+        cmd(if field.is_single_arg() { "HGET" } else { "HMGET" }).arg(key).arg(field)
+    }
+
+    #[doc="Deletes a single (or multiple) fields from a hash."]
+    fn hdel<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+        cmd("HDEL").arg(key).arg(field)
+    }
+
+    #[doc="Sets a single field in a hash."]
+    fn hset<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) {
+        cmd("HSET").arg(key).arg(field).arg(value)
+    }
+
+    #[doc="Sets a single field in a hash if it does not exist."]
+    fn hset_nx<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) {
+        cmd("HSETNX").arg(key).arg(field).arg(value)
+    }
+
+    #[doc="Sets a multiple fields in a hash."]
+    fn hset_multiple<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &[(F, V)]) {
+        cmd("HMSET").arg(key).arg(items)
+    }
+
+    #[doc="Increments a value."]
+    fn hincr<K: ToRedisArgs, F: ToRedisArgs, D: ToRedisArgs>(key: K, field: F, delta: D) {
+        cmd(if delta.describe_numeric_behavior() == NumberIsFloat {
+            "HINCRBYFLOAT"
+        } else {
+            "HINCRBY"
+        }).arg(key).arg(field).arg(delta)
+    }
+
+    #[doc="Checks if a field in a hash exists."]
+    fn hexists<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+        cmd("HEXISTS").arg(key).arg(field)
+    }
+
+    #[doc="Gets all the keys in a hash."]
+    fn hkeys<K: ToRedisArgs>(key: K) {
+        cmd("HKEYS").arg(key)
+    }
+
+    #[doc="Gets all the values in a hash."]
+    fn hvals<K: ToRedisArgs>(key: K) {
+        cmd("HVALS").arg(key)
+    }
+
+    #[doc="Gets all the fields and values in a hash."]
+    fn hgetall<K: ToRedisArgs>(key: K) {
+        cmd("HGETALL").arg(key)
+    }
+
+    #[doc="Gets the length of a hash."]
+    fn hlen<K: ToRedisArgs>(key: K) {
+        cmd("HLEN").arg(key)
+    }
+
+    // list operations
+
+    #[doc="Remove and get the first element in a list, or block until one is available."]
+    fn blpop<K: ToRedisArgs>(key: K, timeout: uint) {
+        cmd("BLPOP").arg(key).arg(timeout)
+    }
+
+    #[doc="Remove and get the last element in a list, or block until one is available."]
+    fn brpop<K: ToRedisArgs>(key: K, timeout: uint) {
+        cmd("BRPOP").arg(key).arg(timeout)
+    }
+
+    #[doc="Pop a value from a list, push it to another list and return it;
+        or block until one is available."]
+    fn brpoplpush<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: uint) {
+        cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
+    }
+
+    #[doc="Get an element from a list by its index."]
+    fn lindex<K: ToRedisArgs>(key: K, index: int) {
+        cmd("LINDEX").arg(key).arg(index)
+    }
+
+    #[doc="Insert an element before another element in a list."]
+    fn linsert_before<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(
+            key: K, pivot: P, value: V) {
+        cmd("LINSERT").arg(key).arg("BEFORE").arg(pivot).arg(value)
+    }
+
+    #[doc="Insert an element after another element in a list."]
+    fn linsert_after<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(
+            key: K, pivot: P, value: V) {
+        cmd("LINSERT").arg(key).arg("AFTER").arg(pivot).arg(value)
+    }
+
+    #[doc="Returns the length of the list stored at key."]
+    fn llen<K: ToRedisArgs>(key: K) {
+        cmd("LLEN").arg(key)
+    }
+
+    #[doc="Removes and returns the first element of the list stored at key."]
+    fn lpop<K: ToRedisArgs>(key: K) {
+        cmd("LPOP").arg(key)
+    }
+
+    #[doc="Insert all the specified values at the head of the list stored at key."]
+    fn lpush<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("LPUSH").arg(key).arg(value)
+    }
+
+    #[doc="Inserts a value at the head of the list stored at key, only if key already exists and
+        holds a list."]
+    fn lpush_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("LPUSHX").arg(key).arg(value)
+    }
+
+    #[doc="Returns the specified elements of the list stored at key."]
+    fn lrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("LRANGE").arg(key).arg(start).arg(stop)
+    }
+
+    #[doc="Removes the first count occurrences of elements equal to value 
+        from the list stored at key."]
+    fn lrem<K: ToRedisArgs, V: ToRedisArgs>(key: K, count: int, value: V) {
+        cmd("LREM").arg(key).arg(count).arg(value)
+    }
+
+    #[doc="Trim an existing list so that it will contain only the specified
+        range of elements specified."]
+    fn ltrim<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("LTRIM").arg(key).arg(start).arg(stop)
+    }
+
+    #[doc="Removes and returns the last element of the list stored at key."]
+    fn rpop<K: ToRedisArgs>(key: K) {
+        cmd("RPOP").arg(key)
+    }
+
+    #[doc="Pop a value from a list, push it to another list and return it."]
+    fn rpoplpush<K: ToRedisArgs>(key: K, dstkey: K) {
+        cmd("RPOPLPUSH").arg(key).arg(dstkey)
+    }
+
+    #[doc="Insert all the specified values at the tail of the list stored at key."]
+    fn rpush<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("RPUSH").arg(key).arg(value)
+    }
+
+    #[doc="Inserts value at the tail of the list stored at key, only if key already exists and
+        holds a list."]
+    fn rpush_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("RPUSHX").arg(key).arg(value)
     }
 )
 

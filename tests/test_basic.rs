@@ -406,3 +406,62 @@ fn test_nice_api() {
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
 }
+
+#[test]
+fn test_auto_m_versions() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.set_multiple([("key1", 1i), ("key2", 2i)][]), Ok(()));
+    assert_eq!(con.get(["key1", "key2"][]), Ok((1i, 2i)));
+}
+
+#[test]
+fn test_nice_hash_api() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.hset_multiple("my_hash", [
+        ("f1", 1i),
+        ("f2", 2i),
+        ("f3", 4i),
+        ("f4", 8i),
+    ][]), Ok(()));
+
+    let hm : HashMap<String, int> = con.hgetall("my_hash").unwrap();
+    assert_eq!(hm.find_equiv(&"f1"), Some(&1i));
+    assert_eq!(hm.find_equiv(&"f2"), Some(&2i));
+    assert_eq!(hm.find_equiv(&"f3"), Some(&4i));
+    assert_eq!(hm.find_equiv(&"f4"), Some(&8i));
+    assert_eq!(hm.len(), 4);
+
+    let v : Vec<(String, int)> = con.hgetall("my_hash").unwrap();
+    assert_eq!(v, vec![
+        ("f1".to_string(), 1i),
+        ("f2".to_string(), 2i),
+        ("f3".to_string(), 4i),
+        ("f4".to_string(), 8i),
+    ]);
+
+    assert_eq!(con.hget("my_hash", ["f2", "f4"][]), Ok((2i, 8i)));
+    assert_eq!(con.hincr("my_hash", "f1", 1i), Ok((2i)));
+    assert_eq!(con.hincr("my_hash", "f2", 1.5f32), Ok((3.5f32)));
+    assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
+    assert_eq!(con.hdel("my_hash", ["f1", "f2"][]), Ok(()));
+    assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
+}
+
+#[test]
+fn test_nice_list_api() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.rpush("my_list", [1i, 2i, 3i, 4i][]), Ok(4i));
+    assert_eq!(con.rpush("my_list", [5i, 6i, 7i, 8i][]), Ok(8i));
+    assert_eq!(con.llen("my_list"), Ok(8i));
+
+    assert_eq!(con.lpop("my_list"), Ok(1i));
+    assert_eq!(con.llen("my_list"), Ok(7i));
+
+    assert_eq!(con.lrange("my_list", 0, 2), Ok((2i, 3i, 4i)));
+}

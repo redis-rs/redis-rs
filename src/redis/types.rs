@@ -425,6 +425,20 @@ pub trait FromRedisValue {
     /// appropriate error is generated.
     fn from_redis_value(v: &Value) -> RedisResult<Self>;
 
+    /// Similar to `from_redis_value` but constructs a vector of objects
+    /// from another vector of values.  This primarily exists internally
+    /// to customize the behavior for vectors of tuples.
+    fn from_redis_values(items: &[Value]) -> RedisResult<Vec<Self>> {
+        let mut rv = vec![];
+        for item in items.iter() {
+            match FromRedisValue::from_redis_value(item) {
+                Ok(val) => rv.push(val),
+                Err(_) => {},
+            }
+        }
+        Ok(rv)
+    }
+
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
@@ -540,14 +554,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                 }
             },
             &Bulk(ref items) => {
-                let mut rv = vec![];
-                for item in items.iter() {
-                    match from_redis_value(item) {
-                        Ok(val) => rv.push(val),
-                        Err(_) => {},
-                    }
-                }
-                Ok(rv)
+                FromRedisValue::from_redis_values(items[])
             }
             &Nil => {
                 Ok(vec![])
@@ -633,6 +640,26 @@ macro_rules! from_redis_value_for_tuple(
                     }
                     _ => invalid_type_error!(v, "Not a bulk response")
                 }
+            }
+
+            #[allow(non_snake_case, unused_variable)]
+            fn from_redis_values(items: &[Value]) -> RedisResult<Vec<($($name,)*)>> {
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+                if items.len() % n != 0 {
+                    invalid_type_error!(items, "Bulk response of wrong dimension")
+                }
+
+                // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                // postfix increment :)
+                let mut rv = vec![];
+                let mut offset = 0;
+                while offset < items.len() - 1 {
+                    rv.push(($({let $name = (); try!(from_redis_value(
+                         &items[{ offset += 1; offset - 1 }]))},)*));
+                }
+                Ok(rv)
             }
         }
         from_redis_value_for_tuple_peel!($($name,)*)

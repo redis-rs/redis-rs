@@ -36,6 +36,8 @@
 //! }
 //! ```
 //!
+//! Commands are work in progress and many are still missing.
+//!
 //! ## Type Conversions
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
