@@ -204,7 +204,16 @@ pub use client::Client;
 pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, PubSub, Msg};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
-pub use commands::{Commands, PipelineCommands};
+pub use commands::{
+    Commands,
+    PipelineCommands,
+
+    BitOp,
+        BitAnd,
+        BitOr,
+        BitXor,
+        BitNot,
+};
 
 #[doc(hidden)]
 pub use types::{
@@ -233,6 +242,10 @@ pub use types::{
 
     /* utility types */
     InfoDict,
+    NumericBehavior,
+        NonNumeric,
+        NumberIsInteger,
+        NumberIsFloat,
 
     /* conversion traits */
     FromRedisValue,

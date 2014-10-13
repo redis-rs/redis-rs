@@ -7,6 +7,16 @@ use std::collections::{HashMap, HashSet};
 use serialize::json;
 
 
+/// Helper enum that is used in some situations to describe
+/// the behavior of arguments in a numeric context.
+#[deriving(PartialEq, Eq, Clone, Show)]
+pub enum NumericBehavior {
+    NonNumeric,
+    NumberIsInteger,
+    NumberIsFloat,
+}
+
+
 /// An enum of all error kinds.
 #[deriving(PartialEq, Eq, Clone, Show)]
 pub enum ErrorKind {
@@ -218,6 +228,20 @@ pub trait ToRedisArgs {
     /// The exception to this rule currently are vectors of items.
     fn to_redis_args(&self) -> Vec<Vec<u8>>;
 
+    /// Returns an information about the contained value with regards
+    /// to it's numeric behavior in a redis context.  This is used in
+    /// some high level concepts to switch between different implementations
+    /// of redis functions.
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        NonNumeric
+    }
+
+    /// Returns an indiciation if the value contained is exactly one
+    /// argument of zero or more.
+    fn is_single_arg(&self) -> bool {
+        true
+    }
+
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
@@ -227,6 +251,11 @@ pub trait ToRedisArgs {
             rv.push_all(item.to_redis_args().as_slice());
         }
         rv
+    }
+
+    #[doc(hidden)]
+    fn is_single_vec_arg(items: &[Self]) -> bool {
+        items.len() == 1
     }
 }
 
@@ -242,11 +271,15 @@ macro_rules! invalid_type_error(
 )
 
 macro_rules! string_based_to_redis_impl(
-    ($t:ty) => (
+    ($t:ty, $numeric:expr) => (
         impl ToRedisArgs for $t {
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let s = self.to_string();
                 vec![s.as_bytes().to_vec()]
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                $numeric
             }
         }
     )
@@ -262,20 +295,24 @@ impl ToRedisArgs for u8 {
     fn make_arg_vec(items: &[u8]) -> Vec<Vec<u8>> {
         vec![items.to_vec()]
     }
+
+    fn is_single_vec_arg(_items: &[u8]) -> bool {
+        true
+    }
 }
 
-string_based_to_redis_impl!(i8)
-string_based_to_redis_impl!(i16)
-string_based_to_redis_impl!(u16)
-string_based_to_redis_impl!(i32)
-string_based_to_redis_impl!(u32)
-string_based_to_redis_impl!(i64)
-string_based_to_redis_impl!(u64)
-string_based_to_redis_impl!(f32)
-string_based_to_redis_impl!(f64)
-string_based_to_redis_impl!(int)
-string_based_to_redis_impl!(uint)
-string_based_to_redis_impl!(bool)
+string_based_to_redis_impl!(i8, NumberIsInteger)
+string_based_to_redis_impl!(i16, NumberIsInteger)
+string_based_to_redis_impl!(u16, NumberIsInteger)
+string_based_to_redis_impl!(i32, NumberIsInteger)
+string_based_to_redis_impl!(u32, NumberIsInteger)
+string_based_to_redis_impl!(i64, NumberIsInteger)
+string_based_to_redis_impl!(u64, NumberIsInteger)
+string_based_to_redis_impl!(f32, NumberIsFloat)
+string_based_to_redis_impl!(f64, NumberIsFloat)
+string_based_to_redis_impl!(int, NumberIsInteger)
+string_based_to_redis_impl!(uint, NumberIsInteger)
+string_based_to_redis_impl!(bool, NonNumeric)
 
 
 impl ToRedisArgs for String {
@@ -300,6 +337,10 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         ToRedisArgs::make_arg_vec(*self)
     }
+
+    fn is_single_arg(&self) -> bool {
+        ToRedisArgs::is_single_vec_arg(*self)
+    }
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
@@ -307,6 +348,20 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         match self {
             &Some(ref x) => x.to_redis_args(),
             &None => vec![],
+        }
+    }
+
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        match self {
+            &Some(ref x) => x.describe_numeric_behavior(),
+            &None => NonNumeric,
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        match self {
+            &Some(ref x) => x.is_single_arg(),
+            &None => false,
         }
     }
 }
@@ -330,6 +385,13 @@ macro_rules! to_redis_args_for_tuple(
                 let mut rv = vec![];
                 $(rv.push_all($name.to_redis_args()[]);)*
                 rv
+            }
+
+            #[allow(non_snake_case, unused_variable)]
+            fn is_single_arg(&self) -> bool {
+                let mut n = 0u;
+                $(let $name = (); n += 1;)*
+                n == 1
             }
         }
         to_redis_args_for_tuple_peel!($($name,)*)

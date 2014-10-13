@@ -1,7 +1,16 @@
-use types::{FromRedisValue, ToRedisArgs, RedisResult};
+use types::{FromRedisValue, ToRedisArgs, RedisResult, NumberIsFloat};
 use client::Client;
 use connection::Connection;
 use cmd::{cmd, Cmd, Pipeline};
+
+
+#[deriving(PartialEq, Eq, Clone, Show)]
+pub enum BitOp {
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+}
 
 macro_rules! implement_commands {
     (
@@ -66,14 +75,29 @@ macro_rules! implement_commands {
 implement_commands!(
     // most common operations
 
-    #[doc="Get the value of a key."]
+    #[doc="Get the value of a key.  If key is a vec this becomes an `MGET`."]
     fn get<K: ToRedisArgs>(self, key: K) {
-        cmd("GET").arg(key)
+        cmd(if key.is_single_arg() { "GET" } else { "MGET" }).arg(key)
     }
 
     #[doc="Set the string value of a key."]
     fn set<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, value: V) {
         cmd("SET").arg(key).arg(value)
+    }
+
+    #[doc="Set the value and expiration of a key."]
+    fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, value: V, seconds: uint) {
+        cmd("SETEX").arg(key).arg(value).arg(seconds)
+    }
+
+    #[doc="Set the value of a key, only if the key does not exist"]
+    fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, value: V) {
+        cmd("SETNX").arg(key).arg(value)
+    }
+
+    #[doc="Set the string value of a key and return its old value."]
+    fn getset<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, value: V) {
+        cmd("GETSET").arg(key).arg(value)
     }
 
     #[doc="Delete one or more keys."]
@@ -87,22 +111,22 @@ implement_commands!(
     }
 
     #[doc="Set a key's time to live in seconds."]
-    fn expire<K: ToRedisArgs, S: ToRedisArgs>(self, key: K, seconds: S) {
+    fn expire<K: ToRedisArgs>(self, key: K, seconds: uint) {
         cmd("EXPIRE").arg(key).arg(seconds)
     }
 
     #[doc="Set the expiration for a key as a UNIX timestamp."]
-    fn expire_at<K: ToRedisArgs, TS: ToRedisArgs>(self, key: K, ts: TS) {
+    fn expire_at<K: ToRedisArgs>(self, key: K, ts: uint) {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
     #[doc="Set a key's time to live in milliseconds."]
-    fn pexpire<K: ToRedisArgs, MS: ToRedisArgs>(self, key: K, ms: MS) {
+    fn pexpire<K: ToRedisArgs>(self, key: K, ms: uint) {
         cmd("PEXPIRE").arg(key).arg(ms)
     }
 
     #[doc="Set the expiration for a key as a UNIX timestamp in milliseconds."]
-    fn pexpire_at<K: ToRedisArgs, TS: ToRedisArgs>(self, key: K, ts: TS) {
+    fn pexpire_at<K: ToRedisArgs>(self, key: K, ts: uint) {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
@@ -119,6 +143,59 @@ implement_commands!(
     #[doc="Rename a key, only if the new key does not exist."]
     fn rename_nx<K: ToRedisArgs>(self, key: K, new_key: K) {
         cmd("RENAMENX").arg(key).arg(new_key)
+    }
+
+    // common string operations
+
+    #[doc="Append a value to a key."]
+    fn append<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, value: V) {
+        cmd("APPEND").arg(key).arg(value)
+    }
+
+    #[doc="Increment the numeric value of a key by the given amount.  This 
+          issues a `INCR` or `INCRBYFLOAT` depending on the type."]
+    fn incr<K: ToRedisArgs, V: ToRedisArgs>(self, key: K, delta: V) {
+        cmd(if delta.describe_numeric_behavior() == NumberIsFloat {
+            "INCRBYFLOAT"
+        } else {
+            "INCR"
+        }).arg(key).arg(delta)
+    }
+
+    #[doc="Sets or clears the bit at offset in the string value stored at key."]
+    fn setbit<K: ToRedisArgs>(self, key: K, offset: uint, value: bool) {
+        cmd("SETBIT").arg(key).arg(offset).arg(value)
+    }
+
+    #[doc="Returns the bit value at offset in the string value stored at key."]
+    fn getbit<K: ToRedisArgs>(self, key: K, offset: uint) {
+        cmd("GETBIT").arg(key).arg(offset)
+    }
+
+    #[doc="Count set bits in a string."]
+    fn bitcount<K: ToRedisArgs>(self, key: K) {
+        cmd("BITCOUNT").arg(key)
+    }
+
+    #[doc="Count set bits in a string in a range."]
+    fn bitcount_range<K: ToRedisArgs>(self, key: K, start: uint, end: uint) {
+        cmd("BITCOUNT").arg(key).arg(start).arg(end)
+    }
+
+    #[doc="Perform a bitwise operation between multiple keys (containing string values)
+        and store the result in the destination key."]
+    fn bitop<K: ToRedisArgs>(self, op: BitOp, dstkey: K, srckeys: K) {
+        cmd("BITOP").arg(match op {
+            BitAnd => "AND",
+            BitOr => "OR",
+            BitXor => "XOR",
+            BitNot => "NOT"
+        }).arg(dstkey).arg(srckeys)
+    }
+
+    #[doc="Get the length of the value stored in a key."]
+    fn strlen<K: ToRedisArgs>(self, key: K) {
+        cmd("STRLEN").arg(key)
     }
 )
 
