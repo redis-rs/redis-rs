@@ -84,6 +84,35 @@ pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
     })
 }
 
+/// Implements the "stateless" part of the connection interface that is used by the
+/// different objects in redis-rs.  Primarily it obviously applies to `Connection`
+/// object but also some other objects implement the interface (for instance
+/// whole clients or certain redis results).
+///
+/// Generally clients and connections (as well as redis results of those) implement
+/// this trait.  Actual connections provide more functionality which can be used
+/// to implement things like `PubSub` but they also can modify the intrinsic
+/// state of the TCP connection.  This is not possible with `ConnectionLike`
+/// implementors because that functionality is not exposed.
+pub trait ConnectionLike {
+
+    /// Sends an already encoded (packed) command into the TCP socket and
+    /// reads the single response from it.
+    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value>;
+
+    /// Sends multiple already encoded (packed) command into the TCP socket
+    /// and reads `count` responses from it.  This is used to implement
+    /// pipelining.
+    fn req_packed_commands(&self, cmd: &[u8],
+        offset: uint, count: uint) -> RedisResult<Vec<Value>>;
+
+    /// Returns the database this connection is bound to.  Note that this
+    /// information might be unreliable because it's initially cached and
+    /// also might be incorrect if the connection like object is not
+    /// actually connected.
+    fn get_db(&self) -> i64;
+}
+
 
 /// A connection is an object that represents a single redis connection.  It
 /// provides basic support for sending encoded commands into a redis connection
@@ -93,15 +122,6 @@ pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
 /// You generally do not much with this object other than passing it to
 /// `Cmd` objects.
 impl Connection {
-
-    /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the single response from it.
-    pub fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        let mut con = self.con.borrow_mut();
-        try!(con.send_bytes(cmd));
-        con.read_response()
-    }
-
     /// Sends an already encoded (packed) command into the TCP socket and
     /// does not read a response.  This is useful for commands like
     /// `MONITOR` which yield multiple items.  This needs to be used with
@@ -116,12 +136,18 @@ impl Connection {
     pub fn recv_response(&self) -> RedisResult<Value> {
         self.con.borrow_mut().read_response()
     }
+}
 
-    /// Sends multiple already encoded (packed) command into the TCP socket
-    /// and reads `count` responses from it.  This is used to implement
-    /// pipelining.
-    pub fn req_packed_commands(&self, cmd: &[u8],
-            offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+impl ConnectionLike for Connection {
+
+    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+        let mut con = self.con.borrow_mut();
+        try!(con.send_bytes(cmd));
+        con.read_response()
+    }
+
+    fn req_packed_commands(&self, cmd: &[u8],
+        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
@@ -134,56 +160,33 @@ impl Connection {
         Ok(rv)
     }
 
-    /// This function simplifies transaction management slightly.  What it
-    /// does is automatically watching keys and then going into a transaction
-    /// loop util it succeeds.  Once it goes through the results are
-    /// returned.
-    ///
-    /// To use the transaction two pieces of information are needed: a list
-    /// of all the keys that need to be watched for modifications and a
-    /// closure with the code that should be execute in the context of the
-    /// transaction.  The closure is invoked with a fresh pipeline in atomic
-    /// mode.  To use the transaction the function needs to return the result
-    /// from querying the pipeline with the connection.
-    ///
-    /// The end result of the transaction is then available as the return
-    /// value from the function call.
-    ///
-    /// Example:
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
-    /// let key = "the_key";
-    /// let (new_val,) : (int,) = con.transaction([key].as_slice(), |pipe| {
-    ///     let old_val : int = try!(redis::cmd("GET").arg(key).query(&con));
-    ///     pipe
-    ///         .cmd("SET").arg(key).arg(old_val + 1).ignore()
-    ///         .cmd("GET").arg(key).query(&con)
-    /// }).unwrap();
-    /// println!("The incremented number is: {}", new_val);
-    /// ```
-    pub fn transaction<K: ToRedisArgs, T: FromRedisValue>(&self,
-            keys: &[K], func: |&mut Pipeline| -> RedisResult<Option<T>>) -> RedisResult<T> {
-        loop {
-            let _ : () = try!(cmd("WATCH").arg(keys).query(self));
-            let mut p = pipe();
-            let response : Option<T> = try!(func(p.atomic()));
-            match response {
-                None => { continue; }
-                Some(response) => {
-                    // make sure no watch is left in the connection, even if
-                    // someone forgot to use the pipeline.
-                    let _ : () = try!(cmd("UNWATCH").query(self));
-                    return Ok(response);
-                }
-            }
+    fn get_db(&self) -> i64 {
+        self.db
+    }
+}
+
+impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
+
+    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+        match self {
+            &Ok(ref x) => x.req_packed_command(cmd),
+            &Err(ref x) => Err(x.clone()),
         }
     }
 
-    /// Returns the database this connection is bound to.
-    pub fn get_db(&self) -> i64 {
-        self.db
+    fn req_packed_commands(&self, cmd: &[u8],
+        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        match self {
+            &Ok(ref x) => x.req_packed_commands(cmd, offset, count),
+            &Err(ref x) => Err(x.clone()),
+        }
+    }
+
+    fn get_db(&self) -> i64 {
+        match self {
+            &Ok(ref x) => x.get_db(),
+            &Err(_) => 0,
+        }
     }
 }
 
@@ -335,6 +338,54 @@ impl Msg {
         match self.pattern {
             None => from_redis_value(&Nil),
             Some(ref x) => from_redis_value(x),
+        }
+    }
+}
+
+/// This function simplifies transaction management slightly.  What it
+/// does is automatically watching keys and then going into a transaction
+/// loop util it succeeds.  Once it goes through the results are
+/// returned.
+///
+/// To use the transaction two pieces of information are needed: a list
+/// of all the keys that need to be watched for modifications and a
+/// closure with the code that should be execute in the context of the
+/// transaction.  The closure is invoked with a fresh pipeline in atomic
+/// mode.  To use the transaction the function needs to return the result
+/// from querying the pipeline with the connection.
+///
+/// The end result of the transaction is then available as the return
+/// value from the function call.
+///
+/// Example:
+///
+/// ```rust,no_run
+/// use redis::{Commands, PipelineCommands};
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let con = client.get_connection().unwrap();
+/// let key = "the_key";
+/// let (new_val,) : (int,) = redis::transaction(&con, [key].as_slice(), |pipe| {
+///     let old_val : int = try!(con.get(key));
+///     pipe
+///         .set(key, old_val + 1).ignore()
+///         .get(key).query(&con)
+/// }).unwrap();
+/// println!("The incremented number is: {}", new_val);
+/// ```
+pub fn transaction<K: ToRedisArgs, T: FromRedisValue>(con: &ConnectionLike,
+        keys: &[K], func: |&mut Pipeline| -> RedisResult<Option<T>>) -> RedisResult<T> {
+    loop {
+        let _ : () = try!(cmd("WATCH").arg(keys).query(con));
+        let mut p = pipe();
+        let response : Option<T> = try!(func(p.atomic()));
+        match response {
+            None => { continue; }
+            Some(response) => {
+                // make sure no watch is left in the connection, even if
+                // someone forgot to use the pipeline.
+                let _ : () = try!(cmd("UNWATCH").query(con));
+                return Ok(response);
+            }
         }
     }
 }

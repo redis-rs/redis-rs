@@ -1,7 +1,7 @@
 use url::Url;
 
-use connection::{Connection, connect, PubSub, connect_pubsub};
-use types::{RedisResult, Error, InvalidClientConfig};
+use connection::{Connection, connect, PubSub, connect_pubsub, ConnectionLike};
+use types::{RedisResult, Value, Error, InvalidClientConfig};
 
 
 /// The client type.
@@ -65,5 +65,21 @@ impl Client {
     /// Note that redis' pubsub operates across all databases.
     pub fn get_pubsub(&self) -> RedisResult<PubSub> {
         Ok(try_io!(connect_pubsub(self.host.as_slice(), self.port)))
+    }
+}
+
+impl ConnectionLike for Client {
+
+    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+        (try!(self.get_connection())).req_packed_command(cmd)
+    }
+
+    fn req_packed_commands(&self, cmd: &[u8],
+        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        (try!(self.get_connection())).req_packed_commands(cmd, offset, count)
+    }
+
+    fn get_db(&self) -> i64 {
+        self.db
     }
 }

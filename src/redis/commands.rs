@@ -1,9 +1,10 @@
 use types::{FromRedisValue, ToRedisArgs, RedisResult, NumberIsFloat};
 use client::Client;
-use connection::Connection;
+use connection::{Connection, ConnectionLike};
 use cmd::{cmd, Cmd, Pipeline};
 
 
+/// Mode for the bit operation on commands.
 #[deriving(PartialEq, Eq, Clone, Show)]
 pub enum BitOp {
     BitAnd,
@@ -362,27 +363,68 @@ implement_commands!(
     fn rpush_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("RPUSHX").arg(key).arg(value)
     }
+
+    // set commands
+
+    #[doc="Add one or more members to a set."]
+    fn sadd<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("SADD").arg(key).arg(member)
+    }
+
+    #[doc="Get the number of members in a set."]
+    fn scard<K: ToRedisArgs>(key: K) {
+        cmd("SCARD").arg(key)
+    }
+
+    #[doc="Subtract multiple sets."]
+    fn sdiff<K: ToRedisArgs>(keys: K) {
+        cmd("SDIFF").arg(keys)
+    }
+
+    #[doc="Subtract multiple sets and store the resulting set in a key."]
+    fn sdiffstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+        cmd("SDIFFSTORE").arg(dstkey).arg(keys)
+    }
+
+    #[doc="Intersect multiple sets."]
+    fn sinter<K: ToRedisArgs>(keys: K) {
+        cmd("SINTER").arg(keys)
+    }
+
+    #[doc="Intersect multiple sets and store the resulting set in a key."]
+    fn sdinterstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+        cmd("SINTERSTORE").arg(dstkey).arg(keys)
+    }
+
+    #[doc="Determine if a given value is a member of a set."]
+    fn sismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("SISMEMBER").arg(key).arg(member)
+    }
+
+    #[doc="Get all the members in a set."]
+    fn smembers<K: ToRedisArgs>(key: K) {
+        cmd("SMEMBERS").arg(key)
+    }
+)
+
+macro_rules! forward_perform(
+    () => (
+        fn perform<T: FromRedisValue>(&self, cmd: &Cmd) -> RedisResult<T> {
+            cmd.query(self)
+        }
+    )
 )
 
 impl Commands for Connection {
-    fn perform<T: FromRedisValue>(&self, cmd: &Cmd) -> RedisResult<T> {
-        cmd.query(self)
-    }
+    forward_perform!()
 }
 
 impl Commands for Client {
-    fn perform<T: FromRedisValue>(&self, cmd: &Cmd) -> RedisResult<T> {
-        cmd.query(&try!(self.get_connection()))
-    }
+    forward_perform!()
 }
 
-impl Commands for RedisResult<Client> {
-    fn perform<T: FromRedisValue>(&self, cmd: &Cmd) -> RedisResult<T> {
-        match self {
-            &Ok(ref client) => cmd.query(&try!(client.get_connection())),
-            &Err(ref x) => Err(x.clone())
-        }
-    }
+impl<T: Commands+ConnectionLike> Commands for RedisResult<T> {
+    forward_perform!()
 }
 
 impl PipelineCommands for Pipeline {

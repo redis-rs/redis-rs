@@ -1,6 +1,6 @@
 use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, Error,
             ResponseError, Bulk, Nil, from_redis_value};
-use connection::Connection;
+use connection::ConnectionLike;
 
 #[deriving(Clone)]
 enum Arg<'a> {
@@ -25,14 +25,14 @@ pub struct Pipeline {
 }
 
 /// Represents a redis iterator.
-pub struct Iter<'a, T: FromRedisValue> {
+pub struct Iter<'a, 'b, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: &'a Connection,
+    con: Box<&'b ConnectionLike + 'b>,
     cmd: &'a Cmd,
 }
 
-impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
+impl<'a, 'b, T: FromRedisValue> Iterator<T> for Iter<'a, 'b, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
@@ -199,7 +199,7 @@ impl Cmd {
     /// result to the target redis value.  This is the general way how
     /// you can retrieve data.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
         match con.req_packed_command(pcmd.as_slice()) {
             Ok(val) => from_redis_value(&val),
@@ -222,8 +222,8 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(&'a mut self, con: &'a Connection)
-            -> RedisResult<Iter<'a, T>> {
+    pub fn iter<'a, 'b, T: FromRedisValue>(&'a mut self, con: &'b ConnectionLike)
+            -> RedisResult<Iter<'a, 'b, T>> {
         let pcmd = self.get_packed_command();
         let rv = try!(con.req_packed_command(pcmd.as_slice()));
         let mut batch : Vec<T>;
@@ -241,7 +241,7 @@ impl Cmd {
         Ok(Iter {
             batch: batch,
             cursor: cursor,
-            con: con,
+            con: box con,
             cmd: self
         })
     }
@@ -259,7 +259,7 @@ impl Cmd {
     /// let _ : () = redis::cmd("PING").query(&con).unwrap();
     /// ```
     #[inline]
-    pub fn execute(&self, con: &Connection) {
+    pub fn execute(&self, con: &ConnectionLike) {
         let _ : () = self.query(con).unwrap();
     }
 }
@@ -376,13 +376,13 @@ impl Pipeline {
         Bulk(rv)
     }
 
-    fn execute_pipelined(&self, con: &Connection) -> RedisResult<Value> {
+    fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(try!(con.req_packed_commands(
             encode_pipeline(self.commands[], false)[],
             0, self.commands.len()))))
     }
 
-    fn execute_transaction(&self, con: &Connection) -> RedisResult<Value> {
+    fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
         let mut resp = try!(con.req_packed_commands(
             encode_pipeline(self.commands[], true)[],
             self.commands.len() + 1, 1));
@@ -408,7 +408,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         from_redis_value(&(
             if self.commands.len() == 0 {
                 Bulk(vec![])
@@ -431,7 +431,7 @@ impl Pipeline {
     /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
     /// ```
     #[inline]
-    pub fn execute(&self, con: &Connection) {
+    pub fn execute(&self, con: &ConnectionLike) {
         let _ : () = self.query(con).unwrap();
     }
 }
@@ -454,7 +454,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// Packs a bunch of commands into a request.  This is generally a quite
 /// useless function as this functionality is nicely wrapped through the
 /// `Cmd` object, but in some cases it can be useful.  The return value
-/// of this can then be send to the low level `Connection` functions.
+/// of this can then be send to the low level `ConnectionLike` methods.
 ///
 /// Example:
 ///

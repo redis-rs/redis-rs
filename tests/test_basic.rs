@@ -322,7 +322,7 @@ fn test_real_transaction_highlevel() {
     let key = "the_key";
     let _ : () = redis::cmd("SET").arg(key).arg(42i).query(&con).unwrap();
 
-    let response : (int,) = con.transaction([key][], |pipe| {
+    let response : (int,) = redis::transaction(&con, [key][], |pipe| {
         let val : int = try!(redis::cmd("GET").arg(key).query(&con));
         pipe
             .cmd("SET").arg(key).arg(val + 1).ignore()

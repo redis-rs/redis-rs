@@ -3,7 +3,7 @@ use crypto::digest::Digest;
 
 use cmd::cmd;
 use types::{ToRedisArgs, FromRedisValue, RedisResult, NoScriptError, Error};
-use connection::Connection;
+use connection::ConnectionLike;
 
 /// Represents a lua script.
 pub struct Script {
@@ -73,7 +73,7 @@ impl Script {
 
     /// Invokes the script directly without arguments.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -113,7 +113,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Invokes the script and returns the result.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &Connection) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")
                 .arg(self.script.hash.as_bytes())

@@ -4,11 +4,21 @@
 //!
 //! # Basic Operation
 //!
-//! To open a connection you need to create a client and then to fetch a
-//! connection from it.  In the future there will be a connection pool for
-//! those, currently each connection is separate and not pooled.
+//! redis-rs exposes to API levels: a low- and a high-level part.  The high-level
+//! part does not expose all the functionality of redis and might take some
+//! liberties in how it speaks the protocol.  The low-level part of the API
+//! allows you to express any request on the redis level.  You can fluently
+//! switch between both API levels at any point.
 //!
-//! Queries are then performed through the `execute` and `query` methods.
+//! ## Connection Handling
+//!
+//! For connecting to redis you can use a client object which then can produce
+//! actual connections.  Connections and clients as well as results of
+//! connections and clients are considered `ConnectionLike` objects and
+//! can be used anywhere a request is made.
+//!
+//! The full canonical way to get a connection is to create a client and
+//! to ask for a connection from it:
 //!
 //! ```rust,no_run
 //! extern crate redis;
@@ -16,27 +26,52 @@
 //! fn main() {
 //!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //!     let con = client.get_connection().unwrap();
-//!     redis::cmd("SET").arg("my_key").arg(42i).execute(&con);
-//!     assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
 //! }
 //! ```
 //!
-//! In addition to that, some convenience methods for common operations are
-//! implemented through `Commands` and `PipelineCommands`.  The above example
-//! is the same as this:
+//! You can however also *not* unwrap the client and connection and pass
+//! the result containing a client to the functions directly.  Doing this
+//! on actual clients is discouraged however as currently no connection
+//! pooling takes place and you create and destroy a TCP socket constantly.
+//!
+//! ## Executing Low-Level Commands
+//!
+//! To execute low-level commands you can use the `cmd` function which allows
+//! you to build redis requests.  Once you have configured a command object
+//! to your liking you can send a query into any `ConnectionLike` object:
+//!
+//! ```rust,no_run
+//! fn main() {
+//!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//!     let con = client.get_connection();
+//!     let _ : () = redis::cmd("SET").arg("my_key").arg(42i).query(&con).unwrap();
+//! }
+//! ```
+//!
+//! Upon querying the return value is a result object.  If you do not care
+//! about the actual return value (other than that it is not a failure)
+//! you can always type annotate it to the unit type `()`.
+//!
+//! ## Executing High-Level Commands
+//!
+//! The high-level interface is similar.  For it to become available you
+//! need to use the `Commands` trait in which case all `ConnectionLike`
+//! objects the library provides will also have high-level methods which
+//! make working with the protocol easier:
 //!
 //! ```rust,no_run
 //! extern crate redis;
 //! use redis::Commands;
 //!
 //! fn main() {
-//!     let client = redis::Client::open("redis://127.0.0.1/");
-//!     let _ : () = client.set("my_key", 42i).unwrap();
-//!     assert_eq!(client.get("my_key"), Ok(42i));
+//!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//!     let con = client.get_connection();
+//!     let _ : () = con.set("my_key", 42i).unwrap();
 //! }
 //! ```
 //!
-//! Commands are work in progress and many are still missing.
+//! Note that high-level commands are work in progress and many are still
+//! missing!
 //!
 //! ## Type Conversions
 //!
@@ -52,21 +87,22 @@
 //! as well as optional values:
 //!
 //! ```rust,no_run
+//! # use redis::Commands;
 //! # use std::collections::{HashMap, HashSet};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let count : i32 = redis::cmd("GET").arg("my_counter").query(&con).unwrap();
-//! let count = redis::cmd("GET").arg("my_counter").query(&con).unwrap_or(0i32);
-//! let k : Option<String> = redis::cmd("GET").arg("missing_key").query(&con).unwrap();
-//! let name : String = redis::cmd("GET").arg("my_name").query(&con).unwrap();
-//! let bin : Vec<u8> = redis::cmd("GET").arg("my_binary").query(&con).unwrap();
-//! let map : HashMap<String, i32> = redis::cmd("HGETALL").arg("my_hash").query(&con).unwrap();
-//! let keys : Vec<String> = redis::cmd("KEYS").query(&con).unwrap();
-//! let mems : HashSet<i32> = redis::cmd("SMEMBERS").arg("s").query(&con).unwrap();
-//! let (k1, k2) : (String, String) = redis::cmd("MGET").arg("k1").arg("k2").query(&con).unwrap();
+//! let count : i32 = con.get("my_counter").unwrap();
+//! let count = con.get("my_counter").unwrap_or(0i32);
+//! let k : Option<String> = con.get("missing_key").unwrap();
+//! let name : String = con.get("my_name").unwrap();
+//! let bin : Vec<u8> = con.get("my_binary").unwrap();
+//! let map : HashMap<String, i32> = con.hgetall("my_hash").unwrap();
+//! let keys : Vec<String> = con.hkeys("my_hash").unwrap();
+//! let mems : HashSet<i32> = con.smembers("my_set").unwrap();
+//! let (k1, k2) : (String, String) = con.get(["k1", "k2"].as_slice()).unwrap();
 //! ```
 //!
-//! ## Iteration Protocol
+//! # Iteration Protocol
 //!
 //! In addition to sending a single query you iterators are also supported.  When
 //! used with regular bulk responses they don't give you much over querying and
@@ -84,11 +120,11 @@
 //! }
 //! ```
 //!
-//! As you can see the cursor argument needs to be defined with `cursor_arg` instead
-//! of `arg` so that the library knows which argument needs updating as the
-//! query is run for more items.
+//! As you can see the cursor argument needs to be defined with `cursor_arg`
+//! instead of `arg` so that the library knows which argument needs updating
+//! as the query is run for more items.
 //!
-//! ## Pipelining
+//! # Pipelining
 //!
 //! In addition to simple queries you can also send command pipelines.  This
 //! is provided through the `pipe` function.  It works very similar to sending
@@ -122,28 +158,44 @@
 //!     .cmd("GET").arg("key_2").query(&con).unwrap();
 //! ```
 //!
-//! ## Transactions
+//! You can also use high-level commands on pipelines through the
+//! `PipelineCommands` trait:
+//!
+//! ```rust,no_run
+//! use redis::PipelineCommands;
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
+//!     .atomic()
+//!     .set("key_1", 42i).ignore()
+//!     .set("key_2", 43i).ignore()
+//!     .get("key_1")
+//!     .get("key_2").query(&con).unwrap();
+//! ```
+//!
+//! # Transactions
 //!
 //! Transactions are available through atomic pipelines.  In order to use
 //! them in a more simple way you can use the `transaction` function of a
 //! connection:
 //!
 //! ```rust,no_run
+//! use redis::{Commands, PipelineCommands};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (int,) = con.transaction([key].as_slice(), |pipe| {
-//!     let old_val : int = try!(redis::cmd("GET").arg(key).query(&con));
+//! let (new_val,) : (int,) = redis::transaction(&con, [key].as_slice(), |pipe| {
+//!     let old_val : int = try!(con.get(key));
 //!     pipe
-//!         .cmd("SET").arg(key).arg(old_val + 1).ignore()
-//!         .cmd("GET").arg(key).query(&con)
+//!         .set(key, old_val + 1).ignore()
+//!         .get(key).query(&con)
 //! }).unwrap();
 //! println!("The incremented number is: {}", new_val);
 //! ```
 //!
 //! For more information see the `transaction` function.
 //!
-//! ## PubSub
+//! # PubSub
 //!
 //! Pubsub is currently work in progress but provided through the `PubSub`
 //! connection object.  Due to the fact that Rust does not have support
@@ -165,7 +217,7 @@
 //! }
 //! ```
 //!
-//! ## Scripts
+//! # Scripts
 //!
 //! Lua scripts are supported through the `Script` type in a convenient
 //! way (it does not support pipelining currently).  It will automatically
@@ -204,12 +256,15 @@ extern crate "rust-crypto" as crypto;
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
-pub use connection::{Connection, PubSub, Msg};
+pub use connection::{Connection, ConnectionLike, PubSub, Msg, transaction};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{
     Commands,
     PipelineCommands,
+};
 
+#[doc(hidden)]
+pub use commands::{
     BitOp,
         BitAnd,
         BitOr,
