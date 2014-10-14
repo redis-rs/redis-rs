@@ -231,13 +231,15 @@ pub trait ToRedisArgs {
     /// Returns an information about the contained value with regards
     /// to it's numeric behavior in a redis context.  This is used in
     /// some high level concepts to switch between different implementations
-    /// of redis functions.
+    /// of redis functions (for instance `INCR` vs `INCRBYFLOAT`).
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         NonNumeric
     }
 
     /// Returns an indiciation if the value contained is exactly one
-    /// argument of zero or more.
+    /// argument.  It returns false if it's zero or more than one.  This
+    /// is used in some high level functions to intelligently switch
+    /// between `GET` and `MGET` variants.
     fn is_single_arg(&self) -> bool {
         true
     }
