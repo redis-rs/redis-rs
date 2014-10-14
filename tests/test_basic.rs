@@ -236,8 +236,7 @@ fn test_scanning() {
         unseen.insert(x);
     }
 
-    let mut cmd = redis::cmd("SSCAN");
-    let mut iter = cmd.arg("foo").cursor_arg(0).iter(&con).unwrap();
+    let mut iter = redis::cmd("SSCAN").arg("foo").cursor_arg(0).iter(&con).unwrap();
 
     for x in iter {
         unseen.remove(&x);
@@ -449,6 +448,16 @@ fn test_nice_hash_api() {
     assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
     assert_eq!(con.hdel("my_hash", ["f1", "f2"][]), Ok(()));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
+
+    let mut iter : redis::Iter<(String, int)> = con.hscan("my_hash").unwrap();
+    let mut found = HashSet::new();
+    for item in iter {
+        found.insert(item);
+    }
+
+    assert_eq!(found.len(), 2);
+    assert_eq!(found.contains(&("f3".to_string(), 4i)), true);
+    assert_eq!(found.contains(&("f4".to_string(), 8i)), true);
 }
 
 #[test]

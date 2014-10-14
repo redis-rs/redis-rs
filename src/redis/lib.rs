@@ -113,8 +113,8 @@
 //! ```rust,no_run
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let mut cmd = redis::cmd("SSCAN");
-//! let mut iter : redis::Iter<int> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+//! let mut iter : redis::Iter<int> = redis::cmd("SSCAN").arg("my_set")
+//!     .cursor_arg(0).iter(&con).unwrap();
 //! for x in iter {
 //!     // do something with the item
 //! }

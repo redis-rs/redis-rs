@@ -1,7 +1,7 @@
 use types::{FromRedisValue, ToRedisArgs, RedisResult, NumberIsFloat};
 use client::Client;
 use connection::{Connection, ConnectionLike};
-use cmd::{cmd, Cmd, Pipeline};
+use cmd::{cmd, Cmd, Pipeline, Iter};
 
 
 /// Mode for the bit operation on commands.
@@ -51,6 +51,39 @@ macro_rules! implement_commands {
                     &self $(, $argname: $argty)*) -> RedisResult<RV>
                     { ($body).query(self) }
             )*
+
+            /// Incrementally iterate the keys space.
+            fn scan<RV: FromRedisValue>(&self) -> RedisResult<Iter<RV>> {
+                cmd("SCAN").cursor_arg(0).iter(self)
+            }
+
+            /// Incrementally iterate the keys space for keys matching a pattern.
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
+                cmd("SCAN").cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+            }
+
+            /// Incrementally iterate hash fields and associated values.
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+                cmd("HSCAN").arg(key).cursor_arg(0).iter(self)
+            }
+
+            /// Incrementally iterate hash fields and associated values for
+            /// field names matching a pattern.
+            fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                cmd("HSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+            }
+
+            /// Incrementally iterate set elements.
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+                cmd("SSCAN").arg(key).cursor_arg(0).iter(self)
+            }
+
+            /// Incrementally iterate set elements for elements matching a pattern.
+            fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                cmd("SSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+            }
         }
 
         /// Implements common redis commands for pipelines.  Unlike the regular
@@ -401,6 +434,41 @@ implement_commands!(
     #[doc="Get all the members in a set."]
     fn smembers<K: ToRedisArgs>(key: K) {
         cmd("SMEMBERS").arg(key)
+    }
+
+    #[doc="Move a member from one set to another."]
+    fn smove<K: ToRedisArgs, M: ToRedisArgs>(srckey: K, dstkey: K, member: M) {
+        cmd("SMOVE").arg(srckey).arg(dstkey).arg(member)
+    }
+
+    #[doc="Remove and return a random member from a set."]
+    fn spop<K: ToRedisArgs>(key: K) {
+        cmd("SPOP").arg(key)
+    }
+
+    #[doc="Get one random member from a set."]
+    fn srandmember<K: ToRedisArgs>(key: K) {
+        cmd("SRANDMEMBER").arg(key)
+    }
+
+    #[doc="Get multiple random members from a set."]
+    fn srandmember_multiple<K: ToRedisArgs>(key: K, count: uint) {
+        cmd("SRANDMEMBER").arg(key).arg(count)
+    }
+
+    #[doc="Remove one or more members from a set."]
+    fn srem<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("SREM").arg(key).arg(member)
+    }
+
+    #[doc="Add multiple sets."]
+    fn sunion<K: ToRedisArgs>(keys: K) {
+        cmd("SUNION").arg(keys)
+    }
+
+    #[doc="Add multiple sets and store the resulting set in a key."]
+    fn sunionstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+        cmd("SUNIONSTORE").arg(dstkey).arg(keys)
     }
 )
 

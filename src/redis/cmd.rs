@@ -25,14 +25,14 @@ pub struct Pipeline {
 }
 
 /// Represents a redis iterator.
-pub struct Iter<'a, 'b, T: FromRedisValue> {
+pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: Box<&'b ConnectionLike + 'b>,
-    cmd: &'a Cmd,
+    con: Box<&'a ConnectionLike + 'a>,
+    cmd: Cmd,
 }
 
-impl<'a, 'b, T: FromRedisValue> Iterator<T> for Iter<'a, 'b, T> {
+impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
@@ -222,8 +222,8 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, 'b, T: FromRedisValue>(&'a mut self, con: &'b ConnectionLike)
-            -> RedisResult<Iter<'a, 'b, T>> {
+    pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike)
+            -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
         let rv = try!(con.req_packed_command(pcmd.as_slice()));
         let mut batch : Vec<T>;
@@ -242,7 +242,7 @@ impl Cmd {
             batch: batch,
             cursor: cursor,
             con: box con,
-            cmd: self
+            cmd: self.clone(),
         })
     }
 
