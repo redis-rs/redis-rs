@@ -22,16 +22,18 @@ To open a connection you need to create a client and then to fetch a
 connection from it.  In the future there will be a connection pool for
 those, currently each connection is separate and not pooled.
 
-Queries are then performed through the `execute` and `query` methods.
+Many commands are implemented through the `Commands` trait but manual
+command creation is also possible.
 
 ```rust
 extern crate redis;
+use redis::Commands;
 
 fn main() {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    let con = client.get_connection().unwrap();
-    redis::cmd("SET").arg("my_key").arg(42i).execute(&con);
-    assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
+    let con = client.get_connection();
+    assert_eq!(con.set("my_key", 42i), Ok(()));
+    assert_eq!(con.get("my_key"), Ok(42i));
 }
 ```
 
