@@ -599,6 +599,107 @@ implement_commands!(
     fn zrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
         cmd("ZRANK").arg(key).arg(member)
     }
+
+    #[doc="Remove one or more members from a sorted set."]
+    fn zrem<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("ZREM").arg(key).arg(members)
+    }
+
+    #[doc="Remove all members in a sorted set between the given lexicographical range."]
+    fn zrembylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZREMBYLEX").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Remove all members in a sorted set within the given indexes."]
+    fn zrembyrank<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("ZREMBYRANK").arg(key).arg(start).arg(stop)
+    }
+
+    #[doc="Remove all members in a sorted set within the given scores."]
+    fn zrembyscore<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZREMBYSCORE").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Return a range of members in a sorted set, by index, with scores
+        ordered from high to low."]
+    fn zrevrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("ZREVRANGE").arg(key).arg(start).arg(stop)
+    }
+
+    #[doc="Return a range of members in a sorted set, by index, with scores
+        ordered from high to low."]
+    fn zrevrange_withscores<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("ZREVRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
+    }
+
+    #[doc="Return a range of members in a sorted set, by score."]
+    fn zrevrangebyscore<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) {
+        cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min)
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with scores."]
+    fn zrevrangebyscore_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) {
+        cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with limit."]
+    fn zrevrangebyscore_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
+            (key: K, max: MM, min: M, offset: int, count: int) {
+        cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with limit with scores."]
+    fn zrevrangebyscore_limit_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
+            (key: K, max: MM, min: M, offset: int, count: int) {
+        cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
+            .arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Determine the index of a member in a sorted set, with scores ordered from high to low."]
+    fn zrevrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("ZREVRANK").arg(key).arg(member)
+    }
+
+    #[doc="Get the score associated with the given member in a sorted set."]
+    fn zscore<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("ZSCORE").arg(key).arg(member)
+    }
+
+    #[doc="Unions multiple sorted sets and store the resulting sorted set in
+        a new key using SUM as aggregation function."]
+    fn zunionstore<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys)
+    }
+
+    #[doc="Unions multiple sorted sets and store the resulting sorted set in
+        a new key using MIN as aggregation function."]
+    fn zunionstore_min<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
+    }
+
+    #[doc="Unions multiple sorted sets and store the resulting sorted set in
+        a new key using MAX as aggregation function."]
+    fn zunionstore_max<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
+    }
+
+    // hyperloglog commands
+
+    #[doc="Adds the specified elements to the specified HyperLogLog."]
+    fn pfadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) {
+        cmd("PFADD").arg(key).arg(element)
+    }
+
+    #[doc="Return the approximated cardinality of the set(s) observed by the
+        HyperLogLog at key(s)."]
+    fn pfcount<K: ToRedisArgs>(key: K) {
+        cmd("PFCOUNT").arg(key)
+    }
+
+    #[doc="Merge N different HyperLogLogs into a single one."]
+    fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+        cmd("PFMERGE").arg(dstkey).arg(srckeys)
+    }
 )
 
 impl Commands for Connection {}
