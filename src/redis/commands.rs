@@ -4,15 +4,6 @@ use connection::{Connection, ConnectionLike};
 use cmd::{cmd, Cmd, Pipeline, Iter};
 
 
-/// Mode for the bit operation on commands.
-#[deriving(PartialEq, Eq, Clone, Show)]
-pub enum BitOp {
-    BitAnd,
-    BitOr,
-    BitXor,
-    BitNot,
-}
-
 macro_rules! implement_commands {
     (
         $(
@@ -83,6 +74,17 @@ macro_rules! implement_commands {
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("SSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+            }
+
+            /// Incrementally iterate sorted set elements.
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+                cmd("ZSCAN").arg(key).cursor_arg(0).iter(self)
+            }
+
+            /// Incrementally iterate sorted set elements for elements matching a pattern.
+            fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                cmd("ZSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
             }
         }
 
@@ -223,15 +225,28 @@ implement_commands!(
         cmd("BITCOUNT").arg(key).arg(start).arg(end)
     }
 
-    #[doc="Perform a bitwise operation between multiple keys (containing string values)
+    #[doc="Perform a bitwise AND between multiple keys (containing string values)
         and store the result in the destination key."]
-    fn bitop<K: ToRedisArgs>(op: BitOp, dstkey: K, srckeys: K) {
-        cmd("BITOP").arg(match op {
-            BitAnd => "AND",
-            BitOr => "OR",
-            BitXor => "XOR",
-            BitNot => "NOT"
-        }).arg(dstkey).arg(srckeys)
+    fn bit_and<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+        cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
+    }
+
+    #[doc="Perform a bitwise OR between multiple keys (containing string values)
+        and store the result in the destination key."]
+    fn bit_or<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+        cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
+    }
+
+    #[doc="Perform a bitwise XOR between multiple keys (containing string values)
+        and store the result in the destination key."]
+    fn bit_xor<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+        cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
+    }
+
+    #[doc="Perform a bitwise NOT of the key (containing string values)
+        and store the result in the destination key."]
+    fn bit_not<K: ToRedisArgs>(dstkey: K, srckey: K) {
+        cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
     #[doc="Get the length of the value stored in a key."]
@@ -469,6 +484,120 @@ implement_commands!(
     #[doc="Add multiple sets and store the resulting set in a key."]
     fn sunionstore<K: ToRedisArgs>(dstkey: K, keys: K) {
         cmd("SUNIONSTORE").arg(dstkey).arg(keys)
+    }
+
+    // sorted set commands
+
+    #[doc="Add one member to a sorted set, or update its score 
+        if it already exists."]
+    fn zadd<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, member: M, score: S) {
+        cmd("ZADD").arg(key).arg(score).arg(member)
+    }
+
+    #[doc="Add multiple members to a sorted set, or update its score 
+        if it already exists."]
+    fn zadd_multiple<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)]) {
+        cmd("ZADD").arg(key).arg(items)
+    }
+
+    #[doc="Get the number of members in a sorted set."]
+    fn zcard<K: ToRedisArgs>(key: K) {
+        cmd("ZCARD").arg(key)
+    }
+
+    #[doc="Count the members in a sorted set with scores within the given values."]
+    fn zcount<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZCOUNT").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Count the members in a sorted set with scores within the given values."]
+    fn zincr<K: ToRedisArgs, M: ToRedisArgs, D: ToRedisArgs>(key: K, member: M, delta: D) {
+        cmd("ZINCRBY").arg(key).arg(delta).arg(member)
+    }
+
+    #[doc="Intersect multiple sorted sets and store the resulting sorted set in
+        a new key using SUM as aggregation function."]
+    fn zinterstore<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys)
+    }
+
+    #[doc="Intersect multiple sorted sets and store the resulting sorted set in
+        a new key using MIN as aggregation function."]
+    fn zinterstore_min<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
+    }
+
+    #[doc="Intersect multiple sorted sets and store the resulting sorted set in
+        a new key using MAX as aggregation function."]
+    fn zinterstore_max<K: ToRedisArgs>(dstkey: K, keys: &[K]) {
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
+    }
+
+    #[doc="Count the number of members in a sorted set between a given lexicographical range."]
+    fn zlexcount<K: ToRedisArgs, L: ToRedisArgs>(key: K, min: L, max: L) {
+        cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Return a range of members in a sorted set, by index"]
+    fn zrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("ZRANGE").arg(key).arg(start).arg(stop)
+    }
+
+    #[doc="Return a range of members in a sorted set, by index with scores."]
+    fn zrange_withscores<K: ToRedisArgs>(key: K, start: int, stop: int) {
+        cmd("ZRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
+    }
+
+    #[doc="Return a range of members in a sorted set, by lexicographical range."]
+    fn zrangebylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZRANGEBYLEX").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Return a range of members in a sorted set, by lexicographical
+        range with offset and limit."]
+    fn zrangebylex_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(
+            key: K, min: M, max: MM, offset: int, count: int) {
+        cmd("ZRANGEBYLEX").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Return a range of members in a sorted set, by lexicographical range."]
+    fn zrevrangebylex<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) {
+        cmd("ZREVRANGEBYLEX").arg(key).arg(max).arg(min)
+    }
+
+    #[doc="Return a range of members in a sorted set, by lexicographical
+        range with offset and limit."]
+    fn zrevrangebylex_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(
+            key: K, max: MM, min: M, offset: int, count: int) {
+        cmd("ZREVRANGEBYLEX").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Return a range of members in a sorted set, by score."]
+    fn zrangebyscore<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max)
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with scores."]
+    fn zrangebyscore_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+        cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with limit."]
+    fn zrangebyscore_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
+            (key: K, min: M, max: MM, offset: int, count: int) {
+        cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Return a range of members in a sorted set, by score with limit with scores."]
+    fn zrangebyscore_limit_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
+            (key: K, min: M, max: MM, offset: int, count: int) {
+        cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
+            .arg("LIMIT").arg(offset).arg(count)
+    }
+
+    #[doc="Determine the index of a member in a sorted set."]
+    fn zrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("ZRANK").arg(key).arg(member)
     }
 )
 

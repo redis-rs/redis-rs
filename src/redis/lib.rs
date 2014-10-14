@@ -264,15 +264,6 @@ pub use commands::{
 };
 
 #[doc(hidden)]
-pub use commands::{
-    BitOp,
-        BitAnd,
-        BitOr,
-        BitXor,
-        BitNot,
-};
-
-#[doc(hidden)]
 pub use types::{
     /* low level values */
     Value,
