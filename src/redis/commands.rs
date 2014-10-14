@@ -44,15 +44,12 @@ macro_rules! implement_commands {
         /// let client = redis::Client::open("redis://127.0.0.1/");
         /// assert_eq!(client.get("my_key"), Ok(42i));
         /// ```
-        pub trait Commands {
-            #[doc(hidden)]
-            fn perform<T: FromRedisValue>(&self, con: &Cmd) -> RedisResult<T>;
-
+        pub trait Commands : ConnectionLike {
             $(
                 $(#[$attr])*
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
                     &self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { self.perform($body) }
+                    { ($body).query(self) }
             )*
         }
 
@@ -407,25 +404,9 @@ implement_commands!(
     }
 )
 
-macro_rules! forward_perform(
-    () => (
-        fn perform<T: FromRedisValue>(&self, cmd: &Cmd) -> RedisResult<T> {
-            cmd.query(self)
-        }
-    )
-)
-
-impl Commands for Connection {
-    forward_perform!()
-}
-
-impl Commands for Client {
-    forward_perform!()
-}
-
-impl<T: Commands+ConnectionLike> Commands for RedisResult<T> {
-    forward_perform!()
-}
+impl Commands for Connection {}
+impl Commands for Client {}
+impl<T: Commands+ConnectionLike> Commands for RedisResult<T> {}
 
 impl PipelineCommands for Pipeline {
     fn perform<'a>(&'a mut self, cmd: &Cmd) -> &'a mut Pipeline {
