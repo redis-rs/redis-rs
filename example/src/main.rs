@@ -1,4 +1,5 @@
 extern crate redis;
+use redis::{Commands, PipelineCommands, transaction};
 
 use std::collections::HashMap;
 
@@ -106,16 +107,16 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(redis::cmd("SET").arg(key).arg(42i).query(con));
+    let _ : () = try!(con.set(key, 42i));
 
     // run the transaction block.
-    let (new_val,) : (int,) = con.transaction([key][], |pipe| {
+    let (new_val,) : (int,) = transaction(con, [key].as_slice(), |pipe| {
         // load the old value, so we know what to increment.
-        let val : int = try!(redis::cmd("GET").arg(key).query(con));
+        let val : int = try!(con.get(key));
         // increment
         pipe
-            .cmd("SET").arg(key).arg(val + 1).ignore()
-            .cmd("GET").arg(key).query(con)
+            .set(key, val + 1).ignore()
+            .get(key).query(con)
     }).unwrap();
 
     // and print the result
