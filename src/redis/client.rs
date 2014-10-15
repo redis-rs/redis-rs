@@ -8,6 +8,7 @@ use types::{RedisResult, Value, Error, InvalidClientConfig};
 pub struct Client {
     host: String,
     port: u16,
+    pass: Option<String>,
     db: i64,
 }
 
@@ -41,6 +42,7 @@ impl Client {
         Ok(Client {
             host: u.host,
             port: u.port.unwrap_or(6379),
+            pass: u.user.map_or(None, |u| u.pass),
             db: match u.path.to_string().as_slice().trim_chars('/') {
                 "" => 0,
                 path => unwrap_or!(from_str::<i64>(path), return Err(Error::simple(
@@ -55,7 +57,9 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(try_io!(connect(self.host.as_slice(), self.port, self.db)))
+        let pass = self.pass.as_ref().map(|v| v[]);
+
+        Ok(try_io!(connect(self.host.as_slice(), self.port, self.db, pass)))
     }
 
     /// Returns a PubSub connection.  A pubsub connection can be used to
@@ -64,7 +68,9 @@ impl Client {
     ///
     /// Note that redis' pubsub operates across all databases.
     pub fn get_pubsub(&self) -> RedisResult<PubSub> {
-        Ok(try_io!(connect_pubsub(self.host.as_slice(), self.port)))
+        let pass = self.pass.as_ref().map(|v| v[]);
+
+        Ok(try_io!(connect_pubsub(self.host.as_slice(), self.port, pass)))
     }
 }
 

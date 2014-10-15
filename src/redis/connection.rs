@@ -60,9 +60,20 @@ impl ActualConnection {
 }
 
 
-pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
+pub fn connect(host: &str, port: u16, db: i64, pass: Option<&str>) -> IoResult<Connection> {
     let con = try!(ActualConnection::new(host, port));
     let rv = Connection { con: RefCell::new(con), db: db };
+    if pass.is_some() {
+        match cmd("AUTH").arg(pass.unwrap()).query::<Value>(&rv) {
+            Ok(Okay) => {}
+            _ => { return Err(IoError {
+                kind: ConnectionFailed,
+                desc: "Password authentication failed",
+                detail: None,
+            }); }
+        }
+    }
+
     if db != 0 {
         match cmd("SELECT").arg(db).query::<Value>(&rv) {
             Ok(Okay) => {}
@@ -76,9 +87,9 @@ pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
     Ok(rv)
 }
 
-pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
+pub fn connect_pubsub(host: &str, port: u16, pass: Option<&str>) -> IoResult<PubSub> {
     Ok(PubSub {
-        con: try!(connect(host, port, 0)),
+        con: try!(connect(host, port, 0, pass)),
         channels: HashSet::new(),
         pchannels: HashSet::new(),
     })
