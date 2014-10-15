@@ -38,50 +38,59 @@ macro_rules! implement_commands {
         pub trait Commands : ConnectionLike {
             $(
                 $(#[$attr])*
+                #[inline]
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
                     &self $(, $argname: $argty)*) -> RedisResult<RV>
                     { ($body).query(self) }
             )*
 
             /// Incrementally iterate the keys space.
+            #[inline]
             fn scan<RV: FromRedisValue>(&self) -> RedisResult<Iter<RV>> {
                 cmd("SCAN").cursor_arg(0).iter(self)
             }
 
             /// Incrementally iterate the keys space for keys matching a pattern.
+            #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("SCAN").cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values.
+            #[inline]
             fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
                 cmd("HSCAN").arg(key).cursor_arg(0).iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values for
             /// field names matching a pattern.
+            #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("HSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
             }
 
             /// Incrementally iterate set elements.
+            #[inline]
             fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
                 cmd("SSCAN").arg(key).cursor_arg(0).iter(self)
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
+            #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("SSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
             }
 
             /// Incrementally iterate sorted set elements.
+            #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
                 cmd("ZSCAN").arg(key).cursor_arg(0).iter(self)
             }
 
             /// Incrementally iterate sorted set elements for elements matching a pattern.
+            #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("ZSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
@@ -93,10 +102,12 @@ macro_rules! implement_commands {
         /// directly.  Other than that it works the same however.
         pub trait PipelineCommands {
             #[doc(hidden)]
+            #[inline]
             fn perform<'a>(&'a mut self, con: &Cmd) -> &'a mut Self;
 
             $(
                 $(#[$attr])*
+                #[inline]
                 fn $name<'a $(, $tyargs: $ty)*>(
                     &'a mut self $(, $argname: $argty)*) -> &'a mut Self
                     { self.perform($body) }
