@@ -1,6 +1,6 @@
 # redis-rs
 
-Redis-rs is a high level redis library for rust.  I provides convenient access
+Redis-rs is a high level redis library for rust.  It provides convenient access
 to all redis functionality through a very flexible but low-level API.  It
 uses a customizable type conversion trait so that any operation can return
 results in just the type you are expecting.  This makes for a very pleasant
