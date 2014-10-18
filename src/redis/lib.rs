@@ -41,6 +41,18 @@
 //! on actual clients is discouraged however as currently no connection
 //! pooling takes place and you create and destroy a TCP socket constantly.
 //!
+//! ## Connection Parameters
+//!
+//! redis-rs knows different ways to define where a connection should
+//! go.  The parameter to `Client::open` needs to implement the
+//! `IntoConnectionInfo` trait of which there are three implementations:
+//!
+//! * string slices in `redis://` URL format.
+//! * URL objects from the redis-url crate.
+//! * `ConnectionInfo` objects.
+//!
+//! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
+//!
 //! ## Executing Low-Level Commands
 //!
 //! To execute low-level commands you can use the `cmd` function which allows

@@ -13,7 +13,7 @@ use std::sync::Future;
 use std::io::timer::sleep;
 use std::collections::{HashMap, HashSet};
 
-pub static SERVER_PORT: int = 38991;
+pub static SERVER_PORT: u16 = 38991;
 
 pub struct RedisServer {
     pub process: process::Process,
@@ -60,10 +60,14 @@ pub struct TestContext {
 impl TestContext {
 
     fn new() -> TestContext {
-        let url = format!("redis://127.0.0.1:{port}/0", port=SERVER_PORT);
         let server = RedisServer::new();
 
-        let client = redis::Client::open(url.as_slice()).unwrap();
+        let client = redis::Client::open(redis::ConnectionInfo {
+            host: "127.0.0.1".to_string(),
+            port: SERVER_PORT,
+            db: 0,
+            passwd: None,
+        }).unwrap();
         let con;
 
         loop {
