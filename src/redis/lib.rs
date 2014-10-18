@@ -2,6 +2,13 @@
 //! a general purpose interface to Redis and also provides specific helpers for
 //! commonly used functionality.
 //!
+//! The crate is called `redis` and you can depend on it via cargo:
+//!
+//! ```ini
+//! [dependencies.redis]
+//! git = "https://github.com/mitsuhiko/redis-rs.git"
+//! ```
+//!
 //! # Basic Operation
 //!
 //! redis-rs exposes to API levels: a low- and a high-level part.  The high-level
@@ -257,7 +264,8 @@ pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, ConnectionLike, ConnectionInfo,
-                     IntoConnectionInfo, PubSub, Msg, transaction};
+                     IntoConnectionInfo, PubSub, Msg, transaction,
+                     parse_redis_url};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{
     Commands,
