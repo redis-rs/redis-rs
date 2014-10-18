@@ -4,10 +4,97 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str;
 
+use url;
+
 use cmd::{cmd, pipe, Pipeline};
 use types::{RedisResult, Okay, Error, Value, Data, Nil, InternalIoError,
-            ToRedisArgs, FromRedisValue, from_redis_value};
+            ToRedisArgs, FromRedisValue, from_redis_value,
+            InvalidClientConfig};
 use parser::Parser;
+
+
+static DEFAULT_PORT: u16 = 6370;
+
+fn redis_scheme_type_mapper(scheme: &str) -> url::SchemeType {
+    match scheme {
+        "redis" => url::RelativeScheme(DEFAULT_PORT),
+        _ => url::NonRelativeScheme,
+    }
+}
+
+/// This function takes a redis URL string and parses it into a URL
+/// as used by rust-url.  This is necessary as the default parser does
+/// not understand how redis URLs function.
+pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
+    let mut parser = url::UrlParser::new();
+    parser.scheme_type_mapper(redis_scheme_type_mapper);
+    match parser.parse(input) {
+        Ok(result) => {
+            if result.scheme.as_slice() != "redis" {
+                Err(url::InvalidScheme)
+            } else {
+                Ok(result)
+            }
+        },
+        Err(err) => Err(err),
+    }
+}
+
+
+/// Holds the connection information that redis should use for connecting.
+pub struct ConnectionInfo {
+    pub host: String,
+    pub port: u16,
+    pub db: i64,
+    pub passwd: Option<String>,
+}
+
+/// Converts an object into a connection info struct.  This allows the
+/// constructor of the client to accept connection information in a
+/// range of different formats.
+pub trait IntoConnectionInfo {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo>;
+}
+
+impl IntoConnectionInfo for ConnectionInfo {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        Ok(self)
+    }
+}
+
+impl<'a> IntoConnectionInfo for &'a str {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        match parse_redis_url(self) {
+            Ok(u) => u.into_connection_info(),
+            Err(_) => Err(Error::simple(
+                InvalidClientConfig, "Redis URL did not parse")),
+        }
+    }
+}
+
+impl IntoConnectionInfo for url::Url {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        ensure!(self.scheme.as_slice() == "redis", Err(Error::simple(
+            InvalidClientConfig, "URL provided is not a redis URL")));
+
+        println!("{}", self);
+
+        Ok(ConnectionInfo {
+            host: unwrap_or!(self.serialize_host(),
+                    return Err(Error::simple(InvalidClientConfig,
+                        "Missing hostname"))),
+            port: self.port().unwrap_or(DEFAULT_PORT),
+            db: match self.serialize_path().unwrap_or("".to_string())
+                    .as_slice().trim_chars('/') {
+                "" => 0,
+                path => unwrap_or!(from_str::<i64>(path),
+                    return Err(Error::simple(InvalidClientConfig,
+                        "Path is not a valid redis database number")))
+            },
+            passwd: self.password().and_then(|pw| Some(pw.to_string())),
+        })
+    }
+}
 
 
 struct ActualConnection {
@@ -60,11 +147,13 @@ impl ActualConnection {
 }
 
 
-pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
-    let con = try!(ActualConnection::new(host, port));
-    let rv = Connection { con: RefCell::new(con), db: db };
-    if db != 0 {
-        match cmd("SELECT").arg(db).query::<Value>(&rv) {
+pub fn connect(connection_info: &ConnectionInfo) -> IoResult<Connection> {
+    let con = try!(ActualConnection::new(
+        connection_info.host[], connection_info.port));
+    let rv = Connection { con: RefCell::new(con), db: connection_info.db };
+
+    if connection_info.db != 0 {
+        match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Okay) => {}
             _ => { return Err(IoError {
                 kind: ConnectionFailed,
@@ -73,12 +162,27 @@ pub fn connect(host: &str, port: u16, db: i64) -> IoResult<Connection> {
             }); }
         }
     }
+
+    match connection_info.passwd {
+        Some(ref passwd) => {
+            match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
+                Ok(Okay) => {}
+                _ => { return Err(IoError {
+                    kind: ConnectionFailed,
+                    desc: "Password authentication failed",
+                    detail: None,
+                }); }
+            }
+        },
+        None => {},
+    }
+
     Ok(rv)
 }
 
-pub fn connect_pubsub(host: &str, port: u16) -> IoResult<PubSub> {
+pub fn connect_pubsub(connection_info: &ConnectionInfo) -> IoResult<PubSub> {
     Ok(PubSub {
-        con: try!(connect(host, port, 0)),
+        con: try!(connect(connection_info)),
         channels: HashSet::new(),
         pchannels: HashSet::new(),
     })

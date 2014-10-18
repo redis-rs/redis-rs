@@ -1,14 +1,11 @@
-use url::Url;
-
-use connection::{Connection, connect, PubSub, connect_pubsub, ConnectionLike};
-use types::{RedisResult, Value, Error, InvalidClientConfig};
+use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect,
+                 PubSub, connect_pubsub, ConnectionLike};
+use types::{RedisResult, Value};
 
 
 /// The client type.
 pub struct Client {
-    host: String,
-    port: u16,
-    db: i64,
+    connection_info: ConnectionInfo,
 }
 
 /// The client acts as connector to the redis server.  By itself it does not
@@ -32,20 +29,9 @@ impl Client {
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
-    pub fn open(uri: &str) -> RedisResult<Client> {
-        let u = unwrap_or!(from_str::<Url>(uri), return Err(Error::simple(
-            InvalidClientConfig, "Redis URL did not parse")));
-        ensure!(u.scheme.as_slice() == "redis", Err(Error::simple(
-            InvalidClientConfig, "URL provided is not a redis URL")));
-
+    pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
         Ok(Client {
-            host: u.host,
-            port: u.port.unwrap_or(6379),
-            db: match u.path.to_string().as_slice().trim_chars('/') {
-                "" => 0,
-                path => unwrap_or!(from_str::<i64>(path), return Err(Error::simple(
-                    InvalidClientConfig, "Path is not a valid redis database number")))
-            },
+            connection_info: try!(params.into_connection_info())
         })
     }
 
@@ -55,7 +41,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(try_io!(connect(self.host.as_slice(), self.port, self.db)))
+        Ok(try_io!(connect(&self.connection_info)))
     }
 
     /// Returns a PubSub connection.  A pubsub connection can be used to
@@ -64,7 +50,7 @@ impl Client {
     ///
     /// Note that redis' pubsub operates across all databases.
     pub fn get_pubsub(&self) -> RedisResult<PubSub> {
-        Ok(try_io!(connect_pubsub(self.host.as_slice(), self.port)))
+        Ok(try_io!(connect_pubsub(&self.connection_info)))
     }
 }
 
@@ -80,6 +66,6 @@ impl ConnectionLike for Client {
     }
 
     fn get_db(&self) -> i64 {
-        self.db
+        self.connection_info.db
     }
 }

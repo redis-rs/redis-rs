@@ -6,6 +6,9 @@ authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 [dependencies.rust-crypto]
 git = "https://github.com/DaGenix/rust-crypto.git"
 
+[dependencies.url]
+git = "https://github.com/servo/rust-url"
+
 [lib]
 name = "redis"
 path = "src/redis/lib.rs"

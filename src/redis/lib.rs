@@ -256,7 +256,8 @@ extern crate "rust-crypto" as crypto;
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
-pub use connection::{Connection, ConnectionLike, PubSub, Msg, transaction};
+pub use connection::{Connection, ConnectionLike, ConnectionInfo,
+                     IntoConnectionInfo, PubSub, Msg, transaction};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{
     Commands,
