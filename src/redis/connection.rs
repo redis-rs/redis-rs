@@ -13,7 +13,7 @@ use types::{RedisResult, Okay, Error, Value, Data, Nil, InternalIoError,
 use parser::Parser;
 
 
-static DEFAULT_PORT: u16 = 6370;
+static DEFAULT_PORT: u16 = 6379;
 
 fn redis_scheme_type_mapper(scheme: &str) -> url::SchemeType {
     match scheme {
