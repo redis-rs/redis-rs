@@ -250,6 +250,28 @@ fn test_scanning() {
 }
 
 #[test]
+fn test_filtered_scanning() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+    let mut unseen = HashSet::new();
+
+    for x in range(0u, 3000u) {
+        let _ : () = con.hset("foo", format!("key_{}_{}", x % 100, x), x).unwrap();
+        if x % 100 == 0 {
+            unseen.insert(x);
+        }
+    }
+
+    let mut iter = con.hscan_match("foo", "key_0_*").unwrap();
+
+    for x in iter {
+        unseen.remove(&x);
+    }
+
+    assert_eq!(unseen.len(), 0);
+}
+
+#[test]
 fn test_pipeline() {
     let ctx = TestContext::new();
     let con = ctx.connection();

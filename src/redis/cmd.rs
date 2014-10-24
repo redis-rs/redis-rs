@@ -36,25 +36,30 @@ impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
-        match self.batch.pop() {
-            Some(v) => { return Some(v); }
-            None => {}
-        };
-        if self.cursor == 0 {
-            return None;
+        // we need to do this in a loop until we produce at least one item
+        // or we find the actual end of the iteration.  This is necessary
+        // because with filtering an iterator it is possible that a whole
+        // chunk is not matching the pattern and thus yielding empty results.
+        loop {
+            match self.batch.pop() {
+                Some(v) => { return Some(v); }
+                None => {}
+            };
+            if self.cursor == 0 {
+                return None;
+            }
+
+            let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
+                self.cursor), return None);
+            let rv = unwrap_or!(self.con.req_packed_command(
+                pcmd[]).ok(), return None);
+            let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
+                from_redis_value(&rv).ok(), return None);
+            batch.reverse();
+
+            self.cursor = cur;
+            self.batch = batch;
         }
-
-        let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
-            self.cursor), return None);
-        let rv = unwrap_or!(self.con.req_packed_command(
-            pcmd[]).ok(), return None);
-        let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
-            from_redis_value(&rv).ok(), return None);
-        batch.reverse();
-
-        self.cursor = cur;
-        self.batch = batch;
-        self.batch.pop()
     }
 }
 
