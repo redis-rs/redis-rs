@@ -77,8 +77,6 @@ impl IntoConnectionInfo for url::Url {
         ensure!(self.scheme.as_slice() == "redis", Err(Error::simple(
             InvalidClientConfig, "URL provided is not a redis URL")));
 
-        println!("{}", self);
-
         Ok(ConnectionInfo {
             host: unwrap_or!(self.serialize_host(),
                     return Err(Error::simple(InvalidClientConfig,
