@@ -77,7 +77,7 @@ impl TestContext {
                         kind: ConnectionRefused, .. }), ..}) => {
                     sleep(Duration::milliseconds(1));
                 },
-                Err(err) => { fail!("Could not connect: {}", err); }
+                Err(err) => { panic!("Could not connect: {}", err); }
                 Ok(x) => { con = x; break; },
             }
         }

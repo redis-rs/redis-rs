@@ -317,7 +317,7 @@ impl Pipeline {
     #[inline]
     fn get_last_command(&mut self) -> &mut Cmd {
         let idx = match self.commands.len() {
-            0 => fail!("No command on stack"),
+            0 => panic!("No command on stack"),
             x => x - 1,
         };
         self.commands.get_mut(idx)
