@@ -15,6 +15,9 @@ The crate is called `redis` and you can depend on it via cargo:
 git = "https://github.com/mitsuhiko/redis-rs.git"
 ```
 
+Note that this library always tracks Rust nightly until Rust will
+release a proper stable version.
+
 Documentation on the library can be found at
 [mitsuhiko.github.io/redis-rs](http://mitsuhiko.github.io/redis-rs/redis/).
 
