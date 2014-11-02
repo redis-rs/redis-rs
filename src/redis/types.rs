@@ -202,7 +202,7 @@ impl InfoDict {
 impl<'a> Map<&'a str, Value> for InfoDict {
 
     fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
-        self.map.find_equiv(key)
+        self.map.find_equiv(*key)
     }
 
     fn contains_key<'x>(&'x self, key: &&str) -> bool {
@@ -381,7 +381,7 @@ macro_rules! to_redis_args_for_tuple(
         impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
-            #[allow(non_snake_case, unused_variable)]
+            #[allow(non_snake_case, unused_variables)]
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let ($(ref $name,)*) = *self;
                 let mut rv = vec![];
@@ -389,7 +389,7 @@ macro_rules! to_redis_args_for_tuple(
                 rv
             }
 
-            #[allow(non_snake_case, unused_variable)]
+            #[allow(non_snake_case, unused_variables)]
             fn is_single_arg(&self) -> bool {
                 let mut n = 0u;
                 $(let $name = (); n += 1;)*
@@ -623,7 +623,7 @@ macro_rules! from_redis_value_for_tuple(
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
-            #[allow(non_snake_case, unused_variable)]
+            #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 match v {
                     &Bulk(ref items) => {
@@ -644,7 +644,7 @@ macro_rules! from_redis_value_for_tuple(
                 }
             }
 
-            #[allow(non_snake_case, unused_variable)]
+            #[allow(non_snake_case, unused_variables)]
             fn from_redis_values(items: &[Value]) -> RedisResult<Vec<($($name,)*)>> {
                 // hacky way to count the tuple size
                 let mut n = 0;

@@ -320,7 +320,7 @@ impl Pipeline {
             0 => panic!("No command on stack"),
             x => x - 1,
         };
-        self.commands.get_mut(idx)
+        &mut self.commands[idx]
     }
 
     /// Adds an argument to the last started command.  This works similar
