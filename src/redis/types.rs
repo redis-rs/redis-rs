@@ -202,7 +202,7 @@ impl InfoDict {
 impl<'a> Map<&'a str, Value> for InfoDict {
 
     fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
-        self.map.find_equiv(key)
+        self.map.find_equiv(&key.to_string())
     }
 
     fn contains_key<'x>(&'x self, key: &&str) -> bool {
