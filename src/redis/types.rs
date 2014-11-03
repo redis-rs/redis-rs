@@ -197,21 +197,16 @@ impl InfoDict {
             None => None,
         }
     }
-}
 
-impl<'a> Map<&'a str, Value> for InfoDict {
-
-    fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
+    pub fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
         self.map.find_equiv(*key)
     }
 
-    fn contains_key<'x>(&'x self, key: &&str) -> bool {
+    pub fn contains_key<'x>(&'x self, key: &&str) -> bool {
         self.find(key).is_some()
     }
-}
 
-impl Collection for InfoDict {
-    fn len(&self) -> uint {
+    pub fn len(&self) -> uint {
         self.map.len()
     }
 }
