@@ -152,8 +152,7 @@ impl error::FromError<IoError> for RedisError {
 
 impl error::FromError<(ErrorKind, &'static str)> for RedisError {
 
-    fn from_error(err: (ErrorKind, &'static str)) -> RedisError {
-        let (kind, desc) = err;
+    fn from_error((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError {
             kind: kind,
             desc: desc,
