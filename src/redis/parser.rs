@@ -31,15 +31,18 @@ impl<'a, T: Reader> Parser<T> {
     /// values you can call this multiple times.  If the reader is not yet
     /// ready this will block.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
-        let b = try_io!(self.reader.read_byte());
+        let b = try!(self.reader.read_byte());
         match b as char {
             '+' => self.parse_status(),
             ':' => self.parse_int(),
             '$' => self.parse_data(),
             '*' => self.parse_bulk(),
             '-' => self.parse_error(),
-            _ => Err(Error::simple(ResponseError,
-                                        "Invalid response when parsing value")),
+            _ => Err(Error {
+                kind: ResponseError,
+                desc: "Invalid response when parsing value",
+                detail: None
+            }),
         }
     }
 
@@ -47,20 +50,27 @@ impl<'a, T: Reader> Parser<T> {
 
     #[inline]
     fn expect_char(&mut self, refchar: char) -> Result<(), Error> {
-        if try_io!(self.reader.read_byte()) as char == refchar {
+        if try!(self.reader.read_byte()) as char == refchar {
             Ok(())
         } else {
-            Err(Error::simple(ResponseError, "Invalid byte in response"))
+            Err(Error {
+                kind: ResponseError,
+                desc: "Invalid byte in response",
+                detail: None
+            })
         }
     }
 
     #[inline]
     fn expect_newline(&mut self) -> Result<(), Error> {
-        match try_io!(self.reader.read_byte()) as char {
-            '\n' => { Ok(()) }
-            '\r' => { self.expect_char('\n') }
-            _ => { Err(Error::simple(
-                ResponseError, "Invalid byte in response")) }
+        match try!(self.reader.read_byte()) as char {
+            '\n' => Ok(()),
+            '\r' => self.expect_char('\n'),
+            _ => Err(Error {
+                kind: ResponseError,
+                desc: "Invalid byte in response",
+                detail: None
+            })
         }
     }
 
@@ -68,7 +78,7 @@ impl<'a, T: Reader> Parser<T> {
         let mut rv = vec![];
 
         loop {
-            let b = try_io!(self.reader.read_byte());
+            let b = try!(self.reader.read_byte());
             match b as char {
                 '\n' => { break; }
                 '\r' => {
@@ -85,9 +95,11 @@ impl<'a, T: Reader> Parser<T> {
     fn read_string_line(&mut self) -> Result<String, Error> {
         match String::from_utf8(try!(self.read_line())) {
             Err(_) => {
-                Err(Error::simple(
-                    ResponseError,
-                        "Expected valid string, got garbage"))
+                Err(Error {
+                    kind: ResponseError,
+                    desc: "Expected valid string, got garbage",
+                    detail: None
+                })
             }
             Ok(value) => Ok(value),
         }
@@ -98,7 +110,7 @@ impl<'a, T: Reader> Parser<T> {
         rv.reserve(bytes);
 
         for _ in range(0, bytes) {
-            rv.push(try_io!(self.reader.read_byte()));
+            rv.push(try!(self.reader.read_byte()));
         }
 
         Ok(rv)
@@ -107,7 +119,11 @@ impl<'a, T: Reader> Parser<T> {
     fn read_int_line(&mut self) -> Result<i64, Error> {
         let line = try!(self.read_string_line());
         match from_str::<i64>(line.as_slice().trim()) {
-            None => Err(Error::simple(ResponseError, "Expected integer, got garbage")),
+            None => Err(Error {
+                kind: ResponseError,
+                desc: "Expected integer, got garbage",
+                detail: None
+            }),
             Some(value) => Ok(value)
         }
     }

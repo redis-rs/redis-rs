@@ -7,7 +7,7 @@ use std::str;
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Okay, Error, Value, Data, Nil, InternalIoError,
+use types::{RedisResult, Okay, Error, Value, Data, Nil,
             ToRedisArgs, FromRedisValue, from_redis_value,
             InvalidClientConfig};
 use parser::Parser;
@@ -66,28 +66,40 @@ impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Ok(u) => u.into_connection_info(),
-            Err(_) => Err(Error::simple(
-                InvalidClientConfig, "Redis URL did not parse")),
+            Err(_) => Err(Error {
+                kind: InvalidClientConfig,
+                desc: "Redis URL did not parse",
+                detail: None,
+            }),
         }
     }
 }
 
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        ensure!(self.scheme.as_slice() == "redis", Err(Error::simple(
-            InvalidClientConfig, "URL provided is not a redis URL")));
+        ensure!(self.scheme.as_slice() == "redis", Err(Error {
+            kind: InvalidClientConfig,
+            desc: "URL provided is not a redis URL",
+            detail: None
+        }));
 
         Ok(ConnectionInfo {
             host: unwrap_or!(self.serialize_host(),
-                    return Err(Error::simple(InvalidClientConfig,
-                        "Missing hostname"))),
+                return Err(Error {
+                    kind: InvalidClientConfig,
+                    desc: "Missing hostname",
+                    detail: None
+                })),
             port: self.port().unwrap_or(DEFAULT_PORT),
             db: match self.serialize_path().unwrap_or("".to_string())
                     .as_slice().trim_chars('/') {
                 "" => 0,
                 path => unwrap_or!(from_str::<i64>(path),
-                    return Err(Error::simple(InvalidClientConfig,
-                        "Path is not a valid redis database number")))
+                    return Err(Error {
+                        kind: InvalidClientConfig,
+                        desc: "Path is not a valid redis database number",
+                        detail: None
+                    }))
             },
             passwd: self.password().and_then(|pw| Some(pw.to_string())),
         })
@@ -128,14 +140,8 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = &mut self.sock as &mut Writer;
-        match w.write(bytes) {
-            Err(err) => {
-                Err(Error::simple(
-                    InternalIoError(err),
-                    "Could not send command because of an IO error"))
-            },
-            Ok(_) => Ok(Okay)
-        }
+        try!(w.write(bytes));
+        Ok(Okay)
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {

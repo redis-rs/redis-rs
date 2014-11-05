@@ -41,7 +41,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(try_io!(connect(&self.connection_info)))
+        Ok(try!(connect(&self.connection_info)))
     }
 
     /// Returns a PubSub connection.  A pubsub connection can be used to
@@ -50,7 +50,7 @@ impl Client {
     ///
     /// Note that redis' pubsub operates across all databases.
     pub fn get_pubsub(&self) -> RedisResult<PubSub> {
-        Ok(try_io!(connect_pubsub(&self.connection_info)))
+        Ok(try!(connect_pubsub(&self.connection_info)))
     }
 }
 

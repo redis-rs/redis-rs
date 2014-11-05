@@ -1,3 +1,4 @@
+use std::error;
 use std::fmt;
 use std::hash::Hash;
 use std::io::IoError;
@@ -134,21 +135,37 @@ pub struct Error {
     pub detail: Option<String>,
 }
 
+impl error::FromError<IoError> for Error {
 
-/// Library generic result type.
-pub type RedisResult<T> = Result<T, Error>;
-
-
-impl Error {
-
-    pub fn simple(kind: ErrorKind, desc: &'static str) -> Error {
+    fn from_error(err: IoError) -> Error {
         Error {
-            kind: kind,
-            desc: desc,
-            detail: None,
+            kind: InternalIoError(err),
+            desc: "An internal IO error ocurred.",
+            detail: None
         }
     }
 }
+
+impl error::Error for Error {
+
+    fn description(&self) -> &str {
+        match self.kind {
+            InternalIoError(ref err) => err.desc,
+            _ => self.desc,
+        }
+    }
+
+    fn detail(&self) -> Option<String> {
+        match self.kind {
+            InternalIoError(ref err) => err.detail.clone(),
+            _ => self.detail.clone(),
+        }
+    }
+}
+
+
+/// Library generic result type.
+pub type RedisResult<T> = Result<T, Error>;
 
 
 /// An info dictionary type.

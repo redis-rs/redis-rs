@@ -394,8 +394,11 @@ impl Pipeline {
         match resp.pop() {
             Some(Nil) => Ok(Nil),
             Some(Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => Err(Error::simple(ResponseError,
-                "Invalid response when parsing multi response"))
+            _ => Err(Error {
+                kind: ResponseError,
+                desc: "Invalid response when parsing multi response",
+                detail: None,
+            })
         }
     }
 
