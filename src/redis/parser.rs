@@ -38,7 +38,7 @@ impl<'a, T: Reader> Parser<T> {
             '$' => self.parse_data(),
             '*' => self.parse_bulk(),
             '-' => self.parse_error(),
-            _ => throw!((ResponseError, "Invalid response when parsing value")),
+            _ => fail!((ResponseError, "Invalid response when parsing value")),
         }
     }
 
@@ -49,7 +49,7 @@ impl<'a, T: Reader> Parser<T> {
         if try!(self.reader.read_byte()) as char == refchar {
             Ok(())
         } else {
-            throw!((ResponseError, "Invalid byte in response"));
+            fail!((ResponseError, "Invalid byte in response"));
         }
     }
 
@@ -58,7 +58,7 @@ impl<'a, T: Reader> Parser<T> {
         match try!(self.reader.read_byte()) as char {
             '\n' => Ok(()),
             '\r' => self.expect_char('\n'),
-            _ => throw!((ResponseError, "Invalid byte in response")),
+            _ => fail!((ResponseError, "Invalid byte in response")),
         }
     }
 
@@ -83,7 +83,7 @@ impl<'a, T: Reader> Parser<T> {
     fn read_string_line(&mut self) -> RedisResult<String> {
         match String::from_utf8(try!(self.read_line())) {
             Err(_) => {
-                throw!((ResponseError, "Expected valid string, got garbage"))
+                fail!((ResponseError, "Expected valid string, got garbage"))
             }
             Ok(value) => Ok(value),
         }
@@ -103,7 +103,7 @@ impl<'a, T: Reader> Parser<T> {
     fn read_int_line(&mut self) -> RedisResult<i64> {
         let line = try!(self.read_string_line());
         match from_str::<i64>(line.as_slice().trim()) {
-            None => throw!((ResponseError, "Expected integer, got garbage")),
+            None => fail!((ResponseError, "Expected integer, got garbage")),
             Some(value) => Ok(value)
         }
     }
@@ -157,7 +157,7 @@ impl<'a, T: Reader> Parser<T> {
             other => ExtensionError(other.to_string()),
         };
         let message = pieces.next().unwrap_or("An unknown error ocurred.");
-        throw!(RedisError {
+        fail!(RedisError {
             kind: kind,
             desc: "A error was signalled by the server",
             detail: Some(message.to_string()),

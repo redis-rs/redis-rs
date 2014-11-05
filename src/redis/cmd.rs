@@ -394,7 +394,7 @@ impl Pipeline {
         match resp.pop() {
             Some(Nil) => Ok(Nil),
             Some(Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => throw!((ResponseError, "Invalid response when parsing multi response"))
+            _ => fail!((ResponseError, "Invalid response when parsing multi response"))
         }
     }
 

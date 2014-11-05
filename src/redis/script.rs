@@ -127,7 +127,7 @@ impl<'a> ScriptInvocation<'a> {
                         .arg(self.script.code.as_bytes())
                         .query(con));
                 }
-                Err(x) => throw!(x),
+                Err(x) => fail!(x),
             }
         }
     }

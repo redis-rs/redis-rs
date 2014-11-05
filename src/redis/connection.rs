@@ -67,7 +67,7 @@ impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Ok(u) => u.into_connection_info(),
-            Err(_) => throw!((InvalidClientConfig, "Redis URL did not parse")),
+            Err(_) => fail!((InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
@@ -75,17 +75,17 @@ impl<'a> IntoConnectionInfo for &'a str {
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         ensure!(self.scheme.as_slice() == "redis",
-            throw!((InvalidClientConfig, "URL provided is not a redis URL")));
+            fail!((InvalidClientConfig, "URL provided is not a redis URL")));
 
         Ok(ConnectionInfo {
             host: unwrap_or!(self.serialize_host(),
-                throw!((InvalidClientConfig, "Missing hostname"))),
+                fail!((InvalidClientConfig, "Missing hostname"))),
             port: self.port().unwrap_or(DEFAULT_PORT),
             db: match self.serialize_path().unwrap_or("".to_string())
                     .as_slice().trim_chars('/') {
                 "" => 0,
                 path => unwrap_or!(from_str::<i64>(path),
-                    throw!((InvalidClientConfig, "Invalid database number"))),
+                    fail!((InvalidClientConfig, "Invalid database number"))),
             },
             passwd: self.password().and_then(|pw| Some(pw.to_string())),
         })
@@ -145,7 +145,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Okay) => {}
-            _ => throw!((ResponseError, "Redis server refused to switch database"))
+            _ => fail!((ResponseError, "Redis server refused to switch database"))
         }
     }
 
@@ -153,7 +153,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
         Some(ref passwd) => {
             match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
                 Ok(Okay) => {}
-                _ => { throw!((AuthenticationFailed,
+                _ => { fail!((AuthenticationFailed,
                                "Password authentication failed")); }
             }
         },
@@ -257,7 +257,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
         match self {
             &Ok(ref x) => x.req_packed_command(cmd),
-            &Err(ref x) => throw!(x.clone()),
+            &Err(ref x) => fail!(x.clone()),
         }
     }
 
@@ -265,7 +265,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
         offset: uint, count: uint) -> RedisResult<Vec<Value>> {
         match self {
             &Ok(ref x) => x.req_packed_commands(cmd, offset, count),
-            &Err(ref x) => throw!(x.clone()),
+            &Err(ref x) => fail!(x.clone()),
         }
     }
 
