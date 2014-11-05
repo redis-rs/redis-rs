@@ -30,16 +30,16 @@
 //! ```rust,no_run
 //! extern crate redis;
 //!
-//! fn main() {
-//!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//!     let con = client.get_connection().unwrap();
-//! }
-//! ```
+//! fn do_something() -> redis::RedisResult<()> {
+//!     let client = try!(redis::Client::open("redis://127.0.0.1/"));
+//!     let con = try!(client.get_connection());
 //!
-//! You can however also *not* unwrap the client and connection and pass
-//! the result containing a client to the functions directly.  Doing this
-//! on actual clients is discouraged however as currently no connection
-//! pooling takes place and you create and destroy a TCP socket constantly.
+//!     /* do something here */
+//!
+//!     Ok(())
+//! }
+//! # fn main() {}
+//! ```
 //!
 //! ## Connection Parameters
 //!
@@ -60,10 +60,9 @@
 //! to your liking you can send a query into any `ConnectionLike` object:
 //!
 //! ```rust,no_run
-//! fn main() {
-//!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//!     let con = client.get_connection();
-//!     let _ : () = redis::cmd("SET").arg("my_key").arg(42i).query(&con).unwrap();
+//! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
+//!     let _ : () = try!(redis::cmd("SET").arg("my_key").arg(42i).query(con));
+//!     Ok(())
 //! }
 //! ```
 //!
@@ -82,11 +81,11 @@
 //! extern crate redis;
 //! use redis::Commands;
 //!
-//! fn main() {
-//!     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//!     let con = client.get_connection();
-//!     let _ : () = con.set("my_key", 42i).unwrap();
+//! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
+//!     let _ : () = try!(con.set("my_key", 42i));
+//!     Ok(())
 //! }
+//! # fn main() {}
 //! ```
 //!
 //! Note that high-level commands are work in progress and many are still
@@ -108,17 +107,20 @@
 //! ```rust,no_run
 //! # use redis::Commands;
 //! # use std::collections::{HashMap, HashSet};
+//! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let count : i32 = con.get("my_counter").unwrap();
+//! let count : i32 = try!(con.get("my_counter"));
 //! let count = con.get("my_counter").unwrap_or(0i32);
-//! let k : Option<String> = con.get("missing_key").unwrap();
-//! let name : String = con.get("my_name").unwrap();
-//! let bin : Vec<u8> = con.get("my_binary").unwrap();
-//! let map : HashMap<String, i32> = con.hgetall("my_hash").unwrap();
-//! let keys : Vec<String> = con.hkeys("my_hash").unwrap();
-//! let mems : HashSet<i32> = con.smembers("my_set").unwrap();
-//! let (k1, k2) : (String, String) = con.get(["k1", "k2"].as_slice()).unwrap();
+//! let k : Option<String> = try!(con.get("missing_key"));
+//! let name : String = try!(con.get("my_name"));
+//! let bin : Vec<u8> = try!(con.get("my_binary"));
+//! let map : HashMap<String, i32> = try!(con.hgetall("my_hash"));
+//! let keys : Vec<String> = try!(con.hkeys("my_hash"));
+//! let mems : HashSet<i32> = try!(con.smembers("my_set"));
+//! let (k1, k2) : (String, String) = try!(con.get(["k1", "k2"].as_slice()));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Iteration Protocol
@@ -130,13 +132,15 @@
 //! queries until the cursor is exhausted:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let mut iter : redis::Iter<int> = redis::cmd("SSCAN").arg("my_set")
-//!     .cursor_arg(0).iter(&con).unwrap();
+//! let mut iter : redis::Iter<int> = try!(redis::cmd("SSCAN").arg("my_set")
+//!     .cursor_arg(0).iter(&con));
 //! for x in iter {
 //!     // do something with the item
 //! }
+//! # Ok(()) }
 //! ```
 //!
 //! As you can see the cursor argument needs to be defined with `cursor_arg`
@@ -152,13 +156,15 @@
 //! is easier:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = redis::pipe()
+//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
 //!     .cmd("SET").arg("key_1").arg(42i).ignore()
 //!     .cmd("SET").arg("key_2").arg(43i).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con).unwrap();
+//!     .cmd("GET").arg("key_2").query(&con));
+//! # Ok(()) }
 //! ```
 //!
 //! If you want the pipeline to be wrapped in a `MULTI`/`EXEC` block you can
@@ -167,29 +173,33 @@
 //! care of the rest for you:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = redis::pipe()
+//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
 //!     .atomic()
 //!     .cmd("SET").arg("key_1").arg(42i).ignore()
 //!     .cmd("SET").arg("key_2").arg(43i).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con).unwrap();
+//!     .cmd("GET").arg("key_2").query(&con));
+//! # Ok(()) }
 //! ```
 //!
 //! You can also use high-level commands on pipelines through the
 //! `PipelineCommands` trait:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! use redis::PipelineCommands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = redis::pipe()
+//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
 //!     .atomic()
 //!     .set("key_1", 42i).ignore()
 //!     .set("key_2", 43i).ignore()
 //!     .get("key_1")
-//!     .get("key_2").query(&con).unwrap();
+//!     .get("key_2").query(&con));
+//! # Ok(()) }
 //! ```
 //!
 //! # Transactions
@@ -199,17 +209,19 @@
 //! connection:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! use redis::{Commands, PipelineCommands};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (int,) = redis::transaction(&con, [key].as_slice(), |pipe| {
+//! let (new_val,) : (int,) = try!(redis::transaction(&con, [key].as_slice(), |pipe| {
 //!     let old_val : int = try!(con.get(key));
 //!     pipe
 //!         .set(key, old_val + 1).ignore()
 //!         .get(key).query(&con)
-//! }).unwrap();
+//! }));
 //! println!("The incremented number is: {}", new_val);
+//! # Ok(()) }
 //! ```
 //!
 //! For more information see the `transaction` function.
@@ -224,16 +236,18 @@
 //! Example usage:
 //!
 //! ```rust,no_run
-//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! let mut pubsub = client.get_pubsub().unwrap();
-//! pubsub.subscribe("channel_1").unwrap();
-//! pubsub.subscribe("channel_2").unwrap();
+//! # fn do_something() -> redis::RedisResult<()> {
+//! let client = try!(redis::Client::open("redis://127.0.0.1/"));
+//! let mut pubsub = try!(client.get_pubsub());
+//! try!(pubsub.subscribe("channel_1"));
+//! try!(pubsub.subscribe("channel_2"));
 //!
 //! loop {
-//!     let msg = pubsub.get_message().unwrap();
-//!     let payload : String = msg.get_payload().unwrap();
+//!     let msg = try!(pubsub.get_message());
+//!     let payload : String = try!(msg.get_payload());
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
+//! # }
 //! ```
 //!
 //! # Scripts
@@ -245,13 +259,15 @@
 //! Example:
 //!
 //! ```rust,no_run
+//! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let script = redis::Script::new(r"
 //!     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 //! ");
-//! let result : int = script.arg(1i).arg(2i).invoke(&con).unwrap();
+//! let result : int = try!(script.arg(1i).arg(2i).invoke(&con));
 //! assert_eq!(result, 3);
+//! # Ok(()) }
 //! ```
 
 #![crate_name = "redis"]
