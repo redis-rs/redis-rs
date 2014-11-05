@@ -176,6 +176,13 @@ impl error::Error for RedisError {
             _ => self.detail.clone(),
         }
     }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match self.kind {
+            InternalIoError(ref err) => Some(&*err as &error::Error),
+            _ => None,
+        }
+    }
 }
 
 /// Indicates a general failure in the library.
