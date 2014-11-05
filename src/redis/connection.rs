@@ -285,16 +285,18 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
 /// Example:
 ///
 /// ```rust,no_run
-/// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// let mut pubsub = client.get_pubsub().unwrap();
-/// pubsub.subscribe("channel_1").unwrap();
-/// pubsub.subscribe("channel_2").unwrap();
+/// # fn do_something() -> redis::RedisResult<()> {
+/// let client = try!(redis::Client::open("redis://127.0.0.1/"));
+/// let mut pubsub = try!(client.get_pubsub());
+/// try!(pubsub.subscribe("channel_1"));
+/// try!(pubsub.subscribe("channel_2"));
 ///
 /// loop {
-///     let msg = pubsub.get_message().unwrap();
-///     let payload : String = msg.get_payload().unwrap();
+///     let msg = try!(pubsub.get_message());
+///     let payload : String = try!(msg.get_payload());
 ///     println!("channel '{}': {}", msg.get_channel_name(), payload);
 /// }
+/// # }
 /// ```
 impl PubSub {
 
@@ -448,16 +450,18 @@ impl Msg {
 ///
 /// ```rust,no_run
 /// use redis::{Commands, PipelineCommands};
+/// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let key = "the_key";
-/// let (new_val,) : (int,) = redis::transaction(&con, [key].as_slice(), |pipe| {
+/// let (new_val,) : (int,) = try!(redis::transaction(&con, [key].as_slice(), |pipe| {
 ///     let old_val : int = try!(con.get(key));
 ///     pipe
 ///         .set(key, old_val + 1).ignore()
 ///         .get(key).query(&con)
-/// }).unwrap();
+/// }));
 /// println!("The incremented number is: {}", new_val);
+/// # Ok(()) }
 /// ```
 pub fn transaction<K: ToRedisArgs, T: FromRedisValue>(con: &ConnectionLike,
         keys: &[K], func: |&mut Pipeline| -> RedisResult<Option<T>>) -> RedisResult<T> {

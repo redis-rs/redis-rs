@@ -22,18 +22,23 @@ macro_rules! implement_commands {
         /// For instance this code:
         ///
         /// ```rust,no_run
-        /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        /// let con = client.get_connection().unwrap();
+        /// # fn do_something() -> redis::RedisResult<()> {
+        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
+        /// let con = try!(client.get_connection());
         /// redis::cmd("SET").arg("my_key").arg(42i).execute(&con);
         /// assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42i));
+        /// # Ok(()) }
         /// ```
         ///
         /// Will become this:
         ///
         /// ```rust,no_run
+        /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
-        /// let client = redis::Client::open("redis://127.0.0.1/");
-        /// assert_eq!(client.get("my_key"), Ok(42i));
+        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
+        /// let con = try!(client.get_connection());
+        /// assert_eq!(con.get("my_key"), Ok(42i));
+        /// # Ok(()) }
         /// ```
         pub trait Commands : ConnectionLike {
             $(

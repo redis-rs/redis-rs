@@ -235,10 +235,12 @@ pub struct InfoDict {
 /// in (master, slave) etc:
 ///
 /// ```rust,no_run
+/// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
-/// let info : redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
-/// let role : String = info.get("role").unwrap();
+/// let info : redis::InfoDict = try!(redis::cmd("INFO").query(&con));
+/// let role : Option<String> = info.get("role");
+/// # Ok(()) }
 /// ```
 impl InfoDict {
     /// Creates a new info dictionary from a string in the response of
