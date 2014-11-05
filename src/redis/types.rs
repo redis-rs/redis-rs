@@ -181,6 +181,21 @@ impl error::Error for RedisError {
 /// Indicates a general failure in the library.
 impl RedisError {
 
+    /// Returns the name of the error category for display purposes.
+    pub fn category(&self) -> &str {
+        match self.kind {
+            ResponseError => "response error",
+            AuthenticationFailed => "authentication failed",
+            TypeError => "type error",
+            ExecAbortError => "script execution aborted",
+            BusyLoadingError => "busy loading",
+            NoScriptError => "no script",
+            InvalidClientConfig => "invalid client config",
+            ExtensionError(ref x) => x.as_slice(),
+            InternalIoError(_) => "I/O error",
+        }
+    }
+
     /// Indicates that this failure is an IO failure.
     pub fn is_io_error(&self) -> bool {
         match self.kind {

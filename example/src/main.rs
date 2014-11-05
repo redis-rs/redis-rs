@@ -1,4 +1,5 @@
 extern crate redis;
+use std::error::Error;
 use redis::{Commands, PipelineCommands, transaction};
 
 use std::collections::HashMap;
@@ -22,13 +23,13 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // not slices).  We can however avoid the allocation we can use the
     // find_equiv method.
     println!("  max-intset:        {}", config.find_equiv(
-        &"set-max-intset-entries").unwrap_or(&0));
+        "set-max-intset-entries").unwrap_or(&0));
     println!("  hash-max-ziplist:  {}", config.find_equiv
-        (&"hash-max-ziplist-entries").unwrap_or(&0));
+        ("hash-max-ziplist-entries").unwrap_or(&0));
     println!("  list-max-ziplist:  {}", config.find_equiv(
-        &"list-max-ziplist-entries").unwrap_or(&0));
+        "list-max-ziplist-entries").unwrap_or(&0));
     println!("  zset-max-ziplist:  {}", config.find_equiv(
-        &"zset-max-ziplist-entries").unwrap_or(&0));
+        "zset-max-ziplist-entries").unwrap_or(&0));
 
     Ok(())
 }
@@ -130,7 +131,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
 fn do_redis_code() -> redis::RedisResult<()>
 {
     // general connection handling
-    let client = try!(redis::Client::open("redis://127.0.0.1/"));
+    let client = try!(redis::Client::open("redis://127.0.0.1:1234/"));
     let con = try!(client.get_connection());
 
     // read some config and print it.
@@ -150,5 +151,15 @@ fn do_redis_code() -> redis::RedisResult<()>
 fn main()
 {
     // at this point the errors are fatal, let's just fail hard.
-    do_redis_code().unwrap();
+    match do_redis_code() {
+        Err(err) => {
+            println!("Could not execute example:");
+            println!("  {}: {}", err.category(), err.description());
+            match err.detail() {
+                Some(msg) => println!("  Detail: {}", msg),
+                None => {}
+            };
+        },
+        Ok(()) => {},
+    }
 }
