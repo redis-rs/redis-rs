@@ -1,7 +1,7 @@
 use std::error;
 use std::fmt;
 use std::hash::Hash;
-use std::io::IoError;
+use std::io::{IoError, ConnectionRefused};
 use std::from_str::from_str;
 use std::str::from_utf8;
 use std::collections::{HashMap, HashSet};
@@ -23,6 +23,8 @@ pub enum NumericBehavior {
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
+    /// The authentication with the server failed.
+    AuthenticationFailed,
     /// Operation failed because of a type mismatch.
     TypeError,
     /// A script execution was aborted.
@@ -127,18 +129,20 @@ impl fmt::Show for Value {
 }
 
 
-/// Represents a redis error.
+/// Represents a redis error.  For the most part you should be using
+/// the Error trait to interact with this rather than the actual
+/// struct.
 #[deriving(PartialEq, Eq, Clone, Show)]
-pub struct Error {
+pub struct RedisError {
     pub kind: ErrorKind,
     pub desc: &'static str,
     pub detail: Option<String>,
 }
 
-impl error::FromError<IoError> for Error {
+impl error::FromError<IoError> for RedisError {
 
-    fn from_error(err: IoError) -> Error {
-        Error {
+    fn from_error(err: IoError) -> RedisError {
+        RedisError {
             kind: InternalIoError(err),
             desc: "An internal IO error ocurred.",
             detail: None
@@ -146,7 +150,19 @@ impl error::FromError<IoError> for Error {
     }
 }
 
-impl error::Error for Error {
+impl error::FromError<(ErrorKind, &'static str)> for RedisError {
+
+    fn from_error(err: (ErrorKind, &'static str)) -> RedisError {
+        let (kind, desc) = err;
+        RedisError {
+            kind: kind,
+            desc: desc,
+            detail: None,
+        }
+    }
+}
+
+impl error::Error for RedisError {
 
     fn description(&self) -> &str {
         match self.kind {
@@ -163,9 +179,32 @@ impl error::Error for Error {
     }
 }
 
+/// Indicates a general failure in the library.
+impl RedisError {
+
+    /// Indicates that this failure is an IO failure.
+    pub fn is_io_error(&self) -> bool {
+        match self.kind {
+            InternalIoError(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true if this error indicates that the connection was
+    /// refused.
+    pub fn is_connection_refusal(&self) -> bool {
+        match self.kind {
+            InternalIoError(IoError {
+                kind: ConnectionRefused, ..
+            }) => true,
+            _ => false,
+        }
+    }
+}
+
 
 /// Library generic result type.
-pub type RedisResult<T> = Result<T, Error>;
+pub type RedisResult<T> = Result<T, RedisError>;
 
 
 /// An info dictionary type.
@@ -276,7 +315,7 @@ pub trait ToRedisArgs {
 
 macro_rules! invalid_type_error(
     ($v:expr, $det:expr) => ({
-        return Err(Error {
+        throw!(RedisError {
             kind: TypeError,
             desc: "Response was of incompatible type",
             detail: Some(format!("{} (response was {})", $det, $v)),

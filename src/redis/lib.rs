@@ -296,7 +296,7 @@ pub use types::{
         Status,
 
     /* error and result types */
-    Error,
+    RedisError,
     RedisResult,
 
     /* error kinds */

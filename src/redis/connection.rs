@@ -1,4 +1,4 @@
-use std::io::{Reader, Writer, IoResult, IoError, ConnectionFailed};
+use std::io::{Reader, Writer};
 use std::io::net::tcp::TcpStream;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -7,9 +7,10 @@ use std::str;
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Okay, Error, Value, Data, Nil,
+use types::{RedisResult, Okay, Value, Data, Nil,
             ToRedisArgs, FromRedisValue, from_redis_value,
-            InvalidClientConfig};
+            InvalidClientConfig, AuthenticationFailed,
+            ResponseError};
 use parser::Parser;
 
 
@@ -66,40 +67,25 @@ impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Ok(u) => u.into_connection_info(),
-            Err(_) => Err(Error {
-                kind: InvalidClientConfig,
-                desc: "Redis URL did not parse",
-                detail: None,
-            }),
+            Err(_) => throw!((InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
 
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        ensure!(self.scheme.as_slice() == "redis", Err(Error {
-            kind: InvalidClientConfig,
-            desc: "URL provided is not a redis URL",
-            detail: None
-        }));
+        ensure!(self.scheme.as_slice() == "redis",
+            throw!((InvalidClientConfig, "URL provided is not a redis URL")));
 
         Ok(ConnectionInfo {
             host: unwrap_or!(self.serialize_host(),
-                return Err(Error {
-                    kind: InvalidClientConfig,
-                    desc: "Missing hostname",
-                    detail: None
-                })),
+                throw!((InvalidClientConfig, "Missing hostname"))),
             port: self.port().unwrap_or(DEFAULT_PORT),
             db: match self.serialize_path().unwrap_or("".to_string())
                     .as_slice().trim_chars('/') {
                 "" => 0,
                 path => unwrap_or!(from_str::<i64>(path),
-                    return Err(Error {
-                        kind: InvalidClientConfig,
-                        desc: "Path is not a valid redis database number",
-                        detail: None
-                    }))
+                    throw!((InvalidClientConfig, "Invalid database number"))),
             },
             passwd: self.password().and_then(|pw| Some(pw.to_string())),
         })
@@ -133,7 +119,7 @@ pub struct Msg {
 
 impl ActualConnection {
 
-    pub fn new(host: &str, port: u16) -> IoResult<ActualConnection> {
+    pub fn new(host: &str, port: u16) -> RedisResult<ActualConnection> {
         let sock = try!(TcpStream::connect(host, port));
         Ok(ActualConnection { sock: sock })
     }
@@ -151,7 +137,7 @@ impl ActualConnection {
 }
 
 
-pub fn connect(connection_info: &ConnectionInfo) -> IoResult<Connection> {
+pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(
         connection_info.host[], connection_info.port));
     let rv = Connection { con: RefCell::new(con), db: connection_info.db };
@@ -159,11 +145,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> IoResult<Connection> {
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Okay) => {}
-            _ => { return Err(IoError {
-                kind: ConnectionFailed,
-                desc: "Redis server refused to switch database",
-                detail: None,
-            }); }
+            _ => throw!((ResponseError, "Redis server refused to switch database"))
         }
     }
 
@@ -171,11 +153,8 @@ pub fn connect(connection_info: &ConnectionInfo) -> IoResult<Connection> {
         Some(ref passwd) => {
             match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
                 Ok(Okay) => {}
-                _ => { return Err(IoError {
-                    kind: ConnectionFailed,
-                    desc: "Password authentication failed",
-                    detail: None,
-                }); }
+                _ => { throw!((AuthenticationFailed,
+                               "Password authentication failed")); }
             }
         },
         None => {},
@@ -184,7 +163,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> IoResult<Connection> {
     Ok(rv)
 }
 
-pub fn connect_pubsub(connection_info: &ConnectionInfo) -> IoResult<PubSub> {
+pub fn connect_pubsub(connection_info: &ConnectionInfo) -> RedisResult<PubSub> {
     Ok(PubSub {
         con: try!(connect(connection_info)),
         channels: HashSet::new(),
@@ -278,7 +257,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
         match self {
             &Ok(ref x) => x.req_packed_command(cmd),
-            &Err(ref x) => Err(x.clone()),
+            &Err(ref x) => throw!(x.clone()),
         }
     }
 
@@ -286,7 +265,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
         offset: uint, count: uint) -> RedisResult<Vec<Value>> {
         match self {
             &Ok(ref x) => x.req_packed_commands(cmd, offset, count),
-            &Err(ref x) => Err(x.clone()),
+            &Err(ref x) => throw!(x.clone()),
         }
     }
 

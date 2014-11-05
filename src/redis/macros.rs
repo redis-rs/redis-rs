@@ -6,6 +6,12 @@ macro_rules! ensure {
     )
 }
 
+macro_rules! throw {
+    ($expr:expr) => (
+        return Err(::std::error::FromError::from_error($expr));
+    )
+}
+
 macro_rules! unwrap_or {
     ($expr:expr, $or:expr) => (
         match $expr {

@@ -7,7 +7,6 @@ extern crate serialize;
 use redis::{Commands, PipelineCommands};
 
 use std::io::process;
-use std::io::{IoError, ConnectionRefused};
 use std::time::Duration;
 use std::sync::Future;
 use std::io::timer::sleep;
@@ -72,12 +71,13 @@ impl TestContext {
 
         loop {
             match client.get_connection() {
-                Err(redis::Error {
-                    kind: redis::InternalIoError(IoError {
-                        kind: ConnectionRefused, .. }), ..}) => {
-                    sleep(Duration::milliseconds(1));
+                Err(err) => {
+                    if err.is_connection_refusal() {
+                        sleep(Duration::milliseconds(1));
+                    } else {
+                        panic!("Could not connect: {}", err);
+                    }
                 },
-                Err(err) => { panic!("Could not connect: {}", err); }
                 Ok(x) => { con = x; break; },
             }
         }
