@@ -34,11 +34,14 @@ command creation is also possible.
 extern crate redis;
 use redis::Commands;
 
-fn main() {
-    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    let con = client.get_connection();
-    assert_eq!(con.set("my_key", 42i), Ok(()));
-    assert_eq!(con.get("my_key"), Ok(42i));
+fn fetch_an_integer() -> redis::RedisResult<int> {
+    // connect to redis
+    let client = try!(redis::Client::open("redis://127.0.0.1/"));
+    let con = try!(client.get_connection());
+    // throw away the result, just make sure it does not fail
+    let _ : () = try!(con.set("my_key", 42i));
+    // read back the key and return it
+    con.get("my_key")
 }
 ```
 

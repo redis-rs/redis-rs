@@ -255,24 +255,24 @@ impl ConnectionLike for Connection {
 impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
 
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        match self {
-            &Ok(ref x) => x.req_packed_command(cmd),
-            &Err(ref x) => fail!(x.clone()),
+        match *self {
+            Ok(ref x) => x.req_packed_command(cmd),
+            Err(ref x) => fail!(x.clone()),
         }
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
         offset: uint, count: uint) -> RedisResult<Vec<Value>> {
-        match self {
-            &Ok(ref x) => x.req_packed_commands(cmd, offset, count),
-            &Err(ref x) => fail!(x.clone()),
+        match *self {
+            Ok(ref x) => x.req_packed_commands(cmd, offset, count),
+            Err(ref x) => fail!(x.clone()),
         }
     }
 
     fn get_db(&self) -> i64 {
-        match self {
-            &Ok(ref x) => x.get_db(),
-            &Err(_) => 0,
+        match *self {
+            Ok(ref x) => x.get_db(),
+            Err(_) => 0,
         }
     }
 }
