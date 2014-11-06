@@ -13,7 +13,4 @@ docs: build
 upload-docs: docs
 	@./upload-docs.sh
 
-download-commands:
-	curl https://raw.githubusercontent.com/antirez/redis-doc/master/commands.json > src/redis/commands.json
-
 .PHONY: build test bench docs upload-docs
