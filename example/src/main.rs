@@ -131,7 +131,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
 fn do_redis_code() -> redis::RedisResult<()>
 {
     // general connection handling
-    let client = try!(redis::Client::open("redis://127.0.0.1:1234/"));
+    let client = try!(redis::Client::open("redis://127.0.0.1/"));
     let con = try!(client.get_connection());
 
     // read some config and print it.
