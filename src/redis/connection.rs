@@ -120,7 +120,7 @@ pub struct Msg {
 impl ActualConnection {
 
     pub fn new(host: &str, port: u16) -> RedisResult<ActualConnection> {
-        let sock = try!(TcpStream::connect(host, port));
+        let sock = try!(TcpStream::connect((host, port)));
         Ok(ActualConnection { sock: sock })
     }
 
