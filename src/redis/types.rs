@@ -179,7 +179,7 @@ impl error::Error for RedisError {
 
     fn cause(&self) -> Option<&error::Error> {
         match self.kind {
-            InternalIoError(ref err) => Some(&*err as &error::Error),
+            InternalIoError(ref err) => Some(err as &error::Error),
             _ => None,
         }
     }
