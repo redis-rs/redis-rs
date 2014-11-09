@@ -5,7 +5,7 @@
 //! The crate is called `redis` and you can depend on it via cargo:
 //!
 //! ```ini
-//! [dependencies.redis]
+//! [dependencies.redis-rs]
 //! git = "https://github.com/mitsuhiko/redis-rs.git"
 //! ```
 //!
