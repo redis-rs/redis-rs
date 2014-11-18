@@ -29,7 +29,7 @@ pub struct Script {
 impl Script {
 
     /// Creates a new script object.
-    pub fn new<'a>(code: &'a str) -> Script {
+    pub fn new(code: &str) -> Script {
         let mut hash = Sha1::new();
         hash.input(code.as_bytes());
         Script {
@@ -39,13 +39,13 @@ impl Script {
     }
 
     /// Returns the script's SHA1 hash in hexadecimal format.
-    pub fn get_hash<'a>(&'a self) -> &'a str {
+    pub fn get_hash(&self) -> &str {
         self.hash.as_slice()
     }
 
     /// Creates a script invocation object with a key filled in.
     #[inline]
-    pub fn key<'a, T: ToRedisArgs>(&'a self, key: T) -> ScriptInvocation<'a> {
+    pub fn key<T: ToRedisArgs>(&self, key: T) -> ScriptInvocation {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -55,7 +55,7 @@ impl Script {
 
     /// Creates a script invocation object with an argument filled in.
     #[inline]
-    pub fn arg<'a, T: ToRedisArgs>(&'a self, arg: T) -> ScriptInvocation<'a> {
+    pub fn arg<T: ToRedisArgs>(&self, arg: T) -> ScriptInvocation {
         ScriptInvocation {
             script: self,
             args: arg.to_redis_args(),
@@ -67,7 +67,7 @@ impl Script {
     /// for programmatically adding arguments and keys because the type will
     /// not change.  Normally you can use `arg` and `key` directly.
     #[inline]
-    pub fn prepare_invoke<'a>(&'a self) -> ScriptInvocation<'a> {
+    pub fn prepare_invoke(&self) -> ScriptInvocation {
         ScriptInvocation { script: self, args: vec![], keys: vec![] }
     }
 

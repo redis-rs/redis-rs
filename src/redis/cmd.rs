@@ -302,7 +302,7 @@ impl Pipeline {
     /// Starts a new command.  Functions such as `arg` then become
     /// available to add more arguments to that command.
     #[inline]
-    pub fn cmd<'a>(&mut self, name: &'a str) -> &mut Pipeline {
+    pub fn cmd(&mut self, name: &str) -> &mut Pipeline {
         self.commands.push(cmd(name));
         self
     }

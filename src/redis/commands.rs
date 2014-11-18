@@ -108,13 +108,13 @@ macro_rules! implement_commands {
         pub trait PipelineCommands {
             #[doc(hidden)]
             #[inline]
-            fn perform<'a>(&'a mut self, con: &Cmd) -> &'a mut Self;
+            fn perform(&mut self, con: &Cmd) -> &mut Self;
 
             $(
                 $(#[$attr])*
                 #[inline]
                 fn $name<'a $(, $tyargs: $ty)*>(
-                    &'a mut self $(, $argname: $argty)*) -> &'a mut Self
+                    &mut self $(, $argname: $argty)*) -> &mut Self
                     { self.perform($body) }
             )*
         }
@@ -723,7 +723,7 @@ impl Commands for Client {}
 impl<T: Commands+ConnectionLike> Commands for RedisResult<T> {}
 
 impl PipelineCommands for Pipeline {
-    fn perform<'a>(&'a mut self, cmd: &Cmd) -> &'a mut Pipeline {
+    fn perform(&mut self, cmd: &Cmd) -> &mut Pipeline {
         self.add_command(cmd)
     }
 }

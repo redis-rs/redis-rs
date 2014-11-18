@@ -282,11 +282,11 @@ impl InfoDict {
         }
     }
 
-    pub fn find<'x>(&'x self, key: &&str) -> Option<&'x Value> {
+    pub fn find(&self, key: &&str) -> Option<&Value> {
         self.map.find_equiv(*key)
     }
 
-    pub fn contains_key<'x>(&'x self, key: &&str) -> bool {
+    pub fn contains_key(&self, key: &&str) -> bool {
         self.find(key).is_some()
     }
 

@@ -390,7 +390,7 @@ impl Msg {
     /// your channel contains non utf-8 bytes you can always use this
     /// method.  If the channel is not a valid string (which really should
     /// not happen) then the return value is `"?"`.
-    pub fn get_channel_name<'a>(&'a self) -> &'a str {
+    pub fn get_channel_name(&self) -> &str {
         match self.channel {
             Value::Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
             _ => "?"
@@ -405,7 +405,7 @@ impl Msg {
     /// Returns the bytes that are the message's payload.  This can be used
     /// as an alternative to the `get_payload` function if you are interested
     /// in the raw bytes in it.
-    pub fn get_payload_bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn get_payload_bytes(&self) -> &[u8] {
         match self.channel {
             Value::Data(ref bytes) => bytes[],
             _ => b""
