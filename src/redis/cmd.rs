@@ -2,6 +2,8 @@ use types::{ToRedisArgs, FromRedisValue, Value, RedisResult,
             ResponseError, Bulk, Nil, from_redis_value};
 use connection::ConnectionLike;
 
+use self::Arg::{SimpleArg, CursorArg, BorrowedArg};
+
 #[deriving(Clone)]
 enum Arg<'a> {
     SimpleArg(Vec<u8>),
