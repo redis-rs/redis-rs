@@ -2,10 +2,15 @@ use std::error;
 use std::fmt;
 use std::hash::Hash;
 use std::io::{IoError, ConnectionRefused};
-use std::from_str::from_str;
-use std::str::from_utf8;
+use std::str::{from_str, from_utf8};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
+
+
+pub use self::ErrorKind::{
+    ResponseError, AuthenticationFailed, TypeError, ExecAbortError, BusyLoadingError,
+    NoScriptError, InvalidClientConfig, ExtensionError, InternalIoError
+};
 
 
 /// Helper enum that is used in some situations to describe
@@ -80,16 +85,16 @@ impl Value {
     /// bulk response.
     pub fn looks_like_cursor(&self) -> bool {
         match self {
-            &Bulk(ref items) => {
+            &Value::Bulk(ref items) => {
                 if items.len() != 2 {
                     return false;
                 }
                 match items[0] {
-                    Data(_) => {},
+                    Value::Data(_) => {},
                     _ => { return false; }
                 };
                 match items[1] {
-                    Bulk(_) => {},
+                    Value::Bulk(_) => {},
                     _ => { return false; }
                 }
                 return true;
@@ -102,15 +107,15 @@ impl Value {
 impl fmt::Show for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Nil => write!(fmt, "nil"),
-            &Int(val) => write!(fmt, "int({})", val),
-            &Data(ref val) => {
+            &Value::Nil => write!(fmt, "nil"),
+            &Value::Int(val) => write!(fmt, "int({})", val),
+            &Value::Data(ref val) => {
                 match from_utf8(val[]) {
                     Some(x) => write!(fmt, "string-data('{}')", x.escape_default()),
                     None => write!(fmt, "binary-data({})", val),
                 }
             },
-            &Bulk(ref values) => {
+            &Value::Bulk(ref values) => {
                 try!(write!(fmt, "bulk("));
                 let mut is_first = true;
                 for val in values.iter() {
@@ -122,8 +127,8 @@ impl fmt::Show for Value {
                 }
                 write!(fmt, ")")
             },
-            &Okay => write!(fmt, "ok"),
-            &Status(ref s) => write!(fmt, "status({})", s),
+            &Value::Okay => write!(fmt, "ok"),
+            &Value::Status(ref s) => write!(fmt, "status({})", s),
         }
     }
 }
@@ -263,7 +268,7 @@ impl InfoDict {
             let mut p = line.splitn(1, ':');
             let k = unwrap_or!(p.next(), continue).to_string();
             let v = unwrap_or!(p.next(), continue).to_string();
-            map.insert(k, Status(v));
+            map.insert(k, Value::Status(v));
         }
         InfoDict { map: map }
     }
@@ -307,7 +312,7 @@ pub trait ToRedisArgs {
     /// some high level concepts to switch between different implementations
     /// of redis functions (for instance `INCR` vs `INCRBYFLOAT`).
     fn describe_numeric_behavior(&self) -> NumericBehavior {
-        NonNumeric
+        NumericBehavior::NonNumeric
     }
 
     /// Returns an indiciation if the value contained is exactly one
@@ -377,18 +382,18 @@ impl ToRedisArgs for u8 {
     }
 }
 
-string_based_to_redis_impl!(i8, NumberIsInteger)
-string_based_to_redis_impl!(i16, NumberIsInteger)
-string_based_to_redis_impl!(u16, NumberIsInteger)
-string_based_to_redis_impl!(i32, NumberIsInteger)
-string_based_to_redis_impl!(u32, NumberIsInteger)
-string_based_to_redis_impl!(i64, NumberIsInteger)
-string_based_to_redis_impl!(u64, NumberIsInteger)
-string_based_to_redis_impl!(f32, NumberIsFloat)
-string_based_to_redis_impl!(f64, NumberIsFloat)
-string_based_to_redis_impl!(int, NumberIsInteger)
-string_based_to_redis_impl!(uint, NumberIsInteger)
-string_based_to_redis_impl!(bool, NonNumeric)
+string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat)
+string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat)
+string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger)
+string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric)
 
 
 impl ToRedisArgs for String {
@@ -430,7 +435,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         match self {
             &Some(ref x) => x.describe_numeric_behavior(),
-            &None => NonNumeric,
+            &None => NumericBehavior::NonNumeric,
         }
     }
 
@@ -528,8 +533,8 @@ macro_rules! from_redis_value_for_num_internal(
         {
             let v = $v;
             match v {
-                &Int(val) => Ok(val as $t),
-                &Data(ref bytes) => {
+                &Value::Int(val) => Ok(val as $t),
+                &Value::Data(ref bytes) => {
                     match from_utf8(bytes[]) {
                         Some(s) => match from_str(s.as_slice()) {
                             Some(rv) => Ok(rv),
@@ -582,9 +587,9 @@ from_redis_value_for_num!(uint)
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
         match v {
-            &Nil => Ok(false),
-            &Int(val) => Ok(val != 0),
-            &Status(ref s) => {
+            &Value::Nil => Ok(false),
+            &Value::Int(val) => Ok(val != 0),
+            &Value::Status(ref s) => {
                 if s.as_slice() == "1" { Ok(true) }
                 else if s.as_slice() == "0" { Ok(false) }
                 else {
@@ -592,7 +597,7 @@ impl FromRedisValue for bool {
                         "Response status not valid boolean");
                 }
             }
-            &Okay => Ok(true),
+            &Value::Okay => Ok(true),
             _ => invalid_type_error!(v,
                 "Response type not bool compatible."),
         }
@@ -602,15 +607,15 @@ impl FromRedisValue for bool {
 impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match v {
-            &Data(ref bytes) => {
+            &Value::Data(ref bytes) => {
                 match from_utf8(bytes[]) {
                     Some(s) => Ok(s.to_string()),
                     None => invalid_type_error!(v,
                         "Invalid UTF-8 string."),
                 }
             },
-            &Okay => Ok("OK".to_string()),
-            &Status(ref val) => Ok(val.to_string()),
+            &Value::Okay => Ok("OK".to_string()),
+            &Value::Status(ref val) => Ok(val.to_string()),
             _ => invalid_type_error!(v,
                 "Response type not string compatible."),
         }
@@ -622,17 +627,17 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
         match v {
             // this hack allows us to specialize Vec<u8> to work with
             // binary data whereas all others will fail with an error.
-            &Data(ref bytes) => {
+            &Value::Data(ref bytes) => {
                 match FromRedisValue::from_byte_vec(bytes.as_slice()) {
                     Some(x) => Ok(x),
                     None => invalid_type_error!(v,
                         "Response type not vector compatible.")
                 }
             },
-            &Bulk(ref items) => {
+            &Value::Bulk(ref items) => {
                 FromRedisValue::from_redis_values(items[])
             }
-            &Nil => {
+            &Value::Nil => {
                 Ok(vec![])
             },
             _ => invalid_type_error!(v,
@@ -644,7 +649,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
     fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V>> {
         match v {
-            &Bulk(ref items) => {
+            &Value::Bulk(ref items) => {
                 let mut rv = HashMap::new();
                 let mut iter = items.iter();
                 loop {
@@ -664,7 +669,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
 impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
         match v {
-            &Bulk(ref items) => {
+            &Value::Bulk(ref items) => {
                 let mut rv = HashSet::new();
                 for item in items.iter() {
                     rv.insert(try!(from_redis_value(item)));
@@ -700,7 +705,7 @@ macro_rules! from_redis_value_for_tuple(
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 match v {
-                    &Bulk(ref items) => {
+                    &Value::Bulk(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
@@ -762,9 +767,9 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match v {
-            &Data(ref b) => json::from_str(unwrap_or!(
+            &Value::Data(ref b) => json::from_str(unwrap_or!(
                 from_utf8(b[]), invalid_type_error!(v, "Invalid UTF-8"))),
-            &Status(ref s) => json::from_str(s.as_slice()),
+            &Value::Status(ref s) => json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
         match rv {
@@ -777,7 +782,7 @@ impl FromRedisValue for json::Json {
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
         match v {
-            &Nil => { return Ok(None); }
+            &Value::Nil => { return Ok(None); }
             _ => {}
         }
         Ok(Some(try!(from_redis_value(v))))

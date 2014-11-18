@@ -1,7 +1,7 @@
 use std::io::{Reader, BufReader};
 use std::str::from_utf8;
 
-use types::{RedisResult, Nil, Int, Data, Bulk, Okay, Status, RedisError, Value,
+use types::{RedisResult, RedisError, Value,
             ResponseError, ExecAbortError, BusyLoadingError,
             NoScriptError, ExtensionError};
 
@@ -111,38 +111,38 @@ impl<'a, T: Reader> Parser<T> {
     fn parse_status(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
         if line.as_slice() == "OK" {
-            Ok(Okay)
+            Ok(Value::Okay)
         } else {
-            Ok(Status(line))
+            Ok(Value::Status(line))
         }
     }
 
     fn parse_int(&mut self) -> RedisResult<Value> {
-        Ok(Int(try!(self.read_int_line())))
+        Ok(Value::Int(try!(self.read_int_line())))
     }
 
     fn parse_data(&mut self) -> RedisResult<Value> {
         let length = try!(self.read_int_line());
         if length < 0 {
-            Ok(Nil)
+            Ok(Value::Nil)
         } else {
             let data = try!(self.read(length as uint));
             try!(self.expect_newline());
-            Ok(Data(data))
+            Ok(Value::Data(data))
         }
     }
 
     fn parse_bulk(&mut self) -> RedisResult<Value> {
         let length = try!(self.read_int_line());
         if length < 0 {
-            Ok(Nil)
+            Ok(Value::Nil)
         } else {
             let mut rv = vec![];
             rv.reserve(length as uint);
             for _ in range(0, length) {
                 rv.push(try!(self.parse_value()));
             }
-            Ok(Bulk(rv))
+            Ok(Value::Bulk(rv))
         }
     }
 

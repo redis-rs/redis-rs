@@ -1,12 +1,12 @@
 use types::{ToRedisArgs, FromRedisValue, Value, RedisResult,
-            ResponseError, Bulk, Nil, from_redis_value};
+            ResponseError, from_redis_value};
 use connection::ConnectionLike;
 
 #[deriving(Clone)]
 enum Arg<'a> {
-    SimpleArg(Vec<u8>),
-    CursorArg,
-    BorrowedArg(&'a [u8]),
+    Simple(Vec<u8>),
+    Cursor,
+    Borrowed(&'a [u8]),
 }
 
 
@@ -76,9 +76,9 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
 
         for item in args.iter() {
             match *item {
-                CursorArg => encode(cursor.to_string().as_bytes()),
-                SimpleArg(ref val) => encode(val[]),
-                BorrowedArg(ptr) => encode(ptr),
+                Arg::Cursor => encode(cursor.to_string().as_bytes()),
+                Arg::Simple(ref val) => encode(val[]),
+                Arg::Borrowed(ptr) => encode(ptr),
             }
         }
     }
@@ -149,7 +149,7 @@ impl Cmd {
     #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
         for item in arg.to_redis_args().into_iter() {
-            self.args.push(SimpleArg(item));
+            self.args.push(Arg::Simple(item));
         }
         self
     }
@@ -172,7 +172,7 @@ impl Cmd {
     pub fn cursor_arg(&mut self, cursor: u64) -> &mut Cmd {
         assert!(!self.in_scan_mode());
         self.cursor = Some(cursor);
-        self.args.push(CursorArg);
+        self.args.push(Arg::Cursor);
         self
     }
 
@@ -378,7 +378,7 @@ impl Pipeline {
                 rv.push(result);
             }
         }
-        Bulk(rv)
+        Value::Bulk(rv)
     }
 
     fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
@@ -392,8 +392,8 @@ impl Pipeline {
             encode_pipeline(self.commands[], true)[],
             self.commands.len() + 1, 1));
         match resp.pop() {
-            Some(Nil) => Ok(Nil),
-            Some(Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            Some(Value::Nil) => Ok(Value::Nil),
+            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
             _ => fail!((ResponseError, "Invalid response when parsing multi response"))
         }
     }
@@ -415,7 +415,7 @@ impl Pipeline {
     pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         from_redis_value(&(
             if self.commands.len() == 0 {
-                Bulk(vec![])
+                Value::Bulk(vec![])
             } else if self.transaction_mode {
                 try!(self.execute_transaction(con))
             } else {
@@ -472,7 +472,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(&args.iter().map(|x| BorrowedArg(x[])).collect(), 0)
+    encode_command(&args.iter().map(|x| Arg::Borrowed(x[])).collect(), 0)
 }
 
 /// Shortcut for creating a new pipeline.

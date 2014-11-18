@@ -138,7 +138,7 @@ fn test_info() {
     let con = ctx.connection();
 
     let info : redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
-    assert_eq!(info.find(&"role"), Some(&redis::Status("master".to_string())));
+    assert_eq!(info.find(&"role"), Some(&redis::Value::Status("master".to_string())));
     assert_eq!(info.get("role"), Some("master".to_string()));
     assert_eq!(info.get("loading"), Some(false));
     assert!(info.len() > 0);

@@ -304,12 +304,6 @@ pub use commands::{
 pub use types::{
     /* low level values */
     Value,
-        Nil,
-        Int,
-        Data,
-        Bulk,
-        Okay,
-        Status,
 
     /* error and result types */
     RedisError,
@@ -317,20 +311,10 @@ pub use types::{
 
     /* error kinds */
     ErrorKind,
-        ResponseError,
-        TypeError,
-        ExecAbortError,
-        BusyLoadingError,
-        NoScriptError,
-        ExtensionError,
-        InternalIoError,
 
     /* utility types */
     InfoDict,
     NumericBehavior,
-        NonNumeric,
-        NumberIsInteger,
-        NumberIsFloat,
 
     /* conversion traits */
     FromRedisValue,

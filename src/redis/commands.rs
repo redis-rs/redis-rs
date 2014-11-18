@@ -1,4 +1,4 @@
-use types::{FromRedisValue, ToRedisArgs, RedisResult, NumberIsFloat};
+use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
 use client::Client;
 use connection::{Connection, ConnectionLike};
 use cmd::{cmd, Cmd, Pipeline, Iter};
@@ -214,7 +214,7 @@ implement_commands!(
     #[doc="Increment the numeric value of a key by the given amount.  This 
           issues a `INCR` or `INCRBYFLOAT` depending on the type."]
     fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
-        cmd(if delta.describe_numeric_behavior() == NumberIsFloat {
+        cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "INCRBYFLOAT"
         } else {
             "INCR"
@@ -299,7 +299,7 @@ implement_commands!(
 
     #[doc="Increments a value."]
     fn hincr<K: ToRedisArgs, F: ToRedisArgs, D: ToRedisArgs>(key: K, field: F, delta: D) {
-        cmd(if delta.describe_numeric_behavior() == NumberIsFloat {
+        cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "HINCRBYFLOAT"
         } else {
             "HINCRBY"

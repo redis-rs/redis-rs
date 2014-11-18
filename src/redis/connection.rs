@@ -7,8 +7,7 @@ use std::str;
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Okay, Value, Data, Nil,
-            ToRedisArgs, FromRedisValue, from_redis_value,
+use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
             InvalidClientConfig, AuthenticationFailed,
             ResponseError};
 use parser::Parser;
@@ -127,7 +126,7 @@ impl ActualConnection {
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = &mut self.sock as &mut Writer;
         try!(w.write(bytes));
-        Ok(Okay)
+        Ok(Value::Okay)
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
@@ -144,7 +143,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
 
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
-            Ok(Okay) => {}
+            Ok(Value::Okay) => {}
             _ => fail!((ResponseError, "Redis server refused to switch database"))
         }
     }
@@ -152,7 +151,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     match connection_info.passwd {
         Some(ref passwd) => {
             match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
-                Ok(Okay) => {}
+                Ok(Value::Okay) => {}
                 _ => { fail!((AuthenticationFailed,
                                "Password authentication failed")); }
             }
@@ -393,7 +392,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name<'a>(&'a self) -> &'a str {
         match self.channel {
-            Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
+            Value::Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
             _ => "?"
         }
     }
@@ -408,7 +407,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes<'a>(&'a self) -> &'a [u8] {
         match self.channel {
-            Data(ref bytes) => bytes[],
+            Value::Data(ref bytes) => bytes[],
             _ => b""
         }
     }
@@ -425,7 +424,7 @@ impl Msg {
     /// to figure out if a pattern was set.
     pub fn get_pattern<T: FromRedisValue>(&self) -> RedisResult<T> {
         match self.pattern {
-            None => from_redis_value(&Nil),
+            None => from_redis_value(&Value::Nil),
             Some(ref x) => from_redis_value(x),
         }
     }
