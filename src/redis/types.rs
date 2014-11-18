@@ -2,10 +2,18 @@ use std::error;
 use std::fmt;
 use std::hash::Hash;
 use std::io::{IoError, ConnectionRefused};
-use std::from_str::from_str;
+use std::str::from_str;
 use std::str::from_utf8;
 use std::collections::{HashMap, HashSet};
 use serialize::json;
+
+
+pub use self::Value::{Nil, Int, Data, Bulk, Status, Okay};
+pub use self::ErrorKind::{
+    ResponseError, AuthenticationFailed, TypeError, ExecAbortError, BusyLoadingError,
+    NoScriptError, InvalidClientConfig, ExtensionError, InternalIoError
+};
+pub use self::NumericBehavior::{NonNumeric, NumberIsInteger, NumberIsFloat};
 
 
 /// Helper enum that is used in some situations to describe
