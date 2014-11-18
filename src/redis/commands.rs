@@ -212,12 +212,12 @@ implement_commands!(
     }
 
     #[doc="Increment the numeric value of a key by the given amount.  This 
-          issues a `INCR` or `INCRBYFLOAT` depending on the type."]
+          issues a `INCRBY` or `INCRBYFLOAT` depending on the type."]
     fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "INCRBYFLOAT"
         } else {
-            "INCR"
+            "INCRBY"
         }).arg(key).arg(delta)
     }
 
