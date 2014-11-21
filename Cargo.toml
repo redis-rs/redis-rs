@@ -2,13 +2,16 @@
 name = "redis-rs"
 version = "0.3.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
+keywords = ["redis", "database"]
+description = "Redis driver for Rust."
+license = "BSD-3-Clause"
 
-[dependencies.rust-crypto]
-git = "https://github.com/DaGenix/rust-crypto.git"
+[dependencies.sha1]
+git = "https://github.com/mitsuhiko/rust-sha1.git"
 
 [dependencies.url]
 git = "https://github.com/servo/rust-url"
 
 [lib]
 name = "redis"
-path = "src/redis/lib.rs"
+path = "src/lib.rs"

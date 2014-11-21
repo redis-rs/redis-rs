@@ -17,8 +17,8 @@ static DEFAULT_PORT: u16 = 6379;
 
 fn redis_scheme_type_mapper(scheme: &str) -> url::SchemeType {
     match scheme {
-        "redis" => url::RelativeScheme(DEFAULT_PORT),
-        _ => url::NonRelativeScheme,
+        "redis" => url::SchemeType::Relative(DEFAULT_PORT),
+        _ => url::SchemeType::NonRelative,
     }
 }
 
@@ -31,7 +31,7 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
     match parser.parse(input) {
         Ok(result) => {
             if result.scheme.as_slice() != "redis" {
-                Err(url::InvalidScheme)
+                Err(url::ParseError::InvalidScheme)
             } else {
                 Ok(result)
             }

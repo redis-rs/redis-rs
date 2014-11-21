@@ -155,8 +155,8 @@ fn test_hash_ops() {
 
     let h : HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
     assert_eq!(h.len(), 2);
-    assert_eq!(h.find_equiv("key_1"), Some(&1i32));
-    assert_eq!(h.find_equiv("key_2"), Some(&2i32));
+    assert_eq!(h.get("key_1"), Some(&1i32));
+    assert_eq!(h.get("key_2"), Some(&2i32));
 }
 
 #[test]
@@ -454,10 +454,10 @@ fn test_nice_hash_api() {
     ][]), Ok(()));
 
     let hm : HashMap<String, int> = con.hgetall("my_hash").unwrap();
-    assert_eq!(hm.find_equiv("f1"), Some(&1i));
-    assert_eq!(hm.find_equiv("f2"), Some(&2i));
-    assert_eq!(hm.find_equiv("f3"), Some(&4i));
-    assert_eq!(hm.find_equiv("f4"), Some(&8i));
+    assert_eq!(hm.get("f1"), Some(&1i));
+    assert_eq!(hm.get("f2"), Some(&2i));
+    assert_eq!(hm.get("f3"), Some(&4i));
+    assert_eq!(hm.get("f4"), Some(&8i));
     assert_eq!(hm.len(), 4);
 
     let v : Vec<(String, int)> = con.hgetall("my_hash").unwrap();

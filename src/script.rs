@@ -1,5 +1,4 @@
-use crypto::sha1::Sha1;
-use crypto::digest::Digest;
+use sha1::Sha1;
 
 use cmd::cmd;
 use types::{ToRedisArgs, FromRedisValue, RedisResult, NoScriptError, RedisError};
@@ -31,10 +30,10 @@ impl Script {
     /// Creates a new script object.
     pub fn new(code: &str) -> Script {
         let mut hash = Sha1::new();
-        hash.input(code.as_bytes());
+        hash.update(code.as_bytes());
         Script {
             code: code.to_string(),
-            hash: hash.result_str(),
+            hash: hash.hexdigest(),
         }
     }
 

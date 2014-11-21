@@ -270,11 +270,6 @@
 //! # Ok(()) }
 //! ```
 
-#![crate_name = "redis"]
-#![crate_type = "lib"]
-#![license = "BSD"]
-#![comment = "Bindings and wrapper functions for redis."]
-
 #![deny(non_camel_case_types)]
 
 #![feature(macro_rules)]
@@ -285,7 +280,7 @@
 
 extern crate url;
 extern crate serialize;
-extern crate "rust-crypto" as crypto;
+extern crate sha1;
 
 /* public api */
 pub use parser::{parse_redis_value, Parser};

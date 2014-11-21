@@ -283,7 +283,7 @@ impl InfoDict {
     }
 
     pub fn find(&self, key: &&str) -> Option<&Value> {
-        self.map.find_equiv(*key)
+        self.map.get(*key)
     }
 
     pub fn contains_key(&self, key: &&str) -> bool {
