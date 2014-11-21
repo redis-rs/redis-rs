@@ -1,17 +1,20 @@
 [package]
-name = "redis-rs"
-version = "0.3.0"
+name = "redis"
+version = "0.0.1"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
+homepage = "https://github.com/mitsuhiko/redis-rs"
+documentation = "http://mitsuhiko.github.io/redis-rs/"
 license = "BSD-3-Clause"
+readme = "README.md"
 
-[dependencies.sha1]
-git = "https://github.com/mitsuhiko/rust-sha1.git"
+#[dependencies.sha1]
+#git = "https://github.com/mitsuhiko/rust-sha1.git"
+#
+#[dependencies.url]
+#git = "https://github.com/servo/rust-url"
 
-[dependencies.url]
-git = "https://github.com/servo/rust-url"
-
-[lib]
-name = "redis"
-path = "src/lib.rs"
+[dependencies]
+sha1 = "*"
+url = "*"
