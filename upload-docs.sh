@@ -10,7 +10,7 @@ git init
 cp -r ../target/doc/* .
 cat <<EOF > index.html
 <!doctype html>
-<title>redis-rs</title>
+<title>redis</title>
 <meta http-equiv="refresh" content="0; ./redis/">
 EOF
 
