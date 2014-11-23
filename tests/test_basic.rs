@@ -214,7 +214,7 @@ fn test_optionals() {
 
 #[test]
 fn test_json() {
-    use serialize::json::{Json, List, U64};
+    use serialize::json::{Json, Array, U64};
 
     let ctx = TestContext::new();
     let con = ctx.connection();
@@ -222,7 +222,7 @@ fn test_json() {
     redis::cmd("SET").arg("foo").arg("[1, 2, 3]").execute(&con);
 
     let json : Json = redis::cmd("GET").arg("foo").query(&con).unwrap();
-    assert_eq!(json, List(vec![
+    assert_eq!(json, Array(vec![
         U64(1),
         U64(2),
         U64(3),
