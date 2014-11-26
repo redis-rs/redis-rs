@@ -17,7 +17,7 @@ EOF
 # Add, commit and push files
 git add -f --all .
 git commit -m "Built documentation"
-git co -b gh-pages
+git checkout -b gh-pages
 git remote add origin git@github.com:mitsuhiko/redis-rs.git
 git push -qf origin gh-pages
 
