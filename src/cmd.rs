@@ -28,7 +28,7 @@ pub struct Pipeline {
 pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: Box<&'a ConnectionLike + 'a>,
+    con: Box<&'a (ConnectionLike + 'a)>,
     cmd: Cmd,
 }
 
