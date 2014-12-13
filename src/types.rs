@@ -15,7 +15,7 @@ pub use self::ErrorKind::{
 
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
-#[deriving(PartialEq, Eq, Clone, Show)]
+#[deriving(PartialEq, Eq, Clone, Show, Copy)]
 pub enum NumericBehavior {
     NonNumeric,
     NumberIsInteger,
