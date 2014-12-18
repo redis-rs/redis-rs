@@ -365,7 +365,7 @@ fn test_pubsub() {
     let mut pubsub = ctx.pubsub();
     pubsub.subscribe("foo").unwrap();
 
-    let mut rv = Future::spawn(proc() {
+    let mut rv = Future::spawn(move || {
         sleep(Duration::milliseconds(100));
 
         let msg = pubsub.get_message().unwrap();
