@@ -475,7 +475,7 @@ macro_rules! to_redis_args_for_tuple(
                 n == 1
             }
         }
-        to_redis_args_for_tuple_peel!($($name,)*)
+        to_redis_args_for_tuple_peel!($($name,)*);
     )
 );
 
@@ -483,7 +483,7 @@ macro_rules! to_redis_args_for_tuple(
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
 macro_rules! to_redis_args_for_tuple_peel(
-    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*))
+    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*);)
 );
 
 to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
@@ -564,7 +564,7 @@ macro_rules! from_redis_value_for_num(
 
 impl FromRedisValue for u8 {
     fn from_redis_value(v: &Value) -> RedisResult<u8> {
-        from_redis_value_for_num_internal!(u8, v);
+        from_redis_value_for_num_internal!(u8, v)
     }
 
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
@@ -743,7 +743,7 @@ macro_rules! from_redis_value_for_tuple(
                 Ok(rv)
             }
         }
-        from_redis_value_for_tuple_peel!($($name,)*)
+        from_redis_value_for_tuple_peel!($($name,)*);
     )
 );
 
@@ -751,7 +751,7 @@ macro_rules! from_redis_value_for_tuple(
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
 macro_rules! from_redis_value_for_tuple_peel(
-    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*))
+    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*);)
 );
 
 from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
