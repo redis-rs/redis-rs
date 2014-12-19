@@ -716,7 +716,7 @@ implement_commands!(
     fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
-)
+);
 
 impl Commands for Connection {}
 impl Commands for Client {}

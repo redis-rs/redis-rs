@@ -349,7 +349,7 @@ macro_rules! invalid_type_error(
             detail: Some(format!("{} (response was {})", $det, $v)),
          });
     })
-)
+);
 
 macro_rules! string_based_to_redis_impl(
     ($t:ty, $numeric:expr) => (
@@ -364,7 +364,7 @@ macro_rules! string_based_to_redis_impl(
             }
         }
     )
-)
+);
 
 
 impl ToRedisArgs for u8 {
@@ -382,18 +382,18 @@ impl ToRedisArgs for u8 {
     }
 }
 
-string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat)
-string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat)
-string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric)
+string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
+string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
+string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
 
 
 impl ToRedisArgs for String {
@@ -477,14 +477,14 @@ macro_rules! to_redis_args_for_tuple(
         }
         to_redis_args_for_tuple_peel!($($name,)*)
     )
-)
+);
 
 /// This chips of the leading one and recurses for the rest.  So if the first
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
 macro_rules! to_redis_args_for_tuple_peel(
     ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*))
-)
+);
 
 to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
@@ -550,7 +550,7 @@ macro_rules! from_redis_value_for_num_internal(
             }
         }
     )
-)
+);
 
 macro_rules! from_redis_value_for_num(
     ($t:ty) => (
@@ -560,11 +560,11 @@ macro_rules! from_redis_value_for_num(
             }
         }
     )
-)
+);
 
 impl FromRedisValue for u8 {
     fn from_redis_value(v: &Value) -> RedisResult<u8> {
-        from_redis_value_for_num_internal!(u8, v)
+        from_redis_value_for_num_internal!(u8, v);
     }
 
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
@@ -572,17 +572,17 @@ impl FromRedisValue for u8 {
     }
 }
 
-from_redis_value_for_num!(i8)
-from_redis_value_for_num!(i16)
-from_redis_value_for_num!(u16)
-from_redis_value_for_num!(i32)
-from_redis_value_for_num!(u32)
-from_redis_value_for_num!(i64)
-from_redis_value_for_num!(u64)
-from_redis_value_for_num!(f32)
-from_redis_value_for_num!(f64)
-from_redis_value_for_num!(int)
-from_redis_value_for_num!(uint)
+from_redis_value_for_num!(i8);
+from_redis_value_for_num!(i16);
+from_redis_value_for_num!(u16);
+from_redis_value_for_num!(i32);
+from_redis_value_for_num!(u32);
+from_redis_value_for_num!(i64);
+from_redis_value_for_num!(u64);
+from_redis_value_for_num!(f32);
+from_redis_value_for_num!(f64);
+from_redis_value_for_num!(int);
+from_redis_value_for_num!(uint);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
@@ -745,14 +745,14 @@ macro_rules! from_redis_value_for_tuple(
         }
         from_redis_value_for_tuple_peel!($($name,)*)
     )
-)
+);
 
 /// This chips of the leading one and recurses for the rest.  So if the first
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
 macro_rules! from_redis_value_for_tuple_peel(
     ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*))
-)
+);
 
 from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
