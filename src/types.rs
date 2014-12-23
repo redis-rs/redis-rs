@@ -111,8 +111,8 @@ impl fmt::Show for Value {
             Value::Int(val) => write!(fmt, "int({})", val),
             Value::Data(ref val) => {
                 match from_utf8(val[]) {
-                    Some(x) => write!(fmt, "string-data('{}')", x.escape_default()),
-                    None => write!(fmt, "binary-data({})", val),
+                    Ok(x) => write!(fmt, "string-data('{}')", x.escape_default()),
+                    Err(_) => write!(fmt, "binary-data({})", val),
                 }
             },
             Value::Bulk(ref values) => {
@@ -536,12 +536,12 @@ macro_rules! from_redis_value_for_num_internal(
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
                     match from_utf8(bytes[]) {
-                        Some(s) => match from_str(s.as_slice()) {
+                        Ok(s) => match from_str(s.as_slice()) {
                             Some(rv) => Ok(rv),
                             None => invalid_type_error!(v,
                                 "Could not convert from string.")
                         },
-                        None => invalid_type_error!(v,
+                        Err(_) => invalid_type_error!(v,
                             "Invalid UTF-8 string."),
                     }
                 },
@@ -609,8 +609,8 @@ impl FromRedisValue for String {
         match *v {
             Value::Data(ref bytes) => {
                 match from_utf8(bytes[]) {
-                    Some(s) => Ok(s.to_string()),
-                    None => invalid_type_error!(v,
+                    Ok(s) => Ok(s.to_string()),
+                    Err(_) => invalid_type_error!(v,
                         "Invalid UTF-8 string."),
                 }
             },
