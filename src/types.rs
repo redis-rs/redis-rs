@@ -768,7 +768,7 @@ impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
             Value::Data(ref b) => json::from_str(unwrap_or!(
-                from_utf8(b[]), invalid_type_error!(v, "Invalid UTF-8"))),
+                from_utf8(b[]).ok(), invalid_type_error!(v, "Invalid UTF-8"))),
             Value::Status(ref s) => json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
