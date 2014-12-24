@@ -83,7 +83,7 @@ impl IntoConnectionInfo for url::Url {
             db: match self.serialize_path().unwrap_or("".to_string())
                     .as_slice().trim_chars('/') {
                 "" => 0,
-                path => unwrap_or!(from_str::<i64>(path),
+                path => unwrap_or!(path.parse::<i64>(),
                     fail!((InvalidClientConfig, "Invalid database number"))),
             },
             passwd: self.password().and_then(|pw| Some(pw.to_string())),

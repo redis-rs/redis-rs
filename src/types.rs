@@ -2,7 +2,7 @@ use std::error;
 use std::fmt;
 use std::hash::Hash;
 use std::io::{IoError, ConnectionRefused};
-use std::str::{from_str, from_utf8};
+use std::str::{from_str, from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
 
@@ -111,8 +111,8 @@ impl fmt::Show for Value {
             Value::Int(val) => write!(fmt, "int({})", val),
             Value::Data(ref val) => {
                 match from_utf8(val[]) {
-                    Some(x) => write!(fmt, "string-data('{}')", x.escape_default()),
-                    None => write!(fmt, "binary-data({})", val),
+                    Ok(x) => write!(fmt, "string-data('{}')", x.escape_default()),
+                    Err(_) => write!(fmt, "binary-data({})", val),
                 }
             },
             Value::Bulk(ref values) => {
@@ -150,6 +150,17 @@ impl error::FromError<IoError> for RedisError {
         RedisError {
             kind: InternalIoError(err),
             desc: "An internal IO error ocurred.",
+            detail: None
+        }
+    }
+}
+
+impl error::FromError<Utf8Error> for RedisError {
+
+    fn from_error(_: Utf8Error) -> RedisError {
+        RedisError {
+            kind: TypeError,
+            desc: "Invalid UTF-8.",
             detail: None
         }
     }
@@ -341,7 +352,7 @@ pub trait ToRedisArgs {
 }
 
 
-macro_rules! invalid_type_error(
+macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => ({
         fail!(RedisError {
             kind: TypeError,
@@ -349,9 +360,9 @@ macro_rules! invalid_type_error(
             detail: Some(format!("{} (response was {})", $det, $v)),
          });
     })
-)
+}
 
-macro_rules! string_based_to_redis_impl(
+macro_rules! string_based_to_redis_impl {
     ($t:ty, $numeric:expr) => (
         impl ToRedisArgs for $t {
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
@@ -364,7 +375,7 @@ macro_rules! string_based_to_redis_impl(
             }
         }
     )
-)
+}
 
 
 impl ToRedisArgs for u8 {
@@ -382,18 +393,18 @@ impl ToRedisArgs for u8 {
     }
 }
 
-string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat)
-string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat)
-string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger)
-string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric)
+string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
+string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
+string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
 
 
 impl ToRedisArgs for String {
@@ -453,7 +464,7 @@ impl ToRedisArgs for json::Json {
     }
 }
 
-macro_rules! to_redis_args_for_tuple(
+macro_rules! to_redis_args_for_tuple {
     () => ();
     ($($name:ident,)+) => (
         #[doc(hidden)]
@@ -475,16 +486,16 @@ macro_rules! to_redis_args_for_tuple(
                 n == 1
             }
         }
-        to_redis_args_for_tuple_peel!($($name,)*)
+        to_redis_args_for_tuple_peel!($($name,)*);
     )
-)
+}
 
 /// This chips of the leading one and recurses for the rest.  So if the first
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
-macro_rules! to_redis_args_for_tuple_peel(
-    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*))
-)
+macro_rules! to_redis_args_for_tuple_peel {
+    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*);)
+}
 
 to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
@@ -528,21 +539,17 @@ pub trait FromRedisValue {
     }
 }
 
-macro_rules! from_redis_value_for_num_internal(
+macro_rules! from_redis_value_for_num_internal {
     ($t:ty, $v:expr) => (
         {
             let v = $v;
             match *v {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
-                    match from_utf8(bytes[]) {
-                        Some(s) => match from_str(s.as_slice()) {
-                            Some(rv) => Ok(rv),
-                            None => invalid_type_error!(v,
-                                "Could not convert from string.")
-                        },
+                    match from_str(try!(from_utf8(bytes[])).as_slice()) {
+                        Some(rv) => Ok(rv),
                         None => invalid_type_error!(v,
-                            "Invalid UTF-8 string."),
+                            "Could not convert from string.")
                     }
                 },
                 _ => invalid_type_error!(v,
@@ -550,9 +557,9 @@ macro_rules! from_redis_value_for_num_internal(
             }
         }
     )
-)
+}
 
-macro_rules! from_redis_value_for_num(
+macro_rules! from_redis_value_for_num {
     ($t:ty) => (
         impl FromRedisValue for $t {
             fn from_redis_value(v: &Value) -> RedisResult<$t> {
@@ -560,7 +567,7 @@ macro_rules! from_redis_value_for_num(
             }
         }
     )
-)
+}
 
 impl FromRedisValue for u8 {
     fn from_redis_value(v: &Value) -> RedisResult<u8> {
@@ -572,17 +579,17 @@ impl FromRedisValue for u8 {
     }
 }
 
-from_redis_value_for_num!(i8)
-from_redis_value_for_num!(i16)
-from_redis_value_for_num!(u16)
-from_redis_value_for_num!(i32)
-from_redis_value_for_num!(u32)
-from_redis_value_for_num!(i64)
-from_redis_value_for_num!(u64)
-from_redis_value_for_num!(f32)
-from_redis_value_for_num!(f64)
-from_redis_value_for_num!(int)
-from_redis_value_for_num!(uint)
+from_redis_value_for_num!(i8);
+from_redis_value_for_num!(i16);
+from_redis_value_for_num!(u16);
+from_redis_value_for_num!(i32);
+from_redis_value_for_num!(u32);
+from_redis_value_for_num!(i64);
+from_redis_value_for_num!(u64);
+from_redis_value_for_num!(f32);
+from_redis_value_for_num!(f64);
+from_redis_value_for_num!(int);
+from_redis_value_for_num!(uint);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
@@ -608,11 +615,7 @@ impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match *v {
             Value::Data(ref bytes) => {
-                match from_utf8(bytes[]) {
-                    Some(s) => Ok(s.to_string()),
-                    None => invalid_type_error!(v,
-                        "Invalid UTF-8 string."),
-                }
+                Ok(try!(from_utf8(bytes[])).to_string())
             },
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
@@ -695,7 +698,7 @@ impl FromRedisValue for () {
 }
 
 
-macro_rules! from_redis_value_for_tuple(
+macro_rules! from_redis_value_for_tuple {
     () => ();
     ($($name:ident,)+) => (
         #[doc(hidden)]
@@ -743,16 +746,16 @@ macro_rules! from_redis_value_for_tuple(
                 Ok(rv)
             }
         }
-        from_redis_value_for_tuple_peel!($($name,)*)
+        from_redis_value_for_tuple_peel!($($name,)*);
     )
-)
+}
 
 /// This chips of the leading one and recurses for the rest.  So if the first
 /// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
 /// of size 1 (does not implement down to unit).
-macro_rules! from_redis_value_for_tuple_peel(
-    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*))
-)
+macro_rules! from_redis_value_for_tuple_peel {
+    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*);)
+}
 
 from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
@@ -767,8 +770,7 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => json::from_str(unwrap_or!(
-                from_utf8(b[]), invalid_type_error!(v, "Invalid UTF-8"))),
+            Value::Data(ref b) => json::from_str(try!(from_utf8(b[]))),
             Value::Status(ref s) => json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };

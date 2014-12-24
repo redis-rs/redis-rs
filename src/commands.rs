@@ -121,7 +121,7 @@ macro_rules! implement_commands {
     )
 }
 
-implement_commands!(
+implement_commands! {
     // most common operations
 
     #[doc="Get the value of a key.  If key is a vec this becomes an `MGET`."]
@@ -716,7 +716,7 @@ implement_commands!(
     fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
-)
+}
 
 impl Commands for Connection {}
 impl Commands for Client {}
