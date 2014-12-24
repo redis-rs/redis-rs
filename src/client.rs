@@ -57,12 +57,12 @@ impl Client {
 impl ConnectionLike for Client {
 
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        (try!(self.get_connection())).req_packed_command(cmd)
+        try!(self.get_connection()).req_packed_command(cmd)
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
         offset: uint, count: uint) -> RedisResult<Vec<Value>> {
-        (try!(self.get_connection())).req_packed_commands(cmd, offset, count)
+        try!(self.get_connection()).req_packed_commands(cmd, offset, count)
     }
 
     fn get_db(&self) -> i64 {
