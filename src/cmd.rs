@@ -28,7 +28,7 @@ pub struct Pipeline {
 pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: Box<&'a (ConnectionLike + 'a)>,
+    con: &'a (ConnectionLike + 'a),
     cmd: Cmd,
 }
 
@@ -246,7 +246,7 @@ impl Cmd {
         Ok(Iter {
             batch: batch,
             cursor: cursor,
-            con: box con,
+            con: con,
             cmd: self.clone(),
         })
     }
