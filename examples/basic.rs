@@ -18,17 +18,13 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
 
     println!("Max entry limits:");
 
-    // because our HashSet stores keys as actual strings we cannot use
-    // the find method because of a type mismatch (it takes strings and
-    // not slices).  We can however avoid the allocation we can use the
-    // find_equiv method.
-    println!("  max-intset:        {}", config.find_equiv(
+    println!("  max-intset:        {}", config.get(
         "set-max-intset-entries").unwrap_or(&0));
-    println!("  hash-max-ziplist:  {}", config.find_equiv
-        ("hash-max-ziplist-entries").unwrap_or(&0));
-    println!("  list-max-ziplist:  {}", config.find_equiv(
+    println!("  hash-max-ziplist:  {}", config.get(
+        "hash-max-ziplist-entries").unwrap_or(&0));
+    println!("  list-max-ziplist:  {}", config.get(
         "list-max-ziplist-entries").unwrap_or(&0));
-    println!("  zset-max-ziplist:  {}", config.find_equiv(
+    println!("  zset-max-ziplist:  {}", config.get(
         "zset-max-ziplist-entries").unwrap_or(&0));
 
     Ok(())

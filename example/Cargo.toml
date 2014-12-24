@@ -1,7 +1,0 @@
-[package]
-name = "redis-example"
-version = "0.1.0"
-authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
-
-[dependencies.redis]
-path = ".."
