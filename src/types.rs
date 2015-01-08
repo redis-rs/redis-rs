@@ -2,7 +2,7 @@ use std::error;
 use std::fmt;
 use std::hash::Hash;
 use std::io::{IoError, ConnectionRefused};
-use std::str::{from_str, from_utf8, Utf8Error};
+use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
 
@@ -15,7 +15,7 @@ pub use self::ErrorKind::{
 
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
-#[deriving(PartialEq, Eq, Clone, Show, Copy)]
+#[derive(PartialEq, Eq, Clone, Show, Copy)]
 pub enum NumericBehavior {
     NonNumeric,
     NumberIsInteger,
@@ -24,7 +24,7 @@ pub enum NumericBehavior {
 
 
 /// An enum of all error kinds.
-#[deriving(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Show)]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
@@ -50,7 +50,7 @@ pub enum ErrorKind {
 
 
 /// Internal low-level redis value enum.
-#[deriving(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
@@ -137,7 +137,7 @@ impl fmt::Show for Value {
 /// Represents a redis error.  For the most part you should be using
 /// the Error trait to interact with this rather than the actual
 /// struct.
-#[deriving(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Show)]
 pub struct RedisError {
     pub kind: ErrorKind,
     pub desc: &'static str,
@@ -310,7 +310,7 @@ impl InfoDict {
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
 /// some cases it might make sense to produce more than one.
-pub trait ToRedisArgs {
+pub trait ToRedisArgs: Sized {
     /// This converts the value into a vector of bytes.  Each item
     /// is a single argument.  Most items generate a vector of a
     /// single item.
@@ -511,7 +511,7 @@ to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 ///
 /// In addition to what you can see from the docs, this is also implemented
 /// for tuples up to size 12 and for Vec<u8>.
-pub trait FromRedisValue {
+pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
     /// appropriate error is generated.
@@ -546,7 +546,7 @@ macro_rules! from_redis_value_for_num_internal {
             match *v {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
-                    match from_str(try!(from_utf8(bytes[])).as_slice()) {
+                    match try!(from_utf8(bytes[])).as_slice().parse::<$t>() {
                         Some(rv) => Ok(rv),
                         None => invalid_type_error!(v,
                             "Could not convert from string.")

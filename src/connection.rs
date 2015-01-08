@@ -81,7 +81,7 @@ impl IntoConnectionInfo for url::Url {
                 fail!((InvalidClientConfig, "Missing hostname"))),
             port: self.port().unwrap_or(DEFAULT_PORT),
             db: match self.serialize_path().unwrap_or("".to_string())
-                    .as_slice().trim_chars('/') {
+                    .as_slice().trim_matches('/') {
                 "" => 0,
                 path => unwrap_or!(path.parse::<i64>(),
                     fail!((InvalidClientConfig, "Invalid database number"))),
@@ -462,8 +462,8 @@ impl Msg {
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
-pub fn transaction<K: ToRedisArgs, T: FromRedisValue>(con: &ConnectionLike,
-        keys: &[K], func: |&mut Pipeline| -> RedisResult<Option<T>>) -> RedisResult<T> {
+pub fn transaction<K: ToRedisArgs, T: FromRedisValue, F: Fn(&mut Pipeline) -> RedisResult<Option<T>>>
+    (con: &ConnectionLike, keys: &[K], func: F) -> RedisResult<T> {
     loop {
         let _ : () = try!(cmd("WATCH").arg(keys).query(con));
         let mut p = pipe();

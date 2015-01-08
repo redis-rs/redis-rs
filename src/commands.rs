@@ -40,7 +40,7 @@ macro_rules! implement_commands {
         /// assert_eq!(con.get("my_key"), Ok(42i));
         /// # Ok(()) }
         /// ```
-        pub trait Commands : ConnectionLike {
+        pub trait Commands : ConnectionLike+Sized {
             $(
                 $(#[$attr])*
                 #[inline]

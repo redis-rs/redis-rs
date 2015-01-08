@@ -272,8 +272,6 @@
 
 #![deny(non_camel_case_types)]
 
-#![feature(macro_rules)]
-#![feature(default_type_params)]
 #![feature(slicing_syntax)]
 
 #![experimental]

@@ -2,7 +2,7 @@ use types::{ToRedisArgs, FromRedisValue, Value, RedisResult,
             ResponseError, from_redis_value};
 use connection::ConnectionLike;
 
-#[deriving(Clone)]
+#[derive(Clone)]
 enum Arg<'a> {
     Simple(Vec<u8>),
     Cursor,
@@ -11,7 +11,7 @@ enum Arg<'a> {
 
 
 /// Represents redis commands.
-#[deriving(Clone)]
+#[derive(Clone)]
 pub struct Cmd {
     args: Vec<Arg<'static>>,
     cursor: Option<u64>,
@@ -32,7 +32,8 @@ pub struct Iter<'a, T: FromRedisValue> {
     cmd: Cmd,
 }
 
-impl<'a, T: FromRedisValue> Iterator<T> for Iter<'a, T> {
+impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
+    type Item = T;
 
     #[inline]
     fn next(&mut self) -> Option<T> {
@@ -68,7 +69,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
 
     {
-        let encode = |item: &[u8]| {
+        let mut encode = |&mut: item: &[u8]| {
             cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
             cmd.push_all(item);
             cmd.push_all(b"\r\n");
