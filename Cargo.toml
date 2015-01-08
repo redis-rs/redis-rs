@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.0.5"
+version = "0.0.6"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
