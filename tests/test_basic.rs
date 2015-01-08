@@ -229,7 +229,6 @@ fn test_json() {
     ]));
 }
 
-/* broken?
 #[test]
 fn test_scanning() {
     let ctx = TestContext::new();
@@ -241,9 +240,11 @@ fn test_scanning() {
         unseen.insert(x);
     }
 
-    let mut iter : redis::Iter<uint> = redis::cmd("SSCAN").arg("foo").cursor_arg(0).iter(&con).unwrap();
+    let mut iter = redis::cmd("SSCAN").arg("foo").cursor_arg(0).iter(&con).unwrap();
 
     for x in iter {
+        // type inference limitations
+        let x: uint = x;
         unseen.remove(&x);
     }
 
@@ -266,12 +267,13 @@ fn test_filtered_scanning() {
     let mut iter = con.hscan_match("foo", "key_0_*").unwrap();
 
     for x in iter {
+        // type inference limitations
+        let x: uint = x;
         unseen.remove(&x);
     }
 
     assert_eq!(unseen.len(), 0);
 }
-*/
 
 #[test]
 fn test_pipeline() {
