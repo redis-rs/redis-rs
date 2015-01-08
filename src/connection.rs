@@ -462,8 +462,9 @@ impl Msg {
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
-pub fn transaction<K: ToRedisArgs, T: FromRedisValue, F: Fn(&mut Pipeline) -> RedisResult<Option<T>>>
+pub fn transaction<K: ToRedisArgs, T: FromRedisValue, F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>>
     (con: &ConnectionLike, keys: &[K], func: F) -> RedisResult<T> {
+    let mut func = func;
     loop {
         let _ : () = try!(cmd("WATCH").arg(keys).query(con));
         let mut p = pipe();
