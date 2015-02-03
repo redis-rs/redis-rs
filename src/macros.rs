@@ -12,7 +12,16 @@ macro_rules! fail {
     )
 }
 
-macro_rules! unwrap_or {
+macro_rules! result_unwrap_or {
+    ($expr:expr, $or:expr) => (
+        match $expr {
+            Ok(x) => x,
+            Err(_) => { $or; }
+        }
+    )
+}
+
+macro_rules! option_unwrap_or {
     ($expr:expr, $or:expr) => (
         match $expr {
             Some(x) => x,

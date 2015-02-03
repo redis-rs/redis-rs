@@ -273,11 +273,12 @@
 #![deny(non_camel_case_types)]
 
 #![feature(slicing_syntax)]
-
-#![experimental]
+#![feature(core)]
+#![feature(collections)]
+#![feature(io)]
 
 extern crate url;
-extern crate serialize;
+extern crate "rustc-serialize" as serialize;
 extern crate sha1;
 
 /* public api */

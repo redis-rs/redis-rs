@@ -15,6 +15,9 @@ readme = "README.md"
 #[dependencies.url]
 #git = "https://github.com/servo/rust-url"
 
+[dependencies]
+rustc-serialize = "*"
+
 [dependencies.url]
 git = "https://github.com/badboy/rust-url.git"
 rev = "alpha-fixes"

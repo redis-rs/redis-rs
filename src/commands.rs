@@ -140,7 +140,7 @@ implement_commands! {
     }
 
     #[doc="Set the value and expiration of a key."]
-    fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: uint) {
+    fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: usize) {
         cmd("SETEX").arg(key).arg(value).arg(seconds)
     }
 
@@ -170,22 +170,22 @@ implement_commands! {
     }
 
     #[doc="Set a key's time to live in seconds."]
-    fn expire<K: ToRedisArgs>(key: K, seconds: uint) {
+    fn expire<K: ToRedisArgs>(key: K, seconds: usize) {
         cmd("EXPIRE").arg(key).arg(seconds)
     }
 
     #[doc="Set the expiration for a key as a UNIX timestamp."]
-    fn expire_at<K: ToRedisArgs>(key: K, ts: uint) {
+    fn expire_at<K: ToRedisArgs>(key: K, ts: usize) {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
     #[doc="Set a key's time to live in milliseconds."]
-    fn pexpire<K: ToRedisArgs>(key: K, ms: uint) {
+    fn pexpire<K: ToRedisArgs>(key: K, ms: usize) {
         cmd("PEXPIRE").arg(key).arg(ms)
     }
 
     #[doc="Set the expiration for a key as a UNIX timestamp in milliseconds."]
-    fn pexpire_at<K: ToRedisArgs>(key: K, ts: uint) {
+    fn pexpire_at<K: ToRedisArgs>(key: K, ts: usize) {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
@@ -211,7 +211,7 @@ implement_commands! {
         cmd("APPEND").arg(key).arg(value)
     }
 
-    #[doc="Increment the numeric value of a key by the given amount.  This 
+    #[doc="Increment the numeric value of a key by the given amount.  This
           issues a `INCRBY` or `INCRBYFLOAT` depending on the type."]
     fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
@@ -222,12 +222,12 @@ implement_commands! {
     }
 
     #[doc="Sets or clears the bit at offset in the string value stored at key."]
-    fn setbit<K: ToRedisArgs>(key: K, offset: uint, value: bool) {
+    fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) {
         cmd("SETBIT").arg(key).arg(offset).arg(value)
     }
 
     #[doc="Returns the bit value at offset in the string value stored at key."]
-    fn getbit<K: ToRedisArgs>(key: K, offset: uint) {
+    fn getbit<K: ToRedisArgs>(key: K, offset: usize) {
         cmd("GETBIT").arg(key).arg(offset)
     }
 
@@ -237,7 +237,7 @@ implement_commands! {
     }
 
     #[doc="Count set bits in a string in a range."]
-    fn bitcount_range<K: ToRedisArgs>(key: K, start: uint, end: uint) {
+    fn bitcount_range<K: ToRedisArgs>(key: K, start: usize, end: usize) {
         cmd("BITCOUNT").arg(key).arg(start).arg(end)
     }
 
@@ -334,23 +334,23 @@ implement_commands! {
     // list operations
 
     #[doc="Remove and get the first element in a list, or block until one is available."]
-    fn blpop<K: ToRedisArgs>(key: K, timeout: uint) {
+    fn blpop<K: ToRedisArgs>(key: K, timeout: usize) {
         cmd("BLPOP").arg(key).arg(timeout)
     }
 
     #[doc="Remove and get the last element in a list, or block until one is available."]
-    fn brpop<K: ToRedisArgs>(key: K, timeout: uint) {
+    fn brpop<K: ToRedisArgs>(key: K, timeout: usize) {
         cmd("BRPOP").arg(key).arg(timeout)
     }
 
     #[doc="Pop a value from a list, push it to another list and return it;
         or block until one is available."]
-    fn brpoplpush<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: uint) {
+    fn brpoplpush<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
         cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
     }
 
     #[doc="Get an element from a list by its index."]
-    fn lindex<K: ToRedisArgs>(key: K, index: int) {
+    fn lindex<K: ToRedisArgs>(key: K, index: isize) {
         cmd("LINDEX").arg(key).arg(index)
     }
 
@@ -388,19 +388,19 @@ implement_commands! {
     }
 
     #[doc="Returns the specified elements of the list stored at key."]
-    fn lrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("LRANGE").arg(key).arg(start).arg(stop)
     }
 
-    #[doc="Removes the first count occurrences of elements equal to value 
+    #[doc="Removes the first count occurrences of elements equal to value
         from the list stored at key."]
-    fn lrem<K: ToRedisArgs, V: ToRedisArgs>(key: K, count: int, value: V) {
+    fn lrem<K: ToRedisArgs, V: ToRedisArgs>(key: K, count: isize, value: V) {
         cmd("LREM").arg(key).arg(count).arg(value)
     }
 
     #[doc="Trim an existing list so that it will contain only the specified
         range of elements specified."]
-    fn ltrim<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn ltrim<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("LTRIM").arg(key).arg(start).arg(stop)
     }
 
@@ -483,7 +483,7 @@ implement_commands! {
     }
 
     #[doc="Get multiple random members from a set."]
-    fn srandmember_multiple<K: ToRedisArgs>(key: K, count: uint) {
+    fn srandmember_multiple<K: ToRedisArgs>(key: K, count: usize) {
         cmd("SRANDMEMBER").arg(key).arg(count)
     }
 
@@ -504,13 +504,13 @@ implement_commands! {
 
     // sorted set commands
 
-    #[doc="Add one member to a sorted set, or update its score 
+    #[doc="Add one member to a sorted set, or update its score
         if it already exists."]
     fn zadd<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, member: M, score: S) {
         cmd("ZADD").arg(key).arg(score).arg(member)
     }
 
-    #[doc="Add multiple members to a sorted set, or update its score 
+    #[doc="Add multiple members to a sorted set, or update its score
         if it already exists."]
     fn zadd_multiple<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)]) {
         cmd("ZADD").arg(key).arg(items)
@@ -555,12 +555,12 @@ implement_commands! {
     }
 
     #[doc="Return a range of members in a sorted set, by index"]
-    fn zrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn zrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZRANGE").arg(key).arg(start).arg(stop)
     }
 
     #[doc="Return a range of members in a sorted set, by index with scores."]
-    fn zrange_withscores<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn zrange_withscores<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
     }
 
@@ -572,7 +572,7 @@ implement_commands! {
     #[doc="Return a range of members in a sorted set, by lexicographical
         range with offset and limit."]
     fn zrangebylex_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(
-            key: K, min: M, max: MM, offset: int, count: int) {
+            key: K, min: M, max: MM, offset: isize, count: isize) {
         cmd("ZRANGEBYLEX").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
     }
 
@@ -584,7 +584,7 @@ implement_commands! {
     #[doc="Return a range of members in a sorted set, by lexicographical
         range with offset and limit."]
     fn zrevrangebylex_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(
-            key: K, max: MM, min: M, offset: int, count: int) {
+            key: K, max: MM, min: M, offset: isize, count: isize) {
         cmd("ZREVRANGEBYLEX").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
     }
 
@@ -600,13 +600,13 @@ implement_commands! {
 
     #[doc="Return a range of members in a sorted set, by score with limit."]
     fn zrangebyscore_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
-            (key: K, min: M, max: MM, offset: int, count: int) {
+            (key: K, min: M, max: MM, offset: isize, count: isize) {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
     }
 
     #[doc="Return a range of members in a sorted set, by score with limit with scores."]
     fn zrangebyscore_limit_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
-            (key: K, min: M, max: MM, offset: int, count: int) {
+            (key: K, min: M, max: MM, offset: isize, count: isize) {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
             .arg("LIMIT").arg(offset).arg(count)
     }
@@ -627,7 +627,7 @@ implement_commands! {
     }
 
     #[doc="Remove all members in a sorted set within the given indexes."]
-    fn zrembyrank<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn zrembyrank<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZREMBYRANK").arg(key).arg(start).arg(stop)
     }
 
@@ -638,13 +638,13 @@ implement_commands! {
 
     #[doc="Return a range of members in a sorted set, by index, with scores
         ordered from high to low."]
-    fn zrevrange<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn zrevrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZREVRANGE").arg(key).arg(start).arg(stop)
     }
 
     #[doc="Return a range of members in a sorted set, by index, with scores
         ordered from high to low."]
-    fn zrevrange_withscores<K: ToRedisArgs>(key: K, start: int, stop: int) {
+    fn zrevrange_withscores<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZREVRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
     }
 
@@ -660,13 +660,13 @@ implement_commands! {
 
     #[doc="Return a range of members in a sorted set, by score with limit."]
     fn zrevrangebyscore_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
-            (key: K, max: MM, min: M, offset: int, count: int) {
+            (key: K, max: MM, min: M, offset: isize, count: isize) {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
     }
 
     #[doc="Return a range of members in a sorted set, by score with limit with scores."]
     fn zrevrangebyscore_limit_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
-            (key: K, max: MM, min: M, offset: int, count: int) {
+            (key: K, max: MM, min: M, offset: isize, count: isize) {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
             .arg("LIMIT").arg(offset).arg(count)
     }
