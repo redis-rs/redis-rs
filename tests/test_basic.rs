@@ -1,8 +1,10 @@
+#![feature(core)]
+#![feature(io)]
+#![feature(std_misc)]
 #![feature(slicing_syntax)]
 
 extern crate redis;
-extern crate libc;
-extern crate serialize;
+extern crate "rustc-serialize" as serialize;
 
 use redis::{Commands, PipelineCommands};
 
@@ -235,7 +237,7 @@ fn test_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0u, 1000u) {
+    for x in (0us..1000) {
         redis::cmd("SADD").arg("foo").arg(x).execute(&con);
         unseen.insert(x);
     }
@@ -244,7 +246,7 @@ fn test_scanning() {
 
     for x in iter.by_ref() {
         // type inference limitations
-        let x: uint = x;
+        let x: usize = x;
         unseen.remove(&x);
     }
 
@@ -257,7 +259,7 @@ fn test_filtered_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0u, 3000u) {
+    for x in (0us..3000) {
         let _ : () = con.hset("foo", format!("key_{}_{}", x % 100, x), x).unwrap();
         if x % 100 == 0 {
             unseen.insert(x);
@@ -268,7 +270,7 @@ fn test_filtered_scanning() {
 
     for x in iter.by_ref() {
         // type inference limitations
-        let x: uint = x;
+        let x: usize = x;
         unseen.remove(&x);
     }
 
@@ -326,8 +328,8 @@ fn test_real_transaction() {
 
     loop {
         let _ : () = redis::cmd("WATCH").arg(key).query(&con).unwrap();
-        let val : int = redis::cmd("GET").arg(key).query(&con).unwrap();
-        let response : Option<(int,)> = redis::pipe()
+        let val : isize = redis::cmd("GET").arg(key).query(&con).unwrap();
+        let response : Option<(isize,)> = redis::pipe()
             .atomic()
             .cmd("SET").arg(key).arg(val + 1).ignore()
             .cmd("GET").arg(key)
@@ -351,8 +353,8 @@ fn test_real_transaction_highlevel() {
     let key = "the_key";
     let _ : () = redis::cmd("SET").arg(key).arg(42is).query(&con).unwrap();
 
-    let response : (int,) = redis::transaction(&con, [key].as_slice(), |pipe| {
-        let val : int = try!(redis::cmd("GET").arg(key).query(&con));
+    let response : (isize,) = redis::transaction(&con, [key].as_slice(), |pipe| {
+        let val : isize = try!(redis::cmd("GET").arg(key).query(&con));
         pipe
             .cmd("SET").arg(key).arg(val + 1).ignore()
             .cmd("GET").arg(key).query(&con)
@@ -457,14 +459,14 @@ fn test_nice_hash_api() {
         ("f4", 8is),
     ].as_slice()), Ok(()));
 
-    let hm : HashMap<String, int> = con.hgetall("my_hash").unwrap();
+    let hm : HashMap<String, isize> = con.hgetall("my_hash").unwrap();
     assert_eq!(hm.get("f1"), Some(&1is));
     assert_eq!(hm.get("f2"), Some(&2is));
     assert_eq!(hm.get("f3"), Some(&4is));
     assert_eq!(hm.get("f4"), Some(&8is));
     assert_eq!(hm.len(), 4);
 
-    let v : Vec<(String, int)> = con.hgetall("my_hash").unwrap();
+    let v : Vec<(String, isize)> = con.hgetall("my_hash").unwrap();
     assert_eq!(v, vec![
         ("f1".to_string(), 1is),
         ("f2".to_string(), 2is),
@@ -479,7 +481,7 @@ fn test_nice_hash_api() {
     assert_eq!(con.hdel("my_hash", ["f1", "f2"].as_slice()), Ok(()));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
-    let mut iter : redis::Iter<(String, int)> = con.hscan("my_hash").unwrap();
+    let iter : redis::Iter<(String, isize)> = con.hscan("my_hash").unwrap();
     let mut found = HashSet::new();
     for item in iter {
         found.insert(item);

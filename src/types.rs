@@ -6,7 +6,6 @@ use std::old_io::{IoError, ConnectionRefused};
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
-use serialize::json::Json;
 
 
 pub use self::ErrorKind::{
@@ -772,8 +771,8 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => Json::from_str(try!(from_utf8(b.as_slice()))),
-            Value::Status(ref s) => Json::from_str(s.as_slice()),
+            Value::Data(ref b) => json::Json::from_str(try!(from_utf8(b.as_slice()))),
+            Value::Status(ref s) => json::Json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
         match rv {
