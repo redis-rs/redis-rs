@@ -15,6 +15,10 @@ readme = "README.md"
 #[dependencies.url]
 #git = "https://github.com/servo/rust-url"
 
-[dependencies]
-sha1 = "*"
-url = "*"
+[dependencies.url]
+git = "https://github.com/badboy/rust-url.git"
+rev = "alpha-fixes"
+
+[dependencies.sha1]
+git = "https://github.com/badboy/rust-sha1.git"
+rev = "alpha-fixes"
