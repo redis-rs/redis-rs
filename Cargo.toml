@@ -9,12 +9,7 @@ documentation = "http://mitsuhiko.github.io/redis-rs/"
 license = "BSD-3-Clause"
 readme = "README.md"
 
-#[dependencies.sha1]
-#git = "https://github.com/mitsuhiko/rust-sha1.git"
-#
-#[dependencies.url]
-#git = "https://github.com/servo/rust-url"
-
 [dependencies]
-sha1 = "*"
+rustc-serialize = "*"
 url = "*"
+sha1 = "*"

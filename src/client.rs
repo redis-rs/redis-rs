@@ -61,7 +61,7 @@ impl ConnectionLike for Client {
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
         try!(self.get_connection()).req_packed_commands(cmd, offset, count)
     }
 
