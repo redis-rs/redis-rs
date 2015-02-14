@@ -182,15 +182,8 @@ impl error::Error for RedisError {
 
     fn description(&self) -> &str {
         match self.kind {
-            InternalIoError(ref err) => err.desc,
+            InternalIoError(ref err) => err.description(),
             _ => self.desc,
-        }
-    }
-
-    fn detail(&self) -> Option<String> {
-        match self.kind {
-            InternalIoError(ref err) => err.detail.clone(),
-            _ => self.detail.clone(),
         }
     }
 
