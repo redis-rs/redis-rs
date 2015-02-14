@@ -195,6 +195,13 @@ impl error::Error for RedisError {
     }
 }
 
+impl fmt::Display for RedisError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use std::error::Error;
+        f.write_str(self.description())
+    }
+}
+
 /// Indicates a general failure in the library.
 impl RedisError {
 
