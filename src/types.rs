@@ -233,9 +233,7 @@ impl RedisError {
     /// refused.
     pub fn is_connection_refusal(&self) -> bool {
         match self.kind {
-            InternalIoError(IoError {
-                kind: ConnectionRefused, ..
-            }) => true,
+            InternalIoError(ref e) if e.kind() == ConnectionRefused => true,
             _ => false,
         }
     }
