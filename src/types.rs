@@ -359,7 +359,7 @@ macro_rules! invalid_type_error {
         fail!(RedisError {
             kind: TypeError,
             desc: "Response was of incompatible type",
-            detail: Some(format!("{} (response was {})", $det, $v)),
+            detail: Some(format!("{:?} (response was {:?})", $det, $v)),
          });
     })
 }
