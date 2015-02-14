@@ -119,7 +119,7 @@ pub struct Msg {
 impl ActualConnection {
 
     pub fn new(host: &str, port: u16) -> RedisResult<ActualConnection> {
-        let sock = try!(TcpStream::connect((host, port)));
+        let sock = try!(TcpStream::connect(&(host, port)));
         Ok(ActualConnection { sock: sock })
     }
 
@@ -138,7 +138,7 @@ impl ActualConnection {
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(
-        connection_info.host[], connection_info.port));
+        &connection_info.host, connection_info.port));
     let rv = Connection { con: RefCell::new(con), db: connection_info.db };
 
     if connection_info.db != 0 {
@@ -150,7 +150,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
 
     match connection_info.passwd {
         Some(ref passwd) => {
-            match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
+            match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
                 Ok(Value::Okay) => {}
                 _ => { fail!((AuthenticationFailed,
                                "Password authentication failed")); }
@@ -302,7 +302,7 @@ impl PubSub {
     fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
         let mut chan = vec![];
         for item in channel.to_redis_args().iter() {
-            chan.push_all(item[]);
+            chan.push_all(item);
         }
         chan
     }
@@ -310,7 +310,7 @@ impl PubSub {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("SUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.insert(chan);
         Ok(())
     }
@@ -318,7 +318,7 @@ impl PubSub {
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.insert(chan);
         Ok(())
     }
@@ -326,7 +326,7 @@ impl PubSub {
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("UNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.remove(&chan);
         Ok(())
     }
@@ -334,7 +334,7 @@ impl PubSub {
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.remove(&chan);
         Ok(())
     }
@@ -392,7 +392,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name(&self) -> &str {
         match self.channel {
-            Value::Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
+            Value::Data(ref bytes) => str::from_utf8(bytes).unwrap_or("?"),
             _ => "?"
         }
     }
@@ -407,7 +407,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes(&self) -> &[u8] {
         match self.channel {
-            Value::Data(ref bytes) => bytes[],
+            Value::Data(ref bytes) => bytes,
             _ => b""
         }
     }

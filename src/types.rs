@@ -112,7 +112,7 @@ impl fmt::Debug for Value {
             Value::Nil => write!(fmt, "nil"),
             Value::Int(val) => write!(fmt, "int({:?})", val),
             Value::Data(ref val) => {
-                match from_utf8(val[]) {
+                match from_utf8(val) {
                     Ok(x) => write!(fmt, "string-data('{:?}')", x.escape_default()),
                     Err(_) => write!(fmt, "binary-data({:?})", val),
                 }
@@ -477,7 +477,7 @@ macro_rules! to_redis_args_for_tuple {
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let ($(ref $name,)*) = *self;
                 let mut rv = vec![];
-                $(rv.push_all($name.to_redis_args()[]);)*
+                $(rv.push_all(&$name.to_redis_args());)*
                 rv
             }
 
@@ -548,7 +548,7 @@ macro_rules! from_redis_value_for_num_internal {
             match *v {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
-                    match try!(from_utf8(bytes[])).as_slice().parse::<$t>() {
+                    match try!(from_utf8(bytes)).as_slice().parse::<$t>() {
                         Some(rv) => Ok(rv),
                         None => invalid_type_error!(v,
                             "Could not convert from string.")
@@ -617,7 +617,7 @@ impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match *v {
             Value::Data(ref bytes) => {
-                Ok(try!(from_utf8(bytes[])).to_string())
+                Ok(try!(from_utf8(bytes)).to_string())
             },
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
@@ -640,7 +640,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                 }
             },
             Value::Bulk(ref items) => {
-                FromRedisValue::from_redis_values(items[])
+                FromRedisValue::from_redis_values(items)
             }
             Value::Nil => {
                 Ok(vec![])
@@ -772,7 +772,7 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => json::from_str(try!(from_utf8(b[]))),
+            Value::Data(ref b) => json::from_str(try!(from_utf8(b))),
             Value::Status(ref s) => json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
