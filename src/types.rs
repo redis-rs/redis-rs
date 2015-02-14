@@ -1,6 +1,7 @@
 use std::error;
 use std::fmt;
 use std::hash::Hash;
+use std::collections::hash_map;
 use std::io::ErrorKind::ConnectionRefused;
 use std::io::Error as IoError;
 use std::str::{from_utf8, Utf8Error};
@@ -650,7 +651,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     }
 }
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
+impl<K: FromRedisValue + Eq + Hash<hash_map::Hasher>, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
     fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V>> {
         match *v {
             Value::Bulk(ref items) => {
@@ -670,7 +671,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
     }
 }
 
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
+impl<T: FromRedisValue + Eq + Hash<hash_map::Hasher>> FromRedisValue for HashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
         match *v {
             Value::Bulk(ref items) => {
