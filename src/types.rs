@@ -106,15 +106,15 @@ impl Value {
     }
 }
 
-impl fmt::Show for Value {
+impl fmt::Debug for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Value::Nil => write!(fmt, "nil"),
-            Value::Int(val) => write!(fmt, "int({})", val),
+            Value::Int(val) => write!(fmt, "int({:?})", val),
             Value::Data(ref val) => {
                 match from_utf8(val[]) {
-                    Ok(x) => write!(fmt, "string-data('{}')", x.escape_default()),
-                    Err(_) => write!(fmt, "binary-data({})", val),
+                    Ok(x) => write!(fmt, "string-data('{:?}')", x.escape_default()),
+                    Err(_) => write!(fmt, "binary-data({:?})", val),
                 }
             },
             Value::Bulk(ref values) => {
@@ -124,13 +124,13 @@ impl fmt::Show for Value {
                     if !is_first {
                         try!(write!(fmt, ", "));
                     }
-                    try!(write!(fmt, "{}", val));
+                    try!(write!(fmt, "{:?}", val));
                     is_first = false;
                 }
                 write!(fmt, ")")
             },
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({})", s),
+            Value::Status(ref s) => write!(fmt, "status({:?})", s),
         }
     }
 }
