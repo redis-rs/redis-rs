@@ -69,7 +69,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
 
     {
-        let mut encode = |&mut: item: &[u8]| {
+        let mut encode = |item: &[u8]| {
             cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
             cmd.push_all(item);
             cmd.push_all(b"\r\n");
