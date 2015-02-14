@@ -462,7 +462,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        vec![json::encode(self).into_bytes()]
+        // XXX: the encode result needs to be handled properly
+        vec![json::encode(self).unwrap().into_bytes()]
     }
 }
 
