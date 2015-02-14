@@ -1,5 +1,5 @@
-use std::io::{Reader, Writer};
-use std::io::net::tcp::TcpStream;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str;
@@ -124,13 +124,13 @@ impl ActualConnection {
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        let w = &mut self.sock as &mut Writer;
+        let w = &mut self.sock as &mut Write;
         try!(w.write(bytes));
         Ok(Value::Okay)
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
-        let mut parser = Parser::new(&mut self.sock as &mut Reader);
+        let mut parser = Parser::new(&mut self.sock as &mut Read);
         parser.parse_value()
     }
 }

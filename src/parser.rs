@@ -1,4 +1,4 @@
-use std::io::{Reader, BufReader};
+use std::io::{Read, ReadExt, BufReader};
 use std::str::from_utf8;
 
 use types::{RedisResult, RedisError, Value,
@@ -15,7 +15,7 @@ pub struct Parser<T> {
 /// you normally do not use this directly as it's already done for you by
 /// the client but in some more complex situations it might be useful to be
 /// able to parse the redis responses.
-impl<'a, T: Reader> Parser<T> {
+impl<'a, T: Read> Parser<T> {
 
     /// Creates a new parser that parses the data behind the reader.  More
     /// than one value can be behind the reader in which case the parser can
@@ -31,7 +31,7 @@ impl<'a, T: Reader> Parser<T> {
     /// values you can call this multiple times.  If the reader is not yet
     /// ready this will block.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
-        let b = try!(self.reader.read_byte());
+        let b = try!(self.read_byte());
         match b as char {
             '+' => self.parse_status(),
             ':' => self.parse_int(),
@@ -46,7 +46,7 @@ impl<'a, T: Reader> Parser<T> {
 
     #[inline]
     fn expect_char(&mut self, refchar: char) -> RedisResult<()> {
-        if try!(self.reader.read_byte()) as char == refchar {
+        if try!(self.read_byte()) as char == refchar {
             Ok(())
         } else {
             fail!((ResponseError, "Invalid byte in response"));
@@ -55,7 +55,7 @@ impl<'a, T: Reader> Parser<T> {
 
     #[inline]
     fn expect_newline(&mut self) -> RedisResult<()> {
-        match try!(self.reader.read_byte()) as char {
+        match try!(self.read_byte()) as char {
             '\n' => Ok(()),
             '\r' => self.expect_char('\n'),
             _ => fail!((ResponseError, "Invalid byte in response")),
@@ -66,7 +66,7 @@ impl<'a, T: Reader> Parser<T> {
         let mut rv = vec![];
 
         loop {
-            let b = try!(self.reader.read_byte());
+            let b = try!(self.read_byte());
             match b as char {
                 '\n' => { break; }
                 '\r' => {
@@ -89,12 +89,23 @@ impl<'a, T: Reader> Parser<T> {
         }
     }
 
+    fn read_byte(&mut self) -> RedisResult<u8> {
+        let buf: &mut [u8; 1] = &mut [0];
+        let nread = try!(self.reader.read(buf));
+
+        if nread <= 1 {
+            fail!((ResponseError, "Could not read enough bytes"))
+        } else {
+            Ok(buf[0])
+        }
+    }
+
     fn read(&mut self, bytes: uint) -> RedisResult<Vec<u8>> {
         let mut rv = vec![];
         rv.reserve(bytes);
 
         for _ in range(0, bytes) {
-            rv.push(try!(self.reader.read_byte()));
+            rv.push(try!(self.read_byte()));
         }
 
         Ok(rv)

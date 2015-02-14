@@ -1,7 +1,8 @@
 use std::error;
 use std::fmt;
 use std::hash::Hash;
-use std::io::{IoError, ConnectionRefused};
+use std::io::ErrorKind::ConnectionRefused;
+use std::io::Error as IoError;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
