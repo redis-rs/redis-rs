@@ -114,8 +114,8 @@ impl<'a, T: Read> Parser<T> {
     fn read_int_line(&mut self) -> RedisResult<i64> {
         let line = try!(self.read_string_line());
         match line.as_slice().trim().parse::<i64>() {
-            None => fail!((ResponseError, "Expected integer, got garbage")),
-            Some(value) => Ok(value)
+            Err(_) => fail!((ResponseError, "Expected integer, got garbage")),
+            Ok(value) => Ok(value)
         }
     }
 

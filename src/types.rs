@@ -549,8 +549,8 @@ macro_rules! from_redis_value_for_num_internal {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
                     match try!(from_utf8(bytes)).as_slice().parse::<$t>() {
-                        Some(rv) => Ok(rv),
-                        None => invalid_type_error!(v,
+                        Ok(rv) => Ok(rv),
+                        Err(_) => invalid_type_error!(v,
                             "Could not convert from string.")
                     }
                 },
