@@ -93,7 +93,7 @@ impl<'a, T: Read> Parser<T> {
         let buf: &mut [u8; 1] = &mut [0];
         let nread = try!(self.reader.read(buf));
 
-        if nread <= 1 {
+        if nread < 1 {
             fail!((ResponseError, "Could not read enough bytes"))
         } else {
             Ok(buf[0])
