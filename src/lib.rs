@@ -272,7 +272,9 @@
 
 #![deny(non_camel_case_types)]
 
-#![feature(slicing_syntax)]
+#![feature(slicing_syntax, plugin)]
+
+#![plugin(compile_msg)]
 
 #![experimental]
 
