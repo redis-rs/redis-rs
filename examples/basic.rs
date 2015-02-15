@@ -151,10 +151,6 @@ fn main()
         Err(err) => {
             println!("Could not execute example:");
             println!("  {}: {}", err.category(), err.description());
-            match err.detail() {
-                Some(msg) => println!("  Detail: {}", msg),
-                None => {}
-            };
         },
         Ok(()) => {},
     }

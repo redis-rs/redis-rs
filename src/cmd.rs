@@ -53,7 +53,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
             let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
                 self.cursor), return None);
             let rv = unwrap_or!(self.con.req_packed_command(
-                pcmd[]).ok(), return None);
+                &pcmd).ok(), return None);
             let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
                 from_redis_value(&rv).ok(), return None);
             batch.reverse();
@@ -69,7 +69,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
 
     {
-        let mut encode = |&mut: item: &[u8]| {
+        let mut encode = |item: &[u8]| {
             cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
             cmd.push_all(item);
             cmd.push_all(b"\r\n");
@@ -78,7 +78,7 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
         for item in args.iter() {
             match *item {
                 Arg::Cursor => encode(cursor.to_string().as_bytes()),
-                Arg::Simple(ref val) => encode(val[]),
+                Arg::Simple(ref val) => encode(val),
                 Arg::Borrowed(ptr) => encode(ptr),
             }
         }
@@ -90,13 +90,13 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
     if atomic {
-        rv.push_all(cmd("MULTI").get_packed_command()[]);
+        rv.push_all(&cmd("MULTI").get_packed_command());
     }
     for cmd in cmds.iter() {
-        rv.push_all(cmd.get_packed_command()[]);
+        rv.push_all(&cmd.get_packed_command());
     }
     if atomic {
-        rv.push_all(cmd("EXEC").get_packed_command()[]);
+        rv.push_all(&cmd("EXEC").get_packed_command());
     }
     rv
 }
@@ -384,13 +384,13 @@ impl Pipeline {
 
     fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(try!(con.req_packed_commands(
-            encode_pipeline(self.commands[], false)[],
+            &encode_pipeline(&self.commands, false),
             0, self.commands.len()))))
     }
 
     fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
         let mut resp = try!(con.req_packed_commands(
-            encode_pipeline(self.commands[], true)[],
+            &encode_pipeline(&self.commands, true),
             self.commands.len() + 1, 1));
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
@@ -473,7 +473,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(&args.iter().map(|x| Arg::Borrowed(x[])).collect(), 0)
+    encode_command(&args.iter().map(|x| Arg::Borrowed(x)).collect(), 0)
 }
 
 /// Shortcut for creating a new pipeline.
