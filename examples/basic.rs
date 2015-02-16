@@ -1,3 +1,5 @@
+#![feature(core)]
+
 extern crate redis;
 use std::error::Error;
 use redis::{Commands, PipelineCommands, transaction};
@@ -13,7 +15,7 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // since rust cannot know what format we actually want we need to be
     // explicit here and define the type of our response.  In this case
     // String -> int fits all the items we query for.
-    let config : HashMap<String, int> = try!(
+    let config : HashMap<String, isize> = try!(
         redis::cmd("CONFIG").arg("GET").arg("*-max-*-entries").query(con));
 
     println!("Max entry limits:");
@@ -38,7 +40,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // modified in place we can just ignore the return value upon the end
     // of each iteration.
     let mut pipe = redis::pipe();
-    for num in range(0, 1000u) {
+    for num in range(0, 1000us) {
         pipe.cmd("SADD").arg("my_set").arg(num).ignore();
     }
 
@@ -54,7 +56,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // as a simple exercise we just sum up the iterator.  Since the fold
     // method carries an initial value we do not need to define the
     // type of the iterator, rust will figure "int" out for us.
-    let sum = try!(cmd.iter(con)).fold(0i, |a, b| a + b);
+    let sum = try!(cmd.iter(con)).fold(0is, |a, b| a + b);
 
     println!("The sum of all numbers in the set 0-1000: {}", sum);
 
@@ -67,7 +69,7 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
     println!("Run low-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(redis::cmd("SET").arg(key).arg(42i).query(con));
+    let _ : () = try!(redis::cmd("SET").arg(key).arg(42is).query(con));
 
     loop {
         // we need to start watching the key we care about, so that our
@@ -75,11 +77,11 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
         let _ : () = try!(redis::cmd("WATCH").arg(key).query(con));
 
         // load the old value, so we know what to increment.
-        let val : int = try!(redis::cmd("GET").arg(key).query(con));
+        let val : isize = try!(redis::cmd("GET").arg(key).query(con));
 
         // at this point we can go into an atomic pipe (a multi block)
         // and set up the keys.
-        let response : Option<(int,)> = try!(redis::pipe()
+        let response : Option<(isize,)> = try!(redis::pipe()
             .atomic()
             .cmd("SET").arg(key).arg(val + 1).ignore()
             .cmd("GET").arg(key)
@@ -104,12 +106,12 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(con.set(key, 42i));
+    let _ : () = try!(con.set(key, 42is));
 
     // run the transaction block.
-    let (new_val,) : (int,) = try!(transaction(con, [key].as_slice(), |pipe| {
+    let (new_val,) : (isize,) = try!(transaction(con, [key].as_slice(), |pipe| {
         // load the old value, so we know what to increment.
-        let val : int = try!(con.get(key));
+        let val : isize = try!(con.get(key));
         // increment
         pipe
             .set(key, val + 1).ignore()

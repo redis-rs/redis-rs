@@ -17,7 +17,7 @@ pub use self::ErrorKind::{
 
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
-#[derive(PartialEq, Eq, Clone, Show, Copy)]
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum NumericBehavior {
     NonNumeric,
     NumberIsInteger,
@@ -26,7 +26,7 @@ pub enum NumericBehavior {
 
 
 /// An enum of all error kinds.
-#[derive(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
@@ -139,7 +139,7 @@ impl fmt::Debug for Value {
 /// Represents a redis error.  For the most part you should be using
 /// the Error trait to interact with this rather than the actual
 /// struct.
-#[derive(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RedisError {
     pub kind: ErrorKind,
     pub desc: &'static str,
@@ -301,7 +301,7 @@ impl InfoDict {
         self.find(key).is_some()
     }
 
-    pub fn len(&self) -> uint {
+    pub fn len(&self) -> usize {
         self.map.len()
     }
 }
@@ -402,8 +402,8 @@ string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
-string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger);
-string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
 
 
@@ -482,7 +482,7 @@ macro_rules! to_redis_args_for_tuple {
 
             #[allow(non_snake_case, unused_variables)]
             fn is_single_arg(&self) -> bool {
-                let mut n = 0u;
+                let mut n = 0u32;
                 $(let $name = (); n += 1;)*
                 n == 1
             }
@@ -589,8 +589,8 @@ from_redis_value_for_num!(i64);
 from_redis_value_for_num!(u64);
 from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
-from_redis_value_for_num!(int);
-from_redis_value_for_num!(uint);
+from_redis_value_for_num!(isize);
+from_redis_value_for_num!(usize);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
@@ -771,8 +771,8 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => json::from_str(try!(from_utf8(b))),
-            Value::Status(ref s) => json::from_str(s.as_slice()),
+            Value::Data(ref b) => json::Json::from_str(try!(from_utf8(b))),
+            Value::Status(ref s) => json::Json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
         match rv {

@@ -1,8 +1,8 @@
-#![feature(slicing_syntax)]
+#![feature(core, io, libc, slicing_syntax, std_misc)]
 
 extern crate redis;
 extern crate libc;
-extern crate serialize;
+extern crate "rustc-serialize" as serialize;
 
 use redis::{Commands, PipelineCommands};
 
@@ -116,8 +116,8 @@ fn test_getset() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(42i).execute(&con);
-    assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42i));
+    redis::cmd("SET").arg("foo").arg(42is).execute(&con);
+    assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42is));
 
     redis::cmd("SET").arg("bar").arg("foo").execute(&con);
     assert_eq!(redis::cmd("GET").arg("bar").query(&con), Ok(b"foo".to_vec()));
@@ -128,8 +128,8 @@ fn test_incr() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(42i).execute(&con);
-    assert_eq!(redis::cmd("INCR").arg("foo").query(&con), Ok(43i));
+    redis::cmd("SET").arg("foo").arg(42is).execute(&con);
+    assert_eq!(redis::cmd("INCR").arg("foo").query(&con), Ok(43us));
 }
 
 #[test]
@@ -150,8 +150,8 @@ fn test_hash_ops() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("HSET").arg("foo").arg("key_1").arg(1i).execute(&con);
-    redis::cmd("HSET").arg("foo").arg("key_2").arg(2i).execute(&con);
+    redis::cmd("HSET").arg("foo").arg("key_1").arg(1is).execute(&con);
+    redis::cmd("HSET").arg("foo").arg("key_2").arg(2is).execute(&con);
 
     let h : HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
     assert_eq!(h.len(), 2);
@@ -164,9 +164,9 @@ fn test_set_ops() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1i).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(2i).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(3i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(1is).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(2is).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(3is).execute(&con);
 
     let mut s : Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
     s.sort();
@@ -185,11 +185,11 @@ fn test_scan() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1i).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(2i).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(3i).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(1is).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(2is).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(3is).execute(&con);
 
-    let (cur, mut s) : (i32, Vec<i32>) = redis::cmd("SSCAN").arg("foo").arg(0i).query(&con).unwrap();
+    let (cur, mut s) : (i32, Vec<i32>) = redis::cmd("SSCAN").arg("foo").arg(0is).query(&con).unwrap();
     s.sort();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
@@ -201,7 +201,7 @@ fn test_optionals() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(1i).execute(&con);
+    redis::cmd("SET").arg("foo").arg(1is).execute(&con);
 
     let (a, b) : (Option<i32>, Option<i32>) = redis::cmd("MGET")
         .arg("foo").arg("missing").query(&con).unwrap();
@@ -235,16 +235,16 @@ fn test_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0u, 1000u) {
+    for x in range(0us, 1000us) {
         redis::cmd("SADD").arg("foo").arg(x).execute(&con);
         unseen.insert(x);
     }
 
-    let mut iter = redis::cmd("SSCAN").arg("foo").cursor_arg(0).iter(&con).unwrap();
+    let iter = redis::cmd("SSCAN").arg("foo").cursor_arg(0).iter(&con).unwrap();
 
     for x in iter {
         // type inference limitations
-        let x: uint = x;
+        let x: usize = x;
         unseen.remove(&x);
     }
 
@@ -257,18 +257,18 @@ fn test_filtered_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0u, 3000u) {
+    for x in range(0us, 3000us) {
         let _ : () = con.hset("foo", format!("key_{}_{}", x % 100, x), x).unwrap();
         if x % 100 == 0 {
             unseen.insert(x);
         }
     }
 
-    let mut iter = con.hscan_match("foo", "key_0_*").unwrap();
+    let iter = con.hscan_match("foo", "key_0_*").unwrap();
 
     for x in iter {
         // type inference limitations
-        let x: uint = x;
+        let x: usize = x;
         unseen.remove(&x);
     }
 
@@ -281,8 +281,8 @@ fn test_pipeline() {
     let con = ctx.connection();
 
     let ((k1, k2),) : ((i32, i32),) = redis::pipe()
-        .cmd("SET").arg("key_1").arg(42i).ignore()
-        .cmd("SET").arg("key_2").arg(43i).ignore()
+        .cmd("SET").arg("key_1").arg(42is).ignore()
+        .cmd("SET").arg("key_2").arg(43is).ignore()
         .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 
     assert_eq!(k1, 42);
@@ -308,8 +308,8 @@ fn test_pipeline_transaction() {
 
     let ((k1, k2),) : ((i32, i32),) = redis::pipe()
         .atomic()
-        .cmd("SET").arg("key_1").arg(42i).ignore()
-        .cmd("SET").arg("key_2").arg(43i).ignore()
+        .cmd("SET").arg("key_1").arg(42is).ignore()
+        .cmd("SET").arg("key_2").arg(43is).ignore()
         .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
 
     assert_eq!(k1, 42);
@@ -322,12 +322,12 @@ fn test_real_transaction() {
     let con = ctx.connection();
 
     let key = "the_key";
-    let _ : () = redis::cmd("SET").arg(key).arg(42i).query(&con).unwrap();
+    let _ : () = redis::cmd("SET").arg(key).arg(42is).query(&con).unwrap();
 
     loop {
         let _ : () = redis::cmd("WATCH").arg(key).query(&con).unwrap();
-        let val : int = redis::cmd("GET").arg(key).query(&con).unwrap();
-        let response : Option<(int,)> = redis::pipe()
+        let val : isize = redis::cmd("GET").arg(key).query(&con).unwrap();
+        let response : Option<(isize,)> = redis::pipe()
             .atomic()
             .cmd("SET").arg(key).arg(val + 1).ignore()
             .cmd("GET").arg(key)
@@ -336,7 +336,7 @@ fn test_real_transaction() {
         match response {
             None => { continue; }
             Some(response) => {
-                assert_eq!(response, (43i,));
+                assert_eq!(response, (43is,));
                 break;
             }
         }
@@ -349,16 +349,16 @@ fn test_real_transaction_highlevel() {
     let con = ctx.connection();
 
     let key = "the_key";
-    let _ : () = redis::cmd("SET").arg(key).arg(42i).query(&con).unwrap();
+    let _ : () = redis::cmd("SET").arg(key).arg(42is).query(&con).unwrap();
 
-    let response : (int,) = redis::transaction(&con, &[key], |pipe| {
-        let val : int = try!(redis::cmd("GET").arg(key).query(&con));
+    let response : (isize,) = redis::transaction(&con, &[key], |pipe| {
+        let val : isize = try!(redis::cmd("GET").arg(key).query(&con));
         pipe
             .cmd("SET").arg(key).arg(val + 1).ignore()
             .cmd("GET").arg(key).query(&con)
     }).unwrap();
 
-    assert_eq!(response, (43i,));
+    assert_eq!(response, (43is,));
 }
 
 #[test]
@@ -374,17 +374,17 @@ fn test_pubsub() {
 
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
-        assert_eq!(msg.get_payload(), Ok(42i));
+        assert_eq!(msg.get_payload(), Ok(42is));
 
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
-        assert_eq!(msg.get_payload(), Ok(23i));
+        assert_eq!(msg.get_payload(), Ok(23is));
 
         true
     });
 
-    redis::cmd("PUBLISH").arg("foo").arg(42i).execute(&con);
-    redis::cmd("PUBLISH").arg("foo").arg(23i).execute(&con);
+    redis::cmd("PUBLISH").arg("foo").arg(42is).execute(&con);
+    redis::cmd("PUBLISH").arg("foo").arg(23is).execute(&con);
     assert_eq!(rv.get(), true);
 }
 
@@ -398,9 +398,9 @@ fn test_script() {
     ");
 
     let _ : () = redis::cmd("SET").arg("my_key").arg("foo").query(&con).unwrap();
-    let response = script.key("my_key").arg(42i).invoke(&con);
+    let response = script.key("my_key").arg(42is).invoke(&con);
 
-    assert_eq!(response, Ok(("foo".to_string(), 42i)));
+    assert_eq!(response, Ok(("foo".to_string(), 42is)));
 }
 
 #[test]
@@ -409,12 +409,12 @@ fn test_tuple_args() {
     let con = ctx.connection();
 
     redis::cmd("HMSET").arg("my_key").arg([
-        ("field_1", 42i),
-        ("field_2", 23i),
+        ("field_1", 42is),
+        ("field_2", 23is),
     ].as_slice()).execute(&con);
 
-    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_1").query(&con), Ok(42i));
-    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_2").query(&con), Ok(23i));
+    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_1").query(&con), Ok(42is));
+    assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_2").query(&con), Ok(23is));
 }
 
 #[test]
@@ -422,13 +422,13 @@ fn test_nice_api() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.set("my_key", 42i), Ok(()));
-    assert_eq!(con.get("my_key"), Ok(42i));
+    assert_eq!(con.set("my_key", 42is), Ok(()));
+    assert_eq!(con.get("my_key"), Ok(42is));
 
     let (k1, k2) : (i32, i32) = redis::pipe()
         .atomic()
-        .set("key_1", 42i).ignore()
-        .set("key_2", 43i).ignore()
+        .set("key_1", 42is).ignore()
+        .set("key_2", 43is).ignore()
         .get("key_1")
         .get("key_2").query(&con).unwrap();
 
@@ -441,8 +441,8 @@ fn test_auto_m_versions() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.set_multiple([("key1", 1i), ("key2", 2i)].as_slice()), Ok(()));
-    assert_eq!(con.get(["key1", "key2"].as_slice()), Ok((1i, 2i)));
+    assert_eq!(con.set_multiple([("key1", 1is), ("key2", 2is)].as_slice()), Ok(()));
+    assert_eq!(con.get(["key1", "key2"].as_slice()), Ok((1is, 2is)));
 }
 
 #[test]
@@ -451,43 +451,43 @@ fn test_nice_hash_api() {
     let con = ctx.connection();
 
     assert_eq!(con.hset_multiple("my_hash", &[
-        ("f1", 1i),
-        ("f2", 2i),
-        ("f3", 4i),
-        ("f4", 8i),
+        ("f1", 1is),
+        ("f2", 2is),
+        ("f3", 4is),
+        ("f4", 8is),
     ]), Ok(()));
 
-    let hm : HashMap<String, int> = con.hgetall("my_hash").unwrap();
-    assert_eq!(hm.get("f1"), Some(&1i));
-    assert_eq!(hm.get("f2"), Some(&2i));
-    assert_eq!(hm.get("f3"), Some(&4i));
-    assert_eq!(hm.get("f4"), Some(&8i));
+    let hm : HashMap<String, isize> = con.hgetall("my_hash").unwrap();
+    assert_eq!(hm.get("f1"), Some(&1is));
+    assert_eq!(hm.get("f2"), Some(&2is));
+    assert_eq!(hm.get("f3"), Some(&4is));
+    assert_eq!(hm.get("f4"), Some(&8is));
     assert_eq!(hm.len(), 4);
 
-    let v : Vec<(String, int)> = con.hgetall("my_hash").unwrap();
+    let v : Vec<(String, isize)> = con.hgetall("my_hash").unwrap();
     assert_eq!(v, vec![
-        ("f1".to_string(), 1i),
-        ("f2".to_string(), 2i),
-        ("f3".to_string(), 4i),
-        ("f4".to_string(), 8i),
+        ("f1".to_string(), 1is),
+        ("f2".to_string(), 2is),
+        ("f3".to_string(), 4is),
+        ("f4".to_string(), 8is),
     ]);
 
-    assert_eq!(con.hget("my_hash", ["f2", "f4"].as_slice()), Ok((2i, 8i)));
-    assert_eq!(con.hincr("my_hash", "f1", 1i), Ok((2i)));
+    assert_eq!(con.hget("my_hash", ["f2", "f4"].as_slice()), Ok((2is, 8is)));
+    assert_eq!(con.hincr("my_hash", "f1", 1is), Ok((2is)));
     assert_eq!(con.hincr("my_hash", "f2", 1.5f32), Ok((3.5f32)));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
     assert_eq!(con.hdel("my_hash", ["f1", "f2"].as_slice()), Ok(()));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
-    let mut iter : redis::Iter<(String, int)> = con.hscan("my_hash").unwrap();
+    let iter : redis::Iter<(String, isize)> = con.hscan("my_hash").unwrap();
     let mut found = HashSet::new();
     for item in iter {
         found.insert(item);
     }
 
     assert_eq!(found.len(), 2);
-    assert_eq!(found.contains(&("f3".to_string(), 4i)), true);
-    assert_eq!(found.contains(&("f4".to_string(), 8i)), true);
+    assert_eq!(found.contains(&("f3".to_string(), 4is)), true);
+    assert_eq!(found.contains(&("f4".to_string(), 8is)), true);
 }
 
 #[test]
@@ -495,12 +495,12 @@ fn test_nice_list_api() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.rpush("my_list", [1i, 2i, 3i, 4i].as_slice()), Ok(4i));
-    assert_eq!(con.rpush("my_list", [5i, 6i, 7i, 8i].as_slice()), Ok(8i));
-    assert_eq!(con.llen("my_list"), Ok(8i));
+    assert_eq!(con.rpush("my_list", [1is, 2is, 3is, 4is].as_slice()), Ok(4is));
+    assert_eq!(con.rpush("my_list", [5is, 6is, 7is, 8is].as_slice()), Ok(8is));
+    assert_eq!(con.llen("my_list"), Ok(8is));
 
-    assert_eq!(con.lpop("my_list"), Ok(1i));
-    assert_eq!(con.llen("my_list"), Ok(7i));
+    assert_eq!(con.lpop("my_list"), Ok(1is));
+    assert_eq!(con.llen("my_list"), Ok(7is));
 
-    assert_eq!(con.lrange("my_list", 0, 2), Ok((2i, 3i, 4i)));
+    assert_eq!(con.lrange("my_list", 0, 2), Ok((2is, 3is, 4is)));
 }

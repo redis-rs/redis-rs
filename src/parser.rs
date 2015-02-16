@@ -1,4 +1,4 @@
-use std::io::{Read, ReadExt, BufReader};
+use std::io::{Read, BufReader};
 use std::str::from_utf8;
 
 use types::{RedisResult, RedisError, Value,
@@ -100,7 +100,7 @@ impl<'a, T: Read> Parser<T> {
         }
     }
 
-    fn read(&mut self, bytes: uint) -> RedisResult<Vec<u8>> {
+    fn read(&mut self, bytes: usize) -> RedisResult<Vec<u8>> {
         let mut rv = vec![];
         rv.reserve(bytes);
 
@@ -137,7 +137,7 @@ impl<'a, T: Read> Parser<T> {
         if length < 0 {
             Ok(Value::Nil)
         } else {
-            let data = try!(self.read(length as uint));
+            let data = try!(self.read(length as usize));
             try!(self.expect_newline());
             Ok(Value::Data(data))
         }
@@ -149,7 +149,7 @@ impl<'a, T: Read> Parser<T> {
             Ok(Value::Nil)
         } else {
             let mut rv = vec![];
-            rv.reserve(length as uint);
+            rv.reserve(length as usize);
             for _ in range(0, length) {
                 rv.push(try!(self.parse_value()));
             }

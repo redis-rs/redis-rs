@@ -190,7 +190,7 @@ pub trait ConnectionLike {
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>>;
+        offset: usize, count: usize) -> RedisResult<Vec<Value>>;
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -233,7 +233,7 @@ impl ConnectionLike for Connection {
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
@@ -261,7 +261,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
         match *self {
             Ok(ref x) => x.req_packed_commands(cmd, offset, count),
             Err(ref x) => fail!(x.clone()),
