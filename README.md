@@ -67,3 +67,20 @@ To run benchmarks:
 To build the docs:
 
     $ make docs
+
+The tests need a redis server.  By default they assume that a redis
+server can be started with the `redis-server` command.  If this
+command is not available locally, you can run provide a redis instance
+on `localhost:38991` and run the tests with `REDISRS_NO_SERVER=1`.
+
+One way to start such a server is with [docker](https://www.docker.com/):
+
+    docker run -d -p 38991:6379 --name redis redis:latest
+
+Another way would be to port forward a remote redis server instance
+using `ssh`:
+
+    ssh -L 38991:localhost:6379
+
+On OS X, you might need a combination of `docker` and `ssh`
+port-forwarding to use [`boot2docker`](http://boot2docker.io/).
