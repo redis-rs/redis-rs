@@ -1,4 +1,4 @@
-#![feature(slicing_syntax)]
+#![feature(env,slicing_syntax)]
 
 extern crate redis;
 extern crate libc;
@@ -6,6 +6,7 @@ extern crate serialize;
 
 use redis::{Commands, PipelineCommands};
 
+use std::env;
 use std::io::process;
 use std::time::Duration;
 use std::sync::Future;
@@ -52,15 +53,17 @@ impl Drop for RedisServer {
 }
 
 pub struct TestContext {
-    pub server: RedisServer,
+    pub server: Option<RedisServer>,
     pub client: redis::Client,
 }
 
 impl TestContext {
 
     fn new() -> TestContext {
-        let server = RedisServer::new();
-
+        let mut server = None;
+        if env::var("REDISRS_NO_SERVER").is_err() {
+            server = Some(RedisServer::new());
+        }
         let client = redis::Client::open(redis::ConnectionInfo {
             host: "127.0.0.1".to_string(),
             port: SERVER_PORT,
