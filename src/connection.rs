@@ -1,5 +1,5 @@
-use std::io::{Reader, Writer};
-use std::io::net::tcp::TcpStream;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str;
@@ -83,7 +83,7 @@ impl IntoConnectionInfo for url::Url {
             db: match self.serialize_path().unwrap_or("".to_string())
                     .as_slice().trim_matches('/') {
                 "" => 0,
-                path => unwrap_or!(path.parse::<i64>(),
+                path => path.parse::<i64>().unwrap_or(
                     fail!((InvalidClientConfig, "Invalid database number"))),
             },
             passwd: self.password().and_then(|pw| Some(pw.to_string())),
@@ -119,18 +119,18 @@ pub struct Msg {
 impl ActualConnection {
 
     pub fn new(host: &str, port: u16) -> RedisResult<ActualConnection> {
-        let sock = try!(TcpStream::connect((host, port)));
+        let sock = try!(TcpStream::connect(&(host, port)));
         Ok(ActualConnection { sock: sock })
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        let w = &mut self.sock as &mut Writer;
+        let w = &mut self.sock as &mut Write;
         try!(w.write(bytes));
         Ok(Value::Okay)
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
-        let mut parser = Parser::new(&mut self.sock as &mut Reader);
+        let mut parser = Parser::new(&mut self.sock as &mut Read);
         parser.parse_value()
     }
 }
@@ -138,7 +138,7 @@ impl ActualConnection {
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(
-        connection_info.host[], connection_info.port));
+        &connection_info.host, connection_info.port));
     let rv = Connection { con: RefCell::new(con), db: connection_info.db };
 
     if connection_info.db != 0 {
@@ -150,7 +150,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
 
     match connection_info.passwd {
         Some(ref passwd) => {
-            match cmd("AUTH").arg(passwd[]).query::<Value>(&rv) {
+            match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
                 Ok(Value::Okay) => {}
                 _ => { fail!((AuthenticationFailed,
                                "Password authentication failed")); }
@@ -190,7 +190,7 @@ pub trait ConnectionLike {
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>>;
+        offset: usize, count: usize) -> RedisResult<Vec<Value>>;
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -233,7 +233,7 @@ impl ConnectionLike for Connection {
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
@@ -261,7 +261,7 @@ impl<T: ConnectionLike> ConnectionLike for RedisResult<T> {
     }
 
     fn req_packed_commands(&self, cmd: &[u8],
-        offset: uint, count: uint) -> RedisResult<Vec<Value>> {
+        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
         match *self {
             Ok(ref x) => x.req_packed_commands(cmd, offset, count),
             Err(ref x) => fail!(x.clone()),
@@ -302,7 +302,7 @@ impl PubSub {
     fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
         let mut chan = vec![];
         for item in channel.to_redis_args().iter() {
-            chan.push_all(item[]);
+            chan.push_all(item);
         }
         chan
     }
@@ -310,7 +310,7 @@ impl PubSub {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("SUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.insert(chan);
         Ok(())
     }
@@ -318,7 +318,7 @@ impl PubSub {
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.insert(chan);
         Ok(())
     }
@@ -326,7 +326,7 @@ impl PubSub {
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("UNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.remove(&chan);
         Ok(())
     }
@@ -334,7 +334,7 @@ impl PubSub {
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(chan[]).query(&self.con));
+        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.remove(&chan);
         Ok(())
     }
@@ -392,7 +392,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name(&self) -> &str {
         match self.channel {
-            Value::Data(ref bytes) => str::from_utf8(bytes[]).unwrap_or("?"),
+            Value::Data(ref bytes) => str::from_utf8(bytes).unwrap_or("?"),
             _ => "?"
         }
     }
@@ -407,7 +407,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes(&self) -> &[u8] {
         match self.channel {
-            Value::Data(ref bytes) => bytes[],
+            Value::Data(ref bytes) => bytes,
             _ => b""
         }
     }
