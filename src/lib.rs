@@ -274,8 +274,6 @@
 
 #![feature(collections, core, io, net, plugin)]
 
-#![plugin(compile_msg)]
-
 extern crate url;
 extern crate "rustc-serialize" as serialize;
 extern crate sha1;

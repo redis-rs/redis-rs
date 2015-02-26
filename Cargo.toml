@@ -18,5 +18,4 @@ readme = "README.md"
 [dependencies]
 sha1 = "*"
 url = "*"
-compile_msg = "0"
 rustc-serialize = "*"

@@ -13,11 +13,10 @@ macro_rules! fail {
 }
 
 macro_rules! unwrap_or {
-    ($expr:expr, $or:expr) => ({
-        compile_warning!("unwrap_or! is deprecated; use '.unwrap_or' instead");
+    ($expr:expr, $or:expr) => (
         match $expr {
             Some(x) => x,
             None => { $or; }
         }
-    })
+    )
 }
