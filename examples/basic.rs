@@ -40,7 +40,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // modified in place we can just ignore the return value upon the end
     // of each iteration.
     let mut pipe = redis::pipe();
-    for num in range(0, 1000us) {
+    for num in range(0, 1000) {
         pipe.cmd("SADD").arg("my_set").arg(num).ignore();
     }
 
@@ -56,7 +56,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // as a simple exercise we just sum up the iterator.  Since the fold
     // method carries an initial value we do not need to define the
     // type of the iterator, rust will figure "int" out for us.
-    let sum = try!(cmd.iter(con)).fold(0is, |a, b| a + b);
+    let sum = try!(cmd.iter(con)).fold(0, |a, b| a + b);
 
     println!("The sum of all numbers in the set 0-1000: {}", sum);
 
@@ -69,7 +69,7 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
     println!("Run low-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(redis::cmd("SET").arg(key).arg(42is).query(con));
+    let _ : () = try!(redis::cmd("SET").arg(key).arg(42).query(con));
 
     loop {
         // we need to start watching the key we care about, so that our
@@ -106,7 +106,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(con.set(key, 42is));
+    let _ : () = try!(con.set(key, 42));
 
     // run the transaction block.
     let (new_val,) : (isize,) = try!(transaction(con, [key].as_slice(), |pipe| {
