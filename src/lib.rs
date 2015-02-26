@@ -272,7 +272,7 @@
 
 #![deny(non_camel_case_types)]
 
-#![feature(collections, core, hash, io, net, slicing_syntax, std_misc, plugin)]
+#![feature(collections, core, io, net, plugin)]
 
 #![plugin(compile_msg)]
 
