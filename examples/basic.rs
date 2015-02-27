@@ -109,7 +109,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     let _ : () = try!(con.set(key, 42));
 
     // run the transaction block.
-    let (new_val,) : (isize,) = try!(transaction(con, [key].as_slice(), |pipe| {
+    let (new_val,) : (isize,) = try!(transaction(con, &[key], |pipe| {
         // load the old value, so we know what to increment.
         let val : isize = try!(con.get(key));
         // increment

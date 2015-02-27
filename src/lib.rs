@@ -118,7 +118,7 @@
 //! let map : HashMap<String, i32> = try!(con.hgetall("my_hash"));
 //! let keys : Vec<String> = try!(con.hkeys("my_hash"));
 //! let mems : HashSet<i32> = try!(con.smembers("my_set"));
-//! let (k1, k2) : (String, String) = try!(con.get(["k1", "k2"].as_slice()));
+//! let (k1, k2) : (String, String) = try!(con.get(&["k1", "k2"]));
 //! # Ok(())
 //! # }
 //! ```
@@ -214,7 +214,7 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (int,) = try!(redis::transaction(&con, [key].as_slice(), |pipe| {
+//! let (new_val,) : (int,) = try!(redis::transaction(&con, &[key], |pipe| {
 //!     let old_val : int = try!(con.get(key));
 //!     pipe
 //!         .set(key, old_val + 1).ignore()

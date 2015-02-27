@@ -453,7 +453,7 @@ impl Msg {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let key = "the_key";
-/// let (new_val,) : (int,) = try!(redis::transaction(&con, [key].as_slice(), |pipe| {
+/// let (new_val,) : (int,) = try!(redis::transaction(&con, &[key], |pipe| {
 ///     let old_val : int = try!(con.get(key));
 ///     pipe
 ///         .set(key, old_val + 1).ignore()
