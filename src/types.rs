@@ -1,7 +1,8 @@
 use std::error;
 use std::fmt;
 use std::hash::Hash;
-use std::io::{IoError, ConnectionRefused};
+use std::io::ErrorKind::ConnectionRefused;
+use std::io::Error as IoError;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use serialize::json;
@@ -15,7 +16,7 @@ pub use self::ErrorKind::{
 
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
-#[derive(PartialEq, Eq, Clone, Show, Copy)]
+#[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum NumericBehavior {
     NonNumeric,
     NumberIsInteger,
@@ -24,7 +25,7 @@ pub enum NumericBehavior {
 
 
 /// An enum of all error kinds.
-#[derive(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
@@ -104,15 +105,15 @@ impl Value {
     }
 }
 
-impl fmt::Show for Value {
+impl fmt::Debug for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Value::Nil => write!(fmt, "nil"),
-            Value::Int(val) => write!(fmt, "int({})", val),
+            Value::Int(val) => write!(fmt, "int({:?})", val),
             Value::Data(ref val) => {
-                match from_utf8(val[]) {
-                    Ok(x) => write!(fmt, "string-data('{}')", x.escape_default()),
-                    Err(_) => write!(fmt, "binary-data({})", val),
+                match from_utf8(val) {
+                    Ok(x) => write!(fmt, "string-data('{:?}')", x.escape_default()),
+                    Err(_) => write!(fmt, "binary-data({:?})", val),
                 }
             },
             Value::Bulk(ref values) => {
@@ -122,13 +123,13 @@ impl fmt::Show for Value {
                     if !is_first {
                         try!(write!(fmt, ", "));
                     }
-                    try!(write!(fmt, "{}", val));
+                    try!(write!(fmt, "{:?}", val));
                     is_first = false;
                 }
                 write!(fmt, ")")
             },
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({})", s),
+            Value::Status(ref s) => write!(fmt, "status({:?})", s),
         }
     }
 }
@@ -137,7 +138,7 @@ impl fmt::Show for Value {
 /// Represents a redis error.  For the most part you should be using
 /// the Error trait to interact with this rather than the actual
 /// struct.
-#[derive(PartialEq, Eq, Clone, Show)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RedisError {
     pub kind: ErrorKind,
     pub desc: &'static str,
@@ -181,15 +182,8 @@ impl error::Error for RedisError {
 
     fn description(&self) -> &str {
         match self.kind {
-            InternalIoError(ref err) => err.desc,
+            InternalIoError(ref err) => err.description(),
             _ => self.desc,
-        }
-    }
-
-    fn detail(&self) -> Option<String> {
-        match self.kind {
-            InternalIoError(ref err) => err.detail.clone(),
-            _ => self.detail.clone(),
         }
     }
 
@@ -198,6 +192,13 @@ impl error::Error for RedisError {
             InternalIoError(ref err) => Some(err as &error::Error),
             _ => None,
         }
+    }
+}
+
+impl fmt::Display for RedisError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use std::error::Error;
+        f.write_str(self.description())
     }
 }
 
@@ -231,9 +232,7 @@ impl RedisError {
     /// refused.
     pub fn is_connection_refusal(&self) -> bool {
         match self.kind {
-            InternalIoError(IoError {
-                kind: ConnectionRefused, ..
-            }) => true,
+            InternalIoError(ref e) if e.kind() == ConnectionRefused => true,
             _ => false,
         }
     }
@@ -301,7 +300,7 @@ impl InfoDict {
         self.find(key).is_some()
     }
 
-    pub fn len(&self) -> uint {
+    pub fn len(&self) -> usize {
         self.map.len()
     }
 }
@@ -357,7 +356,7 @@ macro_rules! invalid_type_error {
         fail!(RedisError {
             kind: TypeError,
             desc: "Response was of incompatible type",
-            detail: Some(format!("{} (response was {})", $det, $v)),
+            detail: Some(format!("{:?} (response was {:?})", $det, $v)),
          });
     })
 }
@@ -402,8 +401,8 @@ string_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
-string_based_to_redis_impl!(int, NumericBehavior::NumberIsInteger);
-string_based_to_redis_impl!(uint, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
+string_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
 
 
@@ -460,7 +459,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        vec![json::encode(self).into_bytes()]
+        // XXX: the encode result needs to be handled properly
+        vec![json::encode(self).unwrap().into_bytes()]
     }
 }
 
@@ -475,13 +475,13 @@ macro_rules! to_redis_args_for_tuple {
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let ($(ref $name,)*) = *self;
                 let mut rv = vec![];
-                $(rv.push_all($name.to_redis_args()[]);)*
+                $(rv.push_all(&$name.to_redis_args());)*
                 rv
             }
 
             #[allow(non_snake_case, unused_variables)]
             fn is_single_arg(&self) -> bool {
-                let mut n = 0u;
+                let mut n = 0u32;
                 $(let $name = (); n += 1;)*
                 n == 1
             }
@@ -546,9 +546,9 @@ macro_rules! from_redis_value_for_num_internal {
             match *v {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
-                    match try!(from_utf8(bytes[])).as_slice().parse::<$t>() {
-                        Some(rv) => Ok(rv),
-                        None => invalid_type_error!(v,
+                    match try!(from_utf8(bytes)).as_slice().parse::<$t>() {
+                        Ok(rv) => Ok(rv),
+                        Err(_) => invalid_type_error!(v,
                             "Could not convert from string.")
                     }
                 },
@@ -588,8 +588,8 @@ from_redis_value_for_num!(i64);
 from_redis_value_for_num!(u64);
 from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
-from_redis_value_for_num!(int);
-from_redis_value_for_num!(uint);
+from_redis_value_for_num!(isize);
+from_redis_value_for_num!(usize);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
@@ -615,7 +615,7 @@ impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match *v {
             Value::Data(ref bytes) => {
-                Ok(try!(from_utf8(bytes[])).to_string())
+                Ok(try!(from_utf8(bytes)).to_string())
             },
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
@@ -638,7 +638,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                 }
             },
             Value::Bulk(ref items) => {
-                FromRedisValue::from_redis_values(items[])
+                FromRedisValue::from_redis_values(items)
             }
             Value::Nil => {
                 Ok(vec![])
@@ -770,8 +770,8 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => json::from_str(try!(from_utf8(b[]))),
-            Value::Status(ref s) => json::from_str(s.as_slice()),
+            Value::Data(ref b) => json::Json::from_str(try!(from_utf8(b))),
+            Value::Status(ref s) => json::Json::from_str(s.as_slice()),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
         match rv {

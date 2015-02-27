@@ -98,7 +98,7 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn arg<T: ToRedisArgs>(&'a mut self, arg: T) -> &'a mut ScriptInvocation {
-        self.args.push_all(arg.to_redis_args()[]);
+        self.args.push_all(&arg.to_redis_args());
         self
     }
 
@@ -106,7 +106,7 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn key<T: ToRedisArgs>(&'a mut self, key: T) -> &'a mut ScriptInvocation {
-        self.keys.push_all(key.to_redis_args()[]);
+        self.keys.push_all(&key.to_redis_args());
         self
     }
 
@@ -117,8 +117,8 @@ impl<'a> ScriptInvocation<'a> {
             match cmd("EVALSHA")
                 .arg(self.script.hash.as_bytes())
                 .arg(self.keys.len())
-                .arg(self.keys[])
-                .arg(self.args[]).query(con) {
+                .arg(&*self.keys)
+                .arg(&*self.args).query(con) {
                 Ok(val) => { return Ok(val); }
                 Err(RedisError { kind: NoScriptError, .. }) => {
                     let _ : () = try!(cmd("SCRIPT")
