@@ -30,7 +30,7 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
     parser.scheme_type_mapper(redis_scheme_type_mapper);
     match parser.parse(input) {
         Ok(result) => {
-            if result.scheme.as_slice() != "redis" {
+            if result.scheme != "redis" {
                 Err(url::ParseError::InvalidScheme)
             } else {
                 Ok(result)
@@ -73,7 +73,7 @@ impl<'a> IntoConnectionInfo for &'a str {
 
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        ensure!(self.scheme.as_slice() == "redis",
+        ensure!(self.scheme == "redis",
             fail!((InvalidClientConfig, "URL provided is not a redis URL")));
 
         Ok(ConnectionInfo {
@@ -81,7 +81,7 @@ impl IntoConnectionInfo for url::Url {
                 fail!((InvalidClientConfig, "Missing hostname"))),
             port: self.port().unwrap_or(DEFAULT_PORT),
             db: match self.serialize_path().unwrap_or("".to_string())
-                    .as_slice().trim_matches('/') {
+                    .trim_matches('/') {
                 "" => 0,
                 path => path.parse::<i64>().unwrap_or(
                     fail!((InvalidClientConfig, "Invalid database number"))),
@@ -356,10 +356,10 @@ impl PubSub {
             let mut payload;
             let mut channel;
 
-            if msg_type.as_slice() == "message" {
+            if msg_type == "message" {
                 channel = unwrap_or!(iter.next(), continue);
                 payload = unwrap_or!(iter.next(), continue);
-            } else if msg_type.as_slice() == "pmessage" {
+            } else if msg_type == "pmessage" {
                 pattern = Some(unwrap_or!(iter.next(), continue));
                 channel = unwrap_or!(iter.next(), continue);
                 payload = unwrap_or!(iter.next(), continue);
@@ -453,8 +453,8 @@ impl Msg {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let key = "the_key";
-/// let (new_val,) : (int,) = try!(redis::transaction(&con, &[key], |pipe| {
-///     let old_val : int = try!(con.get(key));
+/// let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
+///     let old_val : isize = try!(con.get(key));
 ///     pipe
 ///         .set(key, old_val + 1).ignore()
 ///         .get(key).query(&con)

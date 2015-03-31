@@ -108,14 +108,14 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
 /// Basic example:
 ///
 /// ```rust
-/// redis::Cmd::new().arg("SET").arg("my_key").arg(42i);
+/// redis::Cmd::new().arg("SET").arg("my_key").arg(42);
 /// ```
 ///
 /// There is also a helper function called `cmd` which makes it a
 /// tiny bit shorter:
 ///
 /// ```rust
-/// redis::cmd("SET").arg("my_key").arg(42i);
+/// redis::cmd("SET").arg("my_key").arg(42);
 /// ```
 ///
 /// Because currently rust's currently does not have an ideal system
@@ -143,8 +143,8 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
-    /// redis::cmd("SET").arg(["my_key", "my_value"].as_slice());
-    /// redis::cmd("SET").arg("my_key").arg(42i);
+    /// redis::cmd("SET").arg(&["my_key", "my_value"]);
+    /// redis::cmd("SET").arg("my_key").arg(42);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
     /// ```
     #[inline]
@@ -164,7 +164,7 @@ impl Cmd {
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
     /// let mut cmd = redis::cmd("SSCAN");
-    /// let mut iter : redis::Iter<int> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+    /// let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
     /// for x in iter {
     ///     // do something with the item
     /// }
@@ -207,7 +207,7 @@ impl Cmd {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
-        match con.req_packed_command(pcmd.as_slice()) {
+        match con.req_packed_command(&pcmd) {
             Ok(val) => from_redis_value(&val),
             Err(e) => Err(e),
         }
@@ -231,7 +231,7 @@ impl Cmd {
     pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike)
             -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
-        let rv = try!(con.req_packed_command(pcmd.as_slice()));
+        let rv = try!(con.req_packed_command(&pcmd));
         let mut batch : Vec<T>;
         let mut cursor = 0;
 
@@ -282,9 +282,9 @@ impl Cmd {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
-///     .cmd("SET").arg("key_1").arg(42i).ignore()
-///     .cmd("SET").arg("key_2").arg(43i).ignore()
-///     .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
+///     .cmd("SET").arg("key_1").arg(42).ignore()
+///     .cmd("SET").arg("key_2").arg(43).ignore()
+///     .cmd("MGET").arg(&["key_1", "key_2"]).query(&con).unwrap();
 /// ```
 ///
 /// As you can see with `cmd` you can start a new command.  By default
@@ -407,8 +407,8 @@ impl Pipeline {
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
     /// let (k1, k2) : (i32, i32) = redis::pipe()
-    ///     .cmd("SET").arg("key_1").arg(42i).ignore()
-    ///     .cmd("SET").arg("key_2").arg(43i).ignore()
+    ///     .cmd("SET").arg("key_1").arg(42).ignore()
+    ///     .cmd("SET").arg("key_2").arg(43).ignore()
     ///     .cmd("GET").arg("key_1")
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
@@ -464,12 +464,13 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// Example:
 ///
 /// ```rust
+/// # #![feature(collections)]
 /// # use redis::ToRedisArgs;
 /// let mut args = vec![];
-/// args.push_all("SET".to_redis_args().as_slice());
-/// args.push_all("my_key".to_redis_args().as_slice());
-/// args.push_all(42i.to_redis_args().as_slice());
-/// let cmd = redis::pack_command(args.as_slice());
+/// args.push_all(&"SET".to_redis_args());
+/// args.push_all(&"my_key".to_redis_args());
+/// args.push_all(&42.to_redis_args());
+/// let cmd = redis::pack_command(&args);
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {

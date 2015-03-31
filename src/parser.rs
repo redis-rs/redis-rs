@@ -113,7 +113,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn read_int_line(&mut self) -> RedisResult<i64> {
         let line = try!(self.read_string_line());
-        match line.as_slice().trim().parse::<i64>() {
+        match line.trim().parse::<i64>() {
             Err(_) => fail!((ResponseError, "Expected integer, got garbage")),
             Ok(value) => Ok(value)
         }
@@ -121,7 +121,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn parse_status(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
-        if line.as_slice() == "OK" {
+        if line == "OK" {
             Ok(Value::Okay)
         } else {
             Ok(Value::Status(line))
@@ -159,7 +159,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn parse_error(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
-        let mut pieces = line.as_slice().splitn(1, ' ');
+        let mut pieces = line.splitn(1, ' ');
         let kind = match pieces.next().unwrap() {
             "ERR" => ResponseError,
             "EXECABORT" => ExecAbortError,

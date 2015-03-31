@@ -61,7 +61,7 @@
 //!
 //! ```rust,no_run
 //! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(redis::cmd("SET").arg("my_key").arg(42i).query(con));
+//!     let _ : () = try!(redis::cmd("SET").arg("my_key").arg(42).query(con));
 //!     Ok(())
 //! }
 //! ```
@@ -82,7 +82,7 @@
 //! use redis::Commands;
 //!
 //! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(con.set("my_key", 42i));
+//!     let _ : () = try!(con.set("my_key", 42));
 //!     Ok(())
 //! }
 //! # fn main() {}
@@ -135,7 +135,7 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let mut iter : redis::Iter<int> = try!(redis::cmd("SSCAN").arg("my_set")
+//! let mut iter : redis::Iter<isize> = try!(redis::cmd("SSCAN").arg("my_set")
 //!     .cursor_arg(0).iter(&con));
 //! for x in iter {
 //!     // do something with the item
@@ -160,8 +160,8 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = try!(redis::pipe()
-//!     .cmd("SET").arg("key_1").arg(42i).ignore()
-//!     .cmd("SET").arg("key_2").arg(43i).ignore()
+//!     .cmd("SET").arg("key_1").arg(42).ignore()
+//!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
 //!     .cmd("GET").arg("key_2").query(&con));
 //! # Ok(()) }
@@ -178,8 +178,8 @@
 //! # let con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = try!(redis::pipe()
 //!     .atomic()
-//!     .cmd("SET").arg("key_1").arg(42i).ignore()
-//!     .cmd("SET").arg("key_2").arg(43i).ignore()
+//!     .cmd("SET").arg("key_1").arg(42).ignore()
+//!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
 //!     .cmd("GET").arg("key_2").query(&con));
 //! # Ok(()) }
@@ -195,8 +195,8 @@
 //! # let con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = try!(redis::pipe()
 //!     .atomic()
-//!     .set("key_1", 42i).ignore()
-//!     .set("key_2", 43i).ignore()
+//!     .set("key_1", 42).ignore()
+//!     .set("key_2", 43).ignore()
 //!     .get("key_1")
 //!     .get("key_2").query(&con));
 //! # Ok(()) }
@@ -214,8 +214,8 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (int,) = try!(redis::transaction(&con, &[key], |pipe| {
-//!     let old_val : int = try!(con.get(key));
+//! let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
+//!     let old_val : isize = try!(con.get(key));
 //!     pipe
 //!         .set(key, old_val + 1).ignore()
 //!         .get(key).query(&con)
@@ -265,14 +265,14 @@
 //! let script = redis::Script::new(r"
 //!     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 //! ");
-//! let result : int = try!(script.arg(1i).arg(2i).invoke(&con));
+//! let result : isize = try!(script.arg(1).arg(2).invoke(&con));
 //! assert_eq!(result, 3);
 //! # Ok(()) }
 //! ```
 
 #![deny(non_camel_case_types)]
 
-#![feature(collections, core, io, net, plugin)]
+#![feature(collections, core)]
 
 extern crate url;
 extern crate rustc_serialize as serialize;
