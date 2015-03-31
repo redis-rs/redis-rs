@@ -1,37 +1,31 @@
-#![feature(core, old_io, libc, std_misc)]
+#![feature(thread_sleep,std_misc)]
 
 extern crate redis;
 extern crate rustc_serialize as serialize;
 
 use redis::{Commands, PipelineCommands};
 
-use std::old_io::process;
+use std::process;
 use std::time::Duration;
 use std::sync::Future;
-use std::old_io::timer::sleep;
+use std::thread::sleep;
 use std::collections::{HashMap, HashSet};
 
 pub static SERVER_PORT: u16 = 38991;
 
 pub struct RedisServer {
-    pub process: process::Process,
+    pub process: process::Child,
 }
 
 impl RedisServer {
 
     pub fn new() -> RedisServer {
-        let mut process = process::Command::new("redis-server")
-            .arg("-")
-            .stdout(process::Ignored)
-            .stderr(process::Ignored)
+        let process = process::Command::new("redis-server")
+            .arg("--port").arg(SERVER_PORT.to_string())
+            .arg("--bind").arg("127.0.0.1")
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
             .spawn().unwrap();
-        {
-            let mut stdin = process.stdin.take().unwrap();
-            stdin.write_str(format!("
-                bind 127.0.0.1
-                port {port}
-            ", port=SERVER_PORT).as_slice()).unwrap();
-        }
         RedisServer { process: process }
     }
 
@@ -46,7 +40,8 @@ impl RedisServer {
 impl Drop for RedisServer {
 
     fn drop(&mut self) {
-        let _ = self.process.signal_exit();
+        let _ = self.process.kill().unwrap();
+        let _ = self.process.wait();
     }
 }
 
