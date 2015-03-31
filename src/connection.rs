@@ -237,7 +237,7 @@ impl ConnectionLike for Connection {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
-        for idx in range(0, offset + count) {
+        for idx in 0..(offset + count) {
             let item = try!(con.read_response());
             if idx >= offset {
                 rv.push(item);
