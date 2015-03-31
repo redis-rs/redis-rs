@@ -34,7 +34,7 @@ command creation is also possible.
 extern crate redis;
 use redis::Commands;
 
-fn fetch_an_integer() -> redis::RedisResult<int> {
+fn fetch_an_integer() -> redis::RedisResult<isize> {
     // connect to redis
     let client = try!(redis::Client::open("redis://127.0.0.1/"));
     let con = try!(client.get_connection());
