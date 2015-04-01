@@ -54,7 +54,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // as a simple exercise we just sum up the iterator.  Since the fold
     // method carries an initial value we do not need to define the
     // type of the iterator, rust will figure "int" out for us.
-    let sum = try!(cmd.iter(con)).fold(0, |a, b| a + b);
+    let sum = try!(cmd.iter::<i32>(con)).fold(0, |a, b| a + b);
 
     println!("The sum of all numbers in the set 0-1000: {}", sum);
 
