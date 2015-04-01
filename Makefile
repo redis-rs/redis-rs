@@ -2,10 +2,10 @@ build:
 	@cargo build
 
 test:
-	@RUST_TEST_TASKS=1 cargo test
+	@RUST_TEST_THREADS=1 cargo test
 
 bench:
-	@RUST_TEST_TASKS=1 cargo bench
+	@RUST_TEST_THREADS=1 cargo bench
 
 docs: build
 	@cargo doc --no-deps

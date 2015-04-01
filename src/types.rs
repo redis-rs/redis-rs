@@ -182,7 +182,7 @@ impl error::Error for RedisError {
 
     fn description(&self) -> &str {
         match self.kind {
-            InternalIoError(ref err) => err.description(),
+            InternalIoError(ref err) => error::Error::description(err),
             _ => self.desc,
         }
     }
@@ -215,7 +215,7 @@ impl RedisError {
             BusyLoadingError => "busy loading",
             NoScriptError => "no script",
             InvalidClientConfig => "invalid client config",
-            ExtensionError(ref x) => x.as_slice(),
+            ExtensionError(ref x) => x,
             InternalIoError(_) => "I/O error",
         }
     }
@@ -339,7 +339,7 @@ pub trait ToRedisArgs: Sized {
     fn make_arg_vec(items: &[Self]) -> Vec<Vec<u8>> {
         let mut rv = vec![];
         for item in items.iter() {
-            rv.push_all(item.to_redis_args().as_slice());
+            rv.push_all(&item.to_redis_args());
         }
         rv
     }
@@ -420,7 +420,7 @@ impl<'a> ToRedisArgs for &'a str {
 
 impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        ToRedisArgs::make_arg_vec(self.as_slice())
+        ToRedisArgs::make_arg_vec(self)
     }
 }
 
@@ -569,7 +569,7 @@ macro_rules! from_redis_value_for_num_internal {
             match *v {
                 Value::Int(val) => Ok(val as $t),
                 Value::Data(ref bytes) => {
-                    match try!(from_utf8(bytes)).as_slice().parse::<$t>() {
+                    match try!(from_utf8(bytes)).parse::<$t>() {
                         Ok(rv) => Ok(rv),
                         Err(_) => invalid_type_error!(v,
                             "Could not convert from string.")
@@ -620,8 +620,8 @@ impl FromRedisValue for bool {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
             Value::Status(ref s) => {
-                if s.as_slice() == "1" { Ok(true) }
-                else if s.as_slice() == "0" { Ok(false) }
+                if &s[..] == "1" { Ok(true) }
+                else if &s[..] == "0" { Ok(false) }
                 else {
                     invalid_type_error!(v,
                         "Response status not valid boolean");
@@ -654,7 +654,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             // this hack allows us to specialize Vec<u8> to work with
             // binary data whereas all others will fail with an error.
             Value::Data(ref bytes) => {
-                match FromRedisValue::from_byte_vec(bytes.as_slice()) {
+                match FromRedisValue::from_byte_vec(bytes) {
                     Some(x) => Ok(x),
                     None => invalid_type_error!(v,
                         "Response type not vector compatible.")
@@ -786,7 +786,7 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
         let s : String = try!(from_redis_value(v));
-        Ok(InfoDict::new(s.as_slice()))
+        Ok(InfoDict::new(&s))
     }
 }
 
@@ -794,7 +794,7 @@ impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
             Value::Data(ref b) => json::Json::from_str(try!(from_utf8(b))),
-            Value::Status(ref s) => json::Json::from_str(s.as_slice()),
+            Value::Status(ref s) => json::Json::from_str(s),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
         match rv {

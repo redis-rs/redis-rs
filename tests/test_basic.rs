@@ -1,38 +1,31 @@
-#![feature(core, old_io, libc, std_misc)]
+#![feature(thread_sleep,std_misc)]
 
 extern crate redis;
-extern crate libc;
-extern crate "rustc-serialize" as serialize;
+extern crate rustc_serialize as serialize;
 
 use redis::{Commands, PipelineCommands};
 
-use std::old_io::process;
+use std::process;
 use std::time::Duration;
 use std::sync::Future;
-use std::old_io::timer::sleep;
+use std::thread::sleep;
 use std::collections::{HashMap, HashSet};
 
 pub static SERVER_PORT: u16 = 38991;
 
 pub struct RedisServer {
-    pub process: process::Process,
+    pub process: process::Child,
 }
 
 impl RedisServer {
 
     pub fn new() -> RedisServer {
-        let mut process = process::Command::new("redis-server")
-            .arg("-")
-            .stdout(process::Ignored)
-            .stderr(process::Ignored)
+        let process = process::Command::new("redis-server")
+            .arg("--port").arg(SERVER_PORT.to_string())
+            .arg("--bind").arg("127.0.0.1")
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
             .spawn().unwrap();
-        {
-            let mut stdin = process.stdin.take().unwrap();
-            stdin.write_str(format!("
-                bind 127.0.0.1
-                port {port}
-            ", port=SERVER_PORT).as_slice()).unwrap();
-        }
         RedisServer { process: process }
     }
 
@@ -47,7 +40,8 @@ impl RedisServer {
 impl Drop for RedisServer {
 
     fn drop(&mut self) {
-        let _ = self.process.signal_exit();
+        let _ = self.process.kill().unwrap();
+        let _ = self.process.wait();
     }
 }
 
@@ -105,9 +99,9 @@ fn test_args() {
     let con = ctx.connection();
 
     redis::cmd("SET").arg("key1").arg(b"foo").execute(&con);
-    redis::cmd("SET").arg(["key2", "bar"].as_slice()).execute(&con);
+    redis::cmd("SET").arg(&["key2", "bar"]).execute(&con);
 
-    assert_eq!(redis::cmd("MGET").arg(["key1", "key2"].as_slice()).query(&con),
+    assert_eq!(redis::cmd("MGET").arg(&["key1", "key2"]).query(&con),
                Ok(("foo".to_string(), b"bar".to_vec())));
 }
 
@@ -235,7 +229,7 @@ fn test_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0, 1000) {
+    for x in 0..1000 {
         redis::cmd("SADD").arg("foo").arg(x).execute(&con);
         unseen.insert(x);
     }
@@ -257,7 +251,7 @@ fn test_filtered_scanning() {
     let con = ctx.connection();
     let mut unseen = HashSet::new();
 
-    for x in range(0, 3000) {
+    for x in 0..3000 {
         let _ : () = con.hset("foo", format!("key_{}_{}", x % 100, x), x).unwrap();
         if x % 100 == 0 {
             unseen.insert(x);
@@ -283,7 +277,7 @@ fn test_pipeline() {
     let ((k1, k2),) : ((i32, i32),) = redis::pipe()
         .cmd("SET").arg("key_1").arg(42).ignore()
         .cmd("SET").arg("key_2").arg(43).ignore()
-        .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
+        .cmd("MGET").arg(&["key_1", "key_2"]).query(&con).unwrap();
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
@@ -310,7 +304,7 @@ fn test_pipeline_transaction() {
         .atomic()
         .cmd("SET").arg("key_1").arg(42).ignore()
         .cmd("SET").arg("key_2").arg(43).ignore()
-        .cmd("MGET").arg(["key_1", "key_2"].as_slice()).query(&con).unwrap();
+        .cmd("MGET").arg(&["key_1", "key_2"]).query(&con).unwrap();
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
@@ -408,10 +402,10 @@ fn test_tuple_args() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    redis::cmd("HMSET").arg("my_key").arg([
+    redis::cmd("HMSET").arg("my_key").arg(&[
         ("field_1", 42),
         ("field_2", 23),
-    ].as_slice()).execute(&con);
+    ]).execute(&con);
 
     assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_1").query(&con), Ok(42));
     assert_eq!(redis::cmd("HGET").arg("my_key").arg("field_2").query(&con), Ok(23));
@@ -441,8 +435,8 @@ fn test_auto_m_versions() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.set_multiple([("key1", 1), ("key2", 2)].as_slice()), Ok(()));
-    assert_eq!(con.get(["key1", "key2"].as_slice()), Ok((1, 2)));
+    assert_eq!(con.set_multiple(&[("key1", 1), ("key2", 2)]), Ok(()));
+    assert_eq!(con.get(&["key1", "key2"]), Ok((1, 2)));
 }
 
 #[test]
@@ -472,11 +466,11 @@ fn test_nice_hash_api() {
         ("f4".to_string(), 8),
     ]);
 
-    assert_eq!(con.hget("my_hash", ["f2", "f4"].as_slice()), Ok((2, 8)));
+    assert_eq!(con.hget("my_hash", &["f2", "f4"]), Ok((2, 8)));
     assert_eq!(con.hincr("my_hash", "f1", 1), Ok((2)));
     assert_eq!(con.hincr("my_hash", "f2", 1.5f32), Ok((3.5f32)));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
-    assert_eq!(con.hdel("my_hash", ["f1", "f2"].as_slice()), Ok(()));
+    assert_eq!(con.hdel("my_hash", &["f1", "f2"]), Ok(()));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
     let iter : redis::Iter<(String, isize)> = con.hscan("my_hash").unwrap();
@@ -495,8 +489,8 @@ fn test_nice_list_api() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.rpush("my_list", [1, 2, 3, 4].as_slice()), Ok(4));
-    assert_eq!(con.rpush("my_list", [5, 6, 7, 8].as_slice()), Ok(8));
+    assert_eq!(con.rpush("my_list", &[1, 2, 3, 4]), Ok(4));
+    assert_eq!(con.rpush("my_list", &[5, 6, 7, 8]), Ok(8));
     assert_eq!(con.llen("my_list"), Ok(8));
 
     assert_eq!(con.lpop("my_list"), Ok(1));

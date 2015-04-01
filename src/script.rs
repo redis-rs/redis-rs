@@ -22,8 +22,8 @@ pub struct Script {
 /// let script = redis::Script::new(r"
 ///     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 /// ");
-/// let result = script.arg(1i).arg(2i).invoke(&con);
-/// assert_eq!(result, Ok(3i));
+/// let result = script.arg(1).arg(2).invoke(&con);
+/// assert_eq!(result, Ok(3));
 /// ```
 impl Script {
 
@@ -39,7 +39,7 @@ impl Script {
 
     /// Returns the script's SHA1 hash in hexadecimal format.
     pub fn get_hash(&self) -> &str {
-        self.hash.as_slice()
+        &self.hash
     }
 
     /// Creates a script invocation object with a key filled in.

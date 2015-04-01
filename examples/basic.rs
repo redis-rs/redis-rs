@@ -1,5 +1,3 @@
-#![feature(core)]
-
 extern crate redis;
 use std::error::Error;
 use redis::{Commands, PipelineCommands, transaction};
@@ -40,7 +38,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // modified in place we can just ignore the return value upon the end
     // of each iteration.
     let mut pipe = redis::pipe();
-    for num in range(0, 1000) {
+    for num in 0..1000 {
         pipe.cmd("SADD").arg("my_set").arg(num).ignore();
     }
 

@@ -104,7 +104,7 @@ impl<'a, T: Read> Parser<T> {
         let mut rv = vec![];
         rv.reserve(bytes);
 
-        for _ in range(0, bytes) {
+        for _ in 0..bytes {
             rv.push(try!(self.read_byte()));
         }
 
@@ -113,7 +113,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn read_int_line(&mut self) -> RedisResult<i64> {
         let line = try!(self.read_string_line());
-        match line.as_slice().trim().parse::<i64>() {
+        match line.trim().parse::<i64>() {
             Err(_) => fail!((ResponseError, "Expected integer, got garbage")),
             Ok(value) => Ok(value)
         }
@@ -121,7 +121,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn parse_status(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
-        if line.as_slice() == "OK" {
+        if line == "OK" {
             Ok(Value::Okay)
         } else {
             Ok(Value::Status(line))
@@ -150,7 +150,7 @@ impl<'a, T: Read> Parser<T> {
         } else {
             let mut rv = vec![];
             rv.reserve(length as usize);
-            for _ in range(0, length) {
+            for _ in 0..length {
                 rv.push(try!(self.parse_value()));
             }
             Ok(Value::Bulk(rv))
@@ -159,7 +159,7 @@ impl<'a, T: Read> Parser<T> {
 
     fn parse_error(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
-        let mut pieces = line.as_slice().splitn(1, ' ');
+        let mut pieces = line.splitn(1, ' ');
         let kind = match pieces.next().unwrap() {
             "ERR" => ResponseError,
             "EXECABORT" => ExecAbortError,
