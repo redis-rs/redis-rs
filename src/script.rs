@@ -98,7 +98,7 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn arg<T: ToRedisArgs>(&'a mut self, arg: T) -> &'a mut ScriptInvocation {
-        self.args.push_all(&arg.to_redis_args());
+        self.args.extend(arg.to_redis_args().into_iter());
         self
     }
 
@@ -106,7 +106,7 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn key<T: ToRedisArgs>(&'a mut self, key: T) -> &'a mut ScriptInvocation {
-        self.keys.push_all(&key.to_redis_args());
+        self.keys.extend(key.to_redis_args().into_iter());
         self
     }
 

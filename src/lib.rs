@@ -272,7 +272,7 @@
 
 #![deny(non_camel_case_types)]
 
-#![feature(collections, core)]
+#![feature(core)]
 
 extern crate url;
 extern crate rustc_serialize as serialize;

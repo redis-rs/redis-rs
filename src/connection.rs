@@ -276,7 +276,7 @@ impl PubSub {
     fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
         let mut chan = vec![];
         for item in channel.to_redis_args().iter() {
-            chan.push_all(item);
+            chan.extend(item.iter().cloned());
         }
         chan
     }

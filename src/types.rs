@@ -106,7 +106,7 @@ impl fmt::Debug for Value {
             Value::Int(val) => write!(fmt, "int({:?})", val),
             Value::Data(ref val) => {
                 match from_utf8(val) {
-                    Ok(x) => write!(fmt, "string-data('{:?}')", x.escape_default()),
+                    Ok(x) => write!(fmt, "string-data('{:?}')", x),
                     Err(_) => write!(fmt, "binary-data({:?})", val),
                 }
             },
@@ -377,7 +377,7 @@ pub trait ToRedisArgs: Sized {
     fn make_arg_vec(items: &[Self]) -> Vec<Vec<u8>> {
         let mut rv = vec![];
         for item in items.iter() {
-            rv.push_all(&item.to_redis_args());
+            rv.extend(item.to_redis_args().into_iter());
         }
         rv
     }
@@ -511,7 +511,7 @@ macro_rules! to_redis_args_for_tuple {
             fn to_redis_args(&self) -> Vec<Vec<u8>> {
                 let ($(ref $name,)*) = *self;
                 let mut rv = vec![];
-                $(rv.push_all(&$name.to_redis_args());)*
+                $(rv.extend($name.to_redis_args().into_iter());)*
                 rv
             }
 

@@ -66,13 +66,13 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 
 fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     let mut cmd = vec![];
-    cmd.push_all(format!("*{}\r\n", args.len()).as_bytes());
+    cmd.extend(format!("*{}\r\n", args.len()).as_bytes().iter().cloned());
 
     {
         let mut encode = |item: &[u8]| {
-            cmd.push_all(format!("${}\r\n", item.len()).as_bytes());
-            cmd.push_all(item);
-            cmd.push_all(b"\r\n");
+            cmd.extend(format!("${}\r\n", item.len()).as_bytes().iter().cloned());
+            cmd.extend(item.iter().cloned());
+            cmd.extend(b"\r\n".iter().cloned());
         };
 
         for item in args.iter() {
@@ -90,13 +90,13 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
     if atomic {
-        rv.push_all(&cmd("MULTI").get_packed_command());
+        rv.extend(cmd("MULTI").get_packed_command().into_iter());
     }
     for cmd in cmds.iter() {
-        rv.push_all(&cmd.get_packed_command());
+        rv.extend(cmd.get_packed_command().into_iter());
     }
     if atomic {
-        rv.push_all(&cmd("EXEC").get_packed_command());
+        rv.extend(cmd("EXEC").get_packed_command().into_iter());
     }
     rv
 }
