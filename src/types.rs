@@ -1,4 +1,5 @@
 use std::error;
+use std::convert;
 use std::fmt;
 use std::hash::Hash;
 use std::io::ErrorKind::ConnectionRefused;
@@ -145,9 +146,9 @@ pub struct RedisError {
     pub detail: Option<String>,
 }
 
-impl error::FromError<IoError> for RedisError {
+impl convert::From<IoError> for RedisError {
 
-    fn from_error(err: IoError) -> RedisError {
+    fn from(err: IoError) -> RedisError {
         RedisError {
             kind: InternalIoError(err),
             desc: "An internal IO error ocurred.",
@@ -156,9 +157,9 @@ impl error::FromError<IoError> for RedisError {
     }
 }
 
-impl error::FromError<Utf8Error> for RedisError {
+impl convert::From<Utf8Error> for RedisError {
 
-    fn from_error(_: Utf8Error) -> RedisError {
+    fn from(_: Utf8Error) -> RedisError {
         RedisError {
             kind: TypeError,
             desc: "Invalid UTF-8.",
@@ -167,9 +168,9 @@ impl error::FromError<Utf8Error> for RedisError {
     }
 }
 
-impl error::FromError<(ErrorKind, &'static str)> for RedisError {
+impl convert::From<(ErrorKind, &'static str)> for RedisError {
 
-    fn from_error((kind, desc): (ErrorKind, &'static str)) -> RedisError {
+    fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError {
             kind: kind,
             desc: desc,
