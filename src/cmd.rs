@@ -1,5 +1,5 @@
 use types::{ToRedisArgs, FromRedisValue, Value, RedisResult,
-            ResponseError, from_redis_value};
+            ErrorKind, from_redis_value};
 use connection::ConnectionLike;
 
 #[derive(Clone)]
@@ -395,7 +395,8 @@ impl Pipeline {
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => fail!((ResponseError, "Invalid response when parsing multi response"))
+            _ => fail!((ErrorKind::ResponseError,
+                        "Invalid response when parsing multi response"))
         }
     }
 

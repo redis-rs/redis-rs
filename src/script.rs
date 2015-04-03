@@ -1,7 +1,7 @@
 use sha1::Sha1;
 
 use cmd::cmd;
-use types::{ToRedisArgs, FromRedisValue, RedisResult, NoScriptError, RedisError};
+use types::{ToRedisArgs, FromRedisValue, RedisResult, ErrorKind};
 use connection::ConnectionLike;
 
 /// Represents a lua script.
@@ -120,13 +120,16 @@ impl<'a> ScriptInvocation<'a> {
                 .arg(&*self.keys)
                 .arg(&*self.args).query(con) {
                 Ok(val) => { return Ok(val); }
-                Err(RedisError { kind: NoScriptError, .. }) => {
-                    let _ : () = try!(cmd("SCRIPT")
-                        .arg("LOAD")
-                        .arg(self.script.code.as_bytes())
-                        .query(con));
+                Err(err) => {
+                    if err.kind() == ErrorKind::NoScriptError {
+                        let _ : () = try!(cmd("SCRIPT")
+                            .arg("LOAD")
+                            .arg(self.script.code.as_bytes())
+                            .query(con));
+                    } else {
+                        fail!(err);
+                    }
                 }
-                Err(x) => fail!(x),
             }
         }
     }

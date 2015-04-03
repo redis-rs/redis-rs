@@ -8,7 +8,7 @@ macro_rules! ensure {
 
 macro_rules! fail {
     ($expr:expr) => (
-        return Err(::std::error::FromError::from_error($expr));
+        return Err(::std::convert::From::from($expr));
     )
 }
 

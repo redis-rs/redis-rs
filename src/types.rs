@@ -1,17 +1,11 @@
 use std::error;
 use std::fmt;
+use std::io;
 use std::hash::Hash;
-use std::io::ErrorKind::ConnectionRefused;
-use std::io::Error as IoError;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
+use std::convert::From;
 use serialize::json;
-
-
-pub use self::ErrorKind::{
-    ResponseError, AuthenticationFailed, TypeError, ExecAbortError, BusyLoadingError,
-    NoScriptError, InvalidClientConfig, ExtensionError, InternalIoError
-};
 
 
 /// Helper enum that is used in some situations to describe
@@ -25,7 +19,7 @@ pub enum NumericBehavior {
 
 
 /// An enum of all error kinds.
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
@@ -42,11 +36,11 @@ pub enum ErrorKind {
     /// An error that was caused because the parameter to the
     /// client were wrong.
     InvalidClientConfig,
-    /// A error that is unknown to the library.  This might be used
-    /// by future redis servers or custom extensions.
-    ExtensionError(String),
-    /// An IO error was encountered while talking to the server.
-    InternalIoError(IoError),
+    /// This kind is returned if the redis error is one that is
+    /// not native to the system.  This is usually the case if
+    /// the cause is another error.
+    IoError,
+    Other,
 }
 
 
@@ -138,58 +132,74 @@ impl fmt::Debug for Value {
 /// Represents a redis error.  For the most part you should be using
 /// the Error trait to interact with this rather than the actual
 /// struct.
-#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RedisError {
-    pub kind: ErrorKind,
-    pub desc: &'static str,
-    pub detail: Option<String>,
+    repr: ErrorRepr,
 }
 
-impl error::FromError<IoError> for RedisError {
+#[derive(Debug)]
+enum ErrorRepr {
+    WithDescription(ErrorKind, &'static str),
+    WithDescriptionAndDetail(ErrorKind, &'static str, String),
+    IoError(io::Error),
+}
 
-    fn from_error(err: IoError) -> RedisError {
-        RedisError {
-            kind: InternalIoError(err),
-            desc: "An internal IO error ocurred.",
-            detail: None
+impl PartialEq for RedisError {
+    fn eq(&self, other: &RedisError) -> bool {
+        match (&self.repr, &other.repr) {
+            (&ErrorRepr::WithDescription(kind_a, _),
+             &ErrorRepr::WithDescription(kind_b, _)) => {
+                kind_a == kind_b
+            }
+            (&ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
+             &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _)) => {
+                kind_a == kind_b
+            }
+            _ => false,
         }
     }
 }
 
-impl error::FromError<Utf8Error> for RedisError {
+impl From<io::Error> for RedisError {
 
-    fn from_error(_: Utf8Error) -> RedisError {
-        RedisError {
-            kind: TypeError,
-            desc: "Invalid UTF-8.",
-            detail: None
-        }
+    fn from(err: io::Error) -> RedisError {
+        RedisError { repr: ErrorRepr::IoError(err) }
     }
 }
 
-impl error::FromError<(ErrorKind, &'static str)> for RedisError {
+impl From<Utf8Error> for RedisError {
 
-    fn from_error((kind, desc): (ErrorKind, &'static str)) -> RedisError {
-        RedisError {
-            kind: kind,
-            desc: desc,
-            detail: None,
-        }
+    fn from(_: Utf8Error) -> RedisError {
+        RedisError { repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8") }
+    }
+}
+
+impl From<(ErrorKind, &'static str)> for RedisError {
+
+    fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
+        RedisError { repr: ErrorRepr::WithDescription(kind, desc) }
+    }
+}
+
+impl From<(ErrorKind, &'static str, String)> for RedisError {
+
+    fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
+        RedisError { repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail) }
     }
 }
 
 impl error::Error for RedisError {
 
     fn description(&self) -> &str {
-        match self.kind {
-            InternalIoError(ref err) => error::Error::description(err),
-            _ => self.desc,
+        match self.repr {
+            ErrorRepr::WithDescription(_, desc) => desc,
+            ErrorRepr::WithDescriptionAndDetail(_, desc, _) => desc,
+            ErrorRepr::IoError(ref err) => err.description(),
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
-        match self.kind {
-            InternalIoError(ref err) => Some(err as &error::Error),
+        match self.repr {
+            ErrorRepr::IoError(ref err) => Some(err as &error::Error),
             _ => None,
         }
     }
@@ -197,43 +207,71 @@ impl error::Error for RedisError {
 
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        use std::error::Error;
-        f.write_str(self.description())
+        match self.repr {
+            ErrorRepr::WithDescription(_, desc) => {
+                desc.fmt(f)
+            }
+            ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
+                try!(desc.fmt(f));
+                try!(f.write_str(": "));
+                detail.fmt(f)
+            }
+            ErrorRepr::IoError(ref err) => {
+                err.fmt(f)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for RedisError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt::Display::fmt(self, f)
     }
 }
 
 /// Indicates a general failure in the library.
 impl RedisError {
 
+    /// Returns the kind of the error.
+    pub fn kind(&self) -> ErrorKind {
+        match self.repr {
+            ErrorRepr::WithDescription(kind, _) => kind,
+            ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
+            ErrorRepr::IoError(_) => ErrorKind::IoError,
+        }
+    }
+
     /// Returns the name of the error category for display purposes.
     pub fn category(&self) -> &str {
-        match self.kind {
-            ResponseError => "response error",
-            AuthenticationFailed => "authentication failed",
-            TypeError => "type error",
-            ExecAbortError => "script execution aborted",
-            BusyLoadingError => "busy loading",
-            NoScriptError => "no script",
-            InvalidClientConfig => "invalid client config",
-            ExtensionError(ref x) => x,
-            InternalIoError(_) => "I/O error",
+        match self.kind() {
+            ErrorKind::ResponseError => "response error",
+            ErrorKind::AuthenticationFailed => "authentication failed",
+            ErrorKind::TypeError => "type error",
+            ErrorKind::ExecAbortError => "script execution aborted",
+            ErrorKind::BusyLoadingError => "busy loading",
+            ErrorKind::NoScriptError => "no script",
+            ErrorKind::InvalidClientConfig => "invalid client config",
+            ErrorKind::IoError => "I/O error",
+            ErrorKind::Other => "other",
         }
     }
 
     /// Indicates that this failure is an IO failure.
     pub fn is_io_error(&self) -> bool {
-        match self.kind {
-            InternalIoError(_) => true,
-            _ => false,
+        match self.kind() {
+            ErrorKind::IoError => true,
+            _ => false
         }
     }
 
     /// Returns true if this error indicates that the connection was
     /// refused.
     pub fn is_connection_refusal(&self) -> bool {
-        match self.kind {
-            InternalIoError(ref e) if e.kind() == ConnectionRefused => true,
-            _ => false,
+        match self.repr {
+            ErrorRepr::IoError(ref err) => {
+                err.kind() == io::ErrorKind::ConnectionRefused
+            }
+            _ => { false }
         }
     }
 }
@@ -275,7 +313,7 @@ impl InfoDict {
             if line.len() == 0 || line.starts_with("#") {
                 continue;
             }
-            let mut p = line.splitn(1, ':');
+            let mut p = line.splitn(2, ':');
             let k = unwrap_or!(p.next(), continue).to_string();
             let v = unwrap_or!(p.next(), continue).to_string();
             map.insert(k, Value::Status(v));
@@ -353,11 +391,9 @@ pub trait ToRedisArgs: Sized {
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => ({
-        fail!(RedisError {
-            kind: TypeError,
-            desc: "Response was of incompatible type",
-            detail: Some(format!("{:?} (response was {:?})", $det, $v)),
-         });
+        fail!((ErrorKind::TypeError,
+               "Response was of incompatible type",
+               format!("{:?} (response was {:?})", $det, $v)));
     })
 }
 

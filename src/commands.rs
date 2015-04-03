@@ -718,7 +718,6 @@ implement_commands! {
 
 impl Commands for Connection {}
 impl Commands for Client {}
-impl<T: Commands+ConnectionLike> Commands for RedisResult<T> {}
 
 impl PipelineCommands for Pipeline {
     fn perform(&mut self, cmd: &Cmd) -> &mut Pipeline {

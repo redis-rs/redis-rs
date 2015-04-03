@@ -1,9 +1,7 @@
 use std::io::{Read, BufReader};
 use std::str::from_utf8;
 
-use types::{RedisResult, RedisError, Value,
-            ResponseError, ExecAbortError, BusyLoadingError,
-            NoScriptError, ExtensionError};
+use types::{RedisResult, Value, ErrorKind};
 
 
 /// The internal redis response parser.
@@ -38,7 +36,7 @@ impl<'a, T: Read> Parser<T> {
             '$' => self.parse_data(),
             '*' => self.parse_bulk(),
             '-' => self.parse_error(),
-            _ => fail!((ResponseError, "Invalid response when parsing value")),
+            _ => fail!((ErrorKind::ResponseError, "Invalid response when parsing value")),
         }
     }
 
@@ -49,7 +47,7 @@ impl<'a, T: Read> Parser<T> {
         if try!(self.read_byte()) as char == refchar {
             Ok(())
         } else {
-            fail!((ResponseError, "Invalid byte in response"));
+            fail!((ErrorKind::ResponseError, "Invalid byte in response"));
         }
     }
 
@@ -58,7 +56,7 @@ impl<'a, T: Read> Parser<T> {
         match try!(self.read_byte()) as char {
             '\n' => Ok(()),
             '\r' => self.expect_char('\n'),
-            _ => fail!((ResponseError, "Invalid byte in response")),
+            _ => fail!((ErrorKind::ResponseError, "Invalid byte in response")),
         }
     }
 
@@ -83,7 +81,7 @@ impl<'a, T: Read> Parser<T> {
     fn read_string_line(&mut self) -> RedisResult<String> {
         match String::from_utf8(try!(self.read_line())) {
             Err(_) => {
-                fail!((ResponseError, "Expected valid string, got garbage"))
+                fail!((ErrorKind::ResponseError, "Expected valid string, got garbage"))
             }
             Ok(value) => Ok(value),
         }
@@ -94,7 +92,7 @@ impl<'a, T: Read> Parser<T> {
         let nread = try!(self.reader.read(buf));
 
         if nread < 1 {
-            fail!((ResponseError, "Could not read enough bytes"))
+            fail!((ErrorKind::ResponseError, "Could not read enough bytes"))
         } else {
             Ok(buf[0])
         }
@@ -114,7 +112,7 @@ impl<'a, T: Read> Parser<T> {
     fn read_int_line(&mut self) -> RedisResult<i64> {
         let line = try!(self.read_string_line());
         match line.trim().parse::<i64>() {
-            Err(_) => fail!((ResponseError, "Expected integer, got garbage")),
+            Err(_) => fail!((ErrorKind::ResponseError, "Expected integer, got garbage")),
             Ok(value) => Ok(value)
         }
     }
@@ -159,20 +157,20 @@ impl<'a, T: Read> Parser<T> {
 
     fn parse_error(&mut self) -> RedisResult<Value> {
         let line = try!(self.read_string_line());
-        let mut pieces = line.splitn(1, ' ');
+        let mut pieces = line.splitn(2, ' ');
         let kind = match pieces.next().unwrap() {
-            "ERR" => ResponseError,
-            "EXECABORT" => ExecAbortError,
-            "LOADING" => BusyLoadingError,
-            "NOSCRIPT" => NoScriptError,
-            other => ExtensionError(other.to_string()),
+            "ERR" => ErrorKind::ResponseError,
+            "EXECABORT" => ErrorKind::ExecAbortError,
+            "LOADING" => ErrorKind::BusyLoadingError,
+            "NOSCRIPT" => ErrorKind::NoScriptError,
+            // XXX: preserve the value somehow
+            x => { panic!("Bad: {}", x); }
         };
-        let message = pieces.next().unwrap_or("An unknown error ocurred.");
-        fail!(RedisError {
-            kind: kind,
-            desc: "A error was signalled by the server",
-            detail: Some(message.to_string()),
-        })
+        let desc = "An error was signalled by the server";
+        match pieces.next() {
+            Some(detail) => fail!((kind, desc, detail.to_string())),
+            None => fail!((kind, desc))
+        }
     }
 }
 

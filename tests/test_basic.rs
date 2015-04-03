@@ -1,4 +1,4 @@
-#![feature(thread_sleep,std_misc)]
+#![feature(std_misc)]
 
 extern crate redis;
 extern crate rustc_serialize as serialize;
@@ -6,9 +6,8 @@ extern crate rustc_serialize as serialize;
 use redis::{Commands, PipelineCommands};
 
 use std::process;
-use std::time::Duration;
 use std::sync::Future;
-use std::thread::sleep;
+use std::thread::sleep_ms;
 use std::collections::{HashMap, HashSet};
 
 pub static SERVER_PORT: u16 = 38991;
@@ -67,7 +66,7 @@ impl TestContext {
             match client.get_connection() {
                 Err(err) => {
                     if err.is_connection_refusal() {
-                        sleep(Duration::milliseconds(1));
+                        sleep_ms(1);
                     } else {
                         panic!("Could not connect: {}", err);
                     }
@@ -364,7 +363,7 @@ fn test_pubsub() {
     pubsub.subscribe("foo").unwrap();
 
     let mut rv = Future::spawn(move || {
-        sleep(Duration::milliseconds(100));
+        sleep_ms(100);
 
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
