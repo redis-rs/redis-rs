@@ -1,7 +1,7 @@
 use std::io::{Read, BufReader};
 use std::str::from_utf8;
 
-use types::{RedisResult, Value, ErrorKind};
+use types::{RedisResult, Value, ErrorKind, make_extension_error};
 
 
 /// The internal redis response parser.
@@ -156,6 +156,7 @@ impl<'a, T: Read> Parser<T> {
     }
 
     fn parse_error(&mut self) -> RedisResult<Value> {
+        let desc = "An error was signalled by the server";
         let line = try!(self.read_string_line());
         let mut pieces = line.splitn(2, ' ');
         let kind = match pieces.next().unwrap() {
@@ -163,10 +164,8 @@ impl<'a, T: Read> Parser<T> {
             "EXECABORT" => ErrorKind::ExecAbortError,
             "LOADING" => ErrorKind::BusyLoadingError,
             "NOSCRIPT" => ErrorKind::NoScriptError,
-            // XXX: preserve the value somehow
-            x => { panic!("Bad: {}", x); }
+            code => { fail!(make_extension_error(code, pieces.next())); }
         };
-        let desc = "An error was signalled by the server";
         match pieces.next() {
             Some(detail) => fail!((kind, desc, detail.to_string())),
             None => fail!((kind, desc))

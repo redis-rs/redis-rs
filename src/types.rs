@@ -40,7 +40,9 @@ pub enum ErrorKind {
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
     IoError,
-    Other,
+    /// An extension error.  This is an error created by the server
+    /// that is not directly understood by the library.
+    ExtensionError,
 }
 
 
@@ -140,6 +142,7 @@ pub struct RedisError {
 enum ErrorRepr {
     WithDescription(ErrorKind, &'static str),
     WithDescriptionAndDetail(ErrorKind, &'static str, String),
+    ExtensionError(String, String),
     IoError(io::Error),
 }
 
@@ -153,7 +156,11 @@ impl PartialEq for RedisError {
             (&ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
              &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _)) => {
                 kind_a == kind_b
-            }
+            },
+            (&ErrorRepr::ExtensionError(ref a, _),
+             &ErrorRepr::ExtensionError(ref b, _)) => {
+                *a == *b
+            },
             _ => false,
         }
     }
@@ -193,6 +200,7 @@ impl error::Error for RedisError {
         match self.repr {
             ErrorRepr::WithDescription(_, desc) => desc,
             ErrorRepr::WithDescriptionAndDetail(_, desc, _) => desc,
+            ErrorRepr::ExtensionError(_, _) => "extension error",
             ErrorRepr::IoError(ref err) => err.description(),
         }
     }
@@ -216,6 +224,11 @@ impl fmt::Display for RedisError {
                 try!(f.write_str(": "));
                 detail.fmt(f)
             }
+            ErrorRepr::ExtensionError(ref code, ref detail) => {
+                try!(code.fmt(f));
+                try!(f.write_str(": "));
+                detail.fmt(f)
+            },
             ErrorRepr::IoError(ref err) => {
                 err.fmt(f)
             }
@@ -237,6 +250,7 @@ impl RedisError {
         match self.repr {
             ErrorRepr::WithDescription(kind, _) => kind,
             ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
+            ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
             ErrorRepr::IoError(_) => ErrorKind::IoError,
         }
     }
@@ -252,7 +266,7 @@ impl RedisError {
             ErrorKind::NoScriptError => "no script",
             ErrorKind::InvalidClientConfig => "invalid client config",
             ErrorKind::IoError => "I/O error",
-            ErrorKind::Other => "other",
+            ErrorKind::ExtensionError => "extension error",
         }
     }
 
@@ -273,6 +287,23 @@ impl RedisError {
             }
             _ => { false }
         }
+    }
+
+    /// Returns the extension error code
+    pub fn extension_error_code(&self) -> Option<&str> {
+        match self.repr {
+            ErrorRepr::ExtensionError(ref code, _) => Some(&code),
+            _ => None,
+        }
+    }
+}
+
+pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
+    RedisError {
+        repr: ErrorRepr::ExtensionError(code.to_string(), match detail {
+            Some(x) => x.to_string(),
+            None => "Unknown extension error encountered".to_string()
+        })
     }
 }
 
