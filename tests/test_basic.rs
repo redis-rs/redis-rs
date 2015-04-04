@@ -1,12 +1,10 @@
-#![feature(std_misc)]
-
 extern crate redis;
 extern crate rustc_serialize as serialize;
 
 use redis::{Commands, PipelineCommands};
 
 use std::process;
-use std::sync::Future;
+use std::thread::spawn;
 use std::thread::sleep_ms;
 use std::collections::{HashMap, HashSet};
 
@@ -362,7 +360,7 @@ fn test_pubsub() {
     let mut pubsub = ctx.pubsub();
     pubsub.subscribe("foo").unwrap();
 
-    let mut rv = Future::spawn(move || {
+    let thread = spawn(move || {
         sleep_ms(100);
 
         let msg = pubsub.get_message().unwrap();
@@ -372,13 +370,12 @@ fn test_pubsub() {
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
         assert_eq!(msg.get_payload(), Ok(23));
-
-        true
     });
 
     redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
     redis::cmd("PUBLISH").arg("foo").arg(23).execute(&con);
-    assert_eq!(rv.get(), true);
+
+    thread.join().ok().expect("Something went wrong");
 }
 
 #[test]

@@ -464,8 +464,8 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 ///
 /// Example:
 ///
-/// ```rust
-/// # #![feature(collections)]
+/// ```rust,ignore
+/// # this is ignore because it uses unstable APIs.
 /// # use redis::ToRedisArgs;
 /// let mut args = vec![];
 /// args.push_all(&"SET".to_redis_args());
