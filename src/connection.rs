@@ -2,7 +2,6 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::str;
 
 use url;
 
@@ -10,6 +9,7 @@ use cmd::{cmd, pipe, Pipeline};
 use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
             ErrorKind};
 use parser::Parser;
+use compat::from_utf8;
 
 
 static DEFAULT_PORT: u16 = 6379;
@@ -366,7 +366,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name(&self) -> &str {
         match self.channel {
-            Value::Data(ref bytes) => str::from_utf8(bytes).unwrap_or("?"),
+            Value::Data(ref bytes) => from_utf8(bytes).unwrap_or("?"),
             _ => "?"
         }
     }

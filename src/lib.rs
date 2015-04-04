@@ -272,8 +272,6 @@
 
 #![deny(non_camel_case_types)]
 
-#![feature(core)]
-
 extern crate url;
 extern crate rustc_serialize as serialize;
 extern crate sha1;
@@ -324,3 +322,5 @@ mod types;
 mod script;
 mod cmd;
 mod commands;
+
+mod compat;
