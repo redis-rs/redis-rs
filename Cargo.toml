@@ -15,6 +15,9 @@ readme = "README.md"
 #[dependencies.url]
 #git = "https://github.com/servo/rust-url"
 
+[dependencies.unix_socket]
+git = "https://github.com/sfackler/rust-unix-socket"
+
 [dependencies]
 sha1 = "*"
 url = "*"

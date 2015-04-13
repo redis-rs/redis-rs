@@ -275,14 +275,15 @@
 extern crate url;
 extern crate rustc_serialize as serialize;
 extern crate sha1;
+extern crate unix_socket;
 
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, ConnectionLike, ConnectionInfo,
-                     IntoConnectionInfo, PubSub, Msg, transaction,
-                     parse_redis_url};
+                     ConnectionAddr, IntoConnectionInfo, PubSub, Msg,
+                     transaction, parse_redis_url};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{
     Commands,
