@@ -1,5 +1,5 @@
 before_install:
-  - yes | sudo add-apt-repository ppa:chris-lea/redis-server
+  - yes | sudo add-apt-repository ppa:rwky/redis
   - sudo apt-get update
 
 install:
