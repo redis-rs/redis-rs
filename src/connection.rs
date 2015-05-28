@@ -41,6 +41,7 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
 
 
 /// Holds the connection information that redis should use for connecting.
+#[derive(Clone, Debug)]
 pub struct ConnectionInfo {
     pub host: String,
     pub port: u16,
