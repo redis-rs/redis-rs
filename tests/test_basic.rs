@@ -53,11 +53,14 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            host: "127.0.0.1".to_string(),
-            port: SERVER_PORT,
+            addr: Box::new(redis::ConnectionAddr::Tcp {
+                host: "127.0.0.1".to_string(),
+                port: SERVER_PORT,
+            }),
             db: 0,
             passwd: None,
         }).unwrap();
+
         let con;
 
         loop {
