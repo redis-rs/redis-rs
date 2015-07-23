@@ -494,3 +494,21 @@ fn test_nice_list_api() {
 
     assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
 }
+
+#[test]
+fn test_tuple_decoding_regression() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert!(con.del("my_zset").is_ok());
+    assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
+    assert_eq!(con.zadd("my_zset", "two", 2), Ok(1));
+
+    let vec : Vec<(String,u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
+    assert_eq!(vec.len(), 2);
+
+    assert_eq!(con.del("my_zset"), Ok(1));
+
+    let vec : Vec<(String,u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
+    assert_eq!(vec.len(), 0);
+}
