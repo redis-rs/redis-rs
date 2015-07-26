@@ -524,7 +524,8 @@ implement_commands! {
         cmd("ZCOUNT").arg(key).arg(min).arg(max)
     }
 
-    /// Count the members in a sorted set with scores within the given values.
+    /// Increments the member in a sorted set at key by delta.
+    /// If the member does not exist, it is added with delta as its score.
     fn zincr<K: ToRedisArgs, M: ToRedisArgs, D: ToRedisArgs>(key: K, member: M, delta: D) {
         cmd("ZINCRBY").arg(key).arg(delta).arg(member)
     }
