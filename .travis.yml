@@ -1,10 +1,14 @@
-before_install:
-  - yes | sudo add-apt-repository ppa:rwky/redis
-  - sudo apt-get update
+sudo: false
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
 
-install:
-  - curl https://static.rust-lang.org/rustup.sh > /tmp/rustup.sh && chmod a+x /tmp/rustup.sh && /tmp/rustup.sh --yes 
-  - sudo apt-get -y install redis-server
+addons:
+  apt:
+    packages:
+      - redis-server
 
 script:
   - make test
