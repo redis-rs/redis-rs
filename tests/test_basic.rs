@@ -500,7 +500,7 @@ fn test_tuple_decoding_regression() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert!(con.del("my_zset").is_ok());
+    assert_eq!(con.del("my_zset"), Ok(()));
     assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
     assert_eq!(con.zadd("my_zset", "two", 2), Ok(1));
 
