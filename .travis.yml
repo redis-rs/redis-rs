@@ -3,8 +3,8 @@ before_install:
   - sudo apt-get update
 
 install:
-  - curl https://static.rust-lang.org/rustup.sh | bash
-  - sudo apt-get install redis-server
+  - curl https://static.rust-lang.org/rustup.sh > /tmp/rustup.sh && chmod a+x /tmp/rustup.sh && /tmp/rustup.sh --yes 
+  - sudo apt-get -y install redis-server
 
 script:
   - make test
