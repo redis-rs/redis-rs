@@ -828,6 +828,9 @@ macro_rules! from_redis_value_for_tuple {
                 // this is pretty ugly too.  The { i += 1; i - 1} is rust's
                 // postfix increment :)
                 let mut rv = vec![];
+                if items.len() == 0 {
+                    return Ok(rv)
+                }
                 let mut offset = 0;
                 while offset < items.len() - 1 {
                     rv.push(($({let $name = (); try!(from_redis_value(
