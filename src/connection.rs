@@ -45,6 +45,11 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
     }
 }
 
+/// Defines the connection address.
+///
+/// The fields available on this struct depend on if the crate has been
+/// compiled with the `unix_socket` feature or not.  The `Tcp` field
+/// is always available, but the `Unix` one is not.
 #[derive(Clone, Debug)]
 pub enum ConnectionAddr {
     Tcp(String, u16),
