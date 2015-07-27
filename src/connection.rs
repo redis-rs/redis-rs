@@ -52,7 +52,9 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
 /// is always available, but the `Unix` one is not.
 #[derive(Clone, Debug)]
 pub enum ConnectionAddr {
+    /// Format for this is `(host, port)`.
     Tcp(String, u16),
+    /// Format for this is the path to the unix socket.
     #[cfg(feature="unix_socket")]
     Unix(PathBuf),
 }
@@ -61,8 +63,11 @@ pub enum ConnectionAddr {
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
+    /// A boxed connection address for where to connect to.
     pub addr: Box<ConnectionAddr>,
+    /// The database number to use.  This is usually `0`.
     pub db: i64,
+    /// Optionally a password that should be used for connection.
     pub passwd: Option<String>,
 }
 
