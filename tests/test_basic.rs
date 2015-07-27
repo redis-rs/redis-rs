@@ -8,7 +8,11 @@ use std::thread::spawn;
 use std::thread::sleep_ms;
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature="unix_socket")]
+use std::path::PathBuf;
+
 pub static SERVER_PORT: u16 = 38991;
+pub static SERVER_UNIX_PATH: &'static str = "/tmp/redis-rs-test.sock";
 
 pub struct RedisServer {
     pub process: process::Child,
@@ -17,12 +21,18 @@ pub struct RedisServer {
 impl RedisServer {
 
     pub fn new() -> RedisServer {
-        let process = process::Command::new("redis-server")
-            .arg("--port").arg(SERVER_PORT.to_string())
-            .arg("--bind").arg("127.0.0.1")
+        let mut cmd = process::Command::new("redis-server");
+        cmd
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
-            .spawn().unwrap();
+            .arg("--port").arg(SERVER_PORT.to_string())
+            .arg("--bind").arg("127.0.0.1");
+
+        if cfg!(feature="unix_socket") {
+            cmd.arg("--unixsocket").arg(SERVER_UNIX_PATH);
+        }
+
+        let process = cmd.spawn().unwrap();
         RedisServer { process: process }
     }
 
@@ -31,6 +41,16 @@ impl RedisServer {
     }
 
     pub fn foo(&mut self) {
+    }
+
+    #[cfg(not(feature="unix_socket"))]
+    pub fn get_client_addr(&self) -> redis::ConnectionAddr {
+        redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
+    }
+
+    #[cfg(feature="unix_socket")]
+    pub fn get_client_addr(&self) -> redis::ConnectionAddr {
+        redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
     }
 }
 
@@ -53,8 +73,7 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            host: "127.0.0.1".to_string(),
-            port: SERVER_PORT,
+            addr: Box::new(server.get_client_addr()),
             db: 0,
             passwd: None,
         }).unwrap();

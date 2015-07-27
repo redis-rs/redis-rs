@@ -279,11 +279,20 @@ impl RedisError {
     }
 
     /// Returns true if this error indicates that the connection was
-    /// refused.
+    /// refused.  You should generally not rely much on this function
+    /// unless you are writing unit tests that want to detect if a
+    /// local server is available.
     pub fn is_connection_refusal(&self) -> bool {
         match self.repr {
             ErrorRepr::IoError(ref err) => {
-                err.kind() == io::ErrorKind::ConnectionRefused
+                match err.kind() {
+                    io::ErrorKind::ConnectionRefused => true,
+                    // if we connect to a unix socket and the file does not
+                    // exist yet, then we want to treat this as if it was a
+                    // connection refusal.
+                    io::ErrorKind::NotFound => cfg!(feature="unix_socket"),
+                    _ => false,
+                }
             }
             _ => { false }
         }

@@ -6,6 +6,13 @@
 //!
 //! ```ini
 //! [dependencies.redis]
+//! version = "*"
+//! ```
+//!
+//! If you want to use the git version:
+//!
+//! ```ini
+//! [dependencies.redis]
 //! git = "https://github.com/mitsuhiko/redis-rs.git"
 //! ```
 //!
@@ -41,6 +48,19 @@
 //! # fn main() {}
 //! ```
 //!
+//! ## Unix Sockets
+//!
+//! By default this library does not support unix sockets but starting with
+//! redis-rs 0.5.0 you can optionally compile it with unix sockets enabled.
+//! For this you just need to enable the `unix_sockets` flag and some of the
+//! otherwise unavailable APIs become available:
+//!
+//! ```ini
+//! [dependencies.redis]
+//! version = "*"
+//! features = ["unix_socket"]
+//! ```
+//!
 //! ## Connection Parameters
 //!
 //! redis-rs knows different ways to define where a connection should
@@ -52,6 +72,11 @@
 //! * `ConnectionInfo` objects.
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
+//!
+//! In case you have compiled the crate with the `unix_sockets` feature
+//! then you can also use a unix URL in this format:
+//!
+//! `unix:///[:<passwd>@]<path>[?db=<db>]`
 //!
 //! ## Executing Low-Level Commands
 //!
@@ -276,12 +301,15 @@ extern crate url;
 extern crate rustc_serialize as serialize;
 extern crate sha1;
 
+#[cfg(feature="unix_socket")]
+extern crate unix_socket;
+
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, ConnectionLike, ConnectionInfo,
-                     IntoConnectionInfo, PubSub, Msg, transaction,
+                     ConnectionAddr, IntoConnectionInfo, PubSub, Msg, transaction,
                      parse_redis_url};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{

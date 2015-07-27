@@ -1,3 +1,5 @@
+#[cfg(feature="unix_socket")]
+use std::path::PathBuf;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::cell::RefCell;
@@ -11,12 +13,16 @@ use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
 use parser::Parser;
 use compat::from_utf8;
 
+#[cfg(feature="unix_socket")]
+use unix_socket::UnixStream;
+
 
 static DEFAULT_PORT: u16 = 6379;
 
 fn redis_scheme_type_mapper(scheme: &str) -> url::SchemeType {
     match scheme {
         "redis" => url::SchemeType::Relative(DEFAULT_PORT),
+        "unix" => url::SchemeType::FileLike,
         _ => url::SchemeType::NonRelative,
     }
 }
@@ -29,22 +35,28 @@ pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
     parser.scheme_type_mapper(redis_scheme_type_mapper);
     match parser.parse(input) {
         Ok(result) => {
-            if result.scheme != "redis" {
-                Err(url::ParseError::InvalidScheme)
-            } else {
+            if result.scheme == "redis" || result.scheme == "unix" {
                 Ok(result)
+            } else {
+                Err(url::ParseError::InvalidScheme)
             }
         },
         Err(err) => Err(err),
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ConnectionAddr {
+    Tcp(String, u16),
+    #[cfg(feature="unix_socket")]
+    Unix(PathBuf),
+}
+
 
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
-    pub host: String,
-    pub port: u16,
+    pub addr: Box<ConnectionAddr>,
     pub db: i64,
     pub passwd: Option<String>,
 }
@@ -71,29 +83,63 @@ impl<'a> IntoConnectionInfo for &'a str {
     }
 }
 
+fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    Ok(ConnectionInfo {
+        addr: Box::new(ConnectionAddr::Tcp(
+            unwrap_or!(url.serialize_host(),
+                fail!((ErrorKind::InvalidClientConfig, "Missing hostname"))),
+            url.port().unwrap_or(DEFAULT_PORT)
+        )),
+        db: match url.serialize_path().unwrap_or("".to_string())
+                .trim_matches('/') {
+            "" => 0,
+            path => unwrap_or!(path.parse::<i64>().ok(),
+                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
+        },
+        passwd: url.password().and_then(|pw| Some(pw.to_string())),
+    })
+}
+
+#[cfg(feature="unix_socket")]
+fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    Ok(ConnectionInfo {
+        addr: Box::new(ConnectionAddr::Unix(
+            unwrap_or!(url.to_file_path().ok(),
+                fail!((ErrorKind::InvalidClientConfig, "Missing path"))),
+        )),
+        db: match url.query_pairs().unwrap_or(vec![])
+                .into_iter().filter(|&(ref key, _)| key == "db").next() {
+            Some((_, db)) => unwrap_or!(db.parse::<i64>().ok(),
+                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
+            None => 0,
+        },
+        passwd: url.password().and_then(|pw| Some(pw.to_string())),
+    })
+}
+
+#[cfg(not(feature="unix_socket"))]
+fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
+    fail!((ErrorKind::InvalidClientConfig,
+           "This version of redis-rs is not compiled with Unix socket support."));
+}
+
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        ensure!(self.scheme == "redis",
-            fail!((ErrorKind::InvalidClientConfig, "URL provided is not a redis URL")));
-
-        Ok(ConnectionInfo {
-            host: unwrap_or!(self.serialize_host(),
-                fail!((ErrorKind::InvalidClientConfig, "Missing hostname"))),
-            port: self.port().unwrap_or(DEFAULT_PORT),
-            db: match self.serialize_path().unwrap_or("".to_string())
-                    .trim_matches('/') {
-                "" => 0,
-                path => unwrap_or!(path.parse::<i64>().ok(),
-                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
-            },
-            passwd: self.password().and_then(|pw| Some(pw.to_string())),
-        })
+        if self.scheme == "redis" {
+            url_to_tcp_connection_info(self)
+        } else if self.scheme == "unix" {
+            url_to_unix_connection_info(self)
+        } else {
+            fail!((ErrorKind::InvalidClientConfig, "URL provided is not a redis URL"));
+        }
     }
 }
 
 
-struct ActualConnection {
-    sock: TcpStream,
+enum ActualConnection {
+    Tcp(TcpStream),
+    #[cfg(feature="unix_socket")]
+    Unix(UnixStream),
 }
 
 /// Represents a stateful redis TCP connection.
@@ -118,27 +164,49 @@ pub struct Msg {
 
 impl ActualConnection {
 
-    pub fn new(host: &str, port: u16) -> RedisResult<ActualConnection> {
-        let sock = try!(TcpStream::connect(&(host, port)));
-        Ok(ActualConnection { sock: sock })
+    pub fn new(addr: &ConnectionAddr) -> RedisResult<ActualConnection> {
+        Ok(match *addr {
+            ConnectionAddr::Tcp(ref host, ref port) => {
+                let host : &str = &*host;
+                ActualConnection::Tcp(try!(TcpStream::connect((host, *port))))
+            }
+            #[cfg(feature="unix_socket")]
+            ConnectionAddr::Unix(ref path) => {
+                ActualConnection::Unix(try!(UnixStream::connect(path)))
+            }
+        })
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        let w = &mut self.sock as &mut Write;
+        let w = match *self {
+            ActualConnection::Tcp(ref mut sock) => {
+                &mut *sock as &mut Write
+            }
+            #[cfg(feature="unix_socket")]
+            ActualConnection::Unix(ref mut sock) => {
+                &mut *sock as &mut Write
+            }
+        };
         try!(w.write(bytes));
         Ok(Value::Okay)
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
-        let mut parser = Parser::new(&mut self.sock as &mut Read);
-        parser.parse_value()
+        Parser::new(match *self {
+            ActualConnection::Tcp(ref mut sock) => {
+                &mut *sock as &mut Read
+            }
+            #[cfg(feature="unix_socket")]
+            ActualConnection::Unix(ref mut sock) => {
+                &mut *sock as &mut Read
+            }
+        }).parse_value()
     }
 }
 
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = try!(ActualConnection::new(
-        &connection_info.host, connection_info.port));
+    let con = try!(ActualConnection::new(&connection_info.addr));
     let rv = Connection { con: RefCell::new(con), db: connection_info.db };
 
     if connection_info.db != 0 {

@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
@@ -19,3 +19,7 @@ readme = "README.md"
 sha1 = "*"
 url = "*"
 rustc-serialize = "*"
+
+[dependencies.unix_socket]
+rust-unix-socket = "*"
+optional = true
