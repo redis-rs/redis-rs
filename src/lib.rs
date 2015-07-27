@@ -294,6 +294,13 @@
 //! assert_eq!(result, 3);
 //! # Ok(()) }
 //! ```
+//!
+//! ## Breaking Changes
+//!
+//! In Rust 0.5.0 the semi-internal `ConnectionInfo` struct had to be
+//! changed because of the unix socket support.  You are generally
+//! heavily encouraged to use the URL based configuration format which
+//! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
 
