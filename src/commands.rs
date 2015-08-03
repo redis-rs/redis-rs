@@ -509,6 +509,11 @@ implement_commands! {
         cmd("ZADD").arg(key).arg(score).arg(member)
     }
 
+    /// Add one member to a sorted set with option (only for redis version 3.0.2 or greater)
+    fn zadd_with_option <K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, option: S, member: M, score: S) {
+        cmd("ZADD").arg(key).arg(option).arg(score).arg(member)
+    }
+    
     /// Add multiple members to a sorted set, or update its score if it already exists.
     fn zadd_multiple<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)]) {
         cmd("ZADD").arg(key).arg(items)
