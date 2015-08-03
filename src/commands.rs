@@ -632,7 +632,7 @@ implement_commands! {
 
     /// Remove all members in a sorted set within the given scores.
     fn zrembyscore<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
-        cmd("ZREMBYSCORE").arg(key).arg(min).arg(max)
+        cmd("ZREMRANGEBYSCORE").arg(key).arg(min).arg(max)
     }
 
     /// Return a range of members in a sorted set, by index, with scores
