@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::str::from_utf8;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -11,7 +12,6 @@ use cmd::{cmd, pipe, Pipeline};
 use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
             ErrorKind};
 use parser::Parser;
-use compat::from_utf8;
 
 #[cfg(feature="unix_socket")]
 use unix_socket::UnixStream;

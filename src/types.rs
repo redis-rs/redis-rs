@@ -2,10 +2,10 @@ use std::error;
 use std::fmt;
 use std::io;
 use std::hash::Hash;
+use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use std::convert::From;
 use serialize::json;
-use compat::{from_utf8, Utf8Error};
 
 
 /// Helper enum that is used in some situations to describe

@@ -357,5 +357,3 @@ mod types;
 mod script;
 mod cmd;
 mod commands;
-
-mod compat;
