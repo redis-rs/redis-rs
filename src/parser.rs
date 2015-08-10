@@ -99,13 +99,22 @@ impl<'a, T: Read> Parser<T> {
     }
 
     fn read(&mut self, bytes: usize) -> RedisResult<Vec<u8>> {
-        let mut rv = vec![];
-        rv.reserve(bytes);
-
-        for _ in 0..bytes {
-            rv.push(try!(self.read_byte()));
-        }
-
+        let mut rv = vec![0; bytes];
+        let mut i = 0;
+        while i < bytes {
+            let res_nread = {
+                let ref mut buf = &mut rv[i..];
+                self.reader.read(buf)
+            };
+            match res_nread {
+                Ok(nread) if nread > 0 =>
+                    i += nread,
+                Ok(_) =>
+                    return fail!((ErrorKind::ResponseError, "Could not read enough bytes")),
+                Err(e) =>
+                    return Err(From::from(e))
+            }
+        };
         Ok(rv)
     }
 
