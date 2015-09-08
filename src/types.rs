@@ -17,11 +17,12 @@ pub enum NumericBehavior {
     NumberIsFloat,
 }
 
+//Option to support zadd function to receive an option as argument
 pub enum Options {
-    XX,
-    NX,
-    CH,
-    INCR
+    XX, //Only update elements that already exist. Never add elements.
+    NX, //Don't update already existing elements. Always add new elements.
+    CH, //Modify the return value from the number of new elements added, to the total number of elements changed
+    INCR //Only one score-element pair can be specified in this mode.
 }
 
 /// An enum of all error kinds.
