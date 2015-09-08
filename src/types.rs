@@ -17,6 +17,12 @@ pub enum NumericBehavior {
     NumberIsFloat,
 }
 
+pub enum Options {
+    XX,
+    NX,
+    CH,
+    INCR
+}
 
 /// An enum of all error kinds.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
