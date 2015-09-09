@@ -512,10 +512,10 @@ implement_commands! {
     /// Add one member to a sorted set with option (only for redis version 3.0.2 or greater)
     fn zadd_with_option <K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, opt: Options, member: M, score: S) {
         match opt {
-            Options::XX     -> cmd("ZADD").arg(key).arg("XX").arg(score).arg(member)
-            Options::NX     -> cmd("ZADD").arg(key).arg("NX").arg(score).arg(member)
-            Options::CH     -> cmd("ZADD").arg(key).arg("CH").arg(score).arg(member)
-            Options::INCR   -> cmd("ZADD").arg(key).arg("INCR").arg(score).arg(member)
+            Options::XX     => cmd("ZADD").arg(key).arg("XX").arg(score).arg(member)
+            Options::NX     => cmd("ZADD").arg(key).arg("NX").arg(score).arg(member)
+            Options::CH     => cmd("ZADD").arg(key).arg("CH").arg(score).arg(member)
+            Options::INCR   => cmd("ZADD").arg(key).arg("INCR").arg(score).arg(member)
         } 
     }
     
