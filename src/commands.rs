@@ -141,7 +141,7 @@ implement_commands! {
 
     /// Set the value and expiration of a key.
     fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: usize) {
-        cmd("SETEX").arg(key).arg(value).arg(seconds)
+        cmd("SETEX").arg(key).arg(seconds).arg(value)
     }
 
     /// Set the value of a key, only if the key does not exist
