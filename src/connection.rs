@@ -1,6 +1,6 @@
 #[cfg(feature="unix_socket")]
 use std::path::PathBuf;
-use std::io::{Read, Write};
+use std::io::{Read, BufReader, Write};
 use std::net::TcpStream;
 use std::str::from_utf8;
 use std::cell::RefCell;
@@ -147,7 +147,7 @@ impl IntoConnectionInfo for url::Url {
 
 
 enum ActualConnection {
-    Tcp(TcpStream),
+    Tcp(BufReader<TcpStream>),
     #[cfg(feature="unix_socket")]
     Unix(UnixStream),
 }
@@ -178,7 +178,9 @@ impl ActualConnection {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let host : &str = &*host;
-                ActualConnection::Tcp(try!(TcpStream::connect((host, *port))))
+                let tcp = try!(TcpStream::connect((host, *port)));
+                let buffered = BufReader::new(tcp);
+                ActualConnection::Tcp(buffered)
             }
             #[cfg(feature="unix_socket")]
             ConnectionAddr::Unix(ref path) => {
@@ -189,8 +191,8 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = match *self {
-            ActualConnection::Tcp(ref mut sock) => {
-                &mut *sock as &mut Write
+            ActualConnection::Tcp(ref mut reader) => {
+                reader.get_mut() as &mut Write
             }
             #[cfg(feature="unix_socket")]
             ActualConnection::Unix(ref mut sock) => {
@@ -203,8 +205,8 @@ impl ActualConnection {
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         Parser::new(match *self {
-            ActualConnection::Tcp(ref mut sock) => {
-                &mut *sock as &mut Read
+            ActualConnection::Tcp(ref mut reader) => {
+                reader as &mut Read
             }
             #[cfg(feature="unix_socket")]
             ActualConnection::Unix(ref mut sock) => {
