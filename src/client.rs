@@ -4,6 +4,7 @@ use types::{RedisResult, Value};
 
 
 /// The client type.
+#[derive(Debug, Clone)]
 pub struct Client {
     connection_info: ConnectionInfo,
 }
