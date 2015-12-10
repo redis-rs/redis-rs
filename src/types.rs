@@ -349,7 +349,7 @@ impl InfoDict {
     /// hash (`#`) are ignored.
     pub fn new(kvpairs: &str) -> InfoDict {
         let mut map = HashMap::new();
-        for line in kvpairs.lines_any() {
+        for line in kvpairs.lines() {
             if line.len() == 0 || line.starts_with("#") {
                 continue;
             }

@@ -408,8 +408,8 @@ impl PubSub {
             let msg_type : String = try!(from_redis_value(
                 &unwrap_or!(iter.next(), continue)));
             let mut pattern = None;
-            let mut payload;
-            let mut channel;
+            let payload;
+            let channel;
 
             if msg_type == "message" {
                 channel = unwrap_or!(iter.next(), continue);

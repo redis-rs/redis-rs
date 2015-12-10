@@ -57,7 +57,7 @@ impl RedisServer {
 impl Drop for RedisServer {
 
     fn drop(&mut self) {
-        let _ = self.process.kill().unwrap();
+        let _ = self.process.kill();
         let _ = self.process.wait();
     }
 }
