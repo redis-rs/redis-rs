@@ -221,13 +221,6 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(&connection_info.addr));
     let rv = Connection { con: RefCell::new(con), db: connection_info.db };
 
-    if connection_info.db != 0 {
-        match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
-            Ok(Value::Okay) => {}
-            _ => fail!((ErrorKind::ResponseError, "Redis server refused to switch database"))
-        }
-    }
-
     match connection_info.passwd {
         Some(ref passwd) => {
             match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
@@ -237,6 +230,13 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
             }
         },
         None => {},
+    }
+    
+    if connection_info.db != 0 {
+        match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
+            Ok(Value::Okay) => {}
+            _ => fail!((ErrorKind::ResponseError, "Redis server refused to switch database"))
+        }
     }
 
     Ok(rv)
