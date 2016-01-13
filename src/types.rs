@@ -75,7 +75,6 @@ pub enum Value {
 /// separated at an early point so the value only holds the remaining
 /// types.
 impl Value {
-
     /// Checks if the return value looks like it fulfils the cursor
     /// protocol.  That means the result is a bulk item of length
     /// two with the first one being a cursor and the second a
@@ -87,16 +86,22 @@ impl Value {
                     return false;
                 }
                 match items[0] {
-                    Value::Data(_) => {},
-                    _ => { return false; }
+                    Value::Data(_) => {}
+                    _ => {
+                        return false;
+                    }
                 };
                 match items[1] {
-                    Value::Bulk(_) => {},
-                    _ => { return false; }
+                    Value::Bulk(_) => {}
+                    _ => {
+                        return false;
+                    }
                 }
                 return true;
             }
-            _ => { return false; }
+            _ => {
+                return false;
+            }
         }
     }
 }
@@ -111,7 +116,7 @@ impl fmt::Debug for Value {
                     Ok(x) => write!(fmt, "string-data('{:?}')", x),
                     Err(_) => write!(fmt, "binary-data({:?})", val),
                 }
-            },
+            }
             Value::Bulk(ref values) => {
                 try!(write!(fmt, "bulk("));
                 let mut is_first = true;
@@ -123,7 +128,7 @@ impl fmt::Debug for Value {
                     is_first = false;
                 }
                 write!(fmt, ")")
-            },
+            }
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({:?})", s),
         }
@@ -150,52 +155,41 @@ impl PartialEq for RedisError {
     fn eq(&self, other: &RedisError) -> bool {
         match (&self.repr, &other.repr) {
             (&ErrorRepr::WithDescription(kind_a, _),
-             &ErrorRepr::WithDescription(kind_b, _)) => {
-                kind_a == kind_b
-            }
+             &ErrorRepr::WithDescription(kind_b, _)) => kind_a == kind_b,
             (&ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
-             &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _)) => {
-                kind_a == kind_b
-            },
+             &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _)) => kind_a == kind_b,
             (&ErrorRepr::ExtensionError(ref a, _),
-             &ErrorRepr::ExtensionError(ref b, _)) => {
-                *a == *b
-            },
+             &ErrorRepr::ExtensionError(ref b, _)) => *a == *b,
             _ => false,
         }
     }
 }
 
 impl From<io::Error> for RedisError {
-
     fn from(err: io::Error) -> RedisError {
         RedisError { repr: ErrorRepr::IoError(err) }
     }
 }
 
 impl From<Utf8Error> for RedisError {
-
     fn from(_: Utf8Error) -> RedisError {
         RedisError { repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8") }
     }
 }
 
 impl From<(ErrorKind, &'static str)> for RedisError {
-
     fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError { repr: ErrorRepr::WithDescription(kind, desc) }
     }
 }
 
 impl From<(ErrorKind, &'static str, String)> for RedisError {
-
     fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
         RedisError { repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail) }
     }
 }
 
 impl error::Error for RedisError {
-
     fn description(&self) -> &str {
         match self.repr {
             ErrorRepr::WithDescription(_, desc) => desc,
@@ -216,9 +210,7 @@ impl error::Error for RedisError {
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.repr {
-            ErrorRepr::WithDescription(_, desc) => {
-                desc.fmt(f)
-            }
+            ErrorRepr::WithDescription(_, desc) => desc.fmt(f),
             ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
                 try!(desc.fmt(f));
                 try!(f.write_str(": "));
@@ -228,10 +220,8 @@ impl fmt::Display for RedisError {
                 try!(code.fmt(f));
                 try!(f.write_str(": "));
                 detail.fmt(f)
-            },
-            ErrorRepr::IoError(ref err) => {
-                err.fmt(f)
             }
+            ErrorRepr::IoError(ref err) => err.fmt(f),
         }
     }
 }
@@ -244,7 +234,6 @@ impl fmt::Debug for RedisError {
 
 /// Indicates a general failure in the library.
 impl RedisError {
-
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match self.repr {
@@ -274,7 +263,7 @@ impl RedisError {
     pub fn is_io_error(&self) -> bool {
         match self.kind() {
             ErrorKind::IoError => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -290,11 +279,11 @@ impl RedisError {
                     // if we connect to a unix socket and the file does not
                     // exist yet, then we want to treat this as if it was a
                     // connection refusal.
-                    io::ErrorKind::NotFound => cfg!(feature="unix_socket"),
+                    io::ErrorKind::NotFound => cfg!(feature = "unix_socket"),
                     _ => false,
                 }
             }
-            _ => { false }
+            _ => false,
         }
     }
 
@@ -309,10 +298,13 @@ impl RedisError {
 
 pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
     RedisError {
-        repr: ErrorRepr::ExtensionError(code.to_string(), match detail {
-            Some(x) => x.to_string(),
-            None => "Unknown extension error encountered".to_string()
-        })
+        repr: ErrorRepr::ExtensionError(code.to_string(),
+                                        match detail {
+                                            Some(x) => x.to_string(),
+                                            None => {
+                                                "Unknown extension error encountered".to_string()
+                                            }
+                                        }),
     }
 }
 
@@ -624,7 +616,7 @@ pub trait FromRedisValue: Sized {
         for item in items.iter() {
             match FromRedisValue::from_redis_value(item) {
                 Ok(val) => rv.push(val),
-                Err(_) => {},
+                Err(_) => {}
             }
         }
         Ok(rv)
@@ -696,16 +688,16 @@ impl FromRedisValue for bool {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
             Value::Status(ref s) => {
-                if &s[..] == "1" { Ok(true) }
-                else if &s[..] == "0" { Ok(false) }
-                else {
-                    invalid_type_error!(v,
-                        "Response status not valid boolean");
+                if &s[..] == "1" {
+                    Ok(true)
+                } else if &s[..] == "0" {
+                    Ok(false)
+                } else {
+                    invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::Okay => Ok(true),
-            _ => invalid_type_error!(v,
-                "Response type not bool compatible."),
+            _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
     }
 }
@@ -713,13 +705,10 @@ impl FromRedisValue for bool {
 impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match *v {
-            Value::Data(ref bytes) => {
-                Ok(try!(from_utf8(bytes)).to_string())
-            },
+            Value::Data(ref bytes) => Ok(try!(from_utf8(bytes)).to_string()),
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
-            _ => invalid_type_error!(v,
-                "Response type not string compatible."),
+            _ => invalid_type_error!(v, "Response type not string compatible."),
         }
     }
 }
@@ -732,18 +721,12 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             Value::Data(ref bytes) => {
                 match FromRedisValue::from_byte_vec(bytes) {
                     Some(x) => Ok(x),
-                    None => invalid_type_error!(v,
-                        "Response type not vector compatible.")
+                    None => invalid_type_error!(v, "Response type not vector compatible."),
                 }
-            },
-            Value::Bulk(ref items) => {
-                FromRedisValue::from_redis_values(items)
             }
-            Value::Nil => {
-                Ok(vec![])
-            },
-            _ => invalid_type_error!(v,
-                "Response type not vector compatible.")
+            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Nil => Ok(vec![]),
+            _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
     }
 }
@@ -757,13 +740,11 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
                 loop {
                     let k = unwrap_or!(iter.next(), break);
                     let v = unwrap_or!(iter.next(), break);
-                    rv.insert(try!(from_redis_value(k)),
-                              try!(from_redis_value(v)));
+                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
                 }
                 Ok(rv)
-            },
-            _ => invalid_type_error!(v,
-                "Response type not hashmap compatible")
+            }
+            _ => invalid_type_error!(v, "Response type not hashmap compatible"),
         }
     }
 }
@@ -777,9 +758,8 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
                     rv.insert(try!(from_redis_value(item)));
                 }
                 Ok(rv)
-            },
-            _ => invalid_type_error!(v,
-                "Response type not hashmap compatible")
+            }
+            _ => invalid_type_error!(v, "Response type not hashmap compatible"),
         }
     }
 }
@@ -864,7 +844,7 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
-        let s : String = try!(from_redis_value(v));
+        let s: String = try!(from_redis_value(v));
         Ok(InfoDict::new(&s))
     }
 }
@@ -886,7 +866,9 @@ impl FromRedisValue for json::Json {
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
         match *v {
-            Value::Nil => { return Ok(None); }
+            Value::Nil => {
+                return Ok(None);
+            }
             _ => {}
         }
         Ok(Some(try!(from_redis_value(v))))

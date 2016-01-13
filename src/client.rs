@@ -1,5 +1,5 @@
-use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect,
-                 PubSub, connect_pubsub, ConnectionLike};
+use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect, PubSub, connect_pubsub,
+                 ConnectionLike};
 use types::{RedisResult, Value};
 
 
@@ -26,14 +26,11 @@ pub struct Client {
 /// let con = client.get_connection().unwrap();
 /// ```
 impl Client {
-
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
     pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
-        Ok(Client {
-            connection_info: try!(params.into_connection_info())
-        })
+        Ok(Client { connection_info: try!(params.into_connection_info()) })
     }
 
     /// Instructs the client to actually connect to redis and returns a
@@ -56,13 +53,15 @@ impl Client {
 }
 
 impl ConnectionLike for Client {
-
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
         try!(self.get_connection()).req_packed_command(cmd)
     }
 
-    fn req_packed_commands(&self, cmd: &[u8],
-        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
+    fn req_packed_commands(&self,
+                           cmd: &[u8],
+                           offset: usize,
+                           count: usize)
+                           -> RedisResult<Vec<Value>> {
         try!(self.get_connection()).req_packed_commands(cmd, offset, count)
     }
 
