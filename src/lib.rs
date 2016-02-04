@@ -311,42 +311,20 @@ extern crate sha1;
 #[cfg(feature="unix_socket")]
 extern crate unix_socket;
 
-/* public api */
+// public api
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
 pub use script::{Script, ScriptInvocation};
-pub use connection::{Connection, ConnectionLike, ConnectionInfo,
-                     ConnectionAddr, IntoConnectionInfo, PubSub, Msg, transaction,
-                     parse_redis_url};
+pub use connection::{Connection, ConnectionLike, ConnectionInfo, ConnectionAddr,
+                     IntoConnectionInfo, PubSub, Msg, transaction, parse_redis_url};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
-pub use commands::{
-    Commands,
-    PipelineCommands,
-};
+pub use commands::{Commands, PipelineCommands};
 
 #[doc(hidden)]
-pub use types::{
-    /* low level values */
-    Value,
-
-    /* error and result types */
-    RedisError,
-    RedisResult,
-
-    /* error kinds */
-    ErrorKind,
-
-    /* utility types */
-    InfoDict,
-    NumericBehavior,
-
-    /* conversion traits */
-    FromRedisValue,
-    ToRedisArgs,
-
-    /* utility functions */
-    from_redis_value,
-};
+pub use types::{/* low level values */ Value, /* error and result types */ RedisError,
+                RedisResult, /* error kinds */ ErrorKind, /* utility types */ InfoDict,
+                NumericBehavior, /* conversion traits */ FromRedisValue, ToRedisArgs,
+                /* utility functions */ from_redis_value};
 
 mod macros;
 

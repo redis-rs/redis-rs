@@ -57,7 +57,8 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
+            fn scan_match
+                <P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
                 cmd("SCAN").cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
             }
 
@@ -593,7 +594,8 @@ implement_commands! {
     }
 
     /// Return a range of members in a sorted set, by score with scores.
-    fn zrangebyscore_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
+    fn zrangebyscore_withscores
+    <K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
     }
 
@@ -653,7 +655,8 @@ implement_commands! {
     }
 
     /// Return a range of members in a sorted set, by score with scores.
-    fn zrevrangebyscore_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) {
+    fn zrevrangebyscore_withscores
+        <K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
     }
 
