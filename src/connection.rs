@@ -1,7 +1,7 @@
 #[cfg(feature="unix_socket")]
 use std::path::PathBuf;
 use std::io::{Read, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{self, TcpStream};
 use std::str::from_utf8;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -204,7 +204,7 @@ impl ActualConnection {
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
-        Parser::new(match *self {
+        let result = Parser::new(match *self {
             ActualConnection::Tcp(ref mut reader) => {
                 reader as &mut Read
             }
@@ -212,7 +212,23 @@ impl ActualConnection {
             ActualConnection::Unix(ref mut sock) => {
                 &mut *sock as &mut Read
             }
-        }).parse_value()
+        }).parse_value();
+        // shutdown connection on protocol error
+        match result {
+            Err(ref e) if e.kind() == ErrorKind::ResponseError => {
+                match *self {
+                    ActualConnection::Tcp(ref mut reader) => {
+                        let _ = reader.get_mut().shutdown(net::Shutdown::Both);
+                    }
+                    #[cfg(feature="unix_socket")]
+                    ActualConnection::Unix(ref mut sock) => {
+                        let _ = sock.shutdown(net::Shutdown::Both);
+                    }
+                }
+            }
+            _ => ()
+        }
+        result
     }
 }
 

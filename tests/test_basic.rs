@@ -532,3 +532,37 @@ fn test_tuple_decoding_regression() {
     let vec : Vec<(String,u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
     assert_eq!(vec.len(), 0);
 }
+
+#[test]
+fn test_invalid_protocol() {
+    use std::thread;
+    use std::error::Error;
+    use std::io::{self, Write};
+    use std::net::{TcpListener};
+    use redis::{RedisResult, Parser};
+
+    let child = thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
+        let listener = try!(TcpListener::bind(&format!("127.0.0.1:{}", SERVER_PORT)[..]));
+        let mut stream = try!(listener.incoming().next().unwrap());
+        // read the request and respond with garbage
+        let _: redis::Value = try!(Parser::new(&mut stream).parse_value());
+        try!(stream.write_all(b"garbage ---!#!#\r\n\r\n\n\r"));
+        // block until the stream is shutdown by the client
+        let _: RedisResult<redis::Value> = Parser::new(&mut stream).parse_value();
+        Ok(())
+    });
+    sleep_ms(100);
+    // some work here
+    let cli = redis::Client::open(&format!("redis://127.0.0.1:{}/", SERVER_PORT)[..]).unwrap();
+    let con = cli.get_connection().unwrap();
+
+    let mut result: redis::RedisResult<u8>;
+    // first requests returns ResponseError
+    result = con.del("my_zset");
+    assert_eq!(result.unwrap_err().kind(), redis::ErrorKind::ResponseError);
+    // from now on it's IoError due to the closed connection
+    result = con.del("my_zset");
+    assert_eq!(result.unwrap_err().kind(), redis::ErrorKind::IoError);
+
+    child.join().unwrap().unwrap();
+}
