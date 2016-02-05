@@ -3,8 +3,8 @@
 [![Build Status](https://travis-ci.org/mitsuhiko/redis-rs.svg?branch=master)](https://travis-ci.org/mitsuhiko/redis-rs)
 [![crates.io](http://meritbadge.herokuapp.com/redis)](https://crates.io/crates/redis)
 
-Redis-rs is a high level redis library for rust.  It provides convenient access
-to all redis functionality through a very flexible but low-level API.  It
+Redis-rs is a high level redis library for Rust.  It provides convenient access
+to all Redis functionality through a very flexible but low-level API.  It
 uses a customizable type conversion trait so that any operation can return
 results in just the type you are expecting.  This makes for a very pleasant
 development experience.
@@ -12,12 +12,9 @@ development experience.
 The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
-[dependencies.redis]
-git = "https://github.com/mitsuhiko/redis-rs.git"
+[dependencies]
+redis = "0.5.2"
 ```
-
-Note that this library always tracks Rust nightly until Rust will
-release a proper stable version.
 
 Documentation on the library can be found at
 [mitsuhiko.github.io/redis-rs](http://mitsuhiko.github.io/redis-rs/redis/).
