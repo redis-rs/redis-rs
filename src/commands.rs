@@ -129,6 +129,11 @@ implement_commands! {
         cmd(if key.is_single_arg() { "GET" } else { "MGET" }).arg(key)
     }
 
+    /// Gets all keys matching pattern
+    fn keys<K: ToRedisArgs>(key: K) {
+        cmd("KEYS").arg(key)
+    }
+
     /// Set the string value of a key.
     fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("SET").arg(key).arg(value)
