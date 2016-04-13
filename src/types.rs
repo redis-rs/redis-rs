@@ -298,6 +298,21 @@ impl RedisError {
         }
     }
 
+    /// Returns true if error was caused by I/O time out.
+    /// Note that this may not be accurate depending on platform.
+    pub fn is_timeout(&self) -> bool {
+        match self.repr {
+            ErrorRepr::IoError(ref err) => {
+                match err.kind() {
+                    io::ErrorKind::TimedOut => true,
+                    io::ErrorKind::WouldBlock => true,
+                    _ => false,
+                }
+            }
+            _ => { false }
+        }
+    }
+
     /// Returns the extension error code
     pub fn extension_error_code(&self) -> Option<&str> {
         match self.repr {

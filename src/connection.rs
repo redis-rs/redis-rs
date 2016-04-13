@@ -5,6 +5,7 @@ use std::net::{self, TcpStream};
 use std::str::from_utf8;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::time::Duration;
 
 use url;
 
@@ -230,6 +231,32 @@ impl ActualConnection {
         }
         result
     }
+
+    pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        match *self {
+            ActualConnection::Tcp(ref reader) => {
+                try!(reader.get_ref().set_write_timeout(dur));
+            }
+            #[cfg(feature="unix_socket")]
+            ActualConnection::Unix(ref sock) => {
+                try!(sock.set_write_timeout(dur));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        match *self {
+            ActualConnection::Tcp(ref reader) => {
+                try!(reader.get_ref().set_read_timeout(dur));
+            }
+            #[cfg(feature="unix_socket")]
+            ActualConnection::Unix(ref sock) => {
+                try!(sock.set_read_timeout(dur));
+            }
+        }
+        Ok(())
+    }
 }
 
 
@@ -247,7 +274,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
         },
         None => {},
     }
-    
+
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Value::Okay) => {}
@@ -317,6 +344,24 @@ impl Connection {
     /// if used in combination with `send_packed_command`.
     pub fn recv_response(&self) -> RedisResult<Value> {
         self.con.borrow_mut().read_response()
+    }
+
+    /// Sets the write timeout for the connection.
+    ///
+    /// If the provided value is `None`, then `send_packed_command` call will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
+    pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        self.con.borrow().set_write_timeout(dur)
+    }
+
+    /// Sets the read timeout for the connection.
+    ///
+    /// If the provided value is `None`, then `recv_response` call will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        self.con.borrow().set_read_timeout(dur)
     }
 }
 
@@ -444,6 +489,15 @@ impl PubSub {
                 pattern: pattern,
             })
         }
+    }
+
+    /// Sets the read timeout for the connection.
+    ///
+    /// If the provided value is `None`, then `get_message` call will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        self.con.set_read_timeout(dur)
     }
 }
 
