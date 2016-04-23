@@ -1,5 +1,4 @@
 use std::io::{Read, BufReader};
-use std::str::from_utf8;
 
 use types::{RedisResult, Value, ErrorKind, make_extension_error};
 
