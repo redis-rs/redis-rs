@@ -503,6 +503,12 @@ impl ToRedisArgs for String {
     }
 }
 
+impl<'a> ToRedisArgs for &'a String {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        vec![self.as_bytes().to_vec()]
+    }
+}
+
 impl<'a> ToRedisArgs for &'a str {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         vec![self.as_bytes().to_vec()]
