@@ -17,6 +17,6 @@ readme = "README.md"
 
 [dependencies]
 sha1 = "0.1.1"
-url = "0.5.4"
+url = "1.0.0"
 rustc-serialize = "0.3.16"
 unix_socket = { version ="0.5.0", optional = true }
