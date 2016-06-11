@@ -1,11 +1,13 @@
 #[cfg(feature="unix_socket")]
 use std::path::PathBuf;
 use std::io::{Read, BufReader, Write};
-use std::net::{self, TcpStream};
+use std::net;
 use std::str::from_utf8;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::time::Duration;
+
+use std::str::FromStr;
 
 use url;
 
@@ -14,8 +16,17 @@ use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
             ErrorKind};
 use parser::Parser;
 
-#[cfg(feature="unix_socket")]
+#[cfg(feature="mioco")]
+use mioco::tcp::TcpStream;
+
+#[cfg(not(feature="mioco"))]
+use std::net::TcpStream;
+
+#[cfg(all(feature="unix_socket", not(feature="mioco")))]
 use unix_socket::UnixStream;
+
+#[cfg(all(feature="unix_socket", feature="mioco"))]
+use mioco::unix::UnixStream;
 
 
 static DEFAULT_PORT: u16 = 6379;
@@ -179,7 +190,9 @@ impl ActualConnection {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let host : &str = &*host;
-                let tcp = try!(TcpStream::connect((host, *port)));
+                let ip = net::IpAddr::from_str(host).unwrap();
+                let socket_addr = net::SocketAddr::new(ip, *port);
+                let tcp = try!(TcpStream::connect(&socket_addr));
                 let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(buffered)
             }
@@ -221,9 +234,13 @@ impl ActualConnection {
                     ActualConnection::Tcp(ref mut reader) => {
                         let _ = reader.get_mut().shutdown(net::Shutdown::Both);
                     }
-                    #[cfg(feature="unix_socket")]
+                    #[cfg(all(feature="unix_socket", not(feature="mioco")))]
                     ActualConnection::Unix(ref mut sock) => {
                         let _ = sock.shutdown(net::Shutdown::Both);
+                    }
+                    #[cfg(all(feature="unix_socket", feature="mioco"))]
+                    ActualConnection::Unix(ref mut sock) => {
+                        panic!("Cannot shutdown Unix mio sockets yet");
                     }
                 }
             }
@@ -232,6 +249,7 @@ impl ActualConnection {
         result
     }
 
+    #[cfg(not(feature="mioco"))]
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(ref reader) => {
@@ -245,6 +263,12 @@ impl ActualConnection {
         Ok(())
     }
 
+    #[cfg(feature="mioco")]
+    pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        Ok(())
+    }
+
+    #[cfg(not(feature="mioco"))]
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(ref reader) => {
@@ -255,6 +279,11 @@ impl ActualConnection {
                 try!(sock.set_read_timeout(dur));
             }
         }
+        Ok(())
+    }
+    
+    #[cfg(feature="mioco")]
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         Ok(())
     }
 }

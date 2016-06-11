@@ -311,6 +311,9 @@ extern crate sha1;
 #[cfg(feature="unix_socket")]
 extern crate unix_socket;
 
+#[cfg(feature="mioco")]
+extern crate mioco;
+
 /* public api */
 pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
