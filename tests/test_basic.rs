@@ -111,6 +111,23 @@ impl TestContext {
 
 
 #[test]
+fn test_parse_redis_url() {
+    let redis_url = format!("redis://127.0.0.1:{}/0", SERVER_PORT);
+    match redis::parse_redis_url(&redis_url) {
+        Ok(_) => assert!(true),
+        Err(_) => assert!(false),
+    }
+    match redis::parse_redis_url("unix:/var/run/redis/redis.sock") {
+        Ok(_) => assert!(true),
+        Err(_) => assert!(false),
+    }
+    match redis::parse_redis_url("127.0.0.1") {
+        Ok(_) => assert!(false),
+        Err(_) => assert!(true),
+    }
+}
+
+#[test]
 fn test_args() {
     let ctx = TestContext::new();
     let con = ctx.connection();

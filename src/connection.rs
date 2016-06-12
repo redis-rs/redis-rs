@@ -20,29 +20,19 @@ use unix_socket::UnixStream;
 
 static DEFAULT_PORT: u16 = 6379;
 
-fn redis_scheme_type_mapper(scheme: &str) -> url::SchemeType {
-    match scheme {
-        "redis" => url::SchemeType::Relative(DEFAULT_PORT),
-        "unix" => url::SchemeType::FileLike,
-        _ => url::SchemeType::NonRelative,
-    }
-}
-
 /// This function takes a redis URL string and parses it into a URL
 /// as used by rust-url.  This is necessary as the default parser does
 /// not understand how redis URLs function.
-pub fn parse_redis_url(input: &str) -> url::ParseResult<url::Url> {
-    let mut parser = url::UrlParser::new();
-    parser.scheme_type_mapper(redis_scheme_type_mapper);
-    match parser.parse(input) {
+pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
+    match url::Url::parse(input) {
         Ok(result) => {
-            if result.scheme == "redis" || result.scheme == "unix" {
+            if result.scheme() == "redis" || result.scheme() == "unix" {
                 Ok(result)
             } else {
-                Err(url::ParseError::InvalidScheme)
+                Err(())
             }
         },
-        Err(err) => Err(err),
+        Err(_) => Err(()),
     }
 }
 
@@ -97,12 +87,13 @@ impl<'a> IntoConnectionInfo for &'a str {
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
         addr: Box::new(ConnectionAddr::Tcp(
-            unwrap_or!(url.serialize_host(),
-                fail!((ErrorKind::InvalidClientConfig, "Missing hostname"))),
+            match url.host() {
+                Some(host) => host.to_string(),
+                None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
+            },
             url.port().unwrap_or(DEFAULT_PORT)
         )),
-        db: match url.serialize_path().unwrap_or("".to_string())
-                .trim_matches('/') {
+        db: match url.path().trim_matches('/') {
             "" => 0,
             path => unwrap_or!(path.parse::<i64>().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
@@ -118,8 +109,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             unwrap_or!(url.to_file_path().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Missing path"))),
         )),
-        db: match url.query_pairs().unwrap_or(vec![])
-                .into_iter().filter(|&(ref key, _)| key == "db").next() {
+        db: match url.query_pairs().into_iter().filter(|&(ref key, _)| key == "db").next() {
             Some((_, db)) => unwrap_or!(db.parse::<i64>().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
             None => 0,
@@ -136,9 +126,9 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
 
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        if self.scheme == "redis" {
+        if self.scheme() == "redis" {
             url_to_tcp_connection_info(self)
-        } else if self.scheme == "unix" {
+        } else if self.scheme() == "unix" {
             url_to_unix_connection_info(self)
         } else {
             fail!((ErrorKind::InvalidClientConfig, "URL provided is not a redis URL"));
