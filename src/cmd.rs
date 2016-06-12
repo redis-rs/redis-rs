@@ -65,14 +65,21 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 }
 
 fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
-    let mut cmd = vec![];
-    cmd.extend(format!("*{}\r\n", args.len()).as_bytes().iter().cloned());
+    let mut cmd = Vec::with_capacity(8192);
+    cmd.push('*' as u8);
+    cmd.extend(args.len().to_string().as_bytes());
+    cmd.push('\r' as u8);
+    cmd.push('\n' as u8);
 
     {
         let mut encode = |item: &[u8]| {
-            cmd.extend(format!("${}\r\n", item.len()).as_bytes().iter().cloned());
-            cmd.extend(item.iter().cloned());
-            cmd.extend(b"\r\n".iter().cloned());
+            cmd.push('$' as u8);
+            cmd.extend(item.len().to_string().as_bytes());
+            cmd.push('\r' as u8);
+            cmd.push('\n' as u8);
+            cmd.extend(item.iter());
+            cmd.push('\r' as u8);
+            cmd.push('\n' as u8);
         };
 
         for item in args.iter() {
