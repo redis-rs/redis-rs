@@ -64,8 +64,35 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
     }
 }
 
+fn countdigits(mut v: usize) -> usize {
+    let mut result = 1;
+    loop {
+        if v < 10 { return result; }
+        if v < 100 { return result + 1; }
+        if v < 1000 { return result + 2; }
+        if v < 10000 { return result + 3; }
+
+        v /= 10000;
+        result += 4;
+    }
+}
+
+#[inline]
+fn bulklen(len: usize) -> usize {
+    return 1+countdigits(len)+2+len+2;
+}
+
 fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
-    let mut cmd = Vec::with_capacity(8192);
+    let mut totlen = 1 + countdigits(args.len()) + 2;
+    for item in args {
+        totlen += bulklen(match *item {
+            Arg::Cursor => countdigits(cursor as usize),
+            Arg::Simple(ref val) => val.len(),
+            Arg::Borrowed(ptr) => ptr.len(),
+        });
+    }
+
+    let mut cmd = Vec::with_capacity(totlen);
     cmd.push('*' as u8);
     cmd.extend(args.len().to_string().as_bytes());
     cmd.push('\r' as u8);
