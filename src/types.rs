@@ -439,7 +439,7 @@ pub trait ToRedisArgs: Sized {
 
     #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
-        items.len() == 1
+        items.len() == 1 && items[0].is_single_arg()
     }
 }
 
@@ -518,6 +518,10 @@ impl<'a> ToRedisArgs for &'a str {
 impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         ToRedisArgs::make_arg_vec(self)
+    }
+
+    fn is_single_arg(&self) -> bool {
+        ToRedisArgs::is_single_vec_arg(&self[..])
     }
 }
 
