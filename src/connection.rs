@@ -1,4 +1,4 @@
-#[cfg(feature="unix_socket")]
+#[cfg(feature="with-unix-sockets")]
 use std::path::PathBuf;
 use std::io::{Read, BufReader, Write};
 use std::net::{self, TcpStream};
@@ -14,7 +14,7 @@ use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
             ErrorKind};
 use parser::Parser;
 
-#[cfg(feature="unix_socket")]
+#[cfg(feature="with-unix-sockets")]
 use unix_socket::UnixStream;
 
 
@@ -39,14 +39,14 @@ pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
 /// Defines the connection address.
 ///
 /// The fields available on this struct depend on if the crate has been
-/// compiled with the `unix_socket` feature or not.  The `Tcp` field
+/// compiled with the `with-unix-sockets` feature or not.  The `Tcp` field
 /// is always available, but the `Unix` one is not.
 #[derive(Clone, Debug)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
     /// Format for this is the path to the unix socket.
-    #[cfg(feature="unix_socket")]
+    #[cfg(feature="with-unix-sockets")]
     Unix(PathBuf),
 }
 
@@ -102,7 +102,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     })
 }
 
-#[cfg(feature="unix_socket")]
+#[cfg(feature="with-unix-sockets")]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
         addr: Box::new(ConnectionAddr::Unix(
@@ -118,7 +118,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     })
 }
 
-#[cfg(not(feature="unix_socket"))]
+#[cfg(not(feature="with-unix-sockets"))]
 fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
     fail!((ErrorKind::InvalidClientConfig,
            "This version of redis-rs is not compiled with Unix socket support."));
@@ -139,7 +139,7 @@ impl IntoConnectionInfo for url::Url {
 
 enum ActualConnection {
     Tcp(BufReader<TcpStream>),
-    #[cfg(feature="unix_socket")]
+    #[cfg(feature="with-unix-sockets")]
     Unix(UnixStream),
 }
 
@@ -173,7 +173,7 @@ impl ActualConnection {
                 let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(buffered)
             }
-            #[cfg(feature="unix_socket")]
+            #[cfg(feature="with-unix-sockets")]
             ConnectionAddr::Unix(ref path) => {
                 ActualConnection::Unix(try!(UnixStream::connect(path)))
             }
@@ -185,7 +185,7 @@ impl ActualConnection {
             ActualConnection::Tcp(ref mut reader) => {
                 reader.get_mut() as &mut Write
             }
-            #[cfg(feature="unix_socket")]
+            #[cfg(feature="with-unix-sockets")]
             ActualConnection::Unix(ref mut sock) => {
                 &mut *sock as &mut Write
             }
@@ -199,7 +199,7 @@ impl ActualConnection {
             ActualConnection::Tcp(ref mut reader) => {
                 reader as &mut Read
             }
-            #[cfg(feature="unix_socket")]
+            #[cfg(feature="with-unix-sockets")]
             ActualConnection::Unix(ref mut sock) => {
                 &mut *sock as &mut Read
             }
@@ -211,7 +211,7 @@ impl ActualConnection {
                     ActualConnection::Tcp(ref mut reader) => {
                         let _ = reader.get_mut().shutdown(net::Shutdown::Both);
                     }
-                    #[cfg(feature="unix_socket")]
+                    #[cfg(feature="with-unix-sockets")]
                     ActualConnection::Unix(ref mut sock) => {
                         let _ = sock.shutdown(net::Shutdown::Both);
                     }
@@ -227,7 +227,7 @@ impl ActualConnection {
             ActualConnection::Tcp(ref reader) => {
                 try!(reader.get_ref().set_write_timeout(dur));
             }
-            #[cfg(feature="unix_socket")]
+            #[cfg(feature="with-unix-sockets")]
             ActualConnection::Unix(ref sock) => {
                 try!(sock.set_write_timeout(dur));
             }
@@ -240,7 +240,7 @@ impl ActualConnection {
             ActualConnection::Tcp(ref reader) => {
                 try!(reader.get_ref().set_read_timeout(dur));
             }
-            #[cfg(feature="unix_socket")]
+            #[cfg(feature="with-unix-sockets")]
             ActualConnection::Unix(ref sock) => {
                 try!(sock.set_read_timeout(dur));
             }

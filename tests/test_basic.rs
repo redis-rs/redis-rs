@@ -1,5 +1,4 @@
 extern crate redis;
-extern crate rustc_serialize as serialize;
 
 use redis::{Commands, PipelineCommands};
 
@@ -8,7 +7,7 @@ use std::thread::{spawn, sleep};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
 
-#[cfg(feature="unix_socket")]
+#[cfg(feature="with-unix-sockets")]
 use std::path::PathBuf;
 
 pub static SERVER_PORT: u16 = 38991;
@@ -28,7 +27,7 @@ impl RedisServer {
             .arg("--port").arg(SERVER_PORT.to_string())
             .arg("--bind").arg("127.0.0.1");
 
-        if cfg!(feature="unix_socket") {
+        if cfg!(feature="with-unix-sockets") {
             cmd.arg("--unixsocket").arg(SERVER_UNIX_PATH);
         }
 
@@ -43,12 +42,12 @@ impl RedisServer {
     pub fn foo(&mut self) {
     }
 
-    #[cfg(not(feature="unix_socket"))]
+    #[cfg(not(feature="with-unix-sockets"))]
     pub fn get_client_addr(&self) -> redis::ConnectionAddr {
         redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
     }
 
-    #[cfg(feature="unix_socket")]
+    #[cfg(feature="with-unix-sockets")]
     pub fn get_client_addr(&self) -> redis::ConnectionAddr {
         redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
     }
@@ -240,9 +239,10 @@ fn test_optionals() {
     assert_eq!(a, 0i32);
 }
 
+#[cfg(feature="with-rustc-json")]
 #[test]
 fn test_json() {
-    use serialize::json::Json;
+    use redis::Json;
 
     let ctx = TestContext::new();
     let con = ctx.connection();

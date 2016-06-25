@@ -52,13 +52,13 @@
 //!
 //! By default this library does not support unix sockets but starting with
 //! redis-rs 0.5.0 you can optionally compile it with unix sockets enabled.
-//! For this you just need to enable the `unix_sockets` flag and some of the
+//! For this you just need to enable the `with-unix-sockets` flag and some of the
 //! otherwise unavailable APIs become available:
 //!
 //! ```ini
 //! [dependencies.redis]
 //! version = "*"
-//! features = ["unix_socket"]
+//! features = ["with-unix-sockets"]
 //! ```
 //!
 //! ## Connection Parameters
@@ -73,7 +73,7 @@
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
 //!
-//! In case you have compiled the crate with the `unix_sockets` feature
+//! In case you have compiled the crate with the `with-unix-sockets` feature
 //! then you can also use a unix URL in this format:
 //!
 //! `unix:///[:<passwd>@]<path>[?db=<db>]`
@@ -305,11 +305,16 @@
 #![deny(non_camel_case_types)]
 
 extern crate url;
-extern crate rustc_serialize as serialize;
 extern crate sha1;
 
-#[cfg(feature="unix_socket")]
+#[cfg(feature="with-rustc-json")]
+pub extern crate rustc_serialize as serialize;
+#[cfg(feature="with-unix-sockets")]
 extern crate unix_socket;
+
+#[doc(hidden)]
+#[cfg(feature="with-rustc-json")]
+pub use serialize::json::Json;
 
 /* public api */
 pub use parser::{parse_redis_value, Parser};

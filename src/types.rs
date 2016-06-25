@@ -5,6 +5,8 @@ use std::hash::Hash;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
 use std::convert::From;
+
+#[cfg(feature="with-rustc-json")]
 use serialize::json;
 
 
@@ -290,7 +292,7 @@ impl RedisError {
                     // if we connect to a unix socket and the file does not
                     // exist yet, then we want to treat this as if it was a
                     // connection refusal.
-                    io::ErrorKind::NotFound => cfg!(feature="unix_socket"),
+                    io::ErrorKind::NotFound => cfg!(feature="with-unix-sockets"),
                     _ => false,
                 }
             }
@@ -558,6 +560,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
+#[cfg(feature="with-rustc-json")]
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         // XXX: the encode result needs to be handled properly
@@ -894,6 +897,7 @@ impl FromRedisValue for InfoDict {
     }
 }
 
+#[cfg(feature="with-rustc-json")]
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
@@ -907,6 +911,7 @@ impl FromRedisValue for json::Json {
         }
     }
 }
+
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {

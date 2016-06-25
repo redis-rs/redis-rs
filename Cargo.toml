@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.5.4"
+version = "0.6.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
@@ -15,8 +15,12 @@ readme = "README.md"
 #[dependencies.url]
 #git = "https://github.com/servo/rust-url"
 
+[features]
+with-rustc-json = ["rustc-serialize"]
+with-unix-sockets = ["unix_socket"]
+
 [dependencies]
 sha1 = "0.1.1"
 url = "1.1"
-rustc-serialize = "0.3.16"
-unix_socket = { version ="0.5.0", optional = true }
+rustc-serialize = { version = "0.3.16", optional = true }
+unix_socket = { version = "0.5.0", optional = true }
