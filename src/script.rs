@@ -33,7 +33,7 @@ impl Script {
         hash.update(code.as_bytes());
         Script {
             code: code.to_string(),
-            hash: hash.hexdigest(),
+            hash: hash.digest().to_string(),
         }
     }
 
