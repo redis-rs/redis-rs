@@ -50,10 +50,10 @@
 //!
 //! ## Unix Sockets
 //!
-//! By default this library does not support unix sockets but starting with
-//! redis-rs 0.5.0 you can optionally compile it with unix sockets enabled.
-//! For this you just need to enable the `with-unix-sockets` flag and some of the
-//! otherwise unavailable APIs become available:
+//! By default this library does not support unix sockets on older versions
+//! of Rust but you can optionally compile it with unix sockets enabled by
+//! enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
+//! this is not needed.
 //!
 //! ```ini
 //! [dependencies.redis]
@@ -73,8 +73,8 @@
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
 //!
-//! In case you have compiled the crate with the `with-unix-sockets` feature
-//! then you can also use a unix URL in this format:
+//! In case the create is compiled with Unix socket support you can also
+//! use a unix URL in this format:
 //!
 //! `unix:///[:<passwd>@]<path>[?db=<db>]`
 //!

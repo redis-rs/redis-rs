@@ -8,6 +8,7 @@ homepage = "https://github.com/mitsuhiko/redis-rs"
 documentation = "http://mitsuhiko.github.io/redis-rs/"
 license = "BSD-3-Clause"
 readme = "README.md"
+build = "build.rs"
 
 #[dependencies.sha1]
 #git = "https://github.com/mitsuhiko/rust-sha1.git"
@@ -18,6 +19,7 @@ readme = "README.md"
 [features]
 with-rustc-json = ["rustc-serialize"]
 with-unix-sockets = ["unix_socket"]
+with-system-unix-sockets = []
 
 [dependencies]
 sha1 = "0.2.0"
