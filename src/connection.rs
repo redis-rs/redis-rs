@@ -16,7 +16,7 @@ use parser::Parser;
 
 #[cfg(feature="with-unix-sockets")]
 use unix_socket::UnixStream;
-#[cfg(feature="with-system-unix-sockets")]
+#[cfg(all(feature="with-system-unix-sockets", not(feature="with-unix-sockets")))]
 use std::os::unix::net::UnixStream;
 
 
