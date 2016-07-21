@@ -7,7 +7,7 @@ use std::thread::{spawn, sleep};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
 
-#[cfg(feature="with-unix-sockets")]
+#[cfg(feature="test-unix-sockets")]
 use std::path::PathBuf;
 
 pub static SERVER_PORT: u16 = 38991;
@@ -27,7 +27,7 @@ impl RedisServer {
             .arg("--port").arg(SERVER_PORT.to_string())
             .arg("--bind").arg("127.0.0.1");
 
-        if cfg!(feature="with-unix-sockets") {
+        if cfg!(feature="test-unix-sockets") {
             cmd.arg("--unixsocket").arg(SERVER_UNIX_PATH);
         }
 
@@ -42,12 +42,12 @@ impl RedisServer {
     pub fn foo(&mut self) {
     }
 
-    #[cfg(not(feature="with-unix-sockets"))]
+    #[cfg(not(feature="test-unix-sockets"))]
     pub fn get_client_addr(&self) -> redis::ConnectionAddr {
         redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
     }
 
-    #[cfg(feature="with-unix-sockets")]
+    #[cfg(feature="test-unix-sockets")]
     pub fn get_client_addr(&self) -> redis::ConnectionAddr {
         redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
     }

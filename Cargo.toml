@@ -21,6 +21,9 @@ with-rustc-json = ["rustc-serialize"]
 with-unix-sockets = ["unix_socket"]
 with-system-unix-sockets = []
 
+# This is exclusively for the testsuite
+test-unix-sockets = []
+
 [dependencies]
 sha1 = "0.2.0"
 url = "1.1"

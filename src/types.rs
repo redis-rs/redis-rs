@@ -292,7 +292,9 @@ impl RedisError {
                     // if we connect to a unix socket and the file does not
                     // exist yet, then we want to treat this as if it was a
                     // connection refusal.
-                    io::ErrorKind::NotFound => cfg!(feature="with-unix-sockets"),
+                    io::ErrorKind::NotFound => cfg!(
+                        any(feature="with-unix-sockets",
+                            feature="with-system-unix-sockets")),
                     _ => false,
                 }
             }
