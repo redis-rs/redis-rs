@@ -1,4 +1,3 @@
-#[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
 use std::path::PathBuf;
 use std::io::{Read, BufReader, Write};
 use std::net::{self, TcpStream};
@@ -40,16 +39,32 @@ pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
 
 /// Defines the connection address.
 ///
-/// The fields available on this struct depend on if the crate has been compiled
-/// with unix sockets or not.  The `Tcp` field is always available, but the `Unix`
-/// one is often not.
+/// Not all connection addresses are supported on all platforms.  For instance
+/// to connect to a unix socket you need to run this on an operating system
+/// that supports them.
 #[derive(Clone, Debug)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
     /// Format for this is the path to the unix socket.
-    #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
     Unix(PathBuf),
+}
+
+impl ConnectionAddr {
+    // Because not all platforms uspport all connection addresses this is a
+    // quick way to figure out if a connection method is supported.  Currently
+    // this only affects unix connections which are only supported on unix
+    // platforms and on older versions of rust also require an explicit feature
+    // to be enabled.
+    pub fn is_supported(&self) -> bool {
+        match *self {
+            ConnectionAddr::Tcp(_, _) => true,
+            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            ConnectionAddr::Unix(_) => true,
+            #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
+            ConnectionAddr::Unix(_) => false,
+        }
+    }
 }
 
 
@@ -123,7 +138,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
 fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
     fail!((ErrorKind::InvalidClientConfig,
-           "This version of redis-rs is not compiled with Unix socket support."));
+           "Unix sockets are not available on this platform."));
 }
 
 impl IntoConnectionInfo for url::Url {
@@ -178,6 +193,11 @@ impl ActualConnection {
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ConnectionAddr::Unix(ref path) => {
                 ActualConnection::Unix(try!(UnixStream::connect(path)))
+            }
+            #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
+            ConnectionAddr::Unix(ref path) => {
+                fail!((ErrorKind::InvalidClientConfig, "Cannot connect to unix sockets \
+                       on this platform"));
             }
         })
     }

@@ -2,24 +2,42 @@ extern crate redis;
 
 use redis::{Commands, PipelineCommands};
 
+use std::env;
 use std::process;
 use std::thread::{spawn, sleep};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
 
-#[cfg(feature="test-unix-sockets")]
 use std::path::PathBuf;
 
 pub static SERVER_PORT: u16 = 38991;
 pub static SERVER_UNIX_PATH: &'static str = "/tmp/redis-rs-test.sock";
 
+#[derive(PartialEq)]
+enum ServerType {
+    Tcp,
+    Unix,
+}
+
 pub struct RedisServer {
     pub process: process::Child,
+    server_type: ServerType,
+}
+
+impl ServerType {
+    fn get_intended() -> ServerType {
+        match env::var("REDISRS_SERVER_TYPE").ok().as_ref().map(|x| &x[..]) {
+            Some("tcp") => ServerType::Tcp,
+            Some("unix") => ServerType::Unix,
+            val => { panic!("Unknown server type {:?}", val); }
+        }
+    }
 }
 
 impl RedisServer {
 
     pub fn new() -> RedisServer {
+        let server_type = ServerType::get_intended();
         let mut cmd = process::Command::new("redis-server");
         cmd
             .stdout(process::Stdio::null())
@@ -27,29 +45,27 @@ impl RedisServer {
             .arg("--port").arg(SERVER_PORT.to_string())
             .arg("--bind").arg("127.0.0.1");
 
-        if cfg!(feature="test-unix-sockets") {
+        if server_type == ServerType::Unix {
             cmd.arg("--unixsocket").arg(SERVER_UNIX_PATH);
         }
 
         let process = cmd.spawn().unwrap();
-        RedisServer { process: process }
+        RedisServer { process: process, server_type: server_type }
     }
 
     pub fn wait(&mut self) {
         self.process.wait().unwrap();
     }
 
-    pub fn foo(&mut self) {
-    }
-
-    #[cfg(not(feature="test-unix-sockets"))]
     pub fn get_client_addr(&self) -> redis::ConnectionAddr {
-        redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
-    }
-
-    #[cfg(feature="test-unix-sockets")]
-    pub fn get_client_addr(&self) -> redis::ConnectionAddr {
-        redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
+        match self.server_type {
+            ServerType::Tcp => {
+                redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
+            },
+            ServerType::Unix => {
+                redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
+            }
+        }
     }
 }
 
