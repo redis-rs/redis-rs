@@ -77,6 +77,11 @@
 //! In case the create is compiled with Unix socket support you can also
 //! use a unix URL in this format:
 //!
+//! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
+//!
+//! For compatibility with some other redis libraries, the "unix" scheme
+//! is also supported:
+//!
 //! `unix:///[:<passwd>@]<path>[?db=<db>]`
 //!
 //! ## Executing Low-Level Commands

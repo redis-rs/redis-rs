@@ -27,10 +27,9 @@ static DEFAULT_PORT: u16 = 6379;
 pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
     match url::Url::parse(input) {
         Ok(result) => {
-            if result.scheme() == "redis" || result.scheme() == "unix" {
-                Ok(result)
-            } else {
-                Err(())
+            match result.scheme() {
+                "redis" | "redis+unix" | "unix" => Ok(result),
+                _ => Err(())
             }
         },
         Err(_) => Err(()),
@@ -62,7 +61,7 @@ impl ConnectionAddr {
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ConnectionAddr::Unix(_) => true,
             #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
-            ConnectionAddr::Unix(_) => false,
+            ConnectionInfo::Unix(_) => false,
         }
     }
 }
@@ -145,7 +144,7 @@ impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         if self.scheme() == "redis" {
             url_to_tcp_connection_info(self)
-        } else if self.scheme() == "unix" {
+        } else if self.scheme() == "unix" || self.scheme() == "redis+unix" {
             url_to_unix_connection_info(self)
         } else {
             fail!((ErrorKind::InvalidClientConfig, "URL provided is not a redis URL"));
