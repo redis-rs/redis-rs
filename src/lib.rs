@@ -48,18 +48,19 @@
 //! # fn main() {}
 //! ```
 //!
-//! ## Unix Sockets
+//! ## Optional Features
 //!
-//! By default this library does not support unix sockets on older versions
-//! of Rust but you can optionally compile it with unix sockets enabled by
-//! enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
-//! this is not needed.
+//! There are currently two features defined that can enable additional
+//! functionality if so desired.
 //!
-//! ```ini
-//! [dependencies.redis]
-//! version = "*"
-//! features = ["with-unix-sockets"]
-//! ```
+//! `with-unix-sockets`:
+//!   By default this library does not support unix sockets on older versions
+//!   of Rust but you can optionally compile it with unix sockets enabled by
+//!   enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
+//!   this is not needed.
+//!
+//! `with-rustc-json`:
+//!   This feature flag enables the `rustc_serialize` JSON support.
 //!
 //! ## Connection Parameters
 //!
