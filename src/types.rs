@@ -341,6 +341,7 @@ pub type RedisResult<T> = Result<T, RedisError>;
 
 
 /// An info dictionary type.
+#[derive(Debug)]
 pub struct InfoDict {
     map: HashMap<String, Value>,
 }
@@ -674,6 +675,13 @@ macro_rules! from_redis_value_for_num_internal {
             let v = $v;
             match *v {
                 Value::Int(val) => Ok(val as $t),
+                Value::Status(ref s) => {
+                    match s.parse::<$t>() {
+                        Ok(rv) => Ok(rv),
+                        Err(_) => invalid_type_error!(v,
+                            "Could not convert from string.")
+                    }
+                },
                 Value::Data(ref bytes) => {
                     match try!(from_utf8(bytes)).parse::<$t>() {
                         Ok(rv) => Ok(rv),
