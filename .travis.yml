@@ -11,7 +11,7 @@ addons:
       - redis-server
 
 script:
-  - make test
+  - REDISRS_UNIFIED_TARGET=1 make test
 
 notifications:
   email: false
