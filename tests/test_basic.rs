@@ -573,23 +573,16 @@ fn test_tuple_decoding_regression() {
 
 #[test]
 fn test_invalid_protocol() {
-    let ctx = TestContext::new();
-    let (addr, url) = match *ctx.server.get_client_addr() {
-        redis::ConnectionAddr::Tcp(ref host, port) => {
-            (format!("{}:{}", host, port),
-             format!("redis://{}:{}", host, port))
-        },
-        _ => { return; }
-    };
-
     use std::thread;
     use std::error::Error;
     use std::io::Write;
     use std::net::TcpListener;
     use redis::{RedisResult, Parser};
 
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
     let child = thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
-        let listener = try!(TcpListener::bind(&addr[..]));
         let mut stream = try!(listener.incoming().next().unwrap());
         // read the request and respond with garbage
         let _: redis::Value = try!(Parser::new(&mut stream).parse_value());
@@ -600,7 +593,7 @@ fn test_invalid_protocol() {
     });
     sleep(Duration::from_millis(100));
     // some work here
-    let cli = redis::Client::open(&url[..]).unwrap();
+    let cli = redis::Client::open(&format!("redis://127.0.0.1:{}", port)[..]).unwrap();
     let con = cli.get_connection().unwrap();
 
     let mut result: redis::RedisResult<u8>;
