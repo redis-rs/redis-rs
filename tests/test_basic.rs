@@ -1,7 +1,10 @@
 extern crate redis;
+extern crate rand;
+extern crate net2;
 
 use redis::{Commands, PipelineCommands};
 
+use std::fs;
 use std::env;
 use std::process;
 use std::thread::{spawn, sleep};
@@ -9,9 +12,6 @@ use std::time::Duration;
 use std::collections::{HashMap, HashSet};
 
 use std::path::PathBuf;
-
-pub static SERVER_PORT: u16 = 38991;
-pub static SERVER_UNIX_PATH: &'static str = "/tmp/redis-rs-test.sock";
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -45,16 +45,25 @@ impl RedisServer {
 
         let addr = match server_type {
             ServerType::Tcp => {
+                // this is technically a race but we can't do better with
+                // the tools that redis gives us :(
+                let listener = net2::TcpBuilder::new_v4().unwrap()
+                    .reuse_address(true).unwrap()
+                    .bind("127.0.0.1:0").unwrap()
+                    .listen(1).unwrap();
+                let server_port = listener.local_addr().unwrap().port();
                 cmd
-                    .arg("--port").arg(SERVER_PORT.to_string())
+                    .arg("--port").arg(server_port.to_string())
                     .arg("--bind").arg("127.0.0.1");
-                redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
+                redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), server_port)
             },
             ServerType::Unix => {
+                let (a, b) = rand::random::<(u64, u64)>();
+                let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
                 cmd
                     .arg("--port").arg("0")
-                    .arg("--unixsocket").arg(SERVER_UNIX_PATH);
-                redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
+                    .arg("--unixsocket").arg(&path);
+                redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
 
@@ -79,6 +88,12 @@ impl Drop for RedisServer {
     fn drop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
+        match *self.get_client_addr() {
+            redis::ConnectionAddr::Unix(ref path) => {
+                fs::remove_file(&path).ok();
+            }
+            _ => {}
+        }
     }
 }
 

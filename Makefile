@@ -4,6 +4,9 @@ build:
 test:
 	@./runtests.sh
 
+test-single:
+	@RUST_TEST_THREADS=1 ./runtests.sh
+
 bench:
 	@RUST_TEST_THREADS=1 cargo bench
 

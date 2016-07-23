@@ -14,7 +14,7 @@ test_run() {
     export CARGO_TARGET_DIR="target/test-$2"
   fi
 
-  RUST_TEST_THREADS=1 REDISRS_SERVER_TYPE=$1 cargo test --features="with-rustc-json $3"
+  REDISRS_SERVER_TYPE=$1 cargo test --features="with-rustc-json $3"
 }
 
 test_run "tcp" "tcp-basic"
