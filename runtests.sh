@@ -18,7 +18,5 @@ test_run() {
 }
 
 test_run "tcp" "tcp-basic"
-if grep with-system-unix-sockets target/debug/build/redis-*/output -q; then
-  test_run "unix" "unix-basic"
-fi
+test_run "unix" "unix-basic"
 test_run "unix" "unix-dep" "with-unix-sockets"
