@@ -11,7 +11,7 @@ test_run() {
   echo "======================================================================"
 
   if [ x$REDISRS_UNIFIED_TARGET != x1 ]; then
-    export CARGO_TARGET_DIR=target/test-$2
+    export CARGO_TARGET_DIR="target/test-$2"
   fi
 
   RUST_TEST_THREADS=1 REDISRS_SERVER_TYPE=$1 cargo test --features="with-rustc-json $3"

@@ -41,7 +41,7 @@ pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
 /// Not all connection addresses are supported on all platforms.  For instance
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),

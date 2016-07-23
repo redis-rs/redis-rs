@@ -21,7 +21,7 @@ enum ServerType {
 
 pub struct RedisServer {
     pub process: process::Child,
-    server_type: ServerType,
+    addr: redis::ConnectionAddr,
 }
 
 impl ServerType {
@@ -41,31 +41,36 @@ impl RedisServer {
         let mut cmd = process::Command::new("redis-server");
         cmd
             .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .arg("--port").arg(SERVER_PORT.to_string())
-            .arg("--bind").arg("127.0.0.1");
+            .stderr(process::Stdio::null());
 
-        if server_type == ServerType::Unix {
-            cmd.arg("--unixsocket").arg(SERVER_UNIX_PATH);
-        }
+        let addr = match server_type {
+            ServerType::Tcp => {
+                cmd
+                    .arg("--port").arg(SERVER_PORT.to_string())
+                    .arg("--bind").arg("127.0.0.1");
+                redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
+            },
+            ServerType::Unix => {
+                cmd
+                    .arg("--port").arg("0")
+                    .arg("--unixsocket").arg(SERVER_UNIX_PATH);
+                redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
+            }
+        };
 
         let process = cmd.spawn().unwrap();
-        RedisServer { process: process, server_type: server_type }
+        RedisServer {
+            process: process,
+            addr: addr,
+        }
     }
 
     pub fn wait(&mut self) {
         self.process.wait().unwrap();
     }
 
-    pub fn get_client_addr(&self) -> redis::ConnectionAddr {
-        match self.server_type {
-            ServerType::Tcp => {
-                redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), SERVER_PORT)
-            },
-            ServerType::Unix => {
-                redis::ConnectionAddr::Unix(PathBuf::from(SERVER_UNIX_PATH))
-            }
-        }
+    pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
+        &self.addr
     }
 }
 
@@ -88,7 +93,7 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: Box::new(server.get_client_addr()),
+            addr: Box::new(server.get_client_addr().clone()),
             db: 0,
             passwd: None,
         }).unwrap();
@@ -127,7 +132,7 @@ impl TestContext {
 
 #[test]
 fn test_parse_redis_url() {
-    let redis_url = format!("redis://127.0.0.1:{}/0", SERVER_PORT);
+    let redis_url = format!("redis://127.0.0.1:1234/0");
     match redis::parse_redis_url(&redis_url) {
         Ok(_) => assert!(true),
         Err(_) => assert!(false),
@@ -568,6 +573,15 @@ fn test_tuple_decoding_regression() {
 
 #[test]
 fn test_invalid_protocol() {
+    let ctx = TestContext::new();
+    let (addr, url) = match *ctx.server.get_client_addr() {
+        redis::ConnectionAddr::Tcp(ref host, port) => {
+            (format!("{}:{}", host, port),
+             format!("redis://{}:{}", host, port))
+        },
+        _ => { return; }
+    };
+
     use std::thread;
     use std::error::Error;
     use std::io::Write;
@@ -575,7 +589,7 @@ fn test_invalid_protocol() {
     use redis::{RedisResult, Parser};
 
     let child = thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
-        let listener = try!(TcpListener::bind(&format!("127.0.0.1:{}", SERVER_PORT)[..]));
+        let listener = try!(TcpListener::bind(&addr[..]));
         let mut stream = try!(listener.incoming().next().unwrap());
         // read the request and respond with garbage
         let _: redis::Value = try!(Parser::new(&mut stream).parse_value());
@@ -586,7 +600,7 @@ fn test_invalid_protocol() {
     });
     sleep(Duration::from_millis(100));
     // some work here
-    let cli = redis::Client::open(&format!("redis://127.0.0.1:{}/", SERVER_PORT)[..]).unwrap();
+    let cli = redis::Client::open(&url[..]).unwrap();
     let con = cli.get_connection().unwrap();
 
     let mut result: redis::RedisResult<u8>;
