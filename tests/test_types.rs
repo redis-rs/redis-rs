@@ -59,7 +59,7 @@ fn test_u32() {
     let i = FromRedisValue::from_redis_value(&Value::Status("42".into()));
     assert_eq!(i, Ok(42u32));
 
-    let bad_i : Result<i32, _> = FromRedisValue::from_redis_value(
+    let bad_i : Result<u32, _> = FromRedisValue::from_redis_value(
         &Value::Status("-1".into()));
     assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
 }
