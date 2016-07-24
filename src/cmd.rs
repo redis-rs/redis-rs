@@ -121,17 +121,21 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     cmd
 }
 
-fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
+fn encode_pipeline(cmds: &[Cmd]) -> Vec<u8> {
     let mut rv = vec![];
-    if atomic {
-        rv.extend(cmd("MULTI").get_packed_command().into_iter());
-    }
     for cmd in cmds.iter() {
         rv.extend(cmd.get_packed_command().into_iter());
     }
-    if atomic {
-        rv.extend(cmd("EXEC").get_packed_command().into_iter());
+    rv
+}
+
+fn encode_atomic_pipeline(cmds: &[Cmd]) -> Vec<u8> {
+    let mut rv = vec![];
+    rv.extend(cmd("MULTI").get_packed_command().into_iter());
+    for cmd in cmds.iter() {
+        rv.extend(cmd.get_packed_command().into_iter());
     }
+    rv.extend(cmd("EXEC").get_packed_command().into_iter());
     rv
 }
 
@@ -418,13 +422,13 @@ impl Pipeline {
 
     fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(try!(con.req_packed_commands(
-            &encode_pipeline(&self.commands, false),
+            &encode_pipeline(&self.commands),
             0, self.commands.len()))))
     }
 
     fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
         let mut resp = try!(con.req_packed_commands(
-            &encode_pipeline(&self.commands, true),
+            &encode_atomic_pipeline(&self.commands),
             self.commands.len() + 1, 1));
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
