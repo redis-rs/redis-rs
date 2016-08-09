@@ -61,7 +61,7 @@ impl ConnectionAddr {
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ConnectionAddr::Unix(_) => true,
             #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
-            ConnectionInfo::Unix(_) => false,
+            ConnectionAddr::Unix(_) => false,
         }
     }
 }
