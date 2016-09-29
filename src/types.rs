@@ -742,6 +742,13 @@ impl FromRedisValue for bool {
                 }
             }
             Value::Okay => Ok(true),
+            Value::Data(ref bytes) => {
+                match try!(from_utf8(bytes)).parse::<bool>() {
+                    Ok(rv) => Ok(rv),
+                    Err(_) => invalid_type_error!(v,
+                        "Could not convert from string.")
+                }
+            },
             _ => invalid_type_error!(v,
                 "Response type not bool compatible."),
         }

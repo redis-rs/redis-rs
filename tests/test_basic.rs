@@ -294,6 +294,20 @@ fn test_json() {
 }
 
 #[test]
+fn test_bool() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    redis::cmd("SET").arg("true").arg(true).execute(&con);
+    redis::cmd("SET").arg("false").arg(false).execute(&con);
+
+    let true_val : bool = redis::cmd("GET").arg("true").query(&con).unwrap();
+    let false_val : bool = redis::cmd("GET").arg("false").query(&con).unwrap();
+    assert_eq!(true_val, true);
+    assert_eq!(false_val, false);
+}
+
+#[test]
 fn test_scanning() {
     let ctx = TestContext::new();
     let con = ctx.connection();
