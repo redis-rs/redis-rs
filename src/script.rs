@@ -97,7 +97,9 @@ impl<'a> ScriptInvocation<'a> {
     /// Adds a regular argument to the invocation.  This ends up as `ARGV[i]`
     /// in the script.
     #[inline]
-    pub fn arg<T: ToRedisArgs>(&'a mut self, arg: T) -> &'a mut ScriptInvocation {
+    pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut ScriptInvocation<'a>
+        where 'a: 'b
+    {
         self.args.extend(arg.to_redis_args().into_iter());
         self
     }
@@ -105,7 +107,9 @@ impl<'a> ScriptInvocation<'a> {
     /// Adds a key argument to the invocation.  This ends up as `KEYS[i]`
     /// in the script.
     #[inline]
-    pub fn key<T: ToRedisArgs>(&'a mut self, key: T) -> &'a mut ScriptInvocation {
+    pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut ScriptInvocation<'a>
+        where 'a: 'b
+    {
         self.keys.extend(key.to_redis_args().into_iter());
         self
     }
