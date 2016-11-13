@@ -446,7 +446,8 @@ fn test_pubsub() {
     });
 
     redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
-    redis::cmd("PUBLISH").arg("foo").arg(23).execute(&con);
+    // We can also call the command directly
+    assert_eq!(con.publish("foo", 23), Ok(1));
 
     thread.join().ok().expect("Something went wrong");
 }
