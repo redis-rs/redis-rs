@@ -720,6 +720,11 @@ implement_commands! {
     fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
+
+    /// Posts a message to the given channel.
+    fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
+        cmd("PUBLISH").arg(channel).arg(message)
+    }
 }
 
 impl Commands for Connection {}
