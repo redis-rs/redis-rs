@@ -331,7 +331,6 @@ pub use connection::{Connection, ConnectionLike, ConnectionInfo, ConnectionAddr,
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{Commands, PipelineCommands};
 
-#[doc(hidden)]
 pub use types::{
     /* low level values */
     Value,
