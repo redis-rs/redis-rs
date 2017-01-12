@@ -16,7 +16,7 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
     b.iter(|| {
         let key = "test_key";
         redis::cmd("SET").arg(key).arg(42).execute(&con);
-        let _ : isize = redis::cmd("GET").arg(key).query(&con).unwrap();
+        let _: isize = redis::cmd("GET").arg(key).query(&con).unwrap();
         redis::cmd("DEL").arg(key).execute(&con);
     });
 }
@@ -28,10 +28,18 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         let key = "test_key";
-        let _ : (usize,) = redis::pipe()
-            .cmd("SET").arg(key).arg(42).ignore()
-            .cmd("GET").arg(key)
-            .cmd("DEL").arg(key).ignore().query(&con).unwrap();
+        let _: (usize,) = redis::pipe()
+            .cmd("SET")
+            .arg(key)
+            .arg(42)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
+            .cmd("DEL")
+            .arg(key)
+            .ignore()
+            .query(&con)
+            .unwrap();
     });
 }
 
@@ -41,12 +49,17 @@ fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
     let con = client.get_connection().unwrap();
     let key = "test_key";
     let mut pipe = redis::pipe();
-    pipe
-        .cmd("SET").arg(key).arg(42).ignore()
-        .cmd("GET").arg(key)
-        .cmd("DEL").arg(key).ignore();
+    pipe.cmd("SET")
+        .arg(key)
+        .arg(42)
+        .ignore()
+        .cmd("GET")
+        .arg(key)
+        .cmd("DEL")
+        .arg(key)
+        .ignore();
 
     b.iter(|| {
-        let _ : (usize,) = pipe.query(&con).unwrap();
+        let _: (usize,) = pipe.query(&con).unwrap();
     });
 }

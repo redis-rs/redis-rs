@@ -26,7 +26,6 @@ pub struct Script {
 /// assert_eq!(result, Ok(3));
 /// ```
 impl Script {
-
     /// Creates a new script object.
     pub fn new(code: &str) -> Script {
         let mut hash = Sha1::new();
@@ -67,17 +66,22 @@ impl Script {
     /// not change.  Normally you can use `arg` and `key` directly.
     #[inline]
     pub fn prepare_invoke(&self) -> ScriptInvocation {
-        ScriptInvocation { script: self, args: vec![], keys: vec![] }
+        ScriptInvocation {
+            script: self,
+            args: vec![],
+            keys: vec![],
+        }
     }
 
     /// Invokes the script directly without arguments.
     #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
-            script: self,
-            args: vec![],
-            keys: vec![],
-        }.invoke(con)
+                script: self,
+                args: vec![],
+                keys: vec![],
+            }
+            .invoke(con)
     }
 }
 
@@ -93,7 +97,6 @@ pub struct ScriptInvocation<'a> {
 /// the `ScriptInvocation` holds the arguments that should be invoked until
 /// it's sent to the server.
 impl<'a> ScriptInvocation<'a> {
-
     /// Adds a regular argument to the invocation.  This ends up as `ARGV[i]`
     /// in the script.
     #[inline]
@@ -122,11 +125,14 @@ impl<'a> ScriptInvocation<'a> {
                 .arg(self.script.hash.as_bytes())
                 .arg(self.keys.len())
                 .arg(&*self.keys)
-                .arg(&*self.args).query(con) {
-                Ok(val) => { return Ok(val); }
+                .arg(&*self.args)
+                .query(con) {
+                Ok(val) => {
+                    return Ok(val);
+                }
                 Err(err) => {
                     if err.kind() == ErrorKind::NoScriptError {
-                        let _ : () = try!(cmd("SCRIPT")
+                        let _: () = try!(cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
                             .query(con));
