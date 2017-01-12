@@ -13,19 +13,23 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // since rust cannot know what format we actually want we need to be
     // explicit here and define the type of our response.  In this case
     // String -> int fits all the items we query for.
-    let config : HashMap<String, isize> = try!(
-        redis::cmd("CONFIG").arg("GET").arg("*-max-*-entries").query(con));
+    let config: HashMap<String, isize> =
+        try!(redis::cmd("CONFIG").arg("GET").arg("*-max-*-entries").query(con));
 
     println!("Max entry limits:");
 
-    println!("  max-intset:        {}", config.get(
-        "set-max-intset-entries").unwrap_or(&0));
-    println!("  hash-max-ziplist:  {}", config.get(
-        "hash-max-ziplist-entries").unwrap_or(&0));
-    println!("  list-max-ziplist:  {}", config.get(
-        "list-max-ziplist-entries").unwrap_or(&0));
-    println!("  zset-max-ziplist:  {}", config.get(
-        "zset-max-ziplist-entries").unwrap_or(&0));
+    println!("  max-intset:        {}",
+             config.get("set-max-intset-entries")
+                 .unwrap_or(&0));
+    println!("  hash-max-ziplist:  {}",
+             config.get("hash-max-ziplist-entries")
+                 .unwrap_or(&0));
+    println!("  list-max-ziplist:  {}",
+             config.get("list-max-ziplist-entries")
+                 .unwrap_or(&0));
+    println!("  zset-max-ziplist:  {}",
+             config.get("zset-max-ziplist-entries")
+                 .unwrap_or(&0));
 
     Ok(())
 }
@@ -44,7 +48,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
 
     // since we don't care about the return value of the pipeline we can
     // just cast it into the unit type.
-    let _ : () = try!(pipe.query(con));
+    let _: () = try!(pipe.query(con));
 
     // since rust currently does not track temporaries for us, we need to
     // store it in a local variable.
@@ -67,26 +71,32 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
     println!("Run low-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(redis::cmd("SET").arg(key).arg(42).query(con));
+    let _: () = try!(redis::cmd("SET").arg(key).arg(42).query(con));
 
     loop {
         // we need to start watching the key we care about, so that our
         // exec fails if the key changes.
-        let _ : () = try!(redis::cmd("WATCH").arg(key).query(con));
+        let _: () = try!(redis::cmd("WATCH").arg(key).query(con));
 
         // load the old value, so we know what to increment.
-        let val : isize = try!(redis::cmd("GET").arg(key).query(con));
+        let val: isize = try!(redis::cmd("GET").arg(key).query(con));
 
         // at this point we can go into an atomic pipe (a multi block)
         // and set up the keys.
-        let response : Option<(isize,)> = try!(redis::pipe()
+        let response: Option<(isize,)> = try!(redis::pipe()
             .atomic()
-            .cmd("SET").arg(key).arg(val + 1).ignore()
-            .cmd("GET").arg(key)
+            .cmd("SET")
+            .arg(key)
+            .arg(val + 1)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
             .query(con));
 
         match response {
-            None => { continue; }
+            None => {
+                continue;
+            }
             Some(response) => {
                 let (new_val,) = response;
                 println!("  New value: {}", new_val);
@@ -104,16 +114,17 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _ : () = try!(con.set(key, 42));
+    let _: () = try!(con.set(key, 42));
 
     // run the transaction block.
-    let (new_val,) : (isize,) = try!(transaction(con, &[key], |pipe| {
+    let (new_val,): (isize,) = try!(transaction(con, &[key], |pipe| {
         // load the old value, so we know what to increment.
-        let val : isize = try!(con.get(key));
+        let val: isize = try!(con.get(key));
         // increment
-        pipe
-            .set(key, val + 1).ignore()
-            .get(key).query(con)
+        pipe.set(key, val + 1)
+            .ignore()
+            .get(key)
+            .query(con)
     }));
 
     // and print the result
@@ -124,8 +135,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
 
 
 /// Runs all the examples and propagates errors up.
-fn do_redis_code() -> redis::RedisResult<()>
-{
+fn do_redis_code() -> redis::RedisResult<()> {
     // general connection handling
     let client = try!(redis::Client::open("redis://127.0.0.1/"));
     let con = try!(client.get_connection());
@@ -144,14 +154,13 @@ fn do_redis_code() -> redis::RedisResult<()>
 }
 
 
-fn main()
-{
+fn main() {
     // at this point the errors are fatal, let's just fail hard.
     match do_redis_code() {
         Err(err) => {
             println!("Could not execute example:");
             println!("  {}: {}", err.category(), err.description());
-        },
-        Ok(()) => {},
+        }
+        Ok(()) => {}
     }
 }

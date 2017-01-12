@@ -1,5 +1,4 @@
-use types::{ToRedisArgs, FromRedisValue, Value, RedisResult,
-            ErrorKind, from_redis_value};
+use types::{ToRedisArgs, FromRedisValue, Value, RedisResult, ErrorKind, from_redis_value};
 use connection::ConnectionLike;
 
 #[derive(Clone)]
@@ -43,19 +42,23 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             match self.batch.pop() {
-                Some(v) => { return Some(v); }
+                Some(v) => {
+                    return Some(v);
+                }
                 None => {}
             };
             if self.cursor == 0 {
                 return None;
             }
 
-            let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(
-                self.cursor), return None);
-            let rv = unwrap_or!(self.con.req_packed_command(
-                &pcmd).ok(), return None);
-            let (cur, mut batch) : (u64, Vec<T>) = unwrap_or!(
-                from_redis_value(&rv).ok(), return None);
+            let pcmd = unwrap_or!(self.cmd.get_packed_command_with_cursor(self.cursor),
+                                  return None);
+            let rv = unwrap_or!(self.con
+                                    .req_packed_command(&pcmd)
+                                    .ok(),
+                                return None);
+            let (cur, mut batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(),
+                                                             return None);
             batch.reverse();
 
             self.cursor = cur;
@@ -67,10 +70,18 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 fn countdigits(mut v: usize) -> usize {
     let mut result = 1;
     loop {
-        if v < 10 { return result; }
-        if v < 100 { return result + 1; }
-        if v < 1000 { return result + 2; }
-        if v < 10000 { return result + 3; }
+        if v < 10 {
+            return result;
+        }
+        if v < 100 {
+            return result + 1;
+        }
+        if v < 1000 {
+            return result + 2;
+        }
+        if v < 10000 {
+            return result + 3;
+        }
 
         v /= 10000;
         result += 4;
@@ -79,7 +90,7 @@ fn countdigits(mut v: usize) -> usize {
 
 #[inline]
 fn bulklen(len: usize) -> usize {
-    return 1+countdigits(len)+2+len+2;
+    return 1 + countdigits(len) + 2 + len + 2;
 }
 
 fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
@@ -165,7 +176,11 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
 impl Cmd {
     /// Creates a new empty command.
     pub fn new() -> Cmd {
-        Cmd { args: vec![], cursor: None, is_ignored: false }
+        Cmd {
+            args: vec![],
+            cursor: None,
+            is_ignored: false,
+        }
     }
 
     /// Appends an argument to the command.  The argument passed must
@@ -262,15 +277,14 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike)
-            -> RedisResult<Iter<'a, T>> {
+    pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike) -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
         let rv = try!(con.req_packed_command(&pcmd));
-        let mut batch : Vec<T>;
+        let mut batch: Vec<T>;
         let mut cursor = 0;
 
         if rv.looks_like_cursor() {
-            let (next, b) : (u64, Vec<T>) = try!(from_redis_value(&rv));
+            let (next, b): (u64, Vec<T>) = try!(from_redis_value(&rv));
             batch = b;
             cursor = next;
         } else {
@@ -300,7 +314,7 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn execute(&self, con: &ConnectionLike) {
-        let _ : () = self.query(con).unwrap();
+        let _: () = self.query(con).unwrap();
     }
 }
 
@@ -327,11 +341,13 @@ impl Cmd {
 /// return value which is useful for `SET` commands and others, which
 /// do not have a useful return value.
 impl Pipeline {
-
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
     pub fn new() -> Pipeline {
-        Pipeline { commands: vec![], transaction_mode: false }
+        Pipeline {
+            commands: vec![],
+            transaction_mode: false,
+        }
     }
 
     /// Starts a new command.  Functions such as `arg` then become
@@ -423,14 +439,13 @@ impl Pipeline {
     }
 
     fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
-        let mut resp = try!(con.req_packed_commands(
-            &encode_pipeline(&self.commands, true),
-            self.commands.len() + 1, 1));
+        let mut resp = try!(con.req_packed_commands(&encode_pipeline(&self.commands, true),
+                                                    self.commands.len() + 1,
+                                                    1));
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => fail!((ErrorKind::ResponseError,
-                        "Invalid response when parsing multi response"))
+            _ => fail!((ErrorKind::ResponseError, "Invalid response when parsing multi response")),
         }
     }
 
@@ -449,15 +464,13 @@ impl Pipeline {
     /// ```
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
-        from_redis_value(&(
-            if self.commands.len() == 0 {
-                Value::Bulk(vec![])
-            } else if self.transaction_mode {
-                try!(self.execute_transaction(con))
-            } else {
-                try!(self.execute_pipelined(con))
-            }
-        ))
+        from_redis_value(&(if self.commands.len() == 0 {
+            Value::Bulk(vec![])
+        } else if self.transaction_mode {
+            try!(self.execute_transaction(con))
+        } else {
+            try!(self.execute_pipelined(con))
+        }))
     }
 
     /// This is a shortcut to `query()` that does not return a value and
@@ -472,7 +485,7 @@ impl Pipeline {
     /// ```
     #[inline]
     pub fn execute(&self, con: &ConnectionLike) {
-        let _ : () = self.query(con).unwrap();
+        let _: () = self.query(con).unwrap();
     }
 }
 

@@ -9,8 +9,7 @@ use std::time::Duration;
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value,
-            ErrorKind};
+use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value, ErrorKind};
 use parser::Parser;
 
 #[cfg(feature="with-unix-sockets")]
@@ -29,9 +28,9 @@ pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
         Ok(result) => {
             match result.scheme() {
                 "redis" | "redis+unix" | "unix" => Ok(result),
-                _ => Err(())
+                _ => Err(()),
             }
-        },
+        }
         Err(_) => Err(()),
     }
 }
@@ -102,17 +101,20 @@ impl<'a> IntoConnectionInfo for &'a str {
 
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Tcp(
-            match url.host() {
-                Some(host) => host.to_string(),
-                None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
-            },
-            url.port().unwrap_or(DEFAULT_PORT)
-        )),
+        addr: Box::new(ConnectionAddr::Tcp(match url.host() {
+                                               Some(host) => host.to_string(),
+                                               None => {
+                                                   fail!((ErrorKind::InvalidClientConfig,
+                                                          "Missing hostname"))
+                                               }
+                                           },
+                                           url.port().unwrap_or(DEFAULT_PORT))),
         db: match url.path().trim_matches('/') {
             "" => 0,
-            path => unwrap_or!(path.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
+            path => {
+                unwrap_or!(path.parse::<i64>().ok(),
+                           fail!((ErrorKind::InvalidClientConfig, "Invalid database number")))
+            }
         },
         passwd: url.password().and_then(|pw| Some(pw.to_string())),
     })
@@ -121,13 +123,14 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Unix(
-            unwrap_or!(url.to_file_path().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Missing path"))),
-        )),
+        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(url.to_file_path().ok(),
+                                                       fail!((ErrorKind::InvalidClientConfig,
+                                                              "Missing path"))))),
         db: match url.query_pairs().into_iter().filter(|&(ref key, _)| key == "db").next() {
-            Some((_, db)) => unwrap_or!(db.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))),
+            Some((_, db)) => {
+                unwrap_or!(db.parse::<i64>().ok(),
+                           fail!((ErrorKind::InvalidClientConfig, "Invalid database number")))
+            }
             None => 0,
         },
         passwd: url.password().and_then(|pw| Some(pw.to_string())),
@@ -136,8 +139,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
 #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
 fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
-    fail!((ErrorKind::InvalidClientConfig,
-           "Unix sockets are not available on this platform."));
+    fail!((ErrorKind::InvalidClientConfig, "Unix sockets are not available on this platform."));
 }
 
 impl IntoConnectionInfo for url::Url {
@@ -180,11 +182,10 @@ pub struct Msg {
 }
 
 impl ActualConnection {
-
     pub fn new(addr: &ConnectionAddr) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
-                let host : &str = &*host;
+                let host: &str = &*host;
                 let tcp = try!(TcpStream::connect((host, *port)));
                 let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(buffered)
@@ -195,7 +196,8 @@ impl ActualConnection {
             }
             #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
             ConnectionAddr::Unix(ref path) => {
-                fail!((ErrorKind::InvalidClientConfig, "Cannot connect to unix sockets \
+                fail!((ErrorKind::InvalidClientConfig,
+                       "Cannot connect to unix sockets \
                        on this platform"));
             }
         })
@@ -203,13 +205,9 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let w = match *self {
-            ActualConnection::Tcp(ref mut reader) => {
-                reader.get_mut() as &mut Write
-            }
+            ActualConnection::Tcp(ref mut reader) => reader.get_mut() as &mut Write,
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock) => {
-                &mut *sock as &mut Write
-            }
+            ActualConnection::Unix(ref mut sock) => &mut *sock as &mut Write,
         };
         try!(w.write(bytes));
         Ok(Value::Okay)
@@ -217,14 +215,11 @@ impl ActualConnection {
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
-            ActualConnection::Tcp(ref mut reader) => {
-                reader as &mut Read
-            }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock) => {
-                &mut *sock as &mut Read
-            }
-        }).parse_value();
+                ActualConnection::Tcp(ref mut reader) => reader as &mut Read,
+                #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            ActualConnection::Unix(ref mut sock) => &mut *sock as &mut Read,
+            })
+            .parse_value();
         // shutdown connection on protocol error
         match result {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => {
@@ -238,7 +233,7 @@ impl ActualConnection {
                     }
                 }
             }
-            _ => ()
+            _ => (),
         }
         result
     }
@@ -273,23 +268,27 @@ impl ActualConnection {
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(&connection_info.addr));
-    let rv = Connection { con: RefCell::new(con), db: connection_info.db };
+    let rv = Connection {
+        con: RefCell::new(con),
+        db: connection_info.db,
+    };
 
     match connection_info.passwd {
         Some(ref passwd) => {
             match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
                 Ok(Value::Okay) => {}
-                _ => { fail!((ErrorKind::AuthenticationFailed,
-                               "Password authentication failed")); }
+                _ => {
+                    fail!((ErrorKind::AuthenticationFailed, "Password authentication failed"));
+                }
             }
-        },
-        None => {},
+        }
+        None => {}
     }
 
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Value::Okay) => {}
-            _ => fail!((ErrorKind::ResponseError, "Redis server refused to switch database"))
+            _ => fail!((ErrorKind::ResponseError, "Redis server refused to switch database")),
         }
     }
 
@@ -315,7 +314,6 @@ pub fn connect_pubsub(connection_info: &ConnectionInfo) -> RedisResult<PubSub> {
 /// state of the TCP connection.  This is not possible with `ConnectionLike`
 /// implementors because that functionality is not exposed.
 pub trait ConnectionLike {
-
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value>;
@@ -323,8 +321,11 @@ pub trait ConnectionLike {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
-    fn req_packed_commands(&self, cmd: &[u8],
-        offset: usize, count: usize) -> RedisResult<Vec<Value>>;
+    fn req_packed_commands(&self,
+                           cmd: &[u8],
+                           offset: usize,
+                           count: usize)
+                           -> RedisResult<Vec<Value>>;
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -377,15 +378,17 @@ impl Connection {
 }
 
 impl ConnectionLike for Connection {
-
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         con.read_response()
     }
 
-    fn req_packed_commands(&self, cmd: &[u8],
-        offset: usize, count: usize) -> RedisResult<Vec<Value>> {
+    fn req_packed_commands(&self,
+                           cmd: &[u8],
+                           offset: usize,
+                           count: usize)
+                           -> RedisResult<Vec<Value>> {
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
@@ -425,7 +428,6 @@ impl ConnectionLike for Connection {
 /// # }
 /// ```
 impl PubSub {
-
     fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
         let mut chan = vec![];
         for item in channel.to_redis_args().iter() {
@@ -437,7 +439,7 @@ impl PubSub {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
+        let _: () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.insert(chan);
         Ok(())
     }
@@ -445,7 +447,7 @@ impl PubSub {
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
+        let _: () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.insert(chan);
         Ok(())
     }
@@ -453,7 +455,7 @@ impl PubSub {
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let chan = self.get_channel(&channel);
-        let _ : () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
+        let _: () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.channels.remove(&chan);
         Ok(())
     }
@@ -461,7 +463,7 @@ impl PubSub {
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let chan = self.get_channel(&pchannel);
-        let _ : () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
+        let _: () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
         self.pchannels.remove(&chan);
         Ok(())
     }
@@ -474,11 +476,9 @@ impl PubSub {
     /// appropriate type through the helper methods on it.
     pub fn get_message(&self) -> RedisResult<Msg> {
         loop {
-            let raw_msg : Vec<Value> = try!(from_redis_value(
-                &try!(self.con.recv_response())));
+            let raw_msg: Vec<Value> = try!(from_redis_value(&try!(self.con.recv_response())));
             let mut iter = raw_msg.into_iter();
-            let msg_type : String = try!(from_redis_value(
-                &unwrap_or!(iter.next(), continue)));
+            let msg_type: String = try!(from_redis_value(&unwrap_or!(iter.next(), continue)));
             let mut pattern = None;
             let payload;
             let channel;
@@ -498,7 +498,7 @@ impl PubSub {
                 payload: payload,
                 channel: channel,
                 pattern: pattern,
-            })
+            });
         }
     }
 
@@ -516,7 +516,6 @@ impl PubSub {
 /// This holds the data that comes from listening to a pubsub
 /// connection.  It only contains actual message data.
 impl Msg {
-
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
         from_redis_value(&self.channel)
@@ -529,7 +528,7 @@ impl Msg {
     pub fn get_channel_name(&self) -> &str {
         match self.channel {
             Value::Data(ref bytes) => from_utf8(bytes).unwrap_or("?"),
-            _ => "?"
+            _ => "?",
         }
     }
 
@@ -544,7 +543,7 @@ impl Msg {
     pub fn get_payload_bytes(&self) -> &[u8] {
         match self.channel {
             Value::Data(ref bytes) => bytes,
-            _ => b""
+            _ => b"",
         }
     }
 
@@ -598,19 +597,26 @@ impl Msg {
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
-pub fn transaction<K: ToRedisArgs, T: FromRedisValue, F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>>
-    (con: &ConnectionLike, keys: &[K], func: F) -> RedisResult<T> {
+pub fn transaction<K: ToRedisArgs,
+                   T: FromRedisValue,
+                   F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>>
+    (con: &ConnectionLike,
+     keys: &[K],
+     func: F)
+     -> RedisResult<T> {
     let mut func = func;
     loop {
-        let _ : () = try!(cmd("WATCH").arg(keys).query(con));
+        let _: () = try!(cmd("WATCH").arg(keys).query(con));
         let mut p = pipe();
-        let response : Option<T> = try!(func(p.atomic()));
+        let response: Option<T> = try!(func(p.atomic()));
         match response {
-            None => { continue; }
+            None => {
+                continue;
+            }
             Some(response) => {
                 // make sure no watch is left in the connection, even if
                 // someone forgot to use the pipeline.
-                let _ : () = try!(cmd("UNWATCH").query(con));
+                let _: () = try!(cmd("UNWATCH").query(con));
                 return Ok(response);
             }
         }
