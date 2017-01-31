@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="Rust &lt;redis-rs-with-btree&gt;">
+    <CLASSES>
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-2016-12-29-x86_64-apple-darwin/lib/rustlib/src/rust/src/libstd" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-2016-12-29-x86_64-apple-darwin/lib/rustlib/src/rust/src/libcore" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-2016-12-29-x86_64-apple-darwin/lib/rustlib/src/rust/src/libcollections" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-2016-12-29-x86_64-apple-darwin/lib/rustlib/src/rust/src/liballoc" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-2016-12-29-x86_64-apple-darwin/lib/rustlib/src/rust/src/libstd_unicode" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

@@ -4,6 +4,7 @@ use std::io;
 use std::hash::Hash;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet,BTreeMap};
 use std::convert::From;
 
 #[cfg(feature="with-rustc-json")]
@@ -790,6 +791,25 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
     }
 }
 
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for BTreeMap<K, V>
+where K: Ord {
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeMap::new();
+                let mut iter = items.iter();
+                loop {
+                    let k = unwrap_or!(iter.next(), break);
+                    let v = unwrap_or!(iter.next(), break);
+                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreemap compatible"),
+        }
+    }
+}
+
 impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
         match *v {
@@ -800,7 +820,23 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
                 }
                 Ok(rv)
             }
-            _ => invalid_type_error!(v, "Response type not hashmap compatible"),
+            _ => invalid_type_error!(v, "Response type not hashset compatible"),
+        }
+    }
+}
+
+impl<T: FromRedisValue + Eq + Hash> FromRedisValue for BTreeSet<T>
+where T: Ord {
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeSet::new();
+                for item in items.iter() {
+                    rv.insert(try!(from_redis_value(item)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreeset compatible"),
         }
     }
 }
