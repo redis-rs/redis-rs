@@ -438,6 +438,17 @@ pub trait ToRedisArgs: Sized {
         rv
     }
 
+    /// This only exists internally as a workaround for the lack of
+    /// specialization.
+    #[doc(hidden)]
+    fn make_arg_vec_ref(items: &[&Self]) -> Vec<Vec<u8>> {
+        let mut rv = vec![];
+        for item in items.iter() {
+            rv.extend(item.to_redis_args().into_iter());
+        }
+        rv
+    }
+
     #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].is_single_arg()
@@ -556,6 +567,32 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut rv : Vec<&T> = Vec::with_capacity(self.len());
+
+        rv.extend(self.iter());
+        ToRedisArgs::make_arg_vec_ref(rv.as_slice())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut rv : Vec<&T> = Vec::with_capacity(self.len());
+
+        rv.extend(self.iter());
+        ToRedisArgs::make_arg_vec_ref(rv.as_slice())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
     }
 }
 

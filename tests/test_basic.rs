@@ -10,6 +10,7 @@ use std::process;
 use std::thread::{spawn, sleep};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet,BTreeMap};
 
 use std::path::PathBuf;
 
@@ -247,6 +248,12 @@ fn test_set_ops() {
     assert_eq!(&s, &[1, 2, 3]);
 
     let set: HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    assert_eq!(set.len(), 3);
+    assert!(set.contains(&1i32));
+    assert!(set.contains(&2i32));
+    assert!(set.contains(&3i32));
+
+    let set: BTreeSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
@@ -566,6 +573,13 @@ fn test_nice_hash_api() {
                Ok(()));
 
     let hm: HashMap<String, isize> = con.hgetall("my_hash").unwrap();
+    assert_eq!(hm.get("f1"), Some(&1));
+    assert_eq!(hm.get("f2"), Some(&2));
+    assert_eq!(hm.get("f3"), Some(&4));
+    assert_eq!(hm.get("f4"), Some(&8));
+    assert_eq!(hm.len(), 4);
+
+    let hm: BTreeMap<String, isize> = con.hgetall("my_hash").unwrap();
     assert_eq!(hm.get("f1"), Some(&1));
     assert_eq!(hm.get("f2"), Some(&2));
     assert_eq!(hm.get("f3"), Some(&4));
