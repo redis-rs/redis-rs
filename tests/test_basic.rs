@@ -231,6 +231,11 @@ fn test_hash_ops() {
     assert_eq!(h.len(), 2);
     assert_eq!(h.get("key_1"), Some(&1i32));
     assert_eq!(h.get("key_2"), Some(&2i32));
+
+    let h: BTreeMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
+    assert_eq!(h.len(), 2);
+    assert_eq!(h.get("key_1"), Some(&1i32));
+    assert_eq!(h.get("key_2"), Some(&2i32));
 }
 
 #[test]

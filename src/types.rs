@@ -596,6 +596,32 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
     }
 }
 
+/// this flattens BTreeMap into something that goes well with HMSET
+impl<T: ToRedisArgs + Hash + Eq + Ord,
+     V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut rv = Vec::with_capacity(self.len());
+
+        rv.extend(self.keys()
+            .zip(self.values())
+            .into_iter()
+            .flat_map(|e| {
+                // otherwise things like HMSET will simply NOT work
+                assert!(e.0.is_single_arg() &&
+                        e.1.is_single_arg());
+
+                vec![e.0.to_redis_args(),
+                               e.1.to_redis_args()].into_iter() } )
+            .collect::<Vec<_>>());
+        ToRedisArgs::make_arg_vec(rv.as_slice())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+
 #[cfg(feature="with-rustc-json")]
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
