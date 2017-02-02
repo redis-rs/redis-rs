@@ -444,7 +444,7 @@ pub trait ToRedisArgs: Sized {
     fn make_arg_vec_ref(items: &[&Self]) -> Vec<Vec<u8>> {
         let mut rv = vec![];
         for item in items.iter() {
-            rv.extend(item.to_redis_args().into_iter());
+            rv.extend(item.to_redis_args());
         }
         rv
     }
@@ -600,20 +600,20 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
 impl<T: ToRedisArgs + Hash + Eq + Ord,
      V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let mut rv = Vec::with_capacity(self.len());
+        let mut rv = Vec::with_capacity(self.len()*2);
 
-        rv.extend(self.keys()
-            .zip(self.values())
+        rv.extend(self
             .into_iter()
             .flat_map(|e| {
+                let (key,value) = e;
                 // otherwise things like HMSET will simply NOT work
-                assert!(e.0.is_single_arg() &&
-                        e.1.is_single_arg());
+                assert!(key.is_single_arg() &&
+                        value.is_single_arg());
 
-                vec![e.0.to_redis_args(),
-                               e.1.to_redis_args()].into_iter() } )
-            .collect::<Vec<_>>());
-        ToRedisArgs::make_arg_vec(rv.as_slice())
+                vec![key.to_redis_args(),
+                               value.to_redis_args()].into_iter() } )
+            );
+        ToRedisArgs::make_arg_vec(&rv)
     }
 
     fn is_single_arg(&self) -> bool {
