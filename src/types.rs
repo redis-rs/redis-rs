@@ -621,7 +621,6 @@ impl<T: ToRedisArgs + Hash + Eq + Ord,
     }
 }
 
-
 #[cfg(feature="with-rustc-json")]
 impl ToRedisArgs for json::Json {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
