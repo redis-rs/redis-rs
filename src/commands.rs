@@ -230,7 +230,7 @@ implement_commands! {
 
     /// Sets or clears the bit at offset in the string value stored at key.
     fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) {
-        cmd("SETBIT").arg(key).arg(offset).arg(value)
+        cmd("SETBIT").arg(key).arg(offset).arg(if value {1} else {0})
     }
 
     /// Returns the bit value at offset in the string value stored at key.

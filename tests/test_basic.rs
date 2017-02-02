@@ -631,6 +631,15 @@ fn test_tuple_decoding_regression() {
 }
 
 #[test]
+fn test_bit_operations() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.setbit("bitvec", 10, true), Ok(false));
+    assert_eq!(con.getbit("bitvec", 10), Ok(true));
+}
+
+#[test]
 fn test_invalid_protocol() {
     use std::thread;
     use std::error::Error;
