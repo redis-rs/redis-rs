@@ -332,10 +332,28 @@ pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
 pub use commands::{Commands, PipelineCommands};
 
 #[doc(hidden)]
-pub use types::{/* low level values */ Value, /* error and result types */ RedisError,
-                RedisResult, /* error kinds */ ErrorKind, /* utility types */ InfoDict,
-                NumericBehavior, /* conversion traits */ FromRedisValue, ToRedisArgs,
-                /* utility functions */ from_redis_value};
+pub use types::{
+    /* low level values */
+    Value,
+
+    /* error and result types */
+    RedisError,
+    RedisResult,
+
+    /* error kinds */
+    ErrorKind,
+
+    /* utility types */
+    InfoDict,
+    NumericBehavior,
+
+    /* conversion traits */
+    FromRedisValue,
+    ToRedisArgs,
+
+    /* utility functions */
+    from_redis_value,
+};
 
 mod macros;
 
