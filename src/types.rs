@@ -604,8 +604,7 @@ impl<T: ToRedisArgs + Hash + Eq + Ord,
 
         rv.extend(self
             .into_iter()
-            .flat_map(|e| {
-                let (key,value) = e;
+            .flat_map(|(key,value)| {
                 // otherwise things like HMSET will simply NOT work
                 assert!(key.is_single_arg() &&
                         value.is_single_arg());
