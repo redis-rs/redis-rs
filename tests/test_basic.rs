@@ -191,6 +191,9 @@ fn test_getset() {
     redis::cmd("SET").arg("foo").arg(42).execute(&con);
     assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42));
 
+    redis::cmd("SET").arg("foo2").arg(true).execute(&con);
+    assert_eq!(redis::cmd("GET").arg("foo2").query(&con), Ok(true));
+
     redis::cmd("SET").arg("bar").arg("foo").execute(&con);
     assert_eq!(redis::cmd("GET").arg("bar").query(&con),
                Ok(b"foo".to_vec()));

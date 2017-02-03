@@ -479,7 +479,6 @@ macro_rules! string_based_to_redis_impl {
     )
 }
 
-
 impl ToRedisArgs for u8 {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         let s = self.to_string();
@@ -495,6 +494,21 @@ impl ToRedisArgs for u8 {
     }
 }
 
+static BOOLCONST : [&'static [u8];2] = [ b"0", b"1" ];
+
+impl ToRedisArgs for bool {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let r = match self {
+            &false => BOOLCONST[0],
+            &true  => BOOLCONST[1],
+        };
+        vec![r.to_vec()]
+    }
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        NumericBehavior::NonNumeric
+    }
+}
+
 string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger);
@@ -506,8 +520,6 @@ string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
-string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
-
 
 impl ToRedisArgs for String {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
@@ -787,20 +799,30 @@ from_redis_value_for_num!(usize);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
+        let err = || { invalid_type_error!(v, "Response status not valid boolean") };
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
+            Value::Data(ref s) => {
+                if &s.as_slice()[..] == BOOLCONST[0] {
+                    Ok(false)
+                } else if &s.as_slice()[..] == BOOLCONST[1] {
+                    Ok(true)
+                } else {
+                    err()
+                }
+            }
             Value::Status(ref s) => {
                 if &s[..] == "1" {
                     Ok(true)
                 } else if &s[..] == "0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response status not valid boolean");
+                    err()
                 }
             }
             Value::Okay => Ok(true),
-            _ => invalid_type_error!(v, "Response type not bool compatible."),
+            _ => err(),
         }
     }
 }
