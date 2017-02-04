@@ -730,11 +730,15 @@ pub trait FromRedisValue: Sized {
         Ok(rv)
     }
 
+	fn supports_byte_vec() -> bool {
+		false
+	}
+
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        None
+        Some(vec![])
     }
 }
 
@@ -779,6 +783,10 @@ impl FromRedisValue for u8 {
     fn from_redis_value(v: &Value) -> RedisResult<u8> {
         from_redis_value_for_num_internal!(u8, v)
     }
+
+	fn supports_byte_vec() -> bool {
+		true
+	}
 
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
@@ -849,7 +857,18 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                     None => invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
-            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Bulk(ref items) => {
+				if T::supports_byte_vec() && items.len()>0 {
+					if let Value::Data(ref bytes) = items[0] {
+						// if supports, will give us a vector
+						Ok(FromRedisValue::from_byte_vec(bytes).unwrap())
+					} else {
+						FromRedisValue::from_redis_values(items)
+					}
+				} else {
+					FromRedisValue::from_redis_values(items)
+				}
+			},
             Value::Nil => Ok(vec![]),
             _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
