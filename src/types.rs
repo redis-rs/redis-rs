@@ -441,15 +441,6 @@ pub trait ToRedisArgs: Sized {
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
-    fn make_arg_vec_ref(items: &[&Self]) -> Vec<Vec<u8>> {
-        let mut rv = vec![];
-        for item in items.iter() {
-            rv.extend(item.to_redis_args());
-        }
-        rv
-    }
-
-    #[doc(hidden)]
     fn make_arg_iter_ref<'a, I>(items: I) -> Vec<Vec<u8>>
     where I: Iterator<Item=&'a Self>, Self: 'a {
         let mut rv = Vec::with_capacity(items.size_hint().0);
