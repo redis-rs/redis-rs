@@ -450,6 +450,16 @@ pub trait ToRedisArgs: Sized {
     }
 
     #[doc(hidden)]
+    fn make_arg_iter_ref<'a, I>(items: I) -> Vec<Vec<u8>>
+    where I: Iterator<Item=&'a Self>, Self: 'a {
+        let mut rv = Vec::with_capacity(items.size_hint().0);
+        for item in items {
+            rv.extend(item.to_redis_args());
+        }
+        rv
+    }
+
+    #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].is_single_arg()
     }
@@ -584,10 +594,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 
 impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let mut rv : Vec<&T> = Vec::with_capacity(self.len());
-
-        rv.extend(self.iter());
-        ToRedisArgs::make_arg_vec_ref(rv.as_slice())
+        ToRedisArgs::make_arg_iter_ref(self.iter())
     }
 
     fn is_single_arg(&self) -> bool {
@@ -597,10 +604,7 @@ impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
 
 impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let mut rv : Vec<&T> = Vec::with_capacity(self.len());
-
-        rv.extend(self.iter());
-        ToRedisArgs::make_arg_vec_ref(rv.as_slice())
+        ToRedisArgs::make_arg_iter_ref(self.iter())
     }
 
     fn is_single_arg(&self) -> bool {
