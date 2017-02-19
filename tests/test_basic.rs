@@ -10,6 +10,7 @@ use std::process;
 use std::thread::{spawn, sleep};
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet,BTreeMap};
 
 use std::path::PathBuf;
 
@@ -190,6 +191,9 @@ fn test_getset() {
     redis::cmd("SET").arg("foo").arg(42).execute(&con);
     assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42));
 
+    redis::cmd("SET").arg("foo2").arg(true).execute(&con);
+    assert_eq!(redis::cmd("GET").arg("foo2").query(&con), Ok(true));
+
     redis::cmd("SET").arg("bar").arg("foo").execute(&con);
     assert_eq!(redis::cmd("GET").arg("bar").query(&con),
                Ok(b"foo".to_vec()));
@@ -230,6 +234,11 @@ fn test_hash_ops() {
     assert_eq!(h.len(), 2);
     assert_eq!(h.get("key_1"), Some(&1i32));
     assert_eq!(h.get("key_2"), Some(&2i32));
+
+    let h: BTreeMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
+    assert_eq!(h.len(), 2);
+    assert_eq!(h.get("key_1"), Some(&1i32));
+    assert_eq!(h.get("key_2"), Some(&2i32));
 }
 
 #[test]
@@ -247,6 +256,12 @@ fn test_set_ops() {
     assert_eq!(&s, &[1, 2, 3]);
 
     let set: HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    assert_eq!(set.len(), 3);
+    assert!(set.contains(&1i32));
+    assert!(set.contains(&2i32));
+    assert!(set.contains(&3i32));
+
+    let set: BTreeSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
@@ -572,6 +587,13 @@ fn test_nice_hash_api() {
     assert_eq!(hm.get("f4"), Some(&8));
     assert_eq!(hm.len(), 4);
 
+    let hm: BTreeMap<String, isize> = con.hgetall("my_hash").unwrap();
+    assert_eq!(hm.get("f1"), Some(&1));
+    assert_eq!(hm.get("f2"), Some(&2));
+    assert_eq!(hm.get("f3"), Some(&4));
+    assert_eq!(hm.get("f4"), Some(&8));
+    assert_eq!(hm.len(), 4);
+
     let v: Vec<(String, isize)> = con.hgetall("my_hash").unwrap();
     assert_eq!(v,
                vec![("f1".to_string(), 1),
@@ -599,6 +621,8 @@ fn test_nice_hash_api() {
 
 #[test]
 fn test_nice_list_api() {
+	use redis::ToRedisArgs;
+
     let ctx = TestContext::new();
     let con = ctx.connection();
 
@@ -610,6 +634,18 @@ fn test_nice_list_api() {
     assert_eq!(con.llen("my_list"), Ok(7));
 
     assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
+
+    let v : Vec<i32> = vec![255,254];
+    assert_eq!(con.rpush("my_list2", v), Ok(2));
+    assert_eq!(con.lrange("my_list2", 0, 2), Ok(vec![255,254]));
+
+    // check whether that writes out nicely
+    let v : Vec<u8> = vec![255,254];
+    assert_eq!(con.rpush("my_list3", v.clone()), Ok(1));
+    assert_eq!(con.lrange("my_list3", 0, 2), Ok(vec![255 as u8,254]));
+
+    assert_eq!(con.rpush("my_list4", (&v).to_redis_args()), Ok(1));
+    assert_eq!(con.lrange("my_list4", 0, 2), Ok(vec![255 as u8,254]));
 }
 
 #[test]

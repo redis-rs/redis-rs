@@ -4,6 +4,7 @@ use std::io;
 use std::hash::Hash;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet,BTreeMap};
 use std::convert::From;
 
 #[cfg(feature="with-rustc-json")]
@@ -437,6 +438,18 @@ pub trait ToRedisArgs: Sized {
         rv
     }
 
+    /// This only exists internally as a workaround for the lack of
+    /// specialization.
+    #[doc(hidden)]
+    fn make_arg_iter_ref<'a, I>(items: I) -> Vec<Vec<u8>>
+    where I: Iterator<Item=&'a Self>, Self: 'a {
+        let mut rv = Vec::with_capacity(items.size_hint().0);
+        for item in items {
+            rv.extend(item.to_redis_args());
+        }
+        rv
+    }
+
     #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].is_single_arg()
@@ -467,7 +480,6 @@ macro_rules! string_based_to_redis_impl {
     )
 }
 
-
 impl ToRedisArgs for u8 {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         let s = self.to_string();
@@ -483,6 +495,21 @@ impl ToRedisArgs for u8 {
     }
 }
 
+static BOOLCONST : [&'static [u8];2] = [ b"0", b"1" ];
+
+impl ToRedisArgs for bool {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let r = match self {
+            &false => BOOLCONST[0],
+            &true  => BOOLCONST[1],
+        };
+        vec![r.to_vec()]
+    }
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        NumericBehavior::NonNumeric
+    }
+}
+
 string_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(u16, NumericBehavior::NumberIsInteger);
@@ -494,8 +521,6 @@ string_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 string_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 string_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
-string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
-
 
 impl ToRedisArgs for String {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
@@ -555,6 +580,59 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_iter_ref(self.iter())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_iter_ref(self.iter())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+/// this flattens BTreeMap into something that goes well with HMSET
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq + Ord,
+     V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut rv = Vec::with_capacity(self.len()*2);
+
+        rv.extend(self
+            .into_iter()
+            .flat_map(|(key,value)| {
+                // otherwise things like HMSET will simply NOT work
+                assert!(key.is_single_arg() &&
+                        value.is_single_arg());
+
+                vec![key.to_redis_args(),
+                               value.to_redis_args()].into_iter() } )
+            );
+        ToRedisArgs::make_arg_vec(&rv)
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
     }
 }
 
@@ -656,11 +734,15 @@ pub trait FromRedisValue: Sized {
         Ok(rv)
     }
 
+	fn supports_byte_vec() -> bool {
+		false
+	}
+
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        None
+        Some(vec![])
     }
 }
 
@@ -706,6 +788,10 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
+	fn supports_byte_vec() -> bool {
+		true
+	}
+
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
@@ -725,20 +811,30 @@ from_redis_value_for_num!(usize);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
+        let err = || { invalid_type_error!(v, "Response status not valid boolean") };
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
+            Value::Data(ref s) => {
+                if &s.as_slice()[..] == BOOLCONST[0] {
+                    Ok(false)
+                } else if &s.as_slice()[..] == BOOLCONST[1] {
+                    Ok(true)
+                } else {
+                    err()
+                }
+            }
             Value::Status(ref s) => {
                 if &s[..] == "1" {
                     Ok(true)
                 } else if &s[..] == "0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response status not valid boolean");
+                    err()
                 }
             }
             Value::Okay => Ok(true),
-            _ => invalid_type_error!(v, "Response type not bool compatible."),
+            _ => err(),
         }
     }
 }
@@ -765,7 +861,18 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                     None => invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
-            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Bulk(ref items) => {
+				if T::supports_byte_vec() && items.len()>0 {
+					if let Value::Data(ref bytes) = items[0] {
+						// if supports, will give us a vector
+						Ok(FromRedisValue::from_byte_vec(bytes).unwrap())
+					} else {
+						FromRedisValue::from_redis_values(items)
+					}
+				} else {
+					FromRedisValue::from_redis_values(items)
+				}
+			},
             Value::Nil => Ok(vec![]),
             _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
@@ -790,6 +897,25 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
     }
 }
 
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for BTreeMap<K, V>
+where K: Ord {
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeMap::new();
+                let mut iter = items.iter();
+                loop {
+                    let k = unwrap_or!(iter.next(), break);
+                    let v = unwrap_or!(iter.next(), break);
+                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreemap compatible"),
+        }
+    }
+}
+
 impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
         match *v {
@@ -800,7 +926,23 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
                 }
                 Ok(rv)
             }
-            _ => invalid_type_error!(v, "Response type not hashmap compatible"),
+            _ => invalid_type_error!(v, "Response type not hashset compatible"),
+        }
+    }
+}
+
+impl<T: FromRedisValue + Eq + Hash> FromRedisValue for BTreeSet<T>
+where T: Ord {
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeSet::new();
+                for item in items.iter() {
+                    rv.insert(try!(from_redis_value(item)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreeset compatible"),
         }
     }
 }

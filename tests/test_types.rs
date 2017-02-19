@@ -99,3 +99,29 @@ fn test_bool() {
     let v = FromRedisValue::from_redis_value(&Value::Int(42));
     assert_eq!(v, Ok(true));
 }
+
+#[test]
+fn test_types_to_redis_args() {
+    use redis::ToRedisArgs;
+    use std::collections::HashSet;
+    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
+
+    assert!( 5i32.to_redis_args().len() > 0 );
+    assert!( "abc".to_redis_args().len() > 0 );
+    assert!( "abc".to_redis_args().len() > 0 );
+    assert!( String::from("x").to_redis_args().len() > 0);
+
+    assert!( [5,4].into_iter().cloned().collect::<HashSet<_>>()
+        .to_redis_args().len() > 0 );
+
+    assert!( [5,4].into_iter().cloned().collect::<BTreeSet<_>>()
+        .to_redis_args().len() > 0 );
+
+    // this can be used on something HMSET
+    assert!( [("a", 5), ("b", 6), ("C",7) ].into_iter().cloned()
+            .collect::<BTreeMap<_,_>>()
+            .to_redis_args().len() > 0);
+
+
+}
