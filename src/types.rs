@@ -572,6 +572,9 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
 impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         ToRedisArgs::make_arg_iter_ref(self.iter())
@@ -582,6 +585,9 @@ impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
     }
 }
 
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
 impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
         ToRedisArgs::make_arg_iter_ref(self.iter())
@@ -593,6 +599,9 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
 }
 
 /// this flattens BTreeMap into something that goes well with HMSET
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
 impl<T: ToRedisArgs + Hash + Eq + Ord,
      V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
     fn to_redis_args(&self) -> Vec<Vec<u8>> {
