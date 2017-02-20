@@ -4,6 +4,7 @@ use std::io;
 use std::hash::Hash;
 use std::str::{from_utf8, Utf8Error};
 use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet,BTreeMap};
 use std::convert::From;
 
 #[cfg(feature="with-rustc-json")]
@@ -437,6 +438,19 @@ pub trait ToRedisArgs: Sized {
         rv
     }
 
+    /// This only exists internally as a workaround for the lack of
+    /// specialization.
+    #[doc(hidden)]
+    fn make_arg_iter_ref<'a, I>(items: I) -> Vec<Vec<u8>>
+        where I: Iterator<Item=&'a Self>, Self: 'a
+    {
+        let mut rv = Vec::with_capacity(items.size_hint().0);
+        for item in items {
+            rv.extend(item.to_redis_args());
+        }
+        rv
+    }
+
     #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].is_single_arg()
@@ -555,6 +569,59 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_iter_ref(self.iter())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::make_arg_iter_ref(self.iter())
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+/// this flattens BTreeMap into something that goes well with HMSET
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+impl<T: ToRedisArgs + Hash + Eq + Ord,
+     V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut rv = Vec::with_capacity(self.len()*2);
+
+        rv.extend(self
+            .into_iter()
+            .flat_map(|(key,value)| {
+                // otherwise things like HMSET will simply NOT work
+                assert!(key.is_single_arg() &&
+                        value.is_single_arg());
+
+                vec![key.to_redis_args(),
+                               value.to_redis_args()].into_iter() } )
+            );
+        ToRedisArgs::make_arg_vec(&rv)
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
     }
 }
 
@@ -790,6 +857,26 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMa
     }
 }
 
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for BTreeMap<K, V>
+    where K: Ord
+{
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeMap::new();
+                let mut iter = items.iter();
+                loop {
+                    let k = unwrap_or!(iter.next(), break);
+                    let v = unwrap_or!(iter.next(), break);
+                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreemap compatible"),
+        }
+    }
+}
+
 impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
         match *v {
@@ -800,7 +887,24 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
                 }
                 Ok(rv)
             }
-            _ => invalid_type_error!(v, "Response type not hashmap compatible"),
+            _ => invalid_type_error!(v, "Response type not hashset compatible"),
+        }
+    }
+}
+
+impl<T: FromRedisValue + Eq + Hash> FromRedisValue for BTreeSet<T>
+    where T: Ord
+{
+    fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
+        match *v {
+            Value::Bulk(ref items) => {
+                let mut rv = BTreeSet::new();
+                for item in items.iter() {
+                    rv.insert(try!(from_redis_value(item)));
+                }
+                Ok(rv)
+            }
+            _ => invalid_type_error!(v, "Response type not btreeset compatible"),
         }
     }
 }
