@@ -411,6 +411,11 @@ implement_commands! {
         cmd("LTRIM").arg(key).arg(start).arg(stop)
     }
 
+    /// Sets the list element at index to value
+    fn lset<K: ToRedisArgs, V: ToRedisArgs>(key: K, index: isize, value: V) {
+        cmd("LSET").arg(key).arg(index).arg(value)
+    }
+
     /// Removes and returns the last element of the list stored at key.
     fn rpop<K: ToRedisArgs>(key: K) {
         cmd("RPOP").arg(key)
