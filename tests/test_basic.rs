@@ -629,6 +629,9 @@ fn test_nice_list_api() {
     assert_eq!(con.llen("my_list"), Ok(7));
 
     assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
+
+    assert_eq!(con.lset("my_list", 0, 4), Ok(true));
+    assert_eq!(con.lrange("my_list", 0, 2), Ok((4, 3, 4)));
 }
 
 #[test]
