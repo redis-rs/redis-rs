@@ -18,11 +18,11 @@
 //!
 //! # Basic Operation
 //!
-//! redis-rs exposes to API levels: a low- and a high-level part.  The high-level
-//! part does not expose all the functionality of redis and might take some
-//! liberties in how it speaks the protocol.  The low-level part of the API
-//! allows you to express any request on the redis level.  You can fluently
-//! switch between both API levels at any point.
+//! redis-rs exposes two API levels: a low- and a high-level part.
+//! The high-level part does not expose all the functionality of redis and
+//! might take some liberties in how it speaks the protocol.  The low-level
+//! part of the API allows you to express any request on the redis level.
+//! You can fluently switch between both API levels at any point.
 //!
 //! ## Connection Handling
 //!
