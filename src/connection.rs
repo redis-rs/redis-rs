@@ -340,7 +340,7 @@ pub trait ConnectionLike {
 /// and to read a response from it.  It's bound to a single database and can
 /// only be created from the client.
 ///
-/// You generally do not much with this object other than passing it to
+/// You generally do not do much with this object other than passing it to
 /// `Cmd` objects.
 impl Connection {
     /// Sends an already encoded (packed) command into the TCP socket and
