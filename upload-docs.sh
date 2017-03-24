@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Make a new repo for the gh-pages branch
 rm -rf .gh-pages
