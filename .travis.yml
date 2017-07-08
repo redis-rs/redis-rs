@@ -7,6 +7,8 @@ rust:
 
 addons:
   apt:
+    sources:
+      - sourceline: 'ppa:chris-lea/redis-server'
     packages:
       - redis-server
 
