@@ -318,6 +318,9 @@ pub extern crate rustc_serialize as serialize;
 #[cfg(feature="with-unix-sockets")]
 extern crate unix_socket;
 
+#[macro_use]
+extern crate nom;
+
 #[doc(hidden)]
 #[cfg(feature="with-rustc-json")]
 pub use serialize::json::Json;
