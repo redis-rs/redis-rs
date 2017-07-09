@@ -138,6 +138,7 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
+    #[allow(dead_code)]
     pub fn pubsub(&self) -> redis::PubSub {
         self.client.get_pubsub().unwrap()
     }

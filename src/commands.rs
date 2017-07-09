@@ -4,7 +4,7 @@ use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
 use client::Client;
 use connection::{Connection, ConnectionLike};
 use cmd::{cmd, Cmd, Pipeline, Iter};
-
+use geo;
 
 macro_rules! implement_commands {
     (
@@ -746,11 +746,13 @@ implement_commands! {
     /// # Example
     ///
     /// ```rust,no_run
-    /// fn add_point(con: &redis::Connection) -> redis::RedisResult<isize> {
+    /// use redis::{Commands, Connection, RedisResult};
+    ///
+    /// fn add_point(con: &Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", ("13.361389", "38.115556", "Palermo"))
     /// }
     ///
-    /// fn add_many_points(con: &redis::Connection) -> redis::RedisResult<isize> {
+    /// fn add_many_points(con: &Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", &[
     ///         ("13.361389", "38.115556", "Palermo"),
     ///         ("15.087269", "37.502669", "Catania")
@@ -759,6 +761,50 @@ implement_commands! {
     /// ```
     fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOADD").arg(key).arg(members)
+    }
+
+    /// Return the distance between two members in the geospatial index
+    /// represented by the sorted set.
+    ///
+    /// If one or both the members are missing, the command returns NULL, so
+    /// it may be convenient to parse its response as either `Option<f64>` or
+    /// `Option<String>`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::Unit;
+    ///
+    /// fn get_dists(con: &redis::Connection) {
+    ///     let x: RedisResult<f64> = con.geo_dist(
+    ///         "my_gis",
+    ///         "Palermo",
+    ///         "Catania",
+    ///         Unit::Kilometers
+    ///     );
+    ///     // x is Ok(166.2742)
+    ///
+    ///     let x: RedisResult<Option<f64>> = con.geo_dist(
+    ///         "my_gis",
+    ///         "Palermo",
+    ///         "Atlantis",
+    ///         Unit::Meters
+    ///     );
+    ///     // x is Ok(None)
+    /// }
+    /// ```
+    fn geo_dist<K: ToRedisArgs, M1: ToRedisArgs, M2: ToRedisArgs>(
+        key: K,
+        member1: M1,
+        member2: M2,
+        unit: geo::Unit
+    ) {
+        cmd("GEODIST")
+            .arg(key)
+            .arg(member1)
+            .arg(member2)
+            .arg(unit)
     }
 
 }
