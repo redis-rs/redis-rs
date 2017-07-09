@@ -6,7 +6,7 @@ extern crate redis;
 extern crate assert_approx_eq;
 
 use redis::{Commands, RedisResult};
-use redis::geo::Unit;
+use redis::geo::{Coord, Unit};
 
 mod common;
 use common::*;
@@ -67,10 +67,34 @@ fn test_geohash() {
     let con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
-
     let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", PALERMO.2);
     assert_eq!(result, Ok(vec![String::from("sqc8b49rny0")]));
 
     let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
     assert_eq!(result, Ok(vec![String::from("sqc8b49rny0"), String::from("sqdtr74hyu0")]));
+
+}
+
+#[test]
+fn test_geopos() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
+
+    let result: Vec<Vec<f64>> = con.geo_pos("my_gis", &[PALERMO.2]).unwrap();
+    assert_eq!(result.len(), 1);
+
+    assert_approx_eq!(result[0][0], 13.36138, 0.0001);
+    assert_approx_eq!(result[0][1], 38.11555, 0.0001);
+
+    // Using the Coord struct
+    let result: Vec<Coord> = con.geo_pos("my_gis", &[PALERMO.2, CATANIA.2]).unwrap();
+    assert_eq!(result.len(), 2);
+
+    assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);
+    assert_approx_eq!(result[0].latitude, 38.11555, 0.0001);
+
+    assert_approx_eq!(result[1].longitude, 15.08726, 0.0001);
+    assert_approx_eq!(result[1].latitude, 37.50266, 0.0001);
 }

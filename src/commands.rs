@@ -808,7 +808,8 @@ implement_commands! {
     }
 
     /// Return valid [Geohash][1] strings representing the position of one or
-    /// more elements in a sorted set.
+    /// more members of the geospatial index represented by the sorted set at
+    /// key.
     ///
     /// [1]: https://en.wikipedia.org/wiki/Geohash
     ///
@@ -828,7 +829,35 @@ implement_commands! {
     fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOHASH").arg(key).arg(members)
     }
+
+    /// Return the positions of all the specified members of the geospatial
+    /// index represented by the sorted set at key.
+    ///
+    /// Every position is a pair of `(longitude, latitude)`. [`redis::geo::Coord`][1]
+    /// can be used to convert these value in a struct.
+    ///
+    /// [1]: ./geo/struct.Coord.html
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::Coord;
+    ///
+    /// fn get_position(con: &redis::Connection) {
+    ///     let x: RedisResult<Vec<Vec<f64>>> = con.geo_pos("my_gis", &["Palermo", "Catania"]);
+    ///     // x is [ [ 13.361389, 38.115556 ], [ 15.087269, 37.502669 ] ];
+    ///
+    ///     let x: Vec<Coord> = con.geo_pos("my_gis", "Palermo").unwrap();
+    ///     // x[0].longitude is 13.361389
+    ///     // x[0].latitude is 38.115556
+    /// }
+    /// ```
+    fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOPOS").arg(key).arg(members)
+    }
 }
+
 
 impl Commands for Connection {}
 impl Commands for Client {}
