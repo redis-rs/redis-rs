@@ -12,7 +12,7 @@ before_install:
   - make -C /tmp/redis PREFIX=/tmp/redis install
 
 script:
-  - PATH=/tmp/redis:$PATH make test
+  - PATH=/tmp/redis/bin:$PATH make test
 
 notifications:
   email: false
