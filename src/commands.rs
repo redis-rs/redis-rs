@@ -740,6 +740,10 @@ implement_commands! {
     /// Every member has to be written as a tuple of `(longitude, latitude,
     /// member_name)`. It can be a single tuple, or a vector of tuples.
     ///
+    /// `longitude, latitude` can be set using [`redis::geo::Coord`][1].
+    ///
+    /// [1]: ./geo/struct.Coord.html
+    ///
     /// Returns the number of elements added to the sorted set, not including
     /// elements already existing for which the score was updated.
     ///
@@ -747,8 +751,13 @@ implement_commands! {
     ///
     /// ```rust,no_run
     /// use redis::{Commands, Connection, RedisResult};
+    /// use redis::geo::Coord;
     ///
     /// fn add_point(con: &Connection) -> RedisResult<isize> {
+    ///     con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo"))
+    /// }
+    ///
+    /// fn add_point_with_tuples(con: &Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", ("13.361389", "38.115556", "Palermo"))
     /// }
     ///

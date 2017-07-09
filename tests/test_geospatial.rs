@@ -5,8 +5,8 @@ extern crate redis;
 #[macro_use]
 extern crate assert_approx_eq;
 
-use redis::{Commands, RedisResult};
 use redis::geo::{Coord, Unit};
+use redis::{Commands, RedisResult};
 
 mod common;
 use common::*;
@@ -97,4 +97,18 @@ fn test_geopos() {
 
     assert_approx_eq!(result[1].longitude, 15.08726, 0.0001);
     assert_approx_eq!(result[1].latitude, 37.50266, 0.0001);
+}
+
+#[test]
+fn test_use_coord_struct() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo")), Ok(1));
+
+    let result: Vec<Coord<f64>> = con.geo_pos("my_gis", "Palermo").unwrap();
+    assert_eq!(result.len(), 1);
+
+    assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);
+    assert_approx_eq!(result[0].latitude, 38.11555, 0.0001);
 }

@@ -40,6 +40,13 @@ pub struct Coord<T> {
     pub latitude: T,
 }
 
+impl<T> Coord<T> {
+    /// Create a new Coord with the (longitude, latitude)
+    pub fn lon_lat(longitude: T, latitude: T) -> Coord<T> {
+        Coord { longitude, latitude }
+    }
+}
+
 impl<T: FromRedisValue> FromRedisValue for Coord<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
@@ -50,5 +57,33 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
         }
         let mut values = values.into_iter();
         Ok(Coord { longitude: values.next().unwrap(), latitude: values.next().unwrap() })
+    }
+}
+
+impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut args = Vec::new();
+        args.extend_from_slice(&ToRedisArgs::to_redis_args(&self.longitude));
+        args.extend_from_slice(&ToRedisArgs::to_redis_args(&self.latitude));
+        args
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use types::ToRedisArgs;
+    use super::Coord;
+    use std::str;
+
+    #[test]
+    fn test_coord_to_args() {
+        let member = ("Palermo", Coord::lon_lat("13.361389", "38.115556"));
+        let args = ToRedisArgs::to_redis_args(&member);
+        let mut strings = args.iter().map(|c| str::from_utf8(c).unwrap());
+
+        assert_eq!(strings.next(), Some("Palermo"));
+        assert_eq!(strings.next(), Some("13.361389"));
+        assert_eq!(strings.next(), Some("38.115556"));
+        assert_eq!(strings.next(), None);
     }
 }
