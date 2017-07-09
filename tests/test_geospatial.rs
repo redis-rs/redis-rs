@@ -89,7 +89,7 @@ fn test_geopos() {
     assert_approx_eq!(result[0][1], 38.11555, 0.0001);
 
     // Using the Coord struct
-    let result: Vec<Coord> = con.geo_pos("my_gis", &[PALERMO.2, CATANIA.2]).unwrap();
+    let result: Vec<Coord<f64>> = con.geo_pos("my_gis", &[PALERMO.2, CATANIA.2]).unwrap();
     assert_eq!(result.len(), 2);
 
     assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);

@@ -848,7 +848,7 @@ implement_commands! {
     ///     let x: RedisResult<Vec<Vec<f64>>> = con.geo_pos("my_gis", &["Palermo", "Catania"]);
     ///     // x is [ [ 13.361389, 38.115556 ], [ 15.087269, 37.502669 ] ];
     ///
-    ///     let x: Vec<Coord> = con.geo_pos("my_gis", "Palermo").unwrap();
+    ///     let x: Vec<Coord<f64>> = con.geo_pos("my_gis", "Palermo").unwrap();
     ///     // x[0].longitude is 13.361389
     ///     // x[0].latitude is 38.115556
     /// }

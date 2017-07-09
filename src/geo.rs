@@ -29,20 +29,26 @@ impl ToRedisArgs for Unit {
 /// to parse response from Redis.
 ///
 /// [1]: ../trait.Commands.html#method.geo_pos
+///
+/// `T` is the type of the every value.
+///
+/// * You may want to use either `f64` or `f32` if you want to perform mathematical operations.
+/// * To keep the raw value from Redis, use `String`.
 #[derive(Debug)]
-pub struct Coord {
-    pub longitude: f64,
-    pub latitude: f64,
+pub struct Coord<T> {
+    pub longitude: T,
+    pub latitude: T,
 }
 
-impl FromRedisValue for Coord {
+impl<T: FromRedisValue> FromRedisValue for Coord<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let values: Vec<f64> = FromRedisValue::from_redis_value(v)?;
+        let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
         if values.len() != 2 {
             fail!((ErrorKind::TypeError,
                    "Response was of incompatible type",
                    format!("Expect a pair of numbers (response was {:?})", v)));
         }
-        Ok(Coord { longitude: values[0], latitude: values[1] })
+        let mut values = values.into_iter();
+        Ok(Coord { longitude: values.next().unwrap(), latitude: values.next().unwrap() })
     }
 }
