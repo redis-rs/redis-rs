@@ -732,6 +732,35 @@ implement_commands! {
     fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
         cmd("PUBLISH").arg(channel).arg(message)
     }
+
+    // geospatial commands
+
+    /// Adds the specified geospatial items to the specified key.
+    ///
+    /// Every member has to be written as a tuple of `(longitude, latitude,
+    /// member_name)`. It can be a single tuple, or a vector of tuples.
+    ///
+    /// Returns the number of elements added to the sorted set, not including
+    /// elements already existing for which the score was updated.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// fn add_point(con: &redis::Connection) -> redis::RedisResult<isize> {
+    ///     con.geo_add("my_gis", ("13.361389", "38.115556", "Palermo"))
+    /// }
+    ///
+    /// fn add_many_points(con: &redis::Connection) -> redis::RedisResult<isize> {
+    ///     con.geo_add("my_gis", &[
+    ///         ("13.361389", "38.115556", "Palermo"),
+    ///         ("15.087269", "37.502669", "Catania")
+    ///     ])
+    /// }
+    /// ```
+    fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOADD").arg(key).arg(members)
+    }
+
 }
 
 impl Commands for Connection {}
