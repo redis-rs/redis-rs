@@ -807,6 +807,27 @@ implement_commands! {
             .arg(unit)
     }
 
+    /// Return valid [Geohash][1] strings representing the position of one or
+    /// more elements in a sorted set.
+    ///
+    /// [1]: https://en.wikipedia.org/wiki/Geohash
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    ///
+    /// fn get_hash(con: &redis::Connection) {
+    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", "Palermo");
+    ///     // x is vec!["sqc8b49rny0"]
+    ///
+    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", &["Palermo", "Catania"]);
+    ///     // x is vec!["sqc8b49rny0", "sqdtr74hyu0"]
+    /// }
+    /// ```
+    fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOHASH").arg(key).arg(members)
+    }
 }
 
 impl Commands for Connection {}

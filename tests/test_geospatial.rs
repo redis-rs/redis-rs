@@ -59,5 +59,18 @@ fn test_geodist_support_option() {
 
     let dist = result.unwrap().unwrap();
     assert_approx_eq!(dist, 166274.1516, 0.01);
+}
 
+#[test]
+fn test_geohash() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
+
+    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", PALERMO.2);
+    assert_eq!(result, Ok(vec![String::from("sqc8b49rny0")]));
+
+    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
+    assert_eq!(result, Ok(vec![String::from("sqc8b49rny0"), String::from("sqdtr74hyu0")]));
 }
