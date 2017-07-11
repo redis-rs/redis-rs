@@ -3,6 +3,14 @@
 use super::{ErrorKind, RedisResult};
 use types::{FromRedisValue, ToRedisArgs, Value};
 
+macro_rules! invalid_type_error {
+    ($v:expr, $det:expr) => ({
+        fail!((ErrorKind::TypeError,
+               "Response was of incompatible type",
+               format!("{:?} (response was {:?})", $det, $v)));
+    })
+}
+
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
 ///
 /// [1]: ../trait.Commands.html#method.geo_dist
@@ -35,7 +43,7 @@ impl ToRedisArgs for Unit {
 ///
 /// * You may want to use either `f64` or `f32` if you want to perform mathematical operations.
 /// * To keep the raw value from Redis, use `String`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Coord<T> {
     pub longitude: T,
     pub latitude: T,
@@ -52,9 +60,7 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
         if values.len() != 2 {
-            fail!((ErrorKind::TypeError,
-                   "Response was of incompatible type",
-                   format!("Expect a pair of numbers (response was {:?})", v)));
+            invalid_type_error!(v, "Expect a pair of numbers");
         }
         let mut values = values.into_iter();
         Ok(Coord { longitude: values.next().unwrap(), latitude: values.next().unwrap() })
@@ -94,7 +100,6 @@ impl Default for RadiusOrder {
 pub struct RadiusOptions {
     with_coord: bool,
     with_dist: bool,
-    with_hash: bool,
     count: Option<usize>,
     order: RadiusOrder,
     store: Option<Vec<Vec<u8>>>,
@@ -104,7 +109,7 @@ pub struct RadiusOptions {
 impl RadiusOptions {
 
     /// Limit the results to the first N matching items.
-    pub fn limit(&mut self, n: usize) -> &mut Self {
+    pub fn limit(mut self, n: usize) -> Self {
         self.count = Some(n);
         self
     }
@@ -112,28 +117,19 @@ impl RadiusOptions {
     /// Return the distance of the returned items from the specified center.
     /// The distance is returned in the same unit as the unit specified as the
     /// radius argument of the command.
-    pub fn with_dist(&mut self) -> &mut Self {
+    pub fn with_dist(mut self) -> Self {
         self.with_dist = true;
         self
     }
 
     /// Return the longitude,latitude coordinates of the matching items.
-    pub fn with_coord(&mut self) -> &mut Self {
+    pub fn with_coord(mut self) -> Self {
         self.with_coord = true;
         self
     }
 
-    /// Return the raw geohash-encoded sorted set score of the item, in the
-    /// form of a 52 bit unsigned integer. This is only useful for low level
-    /// hacks or debugging and is otherwise of little interest for the general
-    /// user.
-    pub fn with_hash(&mut self) -> &mut Self {
-        self.with_hash = true;
-        self
-    }
-
     /// Sort the returned items
-    pub fn order(&mut self, o: RadiusOrder) -> &mut Self {
+    pub fn order(mut self, o: RadiusOrder) -> Self {
         self.order = o;
         self
     }
@@ -141,14 +137,14 @@ impl RadiusOptions {
     /// Store the results in a sorted set at key, instead of returning them.
     ///
     /// This feature can't be used with any `with_*` method.
-    pub fn store<K: ToRedisArgs>(&mut self, key: K) -> &mut Self {
+    pub fn store<K: ToRedisArgs>(mut self, key: K) -> Self {
         self.store = Some(ToRedisArgs::to_redis_args(&key));
         self
     }
 
     /// Similar to `store`, but includes the distance of every member from the
     /// center. This feature can't be used with any `with_*` method.
-    pub fn store_dist<K: ToRedisArgs>(&mut self, key: K) -> &mut Self {
+    pub fn store_dist<K: ToRedisArgs>(mut self, key: K) -> Self {
         self.store_dist = Some(ToRedisArgs::to_redis_args(&key));
         self
     }
@@ -165,10 +161,6 @@ impl ToRedisArgs for RadiusOptions {
 
         if self.with_dist {
             args.push("WITHDIST".as_bytes().to_vec());
-        }
-
-        if self.with_hash {
-            args.push("WITHHASH".as_bytes().to_vec());
         }
 
         if let Some(n) = self.count {
@@ -196,6 +188,68 @@ impl ToRedisArgs for RadiusOptions {
     }
 }
 
+/// Contain an item returned by [`geo_radius`][1] and [`geo_radius_by_member`][2].
+///
+/// [1]: ../trait.Commands.html#method.geo_radius
+/// [2]: ../trait.Commands.html#method.geo_radius_by_member
+pub struct RadiusSearchResult {
+    pub name: String,
+    pub coord: Option<Coord<f64>>,
+    pub dist: Option<f64>,
+}
+
+impl FromRedisValue for RadiusSearchResult {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+
+        // If we receive only the member name, it will be a plain string
+        if let Ok(name) = FromRedisValue::from_redis_value(v) {
+            return Ok(RadiusSearchResult {
+                name: name,
+                coord: None,
+                dist: None,
+            });
+        }
+
+        // Try to parse the result from multitple values
+        if let Value::Bulk(ref items) = *v {
+            if let Some(result) = RadiusSearchResult::parse_multi_values(items) {
+                return Ok(result);
+            }
+        }
+
+        invalid_type_error!(v, "Response type not RadiusSearchResult compatible.");
+    }
+}
+
+impl RadiusSearchResult {
+    fn parse_multi_values(items: &[Value]) -> Option<Self> {
+        let mut iter = items.iter();
+
+        // First item is always the member name
+        let name: String = match iter.next().map(FromRedisValue::from_redis_value) {
+            Some(Ok(n)) => n,
+            _ => return None,
+        };
+
+        let mut next = iter.next();
+
+        // Next element, if present, will be the distance.
+        let dist = match next.map(FromRedisValue::from_redis_value) {
+            Some(Ok(c)) => { next = iter.next(); Some(c) },
+            _ => None,
+        };
+
+        // Finally, if present, the last item will be the coordinates
+
+        let coord = match next.map(FromRedisValue::from_redis_value) {
+            Some(Ok(c)) => Some(c),
+            _ => None,
+        };
+
+        Some(RadiusSearchResult { name, coord, dist })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use types::ToRedisArgs;
@@ -204,7 +258,7 @@ mod tests {
 
     macro_rules! assert_args {
         ($value:expr, $($args:expr),+) => {
-            let args = ToRedisArgs::to_redis_args($value);
+            let args = $value.to_redis_args();
             let strings: Vec<_> = args.iter()
                                       .map(|a| str::from_utf8(a.as_ref()).unwrap())
                                       .collect();

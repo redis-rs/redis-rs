@@ -5,7 +5,7 @@ extern crate redis;
 #[macro_use]
 extern crate assert_approx_eq;
 
-use redis::geo::{Coord, Unit};
+use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{Commands, RedisResult};
 
 mod common;
@@ -111,4 +111,53 @@ fn test_use_coord_struct() {
 
     assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);
     assert_approx_eq!(result[0].latitude, 38.11555, 0.0001);
+}
+
+#[test]
+fn test_georadius() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
+
+    let geo_radius = |opts: RadiusOptions| -> Vec<RadiusSearchResult> {
+        con.geo_radius("my_gis", 15.0, 37.0, 200.0, Unit::Kilometers, opts).unwrap()
+    };
+
+    // Simple request, without extra data
+    let mut result = geo_radius(RadiusOptions::default());
+    result.sort_by(|a,b| Ord::cmp(&a.name, &b.name));
+
+    assert_eq!(result.len(), 2);
+
+    assert_eq!(result[0].name.as_str(), "Catania");
+    assert_eq!(result[0].coord, None);
+    assert_eq!(result[0].dist, None);
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_eq!(result[1].coord, None);
+    assert_eq!(result[1].dist, None);
+
+    // Get data with multiple fields
+    let result = geo_radius(RadiusOptions::default().with_dist().order(RadiusOrder::Asc));
+
+    assert_eq!(result.len(), 2);
+
+    assert_eq!(result[0].name.as_str(), "Catania");
+    assert_eq!(result[0].coord, None);
+    assert_approx_eq!(result[0].dist.unwrap(), 56.4413, 0.001);
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_eq!(result[1].coord, None);
+    assert_approx_eq!(result[1].dist.unwrap(), 190.4424, 0.001);
+
+    let result = geo_radius(RadiusOptions::default().with_coord().order(RadiusOrder::Desc).limit(1));
+
+    assert_eq!(result.len(), 1);
+
+    assert_eq!(result[0].name.as_str(), "Palermo");
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361389);
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115556);
+    assert_eq!(result[0].dist, None);
+
 }

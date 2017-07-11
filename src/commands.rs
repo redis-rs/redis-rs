@@ -865,6 +865,42 @@ implement_commands! {
     fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOPOS").arg(key).arg(members)
     }
+
+    /// Return the members of a sorted set populated with geospatial information
+    /// using [`geo_add`](#geo_add), which are within the borders of the area
+    /// specified with the center location and the maximum distance from the center
+    /// (the radius).
+    ///
+    /// Every item in the result can be read with [`redis::geo::RadiusSearchResult`][1],
+    /// which support the multiple formats returned by `GEORADIUS`.
+    ///
+    /// [1]: ./geo/struct.RadiusSearchResult.html
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::{RadiusOptions, RadiusSearchResult, RadiusOrder, Unit};
+    ///
+    /// fn radius(con: &redis::Connection) -> Vec<RadiusSearchResult> {
+    ///     let opts = RadiusOptions::default().with_dist().order(RadiusOrder::Asc);
+    ///     con.geo_radius("my_gis", 15.90, 37.21, 51.39, Unit::Kilometers, opts).unwrap()
+    /// }
+    /// ```
+    fn geo_radius<K: ToRedisArgs>(
+        key: K,
+        longitude: f64,
+        latitude: f64,
+        radius: f64,
+        unit: geo::Unit,
+        options: geo::RadiusOptions
+    ) {
+        cmd("GEORADIUS")
+            .arg(key)
+            .arg(longitude)
+            .arg(latitude)
+            .arg(radius)
+            .arg(unit)
+            .arg(options)
+    }
 }
 
 
