@@ -867,7 +867,7 @@ implement_commands! {
     }
 
     /// Return the members of a sorted set populated with geospatial information
-    /// using [`geo_add`](#geo_add), which are within the borders of the area
+    /// using [`geo_add`](#method.geo_add), which are within the borders of the area
     /// specified with the center location and the maximum distance from the center
     /// (the radius).
     ///
@@ -901,8 +901,27 @@ implement_commands! {
             .arg(unit)
             .arg(options)
     }
-}
 
+    /// This command is exactly like [`geo_radius`](#method.geo_radius) with the sole
+    /// difference that instead of taking, as the center of the area to query, a
+    /// longitude and latitude value, it takes the name of a member already
+    /// existing inside the geospatial index represented by the sorted set.
+    fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
+        key: K,
+        member: M,
+        radius: f64,
+        unit: geo::Unit,
+        options: geo::RadiusOptions
+    ) {
+        cmd("GEORADIUSBYMEMBER")
+            .arg(key)
+            .arg(member)
+            .arg(radius)
+            .arg(unit)
+            .arg(options)
+    }
+
+}
 
 impl Commands for Connection {}
 impl Commands for Client {}

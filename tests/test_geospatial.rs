@@ -13,6 +13,7 @@ use common::*;
 
 const PALERMO: (&'static str, &'static str, &'static str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&'static str, &'static str, &'static str) = ("15.087269", "37.502669", "Catania");
+const AGRIGENTO: (&'static str, &'static str, &'static str) = ("13.5833332", "37.316667", "Agrigento");
 
 #[test]
 fn test_geoadd_single_tuple() {
@@ -160,4 +161,19 @@ fn test_georadius() {
     assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115556);
     assert_eq!(result[0].dist, None);
 
+}
+
+#[test]
+fn test_georadius_by_member() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA, AGRIGENTO]), Ok(3));
+
+    // Simple request, without extra data
+    let opts = RadiusOptions::default().order(RadiusOrder::Asc);
+    let result: Vec<RadiusSearchResult> = con.geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts).unwrap();
+    let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
+
+    assert_eq!(names, vec!["Agrigento", "Palermo"]);
 }
