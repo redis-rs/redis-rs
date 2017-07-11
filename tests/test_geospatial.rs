@@ -13,7 +13,8 @@ use common::*;
 
 const PALERMO: (&'static str, &'static str, &'static str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&'static str, &'static str, &'static str) = ("15.087269", "37.502669", "Catania");
-const AGRIGENTO: (&'static str, &'static str, &'static str) = ("13.5833332", "37.316667", "Agrigento");
+const AGRIGENTO: (&'static str, &'static str, &'static str) =
+    ("13.5833332", "37.316667", "Agrigento");
 
 #[test]
 fn test_geoadd_single_tuple() {
@@ -38,7 +39,8 @@ fn test_geodist_existing_members() {
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
-    let dist: f64 = con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Kilometers).unwrap();
+    let dist: f64 = con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Kilometers)
+        .unwrap();
     assert_approx_eq!(dist, 166.2742, 0.001);
 }
 
@@ -55,7 +57,8 @@ fn test_geodist_support_option() {
     let result: RedisResult<Option<f64>> = con.geo_dist("my_gis", PALERMO.2, "none", Unit::Meters);
     assert_eq!(result, Ok(None));
 
-    let result: RedisResult<Option<f64>> = con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Meters);
+    let result: RedisResult<Option<f64>> =
+        con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Meters);
     assert_ne!(result, Ok(None));
 
     let dist = result.unwrap().unwrap();
@@ -72,7 +75,13 @@ fn test_geohash() {
     assert_eq!(result, Ok(vec![String::from("sqc8b49rny0")]));
 
     let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
-    assert_eq!(result, Ok(vec![String::from("sqc8b49rny0"), String::from("sqdtr74hyu0")]));
+    assert_eq!(
+        result,
+        Ok(vec![
+            String::from("sqc8b49rny0"),
+            String::from("sqdtr74hyu0"),
+        ])
+    );
 
 }
 
@@ -105,7 +114,10 @@ fn test_use_coord_struct() {
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    assert_eq!(con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo")), Ok(1));
+    assert_eq!(
+        con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo")),
+        Ok(1)
+    );
 
     let result: Vec<Coord<f64>> = con.geo_pos("my_gis", "Palermo").unwrap();
     assert_eq!(result.len(), 1);
@@ -122,12 +134,13 @@ fn test_georadius() {
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
     let geo_radius = |opts: RadiusOptions| -> Vec<RadiusSearchResult> {
-        con.geo_radius("my_gis", 15.0, 37.0, 200.0, Unit::Kilometers, opts).unwrap()
+        con.geo_radius("my_gis", 15.0, 37.0, 200.0, Unit::Kilometers, opts)
+            .unwrap()
     };
 
     // Simple request, without extra data
     let mut result = geo_radius(RadiusOptions::default());
-    result.sort_by(|a,b| Ord::cmp(&a.name, &b.name));
+    result.sort_by(|a, b| Ord::cmp(&a.name, &b.name));
 
     assert_eq!(result.len(), 2);
 
@@ -152,7 +165,12 @@ fn test_georadius() {
     assert_eq!(result[1].coord, None);
     assert_approx_eq!(result[1].dist.unwrap(), 190.4424, 0.001);
 
-    let result = geo_radius(RadiusOptions::default().with_coord().order(RadiusOrder::Desc).limit(1));
+    let result = geo_radius(
+        RadiusOptions::default()
+            .with_coord()
+            .order(RadiusOrder::Desc)
+            .limit(1),
+    );
 
     assert_eq!(result.len(), 1);
 
@@ -172,7 +190,9 @@ fn test_georadius_by_member() {
 
     // Simple request, without extra data
     let opts = RadiusOptions::default().order(RadiusOrder::Asc);
-    let result: Vec<RadiusSearchResult> = con.geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts).unwrap();
+    let result: Vec<RadiusSearchResult> =
+        con.geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
+            .unwrap();
     let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
 
     assert_eq!(names, vec!["Agrigento", "Palermo"]);

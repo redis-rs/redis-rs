@@ -52,7 +52,10 @@ pub struct Coord<T> {
 impl<T> Coord<T> {
     /// Create a new Coord with the (longitude, latitude)
     pub fn lon_lat(longitude: T, latitude: T) -> Coord<T> {
-        Coord { longitude, latitude }
+        Coord {
+            longitude,
+            latitude,
+        }
     }
 }
 
@@ -63,7 +66,10 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
             invalid_type_error!(v, "Expect a pair of numbers");
         }
         let mut values = values.into_iter();
-        Ok(Coord { longitude: values.next().unwrap(), latitude: values.next().unwrap() })
+        Ok(Coord {
+            longitude: values.next().unwrap(),
+            latitude: values.next().unwrap(),
+        })
     }
 }
 
@@ -122,7 +128,6 @@ impl Default for RadiusOrder {
 ///     con.geo_radius(key, longitude, latitude, meters, Unit::Meters, opts)
 /// }
 /// ```
-
 #[derive(Default)]
 pub struct RadiusOptions {
     with_coord: bool,
@@ -134,7 +139,6 @@ pub struct RadiusOptions {
 }
 
 impl RadiusOptions {
-
     /// Limit the results to the first N matching items.
     pub fn limit(mut self, n: usize) -> Self {
         self.count = Some(n);
@@ -175,7 +179,6 @@ impl RadiusOptions {
         self.store_dist = Some(ToRedisArgs::to_redis_args(&key));
         self
     }
-
 }
 
 impl ToRedisArgs for RadiusOptions {
@@ -262,7 +265,10 @@ impl RadiusSearchResult {
 
         // Next element, if present, will be the distance.
         let dist = match next.map(FromRedisValue::from_redis_value) {
-            Some(Ok(c)) => { next = iter.next(); Some(c) },
+            Some(Ok(c)) => {
+                next = iter.next();
+                Some(c)
+            }
             _ => None,
         };
 
@@ -308,23 +314,27 @@ mod tests {
         // Some combinations with WITH* options
         let opts = || RadiusOptions::default();
 
-        assert_args!(
-            opts().with_coord().with_dist(),
-            "WITHCOORD", "WITHDIST");
+        assert_args!(opts().with_coord().with_dist(), "WITHCOORD", "WITHDIST");
 
         assert_args!(opts().limit(50), "COUNT", "50");
 
-        assert_args!(
-            opts().limit(50).store("x"),
-            "COUNT", "50", "STORE", "x");
+        assert_args!(opts().limit(50).store("x"), "COUNT", "50", "STORE", "x");
 
         assert_args!(
             opts().limit(100).store_dist("y"),
-            "COUNT", "100", "STOREDIST", "y");
+            "COUNT",
+            "100",
+            "STOREDIST",
+            "y"
+        );
 
         assert_args!(
             opts().order(RadiusOrder::Asc).limit(10).with_dist(),
-            "WITHDIST", "COUNT", "10", "ASC");
+            "WITHDIST",
+            "COUNT",
+            "10",
+            "ASC"
+        );
 
     }
 }
