@@ -77,7 +77,10 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
     }
 }
 
-/// Options to sort results from GEORADIUS and GEORADIUSBYMEMBER commands
+/// Options to sort results from [GEORADIUS][1] and [GEORADIUSBYMEMBER][2] commands
+///
+/// [1]: https://redis.io/commands/georadius
+/// [2]: https://redis.io/commands/georadiusbymember
 pub enum RadiusOrder {
     /// Don't sort the results
     Unsorted,
@@ -95,7 +98,31 @@ impl Default for RadiusOrder {
     }
 }
 
-/// Options for the GEORADIUS and GEORADIUSBYMEMBER commands
+/// Options for the [GEORADIUS][1] and [GEORADIUSBYMEMBER][2] commands
+///
+/// [1]: https://redis.io/commands/georadius
+/// [2]: https://redis.io/commands/georadiusbymember
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult};
+/// use redis::geo::{RadiusSearchResult, RadiusOptions, RadiusOrder, Unit};
+/// fn nearest_in_radius(
+///     con: &redis::Connection,
+///     key: &str,
+///     longitude: f64,
+///     latitude: f64,
+///     meters: f64,
+///     limit: usize,
+/// ) -> RedisResult<Vec<RadiusSearchResult>> {
+///     let opts = RadiusOptions::default()
+///         .order(RadiusOrder::Asc)
+///         .limit(limit);
+///     con.geo_radius(key, longitude, latitude, meters, Unit::Meters, opts)
+/// }
+/// ```
+
 #[derive(Default)]
 pub struct RadiusOptions {
     with_coord: bool,
