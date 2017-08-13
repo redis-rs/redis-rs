@@ -123,9 +123,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(url.to_file_path().ok(),
-                                                       fail!((ErrorKind::InvalidClientConfig,
-                                                              "Missing path"))))),
+        addr: Box::new(ConnectionAddr::Unix(PathBuf::from(url.path()))),
         db: match url.query_pairs().into_iter().filter(|&(ref key, _)| key == "db").next() {
             Some((_, db)) => {
                 unwrap_or!(db.parse::<i64>().ok(),
