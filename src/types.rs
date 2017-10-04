@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::convert::From;
+use std::default::Default;
 use std::error;
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{Utf8Error, from_utf8};
 
@@ -841,11 +842,13 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     }
 }
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
-    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V>> {
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
+    for HashMap<K, V, S> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V, S>> {
         match *v {
             Value::Bulk(ref items) => {
-                let mut rv = HashMap::new();
+                let s = S::default();
+                let mut rv = HashMap::with_hasher(s);
                 let mut iter = items.iter();
                 loop {
                     let k = unwrap_or!(iter.next(), break);
