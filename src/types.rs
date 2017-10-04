@@ -883,11 +883,12 @@ where
     }
 }
 
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
+impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue for HashSet<T, S> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T, S>> {
         match *v {
             Value::Bulk(ref items) => {
-                let mut rv = HashSet::new();
+                let s = S::default();
+                let mut rv = HashSet::with_hasher(s);
                 for item in items.iter() {
                     rv.insert(try!(from_redis_value(item)));
                 }
