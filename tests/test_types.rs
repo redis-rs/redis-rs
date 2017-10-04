@@ -1,3 +1,4 @@
+extern crate fnv;
 extern crate redis;
 
 #[test]
@@ -72,6 +73,44 @@ fn test_vec() {
     ]));
 
     assert_eq!(v, Ok(vec![1i32, 2, 3]));
+}
+
+#[test]
+fn test_hashmap() {
+    use fnv::FnvHasher;
+    use std::collections::HashMap;
+    use std::hash::BuildHasherDefault;
+    use redis::{FromRedisValue, Value};
+
+    type Hm = HashMap<String, i32>;
+
+    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Data("a".into()),
+                                                                              Value::Data("1".into()),
+                                                                              Value::Data("b".into()),
+                                                                              Value::Data("2".into()),
+                                                                              Value::Data("c".into()),
+                                                                              Value::Data("3".into())]));
+    let mut e: Hm = HashMap::new();
+    e.insert("a".into(), 1);
+    e.insert("b".into(), 2);
+    e.insert("c".into(), 3);
+    assert_eq!(v, Ok(e));
+
+    type Hasher = BuildHasherDefault<FnvHasher>;
+    type HmHasher = HashMap<String, i32, Hasher>;
+    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Data("a".into()),
+                                                                                    Value::Data("1".into()),
+                                                                                    Value::Data("b".into()),
+                                                                                    Value::Data("2".into()),
+                                                                                    Value::Data("c".into()),
+                                                                                    Value::Data("3".into())]));
+
+    let fnv = Hasher::default();
+    let mut e: HmHasher = HashMap::with_hasher(fnv);
+    e.insert("a".into(), 1);
+    e.insert("b".into(), 2);
+    e.insert("c".into(), 3);
+    assert_eq!(v, Ok(e));
 }
 
 #[test]

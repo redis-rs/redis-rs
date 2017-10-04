@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::convert::From;
+use std::default::Default;
 use std::error;
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{Utf8Error, from_utf8};
 
@@ -596,7 +597,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
+impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for HashSet<T, S> {
     fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
         ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
@@ -841,11 +842,12 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     }
 }
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for HashMap<K, V> {
-    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V>> {
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
+    for HashMap<K, V, S> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V, S>> {
         match *v {
             Value::Bulk(ref items) => {
-                let mut rv = HashMap::new();
+                let mut rv = HashMap::default();
                 let mut iter = items.iter();
                 loop {
                     let k = unwrap_or!(iter.next(), break);
@@ -880,11 +882,11 @@ where
     }
 }
 
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for HashSet<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T>> {
+impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue for HashSet<T, S> {
+    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T, S>> {
         match *v {
             Value::Bulk(ref items) => {
-                let mut rv = HashSet::new();
+                let mut rv = HashSet::default();
                 for item in items.iter() {
                     rv.insert(try!(from_redis_value(item)));
                 }
