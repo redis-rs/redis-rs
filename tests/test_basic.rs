@@ -2,7 +2,7 @@ extern crate redis;
 extern crate rand;
 extern crate net2;
 
-use redis::{Commands, PipelineCommands};
+use redis::{Commands, PipelineCommands, PubSubCommands, ControlFlow};
 
 use std::fs;
 use std::env;
@@ -146,10 +146,6 @@ impl TestContext {
 
     fn connection(&self) -> redis::Connection {
         self.client.get_connection().unwrap()
-    }
-
-    fn pubsub(&self) -> redis::PubSub {
-        self.client.get_pubsub().unwrap()
     }
 }
 
@@ -481,14 +477,23 @@ fn test_real_transaction_highlevel() {
 
 #[test]
 fn test_pubsub() {
+    use std::sync::{Arc, Barrier};
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    let mut pubsub = ctx.pubsub();
-    pubsub.subscribe("foo").unwrap();
+    // Connection for subscriber api
+    let mut pubsub_con = ctx.connection();
+
+    // Barrier is used to make test thread wait to publish
+    // until after the pubsub thread has subscribed.
+    let barrier = Arc::new(Barrier::new(2));
+    let pubsub_barrier = barrier.clone();
 
     let thread = spawn(move || {
-        sleep(Duration::from_millis(100));
+        let mut pubsub = pubsub_con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+
+        let _ = pubsub_barrier.wait();
 
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
@@ -499,9 +504,48 @@ fn test_pubsub() {
         assert_eq!(msg.get_payload(), Ok(23));
     });
 
+    let _ = barrier.wait();
     redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
     // We can also call the command directly
     assert_eq!(con.publish("foo", 23), Ok(1));
+
+    thread.join().ok().expect("Something went wrong");
+}
+
+#[test]
+fn scoped_pubsub() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    // Connection for subscriber api
+    let mut pubsub_con = ctx.connection();
+
+    let thread = spawn(move || {
+        let mut count = 0;
+        pubsub_con.subscribe(&["foo", "bar"], |msg| {
+            count += 1;
+            match count {
+                1 => {
+                    assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+                    assert_eq!(msg.get_payload(), Ok(42));
+                    ControlFlow::Continue
+                },
+                2 => {
+                    assert_eq!(msg.get_channel(), Ok("bar".to_string()));
+                    assert_eq!(msg.get_payload(), Ok(23));
+                    ControlFlow::Break(())
+                },
+                _ => ControlFlow::Break(())
+            }
+        }).unwrap();
+    });
+
+    // Can't use a barrier in this case since there's no opportunity to run code
+    // between channel subscription and blocking for messages.
+    sleep(Duration::from_millis(100));
+
+    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
+    assert_eq!(con.publish("bar", 23), Ok(1));
 
     thread.join().ok().expect("Something went wrong");
 }

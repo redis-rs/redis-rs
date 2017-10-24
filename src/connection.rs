@@ -3,7 +3,6 @@ use std::io::{Read, BufReader, Write};
 use std::net::{self, TcpStream};
 use std::str::from_utf8;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::time::Duration;
 
 use url;
@@ -168,10 +167,8 @@ pub struct Connection {
 }
 
 /// Represents a pubsub connection.
-pub struct PubSub {
-    con: Connection,
-    channels: HashSet<Vec<u8>>,
-    pchannels: HashSet<Vec<u8>>,
+pub struct PubSub<'a> {
+    con: &'a mut Connection,
 }
 
 /// Represents a pubsub message.
@@ -295,14 +292,6 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     Ok(rv)
 }
 
-pub fn connect_pubsub(connection_info: &ConnectionInfo) -> RedisResult<PubSub> {
-    Ok(PubSub {
-        con: try!(connect(connection_info)),
-        channels: HashSet::new(),
-        pchannels: HashSet::new(),
-    })
-}
-
 /// Implements the "stateless" part of the connection interface that is used by the
 /// different objects in redis-rs.  Primarily it obviously applies to `Connection`
 /// object but also some other objects implement the interface (for instance
@@ -375,6 +364,12 @@ impl Connection {
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         self.con.borrow().set_read_timeout(dur)
     }
+
+    pub fn as_pubsub<'a>(&'a mut self) -> PubSub<'a> {
+        PubSub {
+            con: self,
+        }
+    }
 }
 
 impl ConnectionLike for Connection {
@@ -416,7 +411,8 @@ impl ConnectionLike for Connection {
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
 /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-/// let mut pubsub = try!(client.get_pubsub());
+/// let mut con = client.get_connection()?;
+/// let mut pubsub = con.as_pubsub();
 /// try!(pubsub.subscribe("channel_1"));
 /// try!(pubsub.subscribe("channel_2"));
 ///
@@ -427,44 +423,28 @@ impl ConnectionLike for Connection {
 /// }
 /// # }
 /// ```
-impl PubSub {
-    fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
-        let mut chan = vec![];
-        for item in channel.to_redis_args().iter() {
-            chan.extend(item.iter().cloned());
-        }
-        chan
-    }
-
+impl<'a> PubSub<'a> {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&channel);
-        let _: () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
-        self.channels.insert(chan);
+        let _: () = try!(cmd("SUBSCRIBE").arg(channel).query(self.con));
         Ok(())
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&pchannel);
-        let _: () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.pchannels.insert(chan);
+        let _: () = try!(cmd("PSUBSCRIBE").arg(pchannel).query(self.con));
         Ok(())
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&channel);
-        let _: () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.channels.remove(&chan);
+        let _: () = try!(cmd("UNSUBSCRIBE").arg(channel).query(self.con));
         Ok(())
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&pchannel);
-        let _: () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.pchannels.remove(&chan);
+        let _: () = try!(cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con));
         Ok(())
     }
 
@@ -509,6 +489,13 @@ impl PubSub {
     /// method.
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         self.con.set_read_timeout(dur)
+    }
+}
+
+impl<'a> Drop for PubSub<'a> {
+    fn drop(&mut self) {
+        let _ = cmd("UNSUBSCRIBE").query::<()>(self.con);
+        let _ = cmd("PUNSUBSCRIBE").query::<()>(self.con);
     }
 }
 
