@@ -22,13 +22,13 @@ fn get_client() -> redis::Client {
 
 fn bench_simple_getsetdel(b: &mut Bencher) {
     let client = get_client();
-    let con = client.get_connection().unwrap();
+    let mut con = client.get_connection().unwrap();
 
     b.iter(|| {
         let key = "test_key";
-        redis::cmd("SET").arg(key).arg(42).execute(&con);
-        let _: isize = redis::cmd("GET").arg(key).query(&con).unwrap();
-        redis::cmd("DEL").arg(key).execute(&con);
+        redis::cmd("SET").arg(key).arg(42).execute(&mut con);
+        let _: isize = redis::cmd("GET").arg(key).query(&mut con).unwrap();
+        redis::cmd("DEL").arg(key).execute(&mut con);
     });
 }
 
@@ -56,7 +56,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
 
 fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let con = client.get_connection().unwrap();
+    let mut con = client.get_connection().unwrap();
 
     b.iter(|| {
         let key = "test_key";
@@ -70,14 +70,14 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
             .cmd("DEL")
             .arg(key)
             .ignore()
-            .query(&con)
+            .query(&mut con)
             .unwrap();
     });
 }
 
 fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
     let client = get_client();
-    let con = client.get_connection().unwrap();
+    let mut con = client.get_connection().unwrap();
     let key = "test_key";
     let mut pipe = redis::pipe();
     pipe.cmd("SET")
@@ -91,7 +91,7 @@ fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
         .ignore();
 
     b.iter(|| {
-        let _: (usize,) = pipe.query(&con).unwrap();
+        let _: (usize,) = pipe.query(&mut con).unwrap();
     });
 }
 
@@ -108,12 +108,12 @@ fn long_pipeline() -> redis::Pipeline {
 
 fn bench_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let con = client.get_connection().unwrap();
+    let mut con = client.get_connection().unwrap();
 
     let pipe = long_pipeline();
 
     b.iter(|| {
-        let _: () = pipe.query(&con).unwrap();
+        let _: () = pipe.query(&mut con).unwrap();
     });
 }
 

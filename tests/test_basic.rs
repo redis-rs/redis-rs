@@ -34,13 +34,13 @@ fn test_parse_redis_url() {
 #[test]
 fn test_args() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SET").arg("key1").arg(b"foo").execute(&con);
-    redis::cmd("SET").arg(&["key2", "bar"]).execute(&con);
+    redis::cmd("SET").arg("key1").arg(b"foo").execute(&mut con);
+    redis::cmd("SET").arg(&["key2", "bar"]).execute(&mut con);
 
     assert_eq!(
-        redis::cmd("MGET").arg(&["key1", "key2"]).query(&con),
+        redis::cmd("MGET").arg(&["key1", "key2"]).query(&mut con),
         Ok(("foo".to_string(), b"bar".to_vec()))
     );
 }
@@ -48,14 +48,14 @@ fn test_args() {
 #[test]
 fn test_getset() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(42).execute(&con);
-    assert_eq!(redis::cmd("GET").arg("foo").query(&con), Ok(42));
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(42));
 
-    redis::cmd("SET").arg("bar").arg("foo").execute(&con);
+    redis::cmd("SET").arg("bar").arg("foo").execute(&mut con);
     assert_eq!(
-        redis::cmd("GET").arg("bar").query(&con),
+        redis::cmd("GET").arg("bar").query(&mut con),
         Ok(b"foo".to_vec())
     );
 }
@@ -63,18 +63,18 @@ fn test_getset() {
 #[test]
 fn test_incr() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(42).execute(&con);
-    assert_eq!(redis::cmd("INCR").arg("foo").query(&con), Ok(43usize));
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    assert_eq!(redis::cmd("INCR").arg("foo").query(&mut con), Ok(43usize));
 }
 
 #[test]
 fn test_info() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    let info: redis::InfoDict = redis::cmd("INFO").query(&con).unwrap();
+    let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
     assert_eq!(
         info.find(&"role"),
         Some(&redis::Value::Status("master".to_string()))
@@ -88,25 +88,25 @@ fn test_info() {
 #[test]
 fn test_hash_ops() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     redis::cmd("HSET")
         .arg("foo")
         .arg("key_1")
         .arg(1)
-        .execute(&con);
+        .execute(&mut con);
     redis::cmd("HSET")
         .arg("foo")
         .arg("key_2")
         .arg(2)
-        .execute(&con);
+        .execute(&mut con);
 
-    let h: HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
+    let h: HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&mut con).unwrap();
     assert_eq!(h.len(), 2);
     assert_eq!(h.get("key_1"), Some(&1i32));
     assert_eq!(h.get("key_2"), Some(&2i32));
 
-    let h: BTreeMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&con).unwrap();
+    let h: BTreeMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&mut con).unwrap();
     assert_eq!(h.len(), 2);
     assert_eq!(h.get("key_1"), Some(&1i32));
     assert_eq!(h.get("key_2"), Some(&2i32));
@@ -115,24 +115,24 @@ fn test_hash_ops() {
 #[test]
 fn test_set_ops() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(2).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(3).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(1).execute(&mut con);
+    redis::cmd("SADD").arg("foo").arg(2).execute(&mut con);
+    redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
 
-    let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
     s.sort();
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
 
-    let set: HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    let set: HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
     assert!(set.contains(&3i32));
 
-    let set: BTreeSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&con).unwrap();
+    let set: BTreeSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
@@ -142,13 +142,17 @@ fn test_set_ops() {
 #[test]
 fn test_scan() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(2).execute(&con);
-    redis::cmd("SADD").arg("foo").arg(3).execute(&con);
+    redis::cmd("SADD").arg("foo").arg(1).execute(&mut con);
+    redis::cmd("SADD").arg("foo").arg(2).execute(&mut con);
+    redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
 
-    let (cur, mut s): (i32, Vec<i32>) = redis::cmd("SSCAN").arg("foo").arg(0).query(&con).unwrap();
+    let (cur, mut s): (i32, Vec<i32>) = redis::cmd("SSCAN")
+        .arg("foo")
+        .arg(0)
+        .query(&mut con)
+        .unwrap();
     s.sort();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
@@ -158,19 +162,22 @@ fn test_scan() {
 #[test]
 fn test_optionals() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg(1).execute(&con);
+    redis::cmd("SET").arg("foo").arg(1).execute(&mut con);
 
     let (a, b): (Option<i32>, Option<i32>) = redis::cmd("MGET")
         .arg("foo")
         .arg("missing")
-        .query(&con)
+        .query(&mut con)
         .unwrap();
     assert_eq!(a, Some(1i32));
     assert_eq!(b, None);
 
-    let a = redis::cmd("GET").arg("missing").query(&con).unwrap_or(0i32);
+    let a = redis::cmd("GET")
+        .arg("missing")
+        .query(&mut con)
+        .unwrap_or(0i32);
     assert_eq!(a, 0i32);
 }
 
@@ -180,11 +187,14 @@ fn test_json() {
     use redis::Json;
 
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    redis::cmd("SET").arg("foo").arg("[1, 2, 3]").execute(&con);
+    redis::cmd("SET")
+        .arg("foo")
+        .arg("[1, 2, 3]")
+        .execute(&mut con);
 
-    let json: Json = redis::cmd("GET").arg("foo").query(&con).unwrap();
+    let json: Json = redis::cmd("GET").arg("foo").query(&mut con).unwrap();
     assert_eq!(
         json,
         Json::Array(vec![Json::U64(1), Json::U64(2), Json::U64(3)])
@@ -194,18 +204,18 @@ fn test_json() {
 #[test]
 fn test_scanning() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
     let mut unseen = HashSet::new();
 
     for x in 0..1000 {
-        redis::cmd("SADD").arg("foo").arg(x).execute(&con);
+        redis::cmd("SADD").arg("foo").arg(x).execute(&mut con);
         unseen.insert(x);
     }
 
     let iter = redis::cmd("SSCAN")
         .arg("foo")
         .cursor_arg(0)
-        .iter(&con)
+        .iter(&mut con)
         .unwrap();
 
     for x in iter {
@@ -220,7 +230,7 @@ fn test_scanning() {
 #[test]
 fn test_filtered_scanning() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
     let mut unseen = HashSet::new();
 
     for x in 0..3000 {
@@ -246,7 +256,7 @@ fn test_filtered_scanning() {
 #[test]
 fn test_pipeline() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let ((k1, k2),): ((i32, i32),) = redis::pipe()
         .cmd("SET")
@@ -259,7 +269,7 @@ fn test_pipeline() {
         .ignore()
         .cmd("MGET")
         .arg(&["key_1", "key_2"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
 
     assert_eq!(k1, 42);
@@ -269,17 +279,17 @@ fn test_pipeline() {
 #[test]
 fn test_empty_pipeline() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    let _: () = redis::pipe().cmd("PING").ignore().query(&con).unwrap();
+    let _: () = redis::pipe().cmd("PING").ignore().query(&mut con).unwrap();
 
-    let _: () = redis::pipe().query(&con).unwrap();
+    let _: () = redis::pipe().query(&mut con).unwrap();
 }
 
 #[test]
 fn test_pipeline_transaction() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let ((k1, k2),): ((i32, i32),) = redis::pipe()
         .atomic()
@@ -293,7 +303,7 @@ fn test_pipeline_transaction() {
         .ignore()
         .cmd("MGET")
         .arg(&["key_1", "key_2"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
 
     assert_eq!(k1, 42);
@@ -303,7 +313,7 @@ fn test_pipeline_transaction() {
 #[test]
 fn test_pipeline_reuse_query() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let mut pl = redis::pipe();
 
@@ -314,12 +324,12 @@ fn test_pipeline_reuse_query() {
         .ignore()
         .cmd("MGET")
         .arg(&["pkey_1"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
 
     assert_eq!(k1, 42);
 
-    redis::cmd("DEL").arg("pkey_1").execute(&con);
+    redis::cmd("DEL").arg("pkey_1").execute(&mut con);
 
     // The internal commands vector of the pipeline still contains the previous commands.
     let ((k1,), (k2, k3)): ((i32,), (i32, i32)) = pl
@@ -330,7 +340,7 @@ fn test_pipeline_reuse_query() {
         .cmd("MGET")
         .arg(&["pkey_1"])
         .arg(&["pkey_2"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
 
     assert_eq!(k1, 42);
@@ -341,7 +351,7 @@ fn test_pipeline_reuse_query() {
 #[test]
 fn test_pipeline_reuse_query_clear() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let mut pl = redis::pipe();
 
@@ -352,13 +362,13 @@ fn test_pipeline_reuse_query_clear() {
         .ignore()
         .cmd("MGET")
         .arg(&["pkey_1"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
     pl.clear();
 
     assert_eq!(k1, 44);
 
-    redis::cmd("DEL").arg("pkey_1").execute(&con);
+    redis::cmd("DEL").arg("pkey_1").execute(&mut con);
 
     let ((k1, k2),): ((bool, i32),) = pl
         .cmd("SET")
@@ -368,7 +378,7 @@ fn test_pipeline_reuse_query_clear() {
         .cmd("MGET")
         .arg(&["pkey_1"])
         .arg(&["pkey_2"])
-        .query(&con)
+        .query(&mut con)
         .unwrap();
     pl.clear();
 
@@ -379,14 +389,14 @@ fn test_pipeline_reuse_query_clear() {
 #[test]
 fn test_real_transaction() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let key = "the_key";
-    let _: () = redis::cmd("SET").arg(key).arg(42).query(&con).unwrap();
+    let _: () = redis::cmd("SET").arg(key).arg(42).query(&mut con).unwrap();
 
     loop {
-        let _: () = redis::cmd("WATCH").arg(key).query(&con).unwrap();
-        let val: isize = redis::cmd("GET").arg(key).query(&con).unwrap();
+        let _: () = redis::cmd("WATCH").arg(key).query(&mut con).unwrap();
+        let val: isize = redis::cmd("GET").arg(key).query(&mut con).unwrap();
         let response: Option<(isize,)> = redis::pipe()
             .atomic()
             .cmd("SET")
@@ -395,7 +405,7 @@ fn test_real_transaction() {
             .ignore()
             .cmd("GET")
             .arg(key)
-            .query(&con)
+            .query(&mut con)
             .unwrap();
 
         match response {
@@ -413,20 +423,20 @@ fn test_real_transaction() {
 #[test]
 fn test_real_transaction_highlevel() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let key = "the_key";
-    let _: () = redis::cmd("SET").arg(key).arg(42).query(&con).unwrap();
+    let _: () = redis::cmd("SET").arg(key).arg(42).query(&mut con).unwrap();
 
-    let response: (isize,) = redis::transaction(&con, &[key], |pipe| {
-        let val: isize = redis::cmd("GET").arg(key).query(&con)?;
+    let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
+        let val: isize = redis::cmd("GET").arg(key).query(con)?;
         pipe.cmd("SET")
             .arg(key)
             .arg(val + 1)
             .ignore()
             .cmd("GET")
             .arg(key)
-            .query(&con)
+            .query(con)
     })
     .unwrap();
 
@@ -437,7 +447,7 @@ fn test_real_transaction_highlevel() {
 fn test_pubsub() {
     use std::sync::{Arc, Barrier};
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     // Connection for subscriber api
     let mut pubsub_con = ctx.connection();
@@ -463,7 +473,7 @@ fn test_pubsub() {
     });
 
     let _ = barrier.wait();
-    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
+    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
     // We can also call the command directly
     assert_eq!(con.publish("foo", 23), Ok(1));
 
@@ -542,7 +552,7 @@ fn test_pubsub_unsubscribe_one_sub_one_psub() {
 #[test]
 fn scoped_pubsub() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     // Connection for subscriber api
     let mut pubsub_con = ctx.connection();
@@ -575,11 +585,11 @@ fn scoped_pubsub() {
     // between channel subscription and blocking for messages.
     sleep(Duration::from_millis(100));
 
-    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
+    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
     assert_eq!(con.publish("bar", 23), Ok(1));
 
     // Wait for thread
-    let pubsub_con = thread.join().ok().expect("pubsub thread terminates ok");
+    let mut pubsub_con = thread.join().ok().expect("pubsub thread terminates ok");
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = pubsub_con.set("foo", "bar").unwrap();
@@ -590,7 +600,7 @@ fn scoped_pubsub() {
 #[test]
 fn test_script() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     let script = redis::Script::new(
         r"
@@ -601,9 +611,9 @@ fn test_script() {
     let _: () = redis::cmd("SET")
         .arg("my_key")
         .arg("foo")
-        .query(&con)
+        .query(&mut con)
         .unwrap();
-    let response = script.key("my_key").arg(42).invoke(&con);
+    let response = script.key("my_key").arg(42).invoke(&mut con);
 
     assert_eq!(response, Ok(("foo".to_string(), 42)));
 }
@@ -611,19 +621,25 @@ fn test_script() {
 #[test]
 fn test_tuple_args() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     redis::cmd("HMSET")
         .arg("my_key")
         .arg(&[("field_1", 42), ("field_2", 23)])
-        .execute(&con);
+        .execute(&mut con);
 
     assert_eq!(
-        redis::cmd("HGET").arg("my_key").arg("field_1").query(&con),
+        redis::cmd("HGET")
+            .arg("my_key")
+            .arg("field_1")
+            .query(&mut con),
         Ok(42)
     );
     assert_eq!(
-        redis::cmd("HGET").arg("my_key").arg("field_2").query(&con),
+        redis::cmd("HGET")
+            .arg("my_key")
+            .arg("field_2")
+            .query(&mut con),
         Ok(23)
     );
 }
@@ -631,7 +647,7 @@ fn test_tuple_args() {
 #[test]
 fn test_nice_api() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.set("my_key", 42), Ok(()));
     assert_eq!(con.get("my_key"), Ok(42));
@@ -644,7 +660,7 @@ fn test_nice_api() {
         .ignore()
         .get("key_1")
         .get("key_2")
-        .query(&con)
+        .query(&mut con)
         .unwrap();
 
     assert_eq!(k1, 42);
@@ -654,7 +670,7 @@ fn test_nice_api() {
 #[test]
 fn test_auto_m_versions() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.set_multiple(&[("key1", 1), ("key2", 2)]), Ok(()));
     assert_eq!(con.get(&["key1", "key2"]), Ok((1, 2)));
@@ -663,7 +679,7 @@ fn test_auto_m_versions() {
 #[test]
 fn test_nice_hash_api() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(
         con.hset_multiple("my_hash", &[("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8)]),
@@ -716,7 +732,7 @@ fn test_nice_hash_api() {
 #[test]
 fn test_nice_list_api() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.rpush("my_list", &[1, 2, 3, 4]), Ok(4));
     assert_eq!(con.rpush("my_list", &[5, 6, 7, 8]), Ok(8));
@@ -734,7 +750,7 @@ fn test_nice_list_api() {
 #[test]
 fn test_tuple_decoding_regression() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.del("my_zset"), Ok(()));
     assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
@@ -752,7 +768,7 @@ fn test_tuple_decoding_regression() {
 #[test]
 fn test_bit_operations() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.setbit("bitvec", 10, true), Ok(false));
     assert_eq!(con.getbit("bitvec", 10), Ok(true));
@@ -781,7 +797,7 @@ fn test_invalid_protocol() {
     sleep(Duration::from_millis(100));
     // some work here
     let cli = redis::Client::open(&format!("redis://127.0.0.1:{}", port)[..]).unwrap();
-    let con = cli.get_connection().unwrap();
+    let mut con = cli.get_connection().unwrap();
 
     let mut result: redis::RedisResult<u8>;
     // first requests returns ResponseError
@@ -797,15 +813,15 @@ fn test_invalid_protocol() {
 #[test]
 fn test_redis_server_down() {
     let mut ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
-    let ping = redis::cmd("PING").query::<String>(&con);
+    let ping = redis::cmd("PING").query::<String>(&mut con);
     assert_eq!(ping, Ok("PONG".into()));
 
     ctx.stop_server();
 
-    let ping = redis::cmd("PING").query::<String>(&con);
-
+    let ping = redis::cmd("PING").query::<String>(&mut con);
+    assert_eq!(con.is_open(), false);
     assert_eq!(ping.is_err(), true);
     assert_eq!(con.is_open(), false);
 }

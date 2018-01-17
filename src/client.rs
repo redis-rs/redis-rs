@@ -59,12 +59,12 @@ impl Client {
 }
 
 impl ConnectionLike for Client {
-    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+    fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         self.get_connection()?.req_packed_command(cmd)
     }
 
     fn req_packed_commands(
-        &self,
+        &mut self,
         cmd: &[u8],
         offset: usize,
         count: usize,

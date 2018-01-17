@@ -31,7 +31,7 @@ pub struct Pipeline {
 pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: &'a (ConnectionLike + 'a),
+    con: &'a mut (ConnectionLike + 'a),
     cmd: Cmd,
 }
 
@@ -55,11 +55,11 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
                 return None;
             }
 
-            let pcmd = unwrap_or!(
+            let mut pcmd = unwrap_or!(
                 self.cmd.get_packed_command_with_cursor(self.cursor),
                 return None
             );
-            let rv = unwrap_or!(self.con.req_packed_command(&pcmd).ok(), return None);
+            let rv = unwrap_or!(self.con.req_packed_command(&mut pcmd).ok(), return None);
             let (cur, mut batch): (u64, Vec<T>) =
                 unwrap_or!(from_redis_value(&rv).ok(), return None);
             batch.reverse();
@@ -168,9 +168,9 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection().unwrap();
 /// let mut cmd = redis::cmd("SMEMBERS");
-/// let mut iter : redis::Iter<i32> = cmd.arg("my_set").iter(&con).unwrap();
+/// let mut iter : redis::Iter<i32> = cmd.arg("my_set").iter(&mut con).unwrap();
 /// ```
 impl Cmd {
     /// Creates a new empty command.
@@ -190,7 +190,7 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection().unwrap();
     /// redis::cmd("SET").arg(&["my_key", "my_value"]);
     /// redis::cmd("SET").arg("my_key").arg(42);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
@@ -212,9 +212,9 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection().unwrap();
     /// let mut cmd = redis::cmd("SSCAN");
-    /// let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+    /// let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).iter(&mut con).unwrap();
     /// for x in iter {
     ///     // do something with the item
     /// }
@@ -255,7 +255,7 @@ impl Cmd {
     /// result to the target redis value.  This is the general way how
     /// you can retrieve data.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
         match con.req_packed_command(&pcmd) {
             Ok(val) => from_redis_value(&val),
@@ -291,9 +291,12 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike) -> RedisResult<Iter<'a, T>> {
-        let pcmd = self.get_packed_command();
-        let rv = con.req_packed_command(&pcmd)?;
+    pub fn iter<'a, T: FromRedisValue>(
+        &self,
+        con: &'a mut ConnectionLike,
+    ) -> RedisResult<Iter<'a, T>> {
+        let mut pcmd = self.get_packed_command();
+        let rv = con.req_packed_command(&mut pcmd)?;
         let mut batch: Vec<T>;
         let mut cursor = 0;
 
@@ -323,11 +326,11 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
-    /// let _ : () = redis::cmd("PING").query(&con).unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
     /// ```
     #[inline]
-    pub fn execute(&self, con: &ConnectionLike) {
+    pub fn execute(&self, con: &mut ConnectionLike) {
         let _: () = self.query(con).unwrap();
     }
 }
@@ -341,11 +344,11 @@ impl Cmd {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection().unwrap();
 /// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
 ///     .cmd("SET").arg("key_1").arg(42).ignore()
 ///     .cmd("SET").arg("key_2").arg(43).ignore()
-///     .cmd("MGET").arg(&["key_1", "key_2"]).query(&con).unwrap();
+///     .cmd("MGET").arg(&["key_1", "key_2"]).query(&mut con).unwrap();
 /// ```
 ///
 /// As you can see with `cmd` you can start a new command.  By default
@@ -428,11 +431,11 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection().unwrap();
     /// let (k1, k2) : (i32, i32) = redis::pipe()
     ///     .atomic()
     ///     .cmd("GET").arg("key_1")
-    ///     .cmd("GET").arg("key_2").query(&con).unwrap();
+    ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
     /// ```
     #[inline]
     pub fn atomic(&mut self) -> &mut Pipeline {
@@ -450,7 +453,7 @@ impl Pipeline {
         Value::Bulk(rv)
     }
 
-    fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
+    fn execute_pipelined(&self, con: &mut ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),
             0,
@@ -458,7 +461,7 @@ impl Pipeline {
         )?))
     }
 
-    fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
+    fn execute_transaction(&self, con: &mut ConnectionLike) -> RedisResult<Value> {
         let mut resp = con.req_packed_commands(
             &encode_pipeline(&self.commands, true),
             self.commands.len() + 1,
@@ -480,19 +483,19 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection().unwrap();
     /// let (k1, k2) : (i32, i32) = redis::pipe()
     ///     .cmd("SET").arg("key_1").arg(42).ignore()
     ///     .cmd("SET").arg("key_2").arg(43).ignore()
     ///     .cmd("GET").arg("key_1")
-    ///     .cmd("GET").arg("key_2").query(&con).unwrap();
+    ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
     /// ```
     ///
     /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         from_redis_value(
             &(if self.commands.len() == 0 {
                 Value::Bulk(vec![])
@@ -575,15 +578,15 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let con = client.get_connection().unwrap();
-    /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    /// let _ : () = redis::pipe().cmd("PING").query(&mut con).unwrap();
     /// ```
     ///
     /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn execute(&self, con: &ConnectionLike) {
+    pub fn execute(&self, con: &mut ConnectionLike) {
         let _: () = self.query(con).unwrap();
     }
 }

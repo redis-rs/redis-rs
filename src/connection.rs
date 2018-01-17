@@ -1,4 +1,3 @@
-use std::cell::{Cell, RefCell};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{self, TcpStream};
 use std::path::PathBuf;
@@ -193,14 +192,14 @@ enum ActualConnection {
 
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
-    con: RefCell<ActualConnection>,
+    con: ActualConnection,
     db: i64,
 
     /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
     ///
     /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
     /// exit the pubsub state before executing the new request.
-    pubsub: Cell<bool>,
+    pubsub: bool,
 }
 
 /// Represents a pubsub connection.
@@ -343,14 +342,14 @@ impl ActualConnection {
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr)?;
-    let rv = Connection {
-        con: RefCell::new(con),
+    let mut rv = Connection {
+        con: con,
         db: connection_info.db,
-        pubsub: Cell::new(false),
+        pubsub: false,
     };
 
     match connection_info.passwd {
-        Some(ref passwd) => match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
+        Some(ref passwd) => match cmd("AUTH").arg(&**passwd).query::<Value>(&mut rv) {
             Ok(Value::Okay) => {}
             _ => {
                 fail!((
@@ -363,7 +362,10 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     }
 
     if connection_info.db != 0 {
-        match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
+        match cmd("SELECT")
+            .arg(connection_info.db)
+            .query::<Value>(&mut rv)
+        {
             Ok(Value::Okay) => {}
             _ => fail!((
                 ErrorKind::ResponseError,
@@ -388,13 +390,13 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
 pub trait ConnectionLike {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value>;
+    fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value>;
 
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
     fn req_packed_commands(
-        &self,
+        &mut self,
         cmd: &[u8],
         offset: usize,
         count: usize,
@@ -419,15 +421,15 @@ impl Connection {
     /// does not read a response.  This is useful for commands like
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
-    pub fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<()> {
-        self.con.borrow_mut().send_bytes(cmd)?;
+    pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
+        self.con.send_bytes(cmd)?;
         Ok(())
     }
 
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
-    pub fn recv_response(&self) -> RedisResult<Value> {
-        self.con.borrow_mut().read_response()
+    pub fn recv_response(&mut self) -> RedisResult<Value> {
+        self.con.read_response()
     }
 
     /// Sets the write timeout for the connection.
@@ -436,7 +438,7 @@ impl Connection {
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        self.con.borrow().set_write_timeout(dur)
+        self.con.set_write_timeout(dur)
     }
 
     /// Sets the read timeout for the connection.
@@ -445,7 +447,7 @@ impl Connection {
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        self.con.borrow().set_read_timeout(dur)
+        self.con.set_read_timeout(dur)
     }
 
     pub fn as_pubsub<'a>(&'a mut self) -> PubSub<'a> {
@@ -454,13 +456,13 @@ impl Connection {
         PubSub::new(self)
     }
 
-    fn exit_pubsub(&self) -> RedisResult<()> {
+    fn exit_pubsub(&mut self) -> RedisResult<()> {
         let res = self.clear_active_subscriptions();
         if res.is_ok() {
-            self.pubsub.set(false);
+            self.pubsub = false;
         } else {
             // Raise the pubsub flag to indicate the connection is "stuck" in that state.
-            self.pubsub.set(true);
+            self.pubsub = true;
         }
 
         res
@@ -470,7 +472,7 @@ impl Connection {
     ///
     /// Any active subscriptions are unsubscribed. In the event of an error, the connection is
     /// dropped.
-    fn clear_active_subscriptions(&self) -> RedisResult<()> {
+    fn clear_active_subscriptions(&mut self) -> RedisResult<()> {
         // Responses to unsubscribe commands return in a 3-tuple with values
         // ("unsubscribe" or "punsubscribe", name of subscription removed, count of remaining subs).
         // The "count of remaining subs" includes both pattern subscriptions and non pattern
@@ -483,7 +485,7 @@ impl Connection {
 
             // Grab a reference to the underlying connection so that we may send
             // the commands without immediately blocking for a response.
-            let mut con = self.con.borrow_mut();
+            let con = &mut self.con;
 
             // Execute commands
             con.send_bytes(&unsubscribe)?;
@@ -524,31 +526,31 @@ impl Connection {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     pub fn is_open(&self) -> bool {
-        self.con.borrow().is_open()
+        self.con.is_open()
     }
 }
 
 impl ConnectionLike for Connection {
-    fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        if self.pubsub.get() {
+    fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
+        if self.pubsub {
             self.exit_pubsub()?;
         }
 
-        let mut con = self.con.borrow_mut();
+        let con = &mut self.con;
         con.send_bytes(cmd)?;
         con.read_response()
     }
 
     fn req_packed_commands(
-        &self,
+        &mut self,
         cmd: &[u8],
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        if self.pubsub.get() {
+        if self.pubsub {
             self.exit_pubsub()?;
         }
-        let mut con = self.con.borrow_mut();
+        let con = &mut self.con;
         con.send_bytes(cmd)?;
         let mut rv = vec![];
         for idx in 0..(offset + count) {
@@ -621,7 +623,7 @@ impl<'a> PubSub<'a> {
     ///
     /// The message itself is still generic and can be converted into an
     /// appropriate type through the helper methods on it.
-    pub fn get_message(&self) -> RedisResult<Msg> {
+    pub fn get_message(&mut self) -> RedisResult<Msg> {
         loop {
             let raw_msg: Vec<Value> = from_redis_value(&self.con.recv_response()?)?;
             let mut iter = raw_msg.into_iter();
@@ -738,23 +740,24 @@ impl Msg {
 /// use redis::{Commands, PipelineCommands};
 /// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection().unwrap();
 /// let key = "the_key";
-/// let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
+/// let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 ///     let old_val : isize = con.get(key)?;
 ///     pipe
 ///         .set(key, old_val + 1).ignore()
-///         .get(key).query(&con)
+///         .get(key).query(con)
 /// })?;
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
 pub fn transaction<
+    C: ConnectionLike,
     K: ToRedisArgs,
     T: FromRedisValue,
-    F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>,
+    F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
 >(
-    con: &ConnectionLike,
+    con: &mut C,
     keys: &[K],
     func: F,
 ) -> RedisResult<T> {
@@ -762,7 +765,7 @@ pub fn transaction<
     loop {
         let _: () = cmd("WATCH").arg(keys).query(con)?;
         let mut p = pipe();
-        let response: Option<T> = func(p.atomic())?;
+        let response: Option<T> = func(con, p.atomic())?;
         match response {
             None => {
                 continue;
