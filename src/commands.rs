@@ -1,8 +1,7 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
 use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
-use client::Client;
-use connection::{Connection, ConnectionLike, Msg};
+use connection::{ConnectionLike, Msg, Connection};
 use cmd::{cmd, Cmd, Pipeline, Iter};
 
 
@@ -26,9 +25,9 @@ macro_rules! implement_commands {
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let con = client.get_connection()?;
-        /// redis::cmd("SET").arg("my_key").arg(42).execute(&con);
-        /// assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42));
+        /// let mut con = client.get_connection()?;
+        /// redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
+        /// assert_eq!(redis::cmd("GET").arg("my_key").query(&mut con), Ok(42));
         /// # Ok(()) }
         /// ```
         ///
@@ -38,7 +37,7 @@ macro_rules! implement_commands {
         /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let con = client.get_connection()?;
+        /// let mut con = client.get_connection()?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```
@@ -47,13 +46,13 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
-                    &self $(, $argname: $argty)*) -> RedisResult<RV>
+                    &mut self $(, $argname: $argty)*) -> RedisResult<RV>
                     { ($body).query(self) }
             )*
 
             /// Incrementally iterate the keys space.
             #[inline]
-            fn scan<RV: FromRedisValue>(&self) -> RedisResult<Iter<RV>> {
+            fn scan<RV: FromRedisValue>(&mut self) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0);
                 c.iter(self)
@@ -61,7 +60,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -69,7 +68,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate hash fields and associated values.
             #[inline]
-            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -79,7 +78,7 @@ macro_rules! implement_commands {
             /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -87,7 +86,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate set elements.
             #[inline]
-            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -96,7 +95,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -104,7 +103,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate sorted set elements.
             #[inline]
-            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -113,7 +112,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -819,8 +818,7 @@ pub trait PubSubCommands: Sized {
               P: ToRedisArgs;
 }
 
-impl Commands for Connection {}
-impl Commands for Client {}
+impl<T> Commands for T where T: ConnectionLike {}
 
 impl PubSubCommands for Connection {
     fn subscribe<'a, C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>

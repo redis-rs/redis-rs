@@ -18,11 +18,11 @@ pub struct Script {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection().unwrap();
 /// let script = redis::Script::new(r"
 ///     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 /// ");
-/// let result = script.arg(1).arg(2).invoke(&con);
+/// let result = script.arg(1).arg(2).invoke(&mut con);
 /// assert_eq!(result, Ok(3));
 /// ```
 impl Script {
@@ -75,7 +75,7 @@ impl Script {
 
     /// Invokes the script directly without arguments.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -121,7 +121,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Invokes the script and returns the result.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")
                 .arg(self.script.hash.as_bytes())
