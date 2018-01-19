@@ -88,12 +88,25 @@ fn bench_encode_pipeline(b: &mut Bencher) {
     });
 }
 
+fn bench_encode_pipeline_nested(b: &mut Bencher) {
+    b.iter(|| {
+        let mut pipe = redis::pipe();
+
+        for _ in 0..200 {
+            pipe.set("foo", ("bar", 123, b"1231279712", &["test", "test", "test"][..])).ignore();
+        }
+        pipe
+    });
+}
+
+
 benchmark_group!(
     bench,
     bench_simple_getsetdel,
     bench_simple_getsetdel_pipeline,
     bench_simple_getsetdel_pipeline_precreated,
     bench_long_pipeline,
-    bench_encode_pipeline
+    bench_encode_pipeline,
+    bench_encode_pipeline_nested
 );
 benchmark_main!(bench);
