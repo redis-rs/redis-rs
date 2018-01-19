@@ -1,14 +1,13 @@
-#![feature(test)]
-extern crate test;
 extern crate redis;
+#[macro_use]
+extern crate bencher;
 
-use test::Bencher;
+use bencher::Bencher;
 
 fn get_client() -> redis::Client {
     redis::Client::open("redis://127.0.0.1:6379").unwrap()
 }
 
-#[bench]
 fn bench_simple_getsetdel(b: &mut Bencher) {
     let client = get_client();
     let con = client.get_connection().unwrap();
@@ -21,7 +20,6 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
     let client = get_client();
     let con = client.get_connection().unwrap();
@@ -43,7 +41,6 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
     let client = get_client();
     let con = client.get_connection().unwrap();
@@ -63,3 +60,12 @@ fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
         let _: (usize,) = pipe.query(&con).unwrap();
     });
 }
+
+
+benchmark_group!(
+    bench,
+    bench_simple_getsetdel,
+    bench_simple_getsetdel_pipeline,
+    bench_simple_getsetdel_pipeline_precreated
+);
+benchmark_main!(bench);
