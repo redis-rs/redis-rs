@@ -198,7 +198,9 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
-        for item in arg.to_redis_args().into_iter() {
+        let mut out = Vec::new();
+        arg.write_redis_args(&mut out);
+        for item in out {
             self.args.push(Arg::Simple(item));
         }
         self

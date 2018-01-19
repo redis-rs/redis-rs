@@ -409,7 +409,17 @@ pub trait ToRedisArgs: Sized {
     /// single item.
     ///
     /// The exception to this rule currently are vectors of items.
-    fn to_redis_args(&self) -> Vec<Vec<u8>>;
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        self.write_redis_args(&mut out);
+        out
+    }
+
+    /// This writes the value into a vector of bytes.  Each item
+    /// is a single argument.  Most items generate a single item. 
+    ///
+    /// The exception to this rule currently are vectors of items.
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>);
 
     /// Returns an information about the contained value with regards
     /// to it's numeric behavior in a redis context.  This is used in
@@ -430,25 +440,21 @@ pub trait ToRedisArgs: Sized {
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
-    fn make_arg_vec(items: &[Self]) -> Vec<Vec<u8>> {
-        let mut rv = vec![];
+    fn make_arg_vec(items: &[Self], out: &mut Vec<Vec<u8>>) {
         for item in items.iter() {
-            rv.extend(item.to_redis_args().into_iter());
+            item.write_redis_args(out);
         }
-        rv
     }
 
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
-    fn make_arg_iter_ref<'a, I>(items: I) -> Vec<Vec<u8>>
+    fn make_arg_iter_ref<'a, I>(items: I, out: &mut Vec<Vec<u8>>)
         where I: Iterator<Item=&'a Self>, Self: 'a
     {
-        let mut rv = Vec::with_capacity(items.size_hint().0);
         for item in items {
-            rv.extend(item.to_redis_args());
+            item.write_redis_args(out);
         }
-        rv
     }
 
     #[doc(hidden)]
@@ -469,9 +475,9 @@ macro_rules! invalid_type_error {
 macro_rules! string_based_to_redis_impl {
     ($t:ty, $numeric:expr) => (
         impl ToRedisArgs for $t {
-            fn to_redis_args(&self) -> Vec<Vec<u8>> {
+            fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
                 let s = self.to_string();
-                vec![s.as_bytes().to_vec()]
+                out.push(s.into_bytes())
             }
 
             fn describe_numeric_behavior(&self) -> NumericBehavior {
@@ -483,13 +489,13 @@ macro_rules! string_based_to_redis_impl {
 
 
 impl ToRedisArgs for u8 {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
         let s = self.to_string();
-        vec![s.as_bytes().to_vec()]
+        out.push(s.into_bytes());
     }
 
-    fn make_arg_vec(items: &[u8]) -> Vec<Vec<u8>> {
-        vec![items.to_vec()]
+    fn make_arg_vec(items: &[u8], out: &mut Vec<Vec<u8>>) {
+        out.push(items.to_vec());
     }
 
     fn is_single_vec_arg(_items: &[u8]) -> bool {
@@ -512,26 +518,26 @@ string_based_to_redis_impl!(bool, NumericBehavior::NonNumeric);
 
 
 impl ToRedisArgs for String {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        vec![self.as_bytes().to_vec()]
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        out.push(self.as_bytes().to_vec())
     }
 }
 
 impl<'a> ToRedisArgs for &'a String {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        vec![self.as_bytes().to_vec()]
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        out.push(self.as_bytes().to_vec())
     }
 }
 
 impl<'a> ToRedisArgs for &'a str {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        vec![self.as_bytes().to_vec()]
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        out.push(self.as_bytes().to_vec())
     }
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        ToRedisArgs::make_arg_vec(self)
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        ToRedisArgs::make_arg_vec(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -540,8 +546,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
 }
 
 impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        ToRedisArgs::make_arg_vec(*self)
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        ToRedisArgs::make_arg_vec(*self, out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -550,10 +556,10 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
         match *self {
-            Some(ref x) => x.to_redis_args(),
-            None => vec![],
+            Some(ref x) => x.write_redis_args(out),
+            None => (),
         }
     }
 
@@ -576,8 +582,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 /// check whether the set is empty and if so, not attempt to use that
 /// result
 impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        ToRedisArgs::make_arg_iter_ref(self.iter())
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -589,8 +595,8 @@ impl<T: ToRedisArgs + Hash + Eq> ToRedisArgs for HashSet<T> {
 /// check whether the set is empty and if so, not attempt to use that
 /// result
 impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        ToRedisArgs::make_arg_iter_ref(self.iter())
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -604,20 +610,19 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
 /// result
 impl<T: ToRedisArgs + Hash + Eq + Ord,
      V: ToRedisArgs> ToRedisArgs for BTreeMap<T,V> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
         let mut rv = Vec::with_capacity(self.len()*2);
 
-        rv.extend(self
-            .into_iter()
-            .flat_map(|(key,value)| {
-                // otherwise things like HMSET will simply NOT work
-                assert!(key.is_single_arg() &&
-                        value.is_single_arg());
+        for (key, value) in self {
+            // otherwise things like HMSET will simply NOT work
+            assert!(key.is_single_arg() &&
+                    value.is_single_arg());
 
-                vec![key.to_redis_args(),
-                               value.to_redis_args()].into_iter() } )
-            );
-        ToRedisArgs::make_arg_vec(&rv)
+            key.write_redis_args(&mut rv);
+            value.write_redis_args(&mut rv);
+        }
+
+        ToRedisArgs::make_arg_vec(&rv, out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -627,9 +632,9 @@ impl<T: ToRedisArgs + Hash + Eq + Ord,
 
 #[cfg(feature="with-rustc-json")]
 impl ToRedisArgs for json::Json {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+    fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
         // XXX: the encode result needs to be handled properly
-        vec![json::encode(self).unwrap().into_bytes()]
+        out.push(json::encode(self).unwrap().into_bytes())
     }
 }
 
@@ -641,11 +646,9 @@ macro_rules! to_redis_args_for_tuple {
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
-            fn to_redis_args(&self) -> Vec<Vec<u8>> {
+            fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
                 let ($(ref $name,)*) = *self;
-                let mut rv = vec![];
-                $(rv.extend($name.to_redis_args().into_iter());)*
-                rv
+                $($name.write_redis_args(out);)*
             }
 
             #[allow(non_snake_case, unused_variables)]
@@ -672,8 +675,8 @@ macro_rules! to_redis_args_for_array {
     ($($N:expr)+) => {
         $(
             impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T; $N] {
-                fn to_redis_args(&self) -> Vec<Vec<u8>> {
-                    ToRedisArgs::make_arg_vec(*self)
+                fn write_redis_args(&self, out: &mut Vec<Vec<u8>>) {
+                    ToRedisArgs::make_arg_vec(*self, out)
                 }
 
                 fn is_single_arg(&self) -> bool {
