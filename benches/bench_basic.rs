@@ -77,12 +77,23 @@ fn bench_long_pipeline(b: &mut Bencher) {
     });
 }
 
+fn bench_encode_pipeline(b: &mut Bencher) {
+    b.iter(|| {
+        let mut pipe = redis::pipe();
+
+        for _ in 0..1_000 {
+            pipe.set("foo", "bar").ignore();
+        }
+        pipe
+    });
+}
 
 benchmark_group!(
     bench,
     bench_simple_getsetdel,
     bench_simple_getsetdel_pipeline,
     bench_simple_getsetdel_pipeline_precreated,
-    bench_long_pipeline
+    bench_long_pipeline,
+    bench_encode_pipeline
 );
 benchmark_main!(bench);
