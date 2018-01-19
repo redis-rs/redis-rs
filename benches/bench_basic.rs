@@ -2,6 +2,12 @@ extern crate redis;
 #[macro_use]
 extern crate bencher;
 
+extern crate futures;
+extern crate tokio_core;
+
+use futures::Future;
+use tokio_core::reactor::Core;
+
 use bencher::Bencher;
 
 use redis::PipelineCommands;
@@ -19,6 +25,27 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
         redis::cmd("SET").arg(key).arg(42).execute(&con);
         let _: isize = redis::cmd("GET").arg(key).query(&con).unwrap();
         redis::cmd("DEL").arg(key).execute(&con);
+    });
+}
+
+fn bench_simple_getsetdel_async(b: &mut Bencher) {
+    let client = get_client();
+    let mut core = Core::new().unwrap();
+    let con = client.get_async_connection(&core.handle());
+    let mut opt_con = Some(core.run(con).unwrap());
+
+    b.iter(|| {
+        let con = opt_con.take().expect("No connection");
+
+        let key = "test_key";
+        let future = redis::cmd("SET").arg(key).arg(42).query_async(con).and_then(|(con, ())| {
+            redis::cmd("GET").arg(key).query_async(con)
+        }).and_then(|(con, _): (_, isize)| {
+            redis::cmd("DEL").arg(key).query_async(con)
+        });
+        let (con, ()) = core.run(future).unwrap();
+
+        opt_con = Some(con);
     });
 }
 
@@ -103,10 +130,12 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
 benchmark_group!(
     bench,
     bench_simple_getsetdel,
+    bench_simple_getsetdel_async,
     bench_simple_getsetdel_pipeline,
     bench_simple_getsetdel_pipeline_precreated,
     bench_long_pipeline,
     bench_encode_pipeline,
-    bench_encode_pipeline_nested
+    bench_encode_pipeline_nested,
+    bench_long_pipeline
 );
 benchmark_main!(bench);

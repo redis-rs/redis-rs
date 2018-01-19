@@ -1,8 +1,8 @@
 use sha1::Sha1;
 
 use cmd::cmd;
-use types::{ToRedisArgs, FromRedisValue, RedisResult, ErrorKind};
 use connection::ConnectionLike;
+use types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -77,11 +77,10 @@ impl Script {
     #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
-                script: self,
-                args: vec![],
-                keys: vec![],
-            }
-            .invoke(con)
+            script: self,
+            args: vec![],
+            keys: vec![],
+        }.invoke(con)
     }
 }
 
@@ -101,7 +100,8 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut ScriptInvocation<'a>
-        where 'a: 'b
+    where
+        'a: 'b,
     {
         arg.write_redis_args(&mut self.args);
         self
@@ -111,7 +111,8 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut ScriptInvocation<'a>
-        where 'a: 'b
+    where
+        'a: 'b,
     {
         key.write_redis_args(&mut self.keys);
         self
@@ -126,20 +127,21 @@ impl<'a> ScriptInvocation<'a> {
                 .arg(self.keys.len())
                 .arg(&*self.keys)
                 .arg(&*self.args)
-                .query(con) {
+                .query(con)
+            {
                 Ok(val) => {
                     return Ok(val);
                 }
-                Err(err) => {
-                    if err.kind() == ErrorKind::NoScriptError {
-                        let _: () = try!(cmd("SCRIPT")
+                Err(err) => if err.kind() == ErrorKind::NoScriptError {
+                    let _: () = try!(
+                        cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
-                            .query(con));
-                    } else {
-                        fail!(err);
-                    }
-                }
+                            .query(con)
+                    );
+                } else {
+                    fail!(err);
+                },
             }
         }
     }

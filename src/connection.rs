@@ -1,21 +1,21 @@
-use std::path::PathBuf;
-use std::io::{Read, BufReader, Write};
-use std::net::{self, TcpStream};
-use std::str::from_utf8;
 use std::cell::{Cell, RefCell};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{self, TcpStream};
+use std::path::PathBuf;
+use std::str::from_utf8;
 use std::time::Duration;
 
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value, ErrorKind, RedisError};
 use parser::Parser;
+use types::{from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs,
+            Value};
 
-#[cfg(feature="with-unix-sockets")]
-use unix_socket::UnixStream;
-#[cfg(all(feature="with-system-unix-sockets", not(feature="with-unix-sockets")))]
+#[cfg(all(feature = "with-system-unix-sockets", not(feature = "with-unix-sockets")))]
 use std::os::unix::net::UnixStream;
-
+#[cfg(feature = "with-unix-sockets")]
+use unix_socket::UnixStream;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -24,12 +24,10 @@ static DEFAULT_PORT: u16 = 6379;
 /// not understand how redis URLs function.
 pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
     match url::Url::parse(input) {
-        Ok(result) => {
-            match result.scheme() {
-                "redis" | "redis+unix" | "unix" => Ok(result),
-                _ => Err(()),
-            }
-        }
+        Ok(result) => match result.scheme() {
+            "redis" | "redis+unix" | "unix" => Ok(result),
+            _ => Err(()),
+        },
         Err(_) => Err(()),
     }
 }
@@ -56,14 +54,13 @@ impl ConnectionAddr {
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ConnectionAddr::Unix(_) => true,
-            #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
+            #[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
             ConnectionAddr::Unix(_) => false,
         }
     }
 }
-
 
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
@@ -100,45 +97,52 @@ impl<'a> IntoConnectionInfo for &'a str {
 
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Tcp(match url.host() {
-                                               Some(host) => host.to_string(),
-                                               None => {
-                                                   fail!((ErrorKind::InvalidClientConfig,
-                                                          "Missing hostname"))
-                                               }
-                                           },
-                                           url.port().unwrap_or(DEFAULT_PORT))),
+        addr: Box::new(ConnectionAddr::Tcp(
+            match url.host() {
+                Some(host) => host.to_string(),
+                None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
+            },
+            url.port().unwrap_or(DEFAULT_PORT),
+        )),
         db: match url.path().trim_matches('/') {
             "" => 0,
-            path => {
-                unwrap_or!(path.parse::<i64>().ok(),
-                           fail!((ErrorKind::InvalidClientConfig, "Invalid database number")))
-            }
+            path => unwrap_or!(
+                path.parse::<i64>().ok(),
+                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+            ),
         },
         passwd: url.password().and_then(|pw| Some(pw.to_string())),
     })
 }
 
-#[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+#[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(url.to_file_path().ok(),
-                                                       fail!((ErrorKind::InvalidClientConfig,
-                                                              "Missing path"))))),
-        db: match url.query_pairs().into_iter().filter(|&(ref key, _)| key == "db").next() {
-            Some((_, db)) => {
-                unwrap_or!(db.parse::<i64>().ok(),
-                           fail!((ErrorKind::InvalidClientConfig, "Invalid database number")))
-            }
+        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
+            url.to_file_path().ok(),
+            fail!((ErrorKind::InvalidClientConfig, "Missing path"))
+        ))),
+        db: match url.query_pairs()
+            .into_iter()
+            .filter(|&(ref key, _)| key == "db")
+            .next()
+        {
+            Some((_, db)) => unwrap_or!(
+                db.parse::<i64>().ok(),
+                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+            ),
             None => 0,
         },
         passwd: url.password().and_then(|pw| Some(pw.to_string())),
     })
 }
 
-#[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
+#[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
 fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
-    fail!((ErrorKind::InvalidClientConfig, "Unix sockets are not available on this platform."));
+    fail!((
+        ErrorKind::InvalidClientConfig,
+        "Unix sockets are not available on this platform."
+    ));
 }
 
 impl IntoConnectionInfo for url::Url {
@@ -148,24 +152,27 @@ impl IntoConnectionInfo for url::Url {
         } else if self.scheme() == "unix" || self.scheme() == "redis+unix" {
             url_to_unix_connection_info(self)
         } else {
-            fail!((ErrorKind::InvalidClientConfig, "URL provided is not a redis URL"));
+            fail!((
+                ErrorKind::InvalidClientConfig,
+                "URL provided is not a redis URL"
+            ));
         }
     }
 }
 
 struct TcpConnection {
     reader: BufReader<TcpStream>,
-    open: bool
+    open: bool,
 }
 
 struct UnixConnection {
-    sock: UnixStream,
-    open: bool
+    sock: BufReader<UnixStream>,
+    open: bool,
 }
 
 enum ActualConnection {
     Tcp(TcpConnection),
-    #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+    #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
     Unix(UnixConnection),
 }
 
@@ -200,17 +207,23 @@ impl ActualConnection {
                 let host: &str = &*host;
                 let tcp = try!(TcpStream::connect((host, *port)));
                 let buffered = BufReader::new(tcp);
-                ActualConnection::Tcp(TcpConnection { reader: buffered, open: true })
+                ActualConnection::Tcp(TcpConnection {
+                    reader: buffered,
+                    open: true,
+                })
             }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
+                sock: BufReader::new(try!(UnixStream::connect(path))),
+                open: true,
+            }),
+            #[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
             ConnectionAddr::Unix(ref path) => {
-                ActualConnection::Unix(UnixConnection { sock: try!(UnixStream::connect(path)), open: true })
-            }
-            #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
-            ConnectionAddr::Unix(ref path) => {
-                fail!((ErrorKind::InvalidClientConfig,
-                       "Cannot connect to unix sockets \
-                       on this platform"));
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to unix sockets \
+                     on this platform"
+                ));
             }
         })
     }
@@ -221,9 +234,13 @@ impl ActualConnection {
                 try!(reader.get_mut().write_all(bytes));
                 Ok(Value::Okay)
             }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(ref mut connection) => {
-                let result = connection.sock.write_all(bytes).map_err(|e| RedisError::from(e));
+                let result = connection
+                    .sock
+                    .get_mut()
+                    .write_all(bytes)
+                    .map_err(|e| RedisError::from(e));
                 match result {
                     Err(e) => {
                         if e.is_broken_pipe() {
@@ -231,34 +248,31 @@ impl ActualConnection {
                         }
                         Err(e)
                     }
-                    Ok(_) => Ok(Value::Okay)
+                    Ok(_) => Ok(Value::Okay),
                 }
-            },
+            }
         }
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
-                ActualConnection::Tcp(TcpConnection{ ref mut reader, .. }) => reader as &mut Read,
-                #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-                ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut Read,
-            })
-            .parse_value();
+            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => reader as &mut BufRead,
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut BufRead,
+        }).parse_value();
         // shutdown connection on protocol error
         match result {
-            Err(ref e) if e.kind() == ErrorKind::ResponseError => {
-                match *self {
-                    ActualConnection::Tcp(ref mut connection) => {
-                        let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
-                        connection.open = false;
-                    }
-                    #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-                    ActualConnection::Unix(ref mut connection) => {
-                        let _ = connection.sock.shutdown(net::Shutdown::Both);
-                        connection.open = false;
-                    }
+            Err(ref e) if e.kind() == ErrorKind::ResponseError => match *self {
+                ActualConnection::Tcp(ref mut connection) => {
+                    let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
+                    connection.open = false;
                 }
-            }
+                #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+                ActualConnection::Unix(ref mut connection) => {
+                    let _ = connection.sock.get_mut().shutdown(net::Shutdown::Both);
+                    connection.open = false;
+                }
+            },
             _ => (),
         }
         result
@@ -266,12 +280,12 @@ impl ActualConnection {
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
+            ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 try!(reader.get_ref().set_write_timeout(dur));
             }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                try!(sock.set_write_timeout(dur));
+                try!(sock.get_ref().set_write_timeout(dur));
             }
         }
         Ok(())
@@ -279,12 +293,12 @@ impl ActualConnection {
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
+            ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 try!(reader.get_ref().set_read_timeout(dur));
             }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                try!(sock.set_read_timeout(dur));
+                try!(sock.get_ref().set_read_timeout(dur));
             }
         }
         Ok(())
@@ -292,13 +306,9 @@ impl ActualConnection {
 
     pub fn is_open(&self) -> bool {
         match *self {
-            ActualConnection::Tcp(TcpConnection{ open, .. }) => {
-                open
-            }
-            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(UnixConnection { open, .. }) => {
-                open
-            }
+            ActualConnection::Tcp(TcpConnection { open, .. }) => open,
+            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
     }
 }
@@ -312,21 +322,25 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     };
 
     match connection_info.passwd {
-        Some(ref passwd) => {
-            match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
-                Ok(Value::Okay) => {}
-                _ => {
-                    fail!((ErrorKind::AuthenticationFailed, "Password authentication failed"));
-                }
+        Some(ref passwd) => match cmd("AUTH").arg(&**passwd).query::<Value>(&rv) {
+            Ok(Value::Okay) => {}
+            _ => {
+                fail!((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed"
+                ));
             }
-        }
+        },
         None => {}
     }
 
     if connection_info.db != 0 {
         match cmd("SELECT").arg(connection_info.db).query::<Value>(&rv) {
             Ok(Value::Okay) => {}
-            _ => fail!((ErrorKind::ResponseError, "Redis server refused to switch database")),
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to switch database"
+            )),
         }
     }
 
@@ -351,11 +365,12 @@ pub trait ConnectionLike {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
-    fn req_packed_commands(&self,
-                           cmd: &[u8],
-                           offset: usize,
-                           count: usize)
-                           -> RedisResult<Vec<Value>>;
+    fn req_packed_commands(
+        &self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>>;
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -363,7 +378,6 @@ pub trait ConnectionLike {
     /// actually connected.
     fn get_db(&self) -> i64;
 }
-
 
 /// A connection is an object that represents a single redis connection.  It
 /// provides basic support for sending encoded commands into a redis connection
@@ -497,11 +511,12 @@ impl ConnectionLike for Connection {
         con.read_response()
     }
 
-    fn req_packed_commands(&self,
-                           cmd: &[u8],
-                           offset: usize,
-                           count: usize)
-                           -> RedisResult<Vec<Value>> {
+    fn req_packed_commands(
+        &self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
         if self.pubsub.get() {
             self.exit_pubsub()?;
         }
@@ -521,7 +536,6 @@ impl ConnectionLike for Connection {
         self.db
     }
 }
-
 
 /// The pubsub object provides convenient access to the redis pubsub
 /// system.  Once created you can subscribe and unsubscribe from channels
@@ -707,13 +721,15 @@ impl Msg {
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
-pub fn transaction<K: ToRedisArgs,
-                   T: FromRedisValue,
-                   F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>>
-    (con: &ConnectionLike,
-     keys: &[K],
-     func: F)
-     -> RedisResult<T> {
+pub fn transaction<
+    K: ToRedisArgs,
+    T: FromRedisValue,
+    F: FnMut(&mut Pipeline) -> RedisResult<Option<T>>,
+>(
+    con: &ConnectionLike,
+    keys: &[K],
+    func: F,
+) -> RedisResult<T> {
     let mut func = func;
     loop {
         let _: () = try!(cmd("WATCH").arg(keys).query(con));

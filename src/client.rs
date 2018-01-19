@@ -1,6 +1,7 @@
-use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect, ConnectionLike};
-use types::{RedisResult, Value};
+use connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
+use types::{RedisFuture, RedisResult, Value};
 
+use tokio_reactor;
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -29,7 +30,9 @@ impl Client {
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
     pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
-        Ok(Client { connection_info: try!(params.into_connection_info()) })
+        Ok(Client {
+            connection_info: try!(params.into_connection_info()),
+        })
     }
 
     /// Instructs the client to actually connect to redis and returns a
@@ -40,6 +43,17 @@ impl Client {
     pub fn get_connection(&self) -> RedisResult<Connection> {
         Ok(try!(connect(&self.connection_info)))
     }
+
+    pub fn get_async_connection(&self) -> RedisFuture<::async::Connection> {
+        self.get_async_connection_handle(&tokio_reactor::Handle::current())
+    }
+
+    pub fn get_async_connection_handle(
+        &self,
+        handle: &tokio_reactor::Handle,
+    ) -> RedisFuture<::async::Connection> {
+        ::async::connect(self.connection_info.clone(), handle)
+    }
 }
 
 impl ConnectionLike for Client {
@@ -47,11 +61,12 @@ impl ConnectionLike for Client {
         try!(self.get_connection()).req_packed_command(cmd)
     }
 
-    fn req_packed_commands(&self,
-                           cmd: &[u8],
-                           offset: usize,
-                           count: usize)
-                           -> RedisResult<Vec<Value>> {
+    fn req_packed_commands(
+        &self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
         try!(self.get_connection()).req_packed_commands(cmd, offset, count)
     }
 
