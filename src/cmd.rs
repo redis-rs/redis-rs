@@ -93,7 +93,9 @@ fn bulklen(len: usize) -> usize {
     return 1 + countdigits(len) + 2 + len + 2;
 }
 
-fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
+fn encode_command(args: &[Arg], cursor: u64) -> Vec<u8> {
+    use std::io::Write;
+
     let mut totlen = 1 + countdigits(args.len()) + 2;
     for item in args {
         totlen += bulklen(match *item {
@@ -104,17 +106,11 @@ fn encode_command(args: &Vec<Arg>, cursor: u64) -> Vec<u8> {
     }
 
     let mut cmd = Vec::with_capacity(totlen);
-    cmd.push('*' as u8);
-    cmd.extend(args.len().to_string().as_bytes());
-    cmd.push('\r' as u8);
-    cmd.push('\n' as u8);
+    write!(cmd, "*{}\r\n", args.len()).unwrap();
 
     {
         let mut encode = |item: &[u8]| {
-            cmd.push('$' as u8);
-            cmd.extend(item.len().to_string().as_bytes());
-            cmd.push('\r' as u8);
-            cmd.push('\n' as u8);
+            write!(cmd, "${}\r\n", item.len()).unwrap();
             cmd.extend(item.iter());
             cmd.push('\r' as u8);
             cmd.push('\n' as u8);
@@ -198,7 +194,9 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
-        for item in arg.to_redis_args().into_iter() {
+        let mut out = Vec::new();
+        arg.write_redis_args(&mut out);
+        for item in out {
             self.args.push(Arg::Simple(item));
         }
         self
@@ -522,7 +520,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(&args.iter().map(|x| Arg::Borrowed(x)).collect(), 0)
+    encode_command(&args.iter().map(|x| Arg::Borrowed(x)).collect::<Vec<_>>(), 0)
 }
 
 /// Shortcut for creating a new pipeline.
