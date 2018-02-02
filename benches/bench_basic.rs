@@ -1,6 +1,6 @@
-extern crate redis;
 #[macro_use]
 extern crate bencher;
+extern crate redis;
 
 extern crate futures;
 extern crate tokio;

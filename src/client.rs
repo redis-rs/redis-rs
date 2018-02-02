@@ -45,6 +45,14 @@ impl Client {
     pub fn get_async_connection(&self) -> RedisFuture<::async::Connection> {
         ::async::connect(self.connection_info.clone())
     }
+
+    pub fn get_shared_async_connection(&self) -> RedisFuture<::async::SharedConnection> {
+        use futures::Future;
+        Box::new(
+            self.get_async_connection()
+                .and_then(move |con| ::async::SharedConnection::new(con)),
+        )
+    }
 }
 
 impl ConnectionLike for Client {

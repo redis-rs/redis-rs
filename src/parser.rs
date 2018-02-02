@@ -3,12 +3,14 @@ use std::str;
 
 use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
+use bytes::BytesMut;
 use futures::{Async, Future, Poll};
 use tokio_io::AsyncRead;
+use tokio_io::codec::{Decoder, Encoder};
 
 use combine;
 use combine::byte::{byte, crlf, newline};
-use combine::combinator::{any_partial_state, AnyPartialState};
+use combine::combinator::{any_send_partial_state, AnySendPartialState};
 #[allow(unused_imports)] // See https://github.com/rust-lang/rust/issues/43970
 use combine::error::StreamError;
 use combine::parser::choice::choice;
@@ -52,7 +54,7 @@ where
 }
 
 parser!{
-    type PartialState = AnyPartialState;
+    type PartialState = AnySendPartialState;
     fn value['a, I]()(I) -> RedisResult<Value>
         where [I: RangeStream<Item = u8, Range = &'a [u8]> ]
     {
@@ -96,9 +98,11 @@ parser!{
                     combine::value(Value::Nil).map(Ok).left()
                 } else {
                     let length = length as usize;
-                    combine::count_min_max(length, length, value()).map(|result: ResultExtend<_, _>| {
-                        result.0.map(Value::Bulk)
-                    }).right()
+                    combine::count_min_max(length, length, value())
+                        .map(|result: ResultExtend<_, _>| {
+                            result.0.map(Value::Bulk)
+                        })
+                        .right()
                 }
             })
         };
@@ -124,7 +128,7 @@ parser!{
                 })
         };
 
-        any_partial_state(choice((
+        any_send_partial_state(choice((
            byte(b'+').with(status().map(Ok)),
            byte(b':').with(int().map(Value::Int).map(Ok)),
            byte(b'$').with(data().map(Ok)),
@@ -134,9 +138,53 @@ parser!{
     }
 }
 
+#[derive(Default)]
+pub struct ValueCodec {
+    state: AnySendPartialState,
+}
+
+impl Encoder for ValueCodec {
+    type Item = Vec<u8>;
+    type Error = RedisError;
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend(item);
+        Ok(())
+    }
+}
+
+impl Decoder for ValueCodec {
+    type Item = Value;
+    type Error = RedisError;
+    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let (opt, removed_len) = {
+            let buffer = &bytes[..];
+            let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
+            match combine::stream::decode(value(), stream, &mut self.state) {
+                Ok(x) => x,
+                Err(err) => {
+                    let err = err.map_position(|pos| pos.translate_position(buffer))
+                        .map_range(|range| format!("{:?}", range))
+                        .to_string();
+                    return Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "parse error",
+                        err,
+                    )));
+                }
+            }
+        };
+
+        bytes.split_to(removed_len);
+        match opt {
+            Some(result) => Ok(Some(result?)),
+            None => Ok(None),
+        }
+    }
+}
+
 pub struct ValueFuture<R> {
     reader: Option<R>,
-    state: AnyPartialState,
+    state: AnySendPartialState,
     // Intermediate storage for data we know that we need to parse a value but we haven't been able
     // to parse completely yet
     remaining: Vec<u8>,
@@ -253,7 +301,7 @@ impl<'a, T: BufRead> Parser<T> {
     pub fn parse_value(&mut self) -> RedisResult<Value> {
         let mut parser = ValueFuture {
             reader: Some(&mut self.reader),
-            state: AnyPartialState::default(),
+            state: Default::default(),
             remaining: Vec::new(),
         };
         match parser.poll()? {
