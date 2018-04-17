@@ -114,11 +114,33 @@ impl<'a, T: Read> Parser<T> {
     }
 
     fn read_int_line(&mut self) -> RedisResult<i64> {
-        let line = try!(self.read_string_line());
-        match line.trim().parse::<i64>() {
-            Err(_) => fail!((ErrorKind::ResponseError, "Expected integer, got garbage")),
-            Ok(value) => Ok(value),
+        let mut int = 0i64;
+        let mut neg = 1;
+
+        let mut b = try!(self.read_byte());
+        if b as char == '-' {
+            neg = -1;
+            b = try!(self.read_byte());
         }
+
+        loop {
+            match b as char {
+                '0' ... '9' => {
+                    int = (int * 10) + (b - '0' as u8) as i64;
+                }
+                '\n' => {
+                    break;
+                }
+                '\r' => {
+                    try!(self.expect_char('\n'));
+                    break;
+                }
+                _ => fail!((ErrorKind::ResponseError, "Expected integer, got garbage"))
+            };
+            b = try!(self.read_byte());
+        }
+
+        Ok(neg * int)
     }
 
     fn parse_status(&mut self) -> RedisResult<Value> {
