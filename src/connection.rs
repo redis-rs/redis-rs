@@ -541,7 +541,7 @@ impl Msg {
     /// as an alternative to the `get_payload` function if you are interested
     /// in the raw bytes in it.
     pub fn get_payload_bytes(&self) -> &[u8] {
-        match self.channel {
+        match self.payload {
             Value::Data(ref bytes) => bytes,
             _ => b"",
         }
