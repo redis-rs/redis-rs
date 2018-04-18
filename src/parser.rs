@@ -59,7 +59,7 @@ impl<'a, T: Read> Parser<T> {
     }
 
     fn read_line(&mut self) -> RedisResult<Vec<u8>> {
-        let mut rv = vec![];
+        let mut rv = Vec::with_capacity(8);
 
         loop {
             let b = try!(self.read_byte());
