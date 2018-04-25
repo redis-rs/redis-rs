@@ -270,7 +270,7 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! let client = try!(redis::Client::open("redis://127.0.0.1/"));
 //! let mut con = try!(client.get_connection());
-//! let mut pubsub = con.as_pubsub();
+//! let mut pubsub = con.pubsub();
 //! try!(pubsub.subscribe("channel_1"));
 //! try!(pubsub.subscribe("channel_2"));
 //!
