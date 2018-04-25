@@ -482,7 +482,7 @@ fn test_pubsub() {
     let con = ctx.connection();
 
     // Connection for subscriber api
-    let pubsub_con = ctx.connection();
+    let mut pubsub_con = ctx.connection();
 
     // Barrier is used to make test thread wait to publish
     // until after the pubsub thread has subscribed.
@@ -490,7 +490,7 @@ fn test_pubsub() {
     let pubsub_barrier = barrier.clone();
 
     let thread = spawn(move || {
-        let mut pubsub = pubsub_con.pubsub();
+        let mut pubsub = pubsub_con.as_pubsub();
         pubsub.subscribe("foo").unwrap();
 
         let _ = pubsub_barrier.wait();
@@ -515,18 +515,17 @@ fn test_pubsub() {
 #[test]
 fn test_pubsub_unsubscribe() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
-    let mut pubsub = con.pubsub();
+    let mut con = ctx.connection();
 
-    pubsub.subscribe("foo").unwrap();
-    pubsub.subscribe("bar").unwrap();
-    pubsub.subscribe("baz").unwrap();
-    pubsub.psubscribe("foo*").unwrap();
-    pubsub.psubscribe("bar*").unwrap();
-    pubsub.psubscribe("baz*").unwrap();
-
-    // Retrieve original connection
-    let con = pubsub.into_inner().unwrap();
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+        pubsub.subscribe("bar").unwrap();
+        pubsub.subscribe("baz").unwrap();
+        pubsub.psubscribe("foo*").unwrap();
+        pubsub.psubscribe("bar*").unwrap();
+        pubsub.psubscribe("baz*").unwrap();
+    }
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
@@ -537,11 +536,11 @@ fn test_pubsub_unsubscribe() {
 #[test]
 fn test_pubsub_unsubscribe_no_subs() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
-    let pubsub = con.pubsub();
+    let mut con = ctx.connection();
 
-    // Retrieve original connection
-    let con = pubsub.into_inner().unwrap();
+    {
+        let _pubsub = con.as_pubsub();
+    }
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
@@ -552,12 +551,12 @@ fn test_pubsub_unsubscribe_no_subs() {
 #[test]
 fn test_pubsub_unsubscribe_one_sub() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
-    let mut pubsub = con.pubsub();
+    let mut con = ctx.connection();
 
-    // Retrieve original connection
-    pubsub.subscribe("foo").unwrap();
-    let con = pubsub.into_inner().unwrap();
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+    }
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
@@ -568,13 +567,13 @@ fn test_pubsub_unsubscribe_one_sub() {
 #[test]
 fn test_pubsub_unsubscribe_one_sub_one_psub() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
-    let mut pubsub = con.pubsub();
+    let mut con = ctx.connection();
 
-    // Retrieve original connection
-    pubsub.subscribe("foo").unwrap();
-    pubsub.psubscribe("foo*").unwrap();
-    let con = pubsub.into_inner().unwrap();
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+        pubsub.psubscribe("foo*").unwrap();
+    }
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
@@ -588,11 +587,11 @@ fn scoped_pubsub() {
     let con = ctx.connection();
 
     // Connection for subscriber api
-    let pubsub_con = ctx.connection();
+    let mut pubsub_con = ctx.connection();
 
     let thread = spawn(move || {
         let mut count = 0;
-        let (_, con) = pubsub_con.subscribe(&["foo", "bar"], |msg| {
+        pubsub_con.subscribe(&["foo", "bar"], |msg| {
             count += 1;
             match count {
                 1 => {
@@ -608,7 +607,8 @@ fn scoped_pubsub() {
                 _ => ControlFlow::Break(())
             }
         }).unwrap();
-        con
+
+        pubsub_con
     });
 
     // Can't use a barrier in this case since there's no opportunity to run code
@@ -618,7 +618,7 @@ fn scoped_pubsub() {
     redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
     assert_eq!(con.publish("bar", 23), Ok(1));
 
-    // Join the thread and check that the pubsub connection is still usable
+    // Wait for thread
     let pubsub_con = thread.join().ok().expect("pubsub thread terminates ok");
 
     // Connection should be usable again for non-pubsub commands

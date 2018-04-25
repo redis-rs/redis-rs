@@ -784,7 +784,7 @@ pub trait PubSubCommands: Sized {
     /// For every `Msg` passed to the provided closure, either
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
-    fn subscribe<'a, C, F, U>(self, _: C, _: F) -> RedisResult<(U, Self)>
+    fn subscribe<'a, C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               C: ToRedisArgs;
 
@@ -794,7 +794,7 @@ pub trait PubSubCommands: Sized {
     /// For every `Msg` passed to the provided closure, either
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
-    fn psubscribe<'a, P, F, U>(self, _: P, _: F) -> RedisResult<(U, Self)>
+    fn psubscribe<'a, P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               P: ToRedisArgs;
 }
@@ -803,42 +803,36 @@ impl Commands for Connection {}
 impl Commands for Client {}
 
 impl PubSubCommands for Connection {
-    fn subscribe<'a, C, F, U>(self, channels: C, mut func: F) -> RedisResult<(U, Self)>
+    fn subscribe<'a, C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               C: ToRedisArgs
     {
-        let mut pubsub = self.pubsub();
+        let mut pubsub = self.as_pubsub();
         pubsub.subscribe(channels)?;
 
-        let value = loop {
+        loop {
             let msg = pubsub.get_message()?;
             match func(msg) {
                 ControlFlow::Continue => continue,
-                ControlFlow::Break(value) => break value,
+                ControlFlow::Break(value) => return Ok(value),
             }
-        };
-
-        let con = pubsub.into_inner()?;
-        Ok((value, con))
+        }
     }
 
-    fn psubscribe<'a, P, F, U>(self, patterns: P, mut func: F) -> RedisResult<(U, Self)>
+    fn psubscribe<'a, P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               P: ToRedisArgs
     {
-        let mut pubsub = self.pubsub();
+        let mut pubsub = self.as_pubsub();
         pubsub.psubscribe(patterns)?;
 
-        let value = loop {
+        loop {
             let msg = pubsub.get_message()?;
             match func(msg) {
                 ControlFlow::Continue => continue,
-                ControlFlow::Break(value) => break value,
+                ControlFlow::Break(value) => return Ok(value),
             }
         };
-
-        let con = pubsub.into_inner()?;
-        Ok((value, con))
     }
 }
 
