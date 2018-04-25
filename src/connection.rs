@@ -426,25 +426,25 @@ impl ConnectionLike for Connection {
 impl<'a> PubSub<'a> {
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let _: () = try!(cmd("SUBSCRIBE").arg(channel).query(self.con));
+        let _: () = cmd("SUBSCRIBE").arg(channel).query(self.con)?;
         Ok(())
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let _: () = try!(cmd("PSUBSCRIBE").arg(pchannel).query(self.con));
+        let _: () = cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?;
         Ok(())
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let _: () = try!(cmd("UNSUBSCRIBE").arg(channel).query(self.con));
+        let _: () = cmd("UNSUBSCRIBE").arg(channel).query(self.con)?;
         Ok(())
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let _: () = try!(cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con));
+        let _: () = cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?;
         Ok(())
     }
 
