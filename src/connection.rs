@@ -209,7 +209,7 @@ impl ActualConnection {
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ActualConnection::Unix(ref mut sock) => &mut *sock as &mut Write,
         };
-        try!(w.write(bytes));
+        try!(w.write_all(bytes));
         Ok(Value::Okay)
     }
 
