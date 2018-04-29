@@ -153,14 +153,20 @@ impl IntoConnectionInfo for url::Url {
     }
 }
 
-struct ConnectionStatus {
+struct TcpConnection {
+    pub reader: BufReader<TcpStream>,
+    pub open: bool
+}
+
+struct UnixConnection {
+    pub sock: UnixStream,
     pub open: bool
 }
 
 enum ActualConnection {
-    Tcp(BufReader<TcpStream>, ConnectionStatus),
+    Tcp(TcpConnection),
     #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-    Unix(UnixStream, ConnectionStatus),
+    Unix(UnixConnection),
 }
 
 /// Represents a stateful redis TCP connection.
@@ -194,11 +200,11 @@ impl ActualConnection {
                 let host: &str = &*host;
                 let tcp = try!(TcpStream::connect((host, *port)));
                 let buffered = BufReader::new(tcp);
-                ActualConnection::Tcp(buffered, ConnectionStatus { open: true})
+                ActualConnection::Tcp(TcpConnection { reader: buffered, open: true })
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ConnectionAddr::Unix(ref path) => {
-                ActualConnection::Unix(try!(UnixStream::connect(path)), ConnectionStatus { open: true})
+                ActualConnection::Unix(UnixConnection { sock: try!(UnixStream::connect(path)), open: true })
             }
             #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
             ConnectionAddr::Unix(ref path) => {
@@ -211,17 +217,17 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
-            ActualConnection::Tcp(ref mut reader, ref _status) => {
+            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                 try!(reader.get_mut().write_all(bytes));
                 Ok(Value::Okay)
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock, ref mut status) => {
-                let result = sock.write_all(bytes).map_err(|e| RedisError::from(e));
+            ActualConnection::Unix(ref mut connection) => {
+                let result = connection.sock.write_all(bytes).map_err(|e| RedisError::from(e));
                 match result {
                     Err(e) => {
                         if e.is_broken_pipe() {
-                            status.open = false;
+                            connection.open = false;
                         }
                         Err(e)
                     }
@@ -233,23 +239,23 @@ impl ActualConnection {
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
-                ActualConnection::Tcp(ref mut reader, ref _status) => reader as &mut Read,
+                ActualConnection::Tcp(TcpConnection{ ref mut reader, .. }) => reader as &mut Read,
                 #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock, ref _status) => &mut *sock as &mut Read,
+            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut Read,
             })
             .parse_value();
         // shutdown connection on protocol error
         match result {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => {
                 match *self {
-                    ActualConnection::Tcp(ref mut reader, ref mut status) => {
-                        let _ = reader.get_mut().shutdown(net::Shutdown::Both);
-                        status.open = false;
+                    ActualConnection::Tcp(ref mut connection) => {
+                        let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
+                        connection.open = false;
                     }
                     #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-                    ActualConnection::Unix(ref mut sock, ref mut status) => {
-                        let _ = sock.shutdown(net::Shutdown::Both);
-                        status.open = false;
+                    ActualConnection::Unix(ref mut connection) => {
+                        let _ = connection.sock.shutdown(net::Shutdown::Both);
+                        connection.open = false;
                     }
                 }
             }
@@ -260,11 +266,11 @@ impl ActualConnection {
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(ref reader, ref _status) => {
+            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
                 try!(reader.get_ref().set_write_timeout(dur));
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref sock, ref _status) => {
+            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 try!(sock.set_write_timeout(dur));
             }
         }
@@ -273,11 +279,11 @@ impl ActualConnection {
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(ref reader, ref _status) => {
+            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
                 try!(reader.get_ref().set_read_timeout(dur));
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref sock, ref _status) => {
+            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 try!(sock.set_read_timeout(dur));
             }
         }
@@ -286,12 +292,12 @@ impl ActualConnection {
 
     pub fn is_open(&self) -> bool {
         match *self {
-            ActualConnection::Tcp(ref _reader, ref status) => {
-                status.open
+            ActualConnection::Tcp(TcpConnection{ open, .. }) => {
+                open
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref _sock, ref status) => {
-                status.open
+            ActualConnection::Unix(UnixConnection { open, .. }) => {
+                open
             }
         }
     }
