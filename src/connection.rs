@@ -154,13 +154,13 @@ impl IntoConnectionInfo for url::Url {
 }
 
 struct TcpConnection {
-    pub reader: BufReader<TcpStream>,
-    pub open: bool
+    reader: BufReader<TcpStream>,
+    open: bool
 }
 
 struct UnixConnection {
-    pub sock: UnixStream,
-    pub open: bool
+    sock: UnixStream,
+    open: bool
 }
 
 enum ActualConnection {
@@ -241,7 +241,7 @@ impl ActualConnection {
         let result = Parser::new(match *self {
                 ActualConnection::Tcp(TcpConnection{ ref mut reader, .. }) => reader as &mut Read,
                 #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut Read,
+                ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut Read,
             })
             .parse_value();
         // shutdown connection on protocol error
@@ -476,8 +476,11 @@ impl Connection {
 
     /// Returns the connection status.
     ///
-    /// The connection is open until any `read_response` call failed to
-    /// parse a command.
+    /// The connection is open until any `read_response` call recieved an
+    /// invalid response from the server (most likely a closed or dropped
+    /// connection, otherwise a Redis protocol error). When using unix
+    /// sockets the connection is open until writing a command failed with a
+    /// `BrokenPipe` error.
     pub fn is_open(&self) -> bool {
         self.con.borrow().is_open()
     }
