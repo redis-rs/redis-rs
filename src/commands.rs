@@ -736,17 +736,17 @@ implement_commands! {
 
 /// Allows pubsub callbacks to stop receiving messages.
 ///
-/// Arbitraty data may be returned from `Break`.
+/// Arbitrary data may be returned from `Break`.
 pub enum ControlFlow<U> {
     Continue,
     Break(U),
 }
 
-/// The PubSub trait allows subscribing to one or more items
+/// The PubSub trait allows subscribing to one or more channels
 /// and receiving a callback whenever a message arrives.
 ///
 /// Each method handles subscribing to the list of keys, waiting for
-/// messages, and unsubscribing from the same list of keys once
+/// messages, and unsubscribing from the same list of channels once
 /// a ControlFlow::Break is encountered.
 ///
 /// Once (p)subscribe returns Ok(U), the connection is again safe to use
@@ -764,7 +764,7 @@ pub enum ControlFlow<U> {
 ///     // do something with message
 ///     assert_eq!(msg.get_channel(), Ok(String::from("foo")));
 ///
-///     // incerement messages seen counter
+///     // increment messages seen counter
 ///     count += 1;
 ///     match count {
 ///         // stop after receiving 10 messages
@@ -774,9 +774,8 @@ pub enum ControlFlow<U> {
 /// });
 /// # Ok(()) }
 /// ```
-//
-// In the future, it would be nice to implement Try such that `?` will work
-// within the closure.
+// TODO In the future, it would be nice to implement Try such that `?` will work
+//      within the closure.
 pub trait PubSubCommands: Sized {
     /// Subscribe to a list of channels using SUBSCRIBE and run the provided
     /// closure for each message received.

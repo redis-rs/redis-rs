@@ -500,7 +500,7 @@ impl ConnectionLike for Connection {
 /// # }
 /// ```
 impl<'a> PubSub<'a> {
-    pub fn new(con: &'a mut Connection) -> Self {
+    fn new(con: &'a mut Connection) -> Self {
         Self { con }
     }
 
