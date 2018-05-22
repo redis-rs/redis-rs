@@ -269,7 +269,8 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! let client = try!(redis::Client::open("redis://127.0.0.1/"));
-//! let mut pubsub = try!(client.get_pubsub());
+//! let mut con = try!(client.get_connection());
+//! let mut pubsub = con.as_pubsub();
 //! try!(pubsub.subscribe("channel_1"));
 //! try!(pubsub.subscribe("channel_2"));
 //!
@@ -329,7 +330,7 @@ pub use script::{Script, ScriptInvocation};
 pub use connection::{Connection, ConnectionLike, ConnectionInfo, ConnectionAddr,
                      IntoConnectionInfo, PubSub, Msg, transaction, parse_redis_url};
 pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
-pub use commands::{Commands, PipelineCommands};
+pub use commands::{Commands, PipelineCommands, PubSubCommands, ControlFlow};
 
 pub use types::{
     /* low level values */

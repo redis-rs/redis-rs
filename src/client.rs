@@ -1,5 +1,4 @@
-use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect, PubSub, connect_pubsub,
-                 ConnectionLike};
+use connection::{ConnectionInfo, IntoConnectionInfo, Connection, connect, ConnectionLike};
 use types::{RedisResult, Value};
 
 
@@ -40,15 +39,6 @@ impl Client {
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
         Ok(try!(connect(&self.connection_info)))
-    }
-
-    /// Returns a PubSub connection.  A pubsub connection can be used to
-    /// listen to messages coming in through the redis publish/subscribe
-    /// system.
-    ///
-    /// Note that redis' pubsub operates across all databases.
-    pub fn get_pubsub(&self) -> RedisResult<PubSub> {
-        Ok(try!(connect_pubsub(&self.connection_info)))
     }
 }
 

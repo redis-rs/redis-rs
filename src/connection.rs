@@ -2,8 +2,7 @@ use std::path::PathBuf;
 use std::io::{Read, BufReader, Write};
 use std::net::{self, TcpStream};
 use std::str::from_utf8;
-use std::cell::RefCell;
-use std::collections::HashSet;
+use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
 use url;
@@ -165,13 +164,17 @@ enum ActualConnection {
 pub struct Connection {
     con: RefCell<ActualConnection>,
     db: i64,
+
+    /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
+    ///
+    /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
+    /// exit the pubsub state before executing the new request.
+    pubsub: Cell<bool>,
 }
 
 /// Represents a pubsub connection.
-pub struct PubSub {
-    con: Connection,
-    channels: HashSet<Vec<u8>>,
-    pchannels: HashSet<Vec<u8>>,
+pub struct PubSub<'a> {
+    con: &'a mut Connection,
 }
 
 /// Represents a pubsub message.
@@ -271,6 +274,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let rv = Connection {
         con: RefCell::new(con),
         db: connection_info.db,
+        pubsub: Cell::new(false),
     };
 
     match connection_info.passwd {
@@ -293,14 +297,6 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     }
 
     Ok(rv)
-}
-
-pub fn connect_pubsub(connection_info: &ConnectionInfo) -> RedisResult<PubSub> {
-    Ok(PubSub {
-        con: try!(connect(connection_info)),
-        channels: HashSet::new(),
-        pchannels: HashSet::new(),
-    })
 }
 
 /// Implements the "stateless" part of the connection interface that is used by the
@@ -375,10 +371,82 @@ impl Connection {
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         self.con.borrow().set_read_timeout(dur)
     }
+
+    pub fn as_pubsub<'a>(&'a mut self) -> PubSub<'a> {
+        // NOTE: The pubsub flag is intentionally not raised at this time since running commands
+        // within the pubsub state should not try and exit from the pubsub state.
+        PubSub::new(self)
+    }
+
+    fn exit_pubsub(&self) -> RedisResult<()> {
+        let res = self.clear_active_subscriptions();
+        if res.is_ok() {
+            self.pubsub.set(false);
+        } else {
+            // Raise the pubsub flag to indicate the connection is "stuck" in that state.
+            self.pubsub.set(true);
+        }
+
+        res
+    }
+
+    /// Get the inner connection out of a PubSub
+    ///
+    /// Any active subscriptions are unsubscribed. In the event of an error, the connection is
+    /// dropped.
+    fn clear_active_subscriptions(&self) -> RedisResult<()> {
+        // Responses to unsubscribe commands return in a 3-tuple with values
+        // ("unsubscribe" or "punsubscribe", name of subscription removed, count of remaining subs).
+        // The "count of remaining subs" includes both pattern subscriptions and non pattern
+        // subscriptions. Thus, to accurately drain all unsubscribe messages received from the
+        // server, both commands need to be executed at once.
+        {
+            // Prepare both unsubscribe commands
+            let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
+            let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
+
+            // Grab a reference to the underlying connection so that we may send
+            // the commands without immediately blocking for a response.
+            let mut con = self.con.borrow_mut();
+
+            // Execute commands
+            con.send_bytes(&unsubscribe)?;
+            con.send_bytes(&punsubscribe)?;
+        }
+
+        // Receive responses
+        //
+        // There will be at minimum two responses - 1 for each of punsubscribe and unsubscribe
+        // commands. There may be more responses if there are active subscriptions. In this case,
+        // messages are received until the _subscription count_ in the responses reach zero.
+        let mut received_unsub = false;
+        let mut received_punsub = false;
+        loop {
+            let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
+
+            match res.0.first().map(|v| *v) {
+                Some(b'u') => received_unsub = true,
+                Some(b'p') => received_punsub = true,
+                _ => (),
+            }
+
+            if received_unsub && received_punsub && res.2 == 0 {
+                break;
+            }
+        }
+
+        // Finally, the connection is back in its normal state since all subscriptions were
+        // cancelled *and* all unsubscribe messages were received.
+        Ok(())
+    }
 }
 
 impl ConnectionLike for Connection {
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
+        if self.pubsub.get() {
+            self.exit_pubsub()?;
+        }
+
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         con.read_response()
@@ -389,6 +457,9 @@ impl ConnectionLike for Connection {
                            offset: usize,
                            count: usize)
                            -> RedisResult<Vec<Value>> {
+        if self.pubsub.get() {
+            self.exit_pubsub()?;
+        }
         let mut con = self.con.borrow_mut();
         try!(con.send_bytes(cmd));
         let mut rv = vec![];
@@ -416,7 +487,8 @@ impl ConnectionLike for Connection {
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
 /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-/// let mut pubsub = try!(client.get_pubsub());
+/// let mut con = client.get_connection()?;
+/// let mut pubsub = con.as_pubsub();
 /// try!(pubsub.subscribe("channel_1"));
 /// try!(pubsub.subscribe("channel_2"));
 ///
@@ -427,44 +499,32 @@ impl ConnectionLike for Connection {
 /// }
 /// # }
 /// ```
-impl PubSub {
-    fn get_channel<T: ToRedisArgs>(&mut self, channel: &T) -> Vec<u8> {
-        let mut chan = vec![];
-        for item in channel.to_redis_args().iter() {
-            chan.extend(item.iter().cloned());
-        }
-        chan
+impl<'a> PubSub<'a> {
+    fn new(con: &'a mut Connection) -> Self {
+        Self { con }
     }
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&channel);
-        let _: () = try!(cmd("SUBSCRIBE").arg(&*chan).query(&self.con));
-        self.channels.insert(chan);
+        let _: () = cmd("SUBSCRIBE").arg(channel).query(self.con)?;
         Ok(())
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&pchannel);
-        let _: () = try!(cmd("PSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.pchannels.insert(chan);
+        let _: () = cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?;
         Ok(())
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&channel);
-        let _: () = try!(cmd("UNSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.channels.remove(&chan);
+        let _: () = cmd("UNSUBSCRIBE").arg(channel).query(self.con)?;
         Ok(())
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let chan = self.get_channel(&pchannel);
-        let _: () = try!(cmd("PUNSUBSCRIBE").arg(&*chan).query(&self.con));
-        self.pchannels.remove(&chan);
+        let _: () = cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?;
         Ok(())
     }
 
@@ -476,9 +536,9 @@ impl PubSub {
     /// appropriate type through the helper methods on it.
     pub fn get_message(&self) -> RedisResult<Msg> {
         loop {
-            let raw_msg: Vec<Value> = try!(from_redis_value(&try!(self.con.recv_response())));
+            let raw_msg: Vec<Value> = from_redis_value(&self.con.recv_response()?)?;
             let mut iter = raw_msg.into_iter();
-            let msg_type: String = try!(from_redis_value(&unwrap_or!(iter.next(), continue)));
+            let msg_type: String = from_redis_value(&unwrap_or!(iter.next(), continue))?;
             let mut pattern = None;
             let payload;
             let channel;
@@ -512,6 +572,11 @@ impl PubSub {
     }
 }
 
+impl<'a> Drop for PubSub<'a> {
+    fn drop(&mut self) {
+        let _ = self.con.exit_pubsub();
+    }
+}
 
 /// This holds the data that comes from listening to a pubsub
 /// connection.  It only contains actual message data.

@@ -2,7 +2,7 @@ extern crate redis;
 extern crate rand;
 extern crate net2;
 
-use redis::{Commands, PipelineCommands};
+use redis::{Commands, PipelineCommands, PubSubCommands, ControlFlow};
 
 use std::fs;
 use std::env;
@@ -146,10 +146,6 @@ impl TestContext {
 
     fn connection(&self) -> redis::Connection {
         self.client.get_connection().unwrap()
-    }
-
-    fn pubsub(&self) -> redis::PubSub {
-        self.client.get_pubsub().unwrap()
     }
 }
 
@@ -481,14 +477,23 @@ fn test_real_transaction_highlevel() {
 
 #[test]
 fn test_pubsub() {
+    use std::sync::{Arc, Barrier};
     let ctx = TestContext::new();
     let con = ctx.connection();
 
-    let mut pubsub = ctx.pubsub();
-    pubsub.subscribe("foo").unwrap();
+    // Connection for subscriber api
+    let mut pubsub_con = ctx.connection();
+
+    // Barrier is used to make test thread wait to publish
+    // until after the pubsub thread has subscribed.
+    let barrier = Arc::new(Barrier::new(2));
+    let pubsub_barrier = barrier.clone();
 
     let thread = spawn(move || {
-        sleep(Duration::from_millis(100));
+        let mut pubsub = pubsub_con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+
+        let _ = pubsub_barrier.wait();
 
         let msg = pubsub.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
@@ -499,11 +504,127 @@ fn test_pubsub() {
         assert_eq!(msg.get_payload(), Ok(23));
     });
 
+    let _ = barrier.wait();
     redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
     // We can also call the command directly
     assert_eq!(con.publish("foo", 23), Ok(1));
 
     thread.join().ok().expect("Something went wrong");
+}
+
+#[test]
+fn test_pubsub_unsubscribe() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+        pubsub.subscribe("bar").unwrap();
+        pubsub.subscribe("baz").unwrap();
+        pubsub.psubscribe("foo*").unwrap();
+        pubsub.psubscribe("bar*").unwrap();
+        pubsub.psubscribe("baz*").unwrap();
+    }
+
+    // Connection should be usable again for non-pubsub commands
+    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let foo: String = con.get("foo").unwrap();
+    assert_eq!(&foo[..], "bar");
+}
+
+#[test]
+fn test_pubsub_unsubscribe_no_subs() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    {
+        let _pubsub = con.as_pubsub();
+    }
+
+    // Connection should be usable again for non-pubsub commands
+    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let foo: String = con.get("foo").unwrap();
+    assert_eq!(&foo[..], "bar");
+}
+
+#[test]
+fn test_pubsub_unsubscribe_one_sub() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+    }
+
+    // Connection should be usable again for non-pubsub commands
+    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let foo: String = con.get("foo").unwrap();
+    assert_eq!(&foo[..], "bar");
+}
+
+#[test]
+fn test_pubsub_unsubscribe_one_sub_one_psub() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    {
+        let mut pubsub = con.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+        pubsub.psubscribe("foo*").unwrap();
+    }
+
+    // Connection should be usable again for non-pubsub commands
+    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let foo: String = con.get("foo").unwrap();
+    assert_eq!(&foo[..], "bar");
+}
+
+#[test]
+fn scoped_pubsub() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    // Connection for subscriber api
+    let mut pubsub_con = ctx.connection();
+
+    let thread = spawn(move || {
+        let mut count = 0;
+        pubsub_con.subscribe(&["foo", "bar"], |msg| {
+            count += 1;
+            match count {
+                1 => {
+                    assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+                    assert_eq!(msg.get_payload(), Ok(42));
+                    ControlFlow::Continue
+                },
+                2 => {
+                    assert_eq!(msg.get_channel(), Ok("bar".to_string()));
+                    assert_eq!(msg.get_payload(), Ok(23));
+                    ControlFlow::Break(())
+                },
+                _ => ControlFlow::Break(())
+            }
+        }).unwrap();
+
+        pubsub_con
+    });
+
+    // Can't use a barrier in this case since there's no opportunity to run code
+    // between channel subscription and blocking for messages.
+    sleep(Duration::from_millis(100));
+
+    redis::cmd("PUBLISH").arg("foo").arg(42).execute(&con);
+    assert_eq!(con.publish("bar", 23), Ok(1));
+
+    // Wait for thread
+    let pubsub_con = thread.join().ok().expect("pubsub thread terminates ok");
+
+    // Connection should be usable again for non-pubsub commands
+    let _: redis::Value = pubsub_con.set("foo", "bar").unwrap();
+    let foo: String = pubsub_con.get("foo").unwrap();
+    assert_eq!(&foo[..], "bar");
 }
 
 #[test]
