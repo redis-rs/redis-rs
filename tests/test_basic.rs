@@ -88,10 +88,8 @@ impl RedisServer {
     pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
         &self.addr
     }
-}
 
-impl Drop for RedisServer {
-    fn drop(&mut self) {
+    pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
         match *self.get_client_addr() {
@@ -100,6 +98,12 @@ impl Drop for RedisServer {
             }
             _ => {}
         }
+    }
+}
+
+impl Drop for RedisServer {
+    fn drop(&mut self) {
+        self.stop()
     }
 }
 
@@ -147,8 +151,11 @@ impl TestContext {
     fn connection(&self) -> redis::Connection {
         self.client.get_connection().unwrap()
     }
-}
 
+    fn stop_server(&mut self) {
+        self.server.stop();
+    }
+}
 
 #[test]
 fn test_parse_redis_url() {
@@ -816,4 +823,19 @@ fn test_invalid_protocol() {
     assert_eq!(result.unwrap_err().kind(), redis::ErrorKind::IoError);
 
     child.join().unwrap().unwrap();
+}
+
+#[test]
+fn test_redis_server_down() {
+    let mut ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let ping = redis::cmd("PING").query::<String>(&con);
+    assert_eq!(ping, Ok("PONG".into()));
+
+    ctx.stop_server();
+
+    let ping = redis::cmd("PING").query::<String>(&con);
+    assert_eq!(con.is_open(), false);
+    assert_eq!(ping.is_err(), true);
 }

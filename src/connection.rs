@@ -8,7 +8,7 @@ use std::time::Duration;
 use url;
 
 use cmd::{cmd, pipe, Pipeline};
-use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value, ErrorKind};
+use types::{RedisResult, Value, ToRedisArgs, FromRedisValue, from_redis_value, ErrorKind, RedisError};
 use parser::Parser;
 
 #[cfg(feature="with-unix-sockets")]
@@ -153,11 +153,20 @@ impl IntoConnectionInfo for url::Url {
     }
 }
 
+struct TcpConnection {
+    reader: BufReader<TcpStream>,
+    open: bool
+}
+
+struct UnixConnection {
+    sock: UnixStream,
+    open: bool
+}
 
 enum ActualConnection {
-    Tcp(BufReader<TcpStream>),
+    Tcp(TcpConnection),
     #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-    Unix(UnixStream),
+    Unix(UnixConnection),
 }
 
 /// Represents a stateful redis TCP connection.
@@ -191,11 +200,11 @@ impl ActualConnection {
                 let host: &str = &*host;
                 let tcp = try!(TcpStream::connect((host, *port)));
                 let buffered = BufReader::new(tcp);
-                ActualConnection::Tcp(buffered)
+                ActualConnection::Tcp(TcpConnection { reader: buffered, open: true })
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ConnectionAddr::Unix(ref path) => {
-                ActualConnection::Unix(try!(UnixStream::connect(path)))
+                ActualConnection::Unix(UnixConnection { sock: try!(UnixStream::connect(path)), open: true })
             }
             #[cfg(not(any(feature="with-unix-sockets", feature="with-system-unix-sockets")))]
             ConnectionAddr::Unix(ref path) => {
@@ -207,32 +216,46 @@ impl ActualConnection {
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        let w = match *self {
-            ActualConnection::Tcp(ref mut reader) => reader.get_mut() as &mut Write,
+        match *self {
+            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
+                try!(reader.get_mut().write_all(bytes));
+                Ok(Value::Okay)
+            }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock) => &mut *sock as &mut Write,
-        };
-        try!(w.write_all(bytes));
-        Ok(Value::Okay)
+            ActualConnection::Unix(ref mut connection) => {
+                let result = connection.sock.write_all(bytes).map_err(|e| RedisError::from(e));
+                match result {
+                    Err(e) => {
+                        if e.is_broken_pipe() {
+                            connection.open = false;
+                        }
+                        Err(e)
+                    }
+                    Ok(_) => Ok(Value::Okay)
+                }
+            },
+        }
     }
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
-                ActualConnection::Tcp(ref mut reader) => reader as &mut Read,
+                ActualConnection::Tcp(TcpConnection{ ref mut reader, .. }) => reader as &mut Read,
                 #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref mut sock) => &mut *sock as &mut Read,
+                ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut Read,
             })
             .parse_value();
         // shutdown connection on protocol error
         match result {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => {
                 match *self {
-                    ActualConnection::Tcp(ref mut reader) => {
-                        let _ = reader.get_mut().shutdown(net::Shutdown::Both);
+                    ActualConnection::Tcp(ref mut connection) => {
+                        let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
+                        connection.open = false;
                     }
                     #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-                    ActualConnection::Unix(ref mut sock) => {
-                        let _ = sock.shutdown(net::Shutdown::Both);
+                    ActualConnection::Unix(ref mut connection) => {
+                        let _ = connection.sock.shutdown(net::Shutdown::Both);
+                        connection.open = false;
                     }
                 }
             }
@@ -243,11 +266,11 @@ impl ActualConnection {
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(ref reader) => {
+            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
                 try!(reader.get_ref().set_write_timeout(dur));
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref sock) => {
+            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 try!(sock.set_write_timeout(dur));
             }
         }
@@ -256,18 +279,29 @@ impl ActualConnection {
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(ref reader) => {
+            ActualConnection::Tcp(TcpConnection{ ref reader, .. }) => {
                 try!(reader.get_ref().set_read_timeout(dur));
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
-            ActualConnection::Unix(ref sock) => {
+            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 try!(sock.set_read_timeout(dur));
             }
         }
         Ok(())
     }
-}
 
+    pub fn is_open(&self) -> bool {
+        match *self {
+            ActualConnection::Tcp(TcpConnection{ open, .. }) => {
+                open
+            }
+            #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
+            ActualConnection::Unix(UnixConnection { open, .. }) => {
+                open
+            }
+        }
+    }
+}
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = try!(ActualConnection::new(&connection_info.addr));
@@ -438,6 +472,17 @@ impl Connection {
         // Finally, the connection is back in its normal state since all subscriptions were
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
+    }
+
+    /// Returns the connection status.
+    ///
+    /// The connection is open until any `read_response` call recieved an
+    /// invalid response from the server (most likely a closed or dropped
+    /// connection, otherwise a Redis protocol error). When using unix
+    /// sockets the connection is open until writing a command failed with a
+    /// `BrokenPipe` error.
+    pub fn is_open(&self) -> bool {
+        self.con.borrow().is_open()
     }
 }
 

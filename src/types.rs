@@ -310,6 +310,19 @@ impl RedisError {
         }
     }
 
+    /// Returns true if error was caused by a broken pipe.
+    pub fn is_broken_pipe(&self) -> bool {
+        match self.repr {
+            ErrorRepr::IoError(ref err) => {
+                match err.kind() {
+                    io::ErrorKind::BrokenPipe => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// Returns the extension error code
     pub fn extension_error_code(&self) -> Option<&str> {
         match self.repr {
