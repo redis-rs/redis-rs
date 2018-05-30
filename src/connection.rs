@@ -115,7 +115,15 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                            fail!((ErrorKind::InvalidClientConfig, "Invalid database number")))
             }
         },
-        passwd: url.password().and_then(|pw| Some(pw.to_string())),
+        passwd: {
+            match url.password() {
+                Some(passwd_encoded) => {
+                    let passwd = url::percent_encoding::percent_decode(passwd_encoded.as_bytes()).decode_utf8().unwrap();
+                    Some(passwd.to_string())
+                },
+                None => None
+            }
+        }
     })
 }
 
