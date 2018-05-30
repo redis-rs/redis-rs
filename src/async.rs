@@ -381,7 +381,20 @@ where
         loop {
             match mem::replace(&mut self.send_state, SendState::Free) {
                 SendState::Unsent(item) => match self.sink_stream.start_send(item)? {
-                    AsyncSink::Ready => self.send_state = SendState::Sent,
+                    AsyncSink::Ready => {
+                        // Try to take another incoming and start sending it as well
+                        // before completing the send to give the sink a chance to coalesce
+                        // multiple messages into a large one.
+                        match self.incoming.poll() {
+                            Ok(Async::NotReady) | Ok(Async::Ready(None)) | Err(()) => {
+                                self.send_state = SendState::Sent
+                            }
+                            Ok(Async::Ready(Some((item, senders)))) => {
+                                self.in_flight.push_back(senders);
+                                self.send_state = SendState::Unsent(item);
+                            }
+                        }
+                    }
                     AsyncSink::NotReady(item) => {
                         self.send_state = SendState::Unsent(item);
                         return Ok(Async::NotReady);
