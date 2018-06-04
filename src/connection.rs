@@ -158,6 +158,7 @@ struct TcpConnection {
     open: bool
 }
 
+#[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
 struct UnixConnection {
     sock: UnixStream,
     open: bool
@@ -217,16 +218,24 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
-            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                try!(reader.get_mut().write_all(bytes));
-                Ok(Value::Okay)
+            ActualConnection::Tcp(ref mut connection) => {
+                let res = connection.reader.get_mut().write_all(bytes).map_err(|e| RedisError::from(e));
+                match res {
+                    Err(e) => {
+                        if e.is_connection_dropped() {
+                            connection.open = false;
+                        }
+                        Err(e)
+                    }
+                    Ok(_) => Ok(Value::Okay)
+                }
             }
             #[cfg(any(feature="with-unix-sockets", feature="with-system-unix-sockets"))]
             ActualConnection::Unix(ref mut connection) => {
                 let result = connection.sock.write_all(bytes).map_err(|e| RedisError::from(e));
                 match result {
                     Err(e) => {
-                        if e.is_broken_pipe() {
+                        if e.is_connection_dropped() {
                             connection.open = false;
                         }
                         Err(e)
