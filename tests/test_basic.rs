@@ -836,6 +836,7 @@ fn test_redis_server_down() {
     ctx.stop_server();
 
     let ping = redis::cmd("PING").query::<String>(&con);
-    assert_eq!(con.is_open(), false);
+
     assert_eq!(ping.is_err(), true);
+    assert_eq!(con.is_open(), false);
 }

@@ -310,12 +310,12 @@ impl RedisError {
         }
     }
 
-    /// Returns true if error was caused by a broken pipe.
-    pub fn is_broken_pipe(&self) -> bool {
+    /// Returns true if error was caused by a dropped connection.
+    pub fn is_connection_dropped(&self) -> bool {
         match self.repr {
             ErrorRepr::IoError(ref err) => {
                 match err.kind() {
-                    io::ErrorKind::BrokenPipe => true,
+                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset => true,
                     _ => false,
                 }
             }
