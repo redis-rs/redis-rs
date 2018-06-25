@@ -3,10 +3,10 @@ extern crate redis;
 extern crate bencher;
 
 extern crate futures;
-extern crate tokio_core;
+extern crate tokio;
 
 use futures::Future;
-use tokio_core::reactor::Core;
+use tokio::runtime::current_thread::Runtime;
 
 use bencher::Bencher;
 
@@ -30,9 +30,9 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
     let client = get_client();
-    let mut core = Core::new().unwrap();
-    let con = client.get_async_connection(&core.handle());
-    let mut opt_con = Some(core.run(con).unwrap());
+    let mut runtime = Runtime::new().unwrap();
+    let con = client.get_async_connection();
+    let mut opt_con = Some(runtime.block_on(con).unwrap());
 
     b.iter(|| {
         let con = opt_con.take().expect("No connection");
@@ -44,7 +44,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
             .query_async(con)
             .and_then(|(con, ())| redis::cmd("GET").arg(key).query_async(con))
             .and_then(|(con, _): (_, isize)| redis::cmd("DEL").arg(key).query_async(con));
-        let (con, ()) = core.run(future).unwrap();
+        let (con, ()) = runtime.block_on(future).unwrap();
 
         opt_con = Some(con);
     });
