@@ -18,8 +18,7 @@ build = "build.rs"
 
 [features]
 with-rustc-json = ["rustc-serialize"]
-with-unix-sockets = ["unix_socket"]
-# with-async-unix-sockets = ["tokio-uds"]
+with-unix-sockets = ["unix_socket", "tokio-uds"]
 with-system-unix-sockets = []
 
 [dependencies]
@@ -33,7 +32,7 @@ futures = "0.1"
 tokio-reactor = "0.1"
 tokio-tcp = "0.1"
 tokio-io = "0.1"
-# tokio-uds = { git = "https://github.com/Marwes/tokio-uds", branch = "only_tokio_upgrade", optional = true }
+tokio-uds = { version = "0.2", optional = true }
 
 [dev-dependencies]
 rand = "0.4"

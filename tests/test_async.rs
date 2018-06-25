@@ -1,4 +1,3 @@
-#![cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
 extern crate redis;
 
 extern crate futures;

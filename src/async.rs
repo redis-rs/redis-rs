@@ -5,7 +5,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 use net2::TcpBuilder;
 
-#[cfg(feature = "with-async-unix-sockets")]
+#[cfg(feature = "with-unix-sockets")]
 use tokio_uds::UnixStream;
 
 use tokio_io::{self, AsyncWrite};
@@ -22,7 +22,7 @@ use connection::{ConnectionAddr, ConnectionInfo};
 
 enum ActualConnection {
     Tcp(BufReader<TcpStream>),
-    #[cfg(feature = "with-async-unix-sockets")]
+    #[cfg(feature = "with-unix-sockets")]
     Unix(BufReader<UnixStream>),
 }
 
@@ -65,16 +65,16 @@ pub struct Connection {
 macro_rules! with_connection {
     ($con:expr, $f:expr) => {
         match $con {
-            #[cfg(not(feature = "with-async-unix-sockets"))]
+            #[cfg(not(feature = "with-unix-sockets"))]
             ActualConnection::Tcp(con) => {
                 $f(con).map(|(con, value)| (ActualConnection::Tcp(con), value))
             }
 
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualConnection::Tcp(con) => {
                 Either::A($f(con).map(|(con, value)| (ActualConnection::Tcp(con), value)))
             }
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualConnection::Unix(con) => {
                 Either::B($f(con).map(|(con, value)| (ActualConnection::Unix(con), value)))
             }
@@ -85,16 +85,16 @@ macro_rules! with_connection {
 macro_rules! with_write_connection {
     ($con:expr, $f:expr) => {
         match $con {
-            #[cfg(not(feature = "with-async-unix-sockets"))]
+            #[cfg(not(feature = "with-unix-sockets"))]
             ActualConnection::Tcp(con) => {
                 $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value))
             }
 
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualConnection::Tcp(con) => Either::A(
                 $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value)),
             ),
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualConnection::Unix(con) => Either::B(
                 $f(WriteWrapper(con))
                     .map(|(con, value)| (ActualConnection::Unix(con.0), value)),
@@ -156,13 +156,11 @@ pub fn connect(
                     .map(|con| ActualConnection::Tcp(BufReader::new(con))),
             )
         }
-        #[cfg(feature = "with-async-unix-sockets")]
-        ConnectionAddr::Unix(ref path) => {
-            let result = UnixStream::connect(path)
-                .map(|stream| ActualConnection::Unix(BufReader::new(stream)));
-            Either::B(future::result(result))
-        }
-        #[cfg(not(feature = "with-async-unix-sockets"))]
+        #[cfg(feature = "with-unix-sockets")]
+        ConnectionAddr::Unix(ref path) => Either::B(
+            UnixStream::connect(path).map(|stream| ActualConnection::Unix(BufReader::new(stream))),
+        ),
+        #[cfg(not(feature = "with-unix-sockets"))]
         ConnectionAddr::Unix(_) => Either::B(future::err(RedisError::from((
             ErrorKind::InvalidClientConfig,
             "Cannot connect to unix sockets \
