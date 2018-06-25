@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::str;
 
 use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
@@ -257,8 +257,8 @@ impl<'a, T: BufRead> Parser<T> {
             remaining: Vec::new(),
         };
         match parser.poll()? {
-            Async::NotReady => panic!("Blocking read received WouldBlock error"),
-            Async::Ready((_, value)) => return Ok(value),
+            Async::NotReady => Err(io::Error::from(io::ErrorKind::WouldBlock).into()),
+            Async::Ready((_, value)) => Ok(value),
         }
     }
 }
