@@ -38,11 +38,12 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
         let con = opt_con.take().expect("No connection");
 
         let key = "test_key";
-        let future = redis::cmd("SET").arg(key).arg(42).query_async(con).and_then(|(con, ())| {
-            redis::cmd("GET").arg(key).query_async(con)
-        }).and_then(|(con, _): (_, isize)| {
-            redis::cmd("DEL").arg(key).query_async(con)
-        });
+        let future = redis::cmd("SET")
+            .arg(key)
+            .arg(42)
+            .query_async(con)
+            .and_then(|(con, ())| redis::cmd("GET").arg(key).query_async(con))
+            .and_then(|(con, _): (_, isize)| redis::cmd("DEL").arg(key).query_async(con));
         let (con, ()) = core.run(future).unwrap();
 
         opt_con = Some(con);
@@ -120,12 +121,14 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
         let mut pipe = redis::pipe();
 
         for _ in 0..200 {
-            pipe.set("foo", ("bar", 123, b"1231279712", &["test", "test", "test"][..])).ignore();
+            pipe.set(
+                "foo",
+                ("bar", 123, b"1231279712", &["test", "test", "test"][..]),
+            ).ignore();
         }
         pipe
     });
 }
-
 
 benchmark_group!(
     bench,
@@ -135,7 +138,6 @@ benchmark_group!(
     bench_simple_getsetdel_pipeline_precreated,
     bench_long_pipeline,
     bench_encode_pipeline,
-    bench_encode_pipeline_nested,
-    bench_long_pipeline
+    bench_encode_pipeline_nested
 );
 benchmark_main!(bench);
