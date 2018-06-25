@@ -497,7 +497,7 @@ where
 #[derive(Clone)]
 enum ActualPipeline {
     Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
-    #[cfg(feature = "with-async-unix-sockets")]
+    #[cfg(feature = "with-unix-sockets")]
     Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
 }
 
@@ -514,7 +514,7 @@ impl SharedConnection {
                 ActualConnection::Tcp(tcp) => ActualPipeline::Tcp(Pipeline::new(
                     tcp.into_inner().framed(ValueCodec::default()),
                 )),
-                #[cfg(feature = "with-async-unix-sockets")]
+                #[cfg(feature = "with-unix-sockets")]
                 ActualConnection::Unix(unix) => ActualPipeline::Unix(Pipeline::new(
                     unix.into_inner().framed(ValueCodec::default()),
                 )),
@@ -531,7 +531,7 @@ impl ConnectionLike for SharedConnection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualPipeline::Unix(ref pipeline) => pipeline.send(cmd),
         };
         Box::new(future.map(|value| (self, value)).map_err(|err| {
@@ -547,7 +547,7 @@ impl ConnectionLike for SharedConnection {
     ) -> RedisFuture<(Self, Vec<Value>)> {
         let stream = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
-            #[cfg(feature = "with-async-unix-sockets")]
+            #[cfg(feature = "with-unix-sockets")]
             ActualPipeline::Unix(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
         };
         Box::new(
