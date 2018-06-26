@@ -7,9 +7,9 @@ use std::net::ToSocketAddrs;
 #[cfg(feature = "with-unix-sockets")]
 use tokio_uds::UnixStream;
 
+use tokio_codec::{Decoder, Framed};
 use tokio_executor;
-use tokio_io::codec::Framed;
-use tokio_io::{self, AsyncRead, AsyncWrite};
+use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::Either;
@@ -512,11 +512,11 @@ impl SharedConnection {
         Box::new(future::lazy(|| {
             let pipeline = match con.con {
                 ActualConnection::Tcp(tcp) => ActualPipeline::Tcp(Pipeline::new(
-                    tcp.into_inner().framed(ValueCodec::default()),
+                    ValueCodec::default().framed(tcp.into_inner()),
                 )),
                 #[cfg(feature = "with-unix-sockets")]
                 ActualConnection::Unix(unix) => ActualPipeline::Unix(Pipeline::new(
-                    unix.into_inner().framed(ValueCodec::default()),
+                    ValueCodec::default().framed(unix.into_inner()),
                 )),
             };
             Ok(SharedConnection {
