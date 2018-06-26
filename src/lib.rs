@@ -126,8 +126,7 @@
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
 //! exactly friendly to developers, this library provides flexible support
-//! for casting values to the intended results.  This is driven through the
-//! `FromRedisValue` and `ToRedisArgs` traits.
+//! for casting values to the intended results.  This is driven through the `FromRedisValue` and `ToRedisArgs` traits.
 //!
 //! The `arg` method of the command will accept a wide range of types through
 //! the `ToRedisArgs` trait and the `query` method of a command can convert the
@@ -302,6 +301,56 @@
 //! # Ok(()) }
 //! ```
 //!
+//! # Async
+//!
+//! In addition to the synchronous interface that's been explained above there also exists an
+//! asynchronous interface based on [`futures`][] and [`tokio`][].
+//!
+//! This interface exists under the `async` module and largely mirrors the synchronous with a few
+//! concessions to make it fit the constraints of `futures`.
+//!
+//! ```rust,no_run
+//! extern crate redis;
+//! extern crate futures;
+//! extern crate tokio;
+//!
+//! use tokio::executor::current_thread::block_on_all;
+//!
+//! use futures::Future;
+//!
+//! # fn main() {
+//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! let connect = client.get_async_connection();
+//!
+//! block_on_all(connect.and_then(|con| {
+//!     redis::cmd("SET")
+//!         .arg("key1")
+//!         .arg(b"foo")
+//!         // `query_async` acts in the same way as `query` but requires the connection to be
+//!         // taken by value as the method returns a `Future` instead of `Result`.
+//!         // This connection will be returned after the future has been completed allowing it to
+//!         // be used again.
+//!         .query_async(con)
+//!         .and_then(|(con, ())| {
+//!             redis::cmd("SET").arg(&["key2", "bar"]).query_async(con)
+//!         })
+//!         .and_then(|(con, ())| {
+//!             redis::cmd("MGET")
+//!                 .arg(&["key1", "key2"])
+//!                 .query_async(con)
+//!                 .map(|t| t.1)
+//!         })
+//!         .then(|result| {
+//!             assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+//!             result
+//!         })
+//! })).unwrap();
+//! # }
+//! ```
+//!
+//! [`futures`]:https://crates.io/crates/futures
+//! [`tokio`]:https://tokio.rs
+//!
 //! ## Breaking Changes
 //!
 //! In Rust 0.5.0 the semi-internal `ConnectionInfo` struct had to be
@@ -311,56 +360,67 @@
 
 #![deny(non_camel_case_types)]
 
-extern crate url;
+#[macro_use]
+extern crate combine;
 extern crate sha1;
+extern crate url;
 
-#[cfg(feature="with-rustc-json")]
+#[macro_use]
+extern crate futures;
+#[macro_use]
+extern crate tokio_io;
+extern crate tokio_tcp;
+
+#[cfg(feature = "with-rustc-json")]
 pub extern crate rustc_serialize as serialize;
-#[cfg(feature="with-unix-sockets")]
+#[cfg(feature = "with-unix-sockets")]
+extern crate tokio_uds;
+#[cfg(feature = "with-unix-sockets")]
 extern crate unix_socket;
 
 #[doc(hidden)]
-#[cfg(feature="with-rustc-json")]
+#[cfg(feature = "with-rustc-json")]
 pub use serialize::json::Json;
 
 // public api
-pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
+pub use cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
+pub use commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
+pub use connection::{parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo,
+                     ConnectionLike, IntoConnectionInfo, Msg, PubSub};
+pub use parser::{parse_async, parse_redis_value, Parser};
 pub use script::{Script, ScriptInvocation};
-pub use connection::{Connection, ConnectionLike, ConnectionInfo, ConnectionAddr,
-                     IntoConnectionInfo, PubSub, Msg, transaction, parse_redis_url};
-pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
-pub use commands::{Commands, PipelineCommands, PubSubCommands, ControlFlow};
 
-pub use types::{
-    /* low level values */
-    Value,
+pub use types::{// utility functions
+                from_redis_value,
 
-    /* error and result types */
-    RedisError,
-    RedisResult,
+                // error kinds
+                ErrorKind,
 
-    /* error kinds */
-    ErrorKind,
+                // conversion traits
+                FromRedisValue,
 
-    /* utility types */
-    InfoDict,
-    NumericBehavior,
+                // utility types
+                InfoDict,
+                NumericBehavior,
 
-    /* conversion traits */
-    FromRedisValue,
-    ToRedisArgs,
+                // error and result types
+                RedisError,
+                RedisFuture,
+                RedisResult,
+                ToRedisArgs,
 
-    /* utility functions */
-    from_redis_value,
-};
+                // low level values
+                Value};
 
 mod macros;
 
-mod parser;
+pub mod async;
+
 mod client;
-mod connection;
-mod types;
-mod script;
 mod cmd;
 mod commands;
+mod connection;
+mod parser;
+mod script;
+mod types;

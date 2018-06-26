@@ -13,6 +13,7 @@ addons:
 
 script:
   - make test
+  - cargo check --benches
 
 notifications:
   email: false
