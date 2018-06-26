@@ -1,8 +1,6 @@
 use connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use types::{RedisFuture, RedisResult, Value};
 
-use tokio_reactor;
-
 /// The client type.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -45,14 +43,7 @@ impl Client {
     }
 
     pub fn get_async_connection(&self) -> RedisFuture<::async::Connection> {
-        self.get_async_connection_handle(&tokio_reactor::Handle::current())
-    }
-
-    pub fn get_async_connection_handle(
-        &self,
-        handle: &tokio_reactor::Handle,
-    ) -> RedisFuture<::async::Connection> {
-        ::async::connect(self.connection_info.clone(), handle)
+        ::async::connect(self.connection_info.clone())
     }
 }
 

@@ -365,13 +365,10 @@ extern crate combine;
 extern crate sha1;
 extern crate url;
 
-extern crate net2;
-
 #[macro_use]
 extern crate futures;
 #[macro_use]
 extern crate tokio_io;
-extern crate tokio_reactor;
 extern crate tokio_tcp;
 
 #[cfg(feature = "with-rustc-json")]

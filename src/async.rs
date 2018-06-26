@@ -1,15 +1,12 @@
 use std::fmt::Arguments;
 use std::io::{self, BufReader, Read, Write};
 use std::mem;
-use std::net::{SocketAddr, ToSocketAddrs};
-
-use net2::TcpBuilder;
+use std::net::ToSocketAddrs;
 
 #[cfg(feature = "with-unix-sockets")]
 use tokio_uds::UnixStream;
 
 use tokio_io::{self, AsyncWrite};
-use tokio_reactor;
 use tokio_tcp::TcpStream;
 
 use futures::future::Either;
@@ -120,10 +117,7 @@ impl Connection {
     }
 }
 
-pub fn connect(
-    connection_info: ConnectionInfo,
-    handle: &tokio_reactor::Handle,
-) -> RedisFuture<Connection> {
+pub fn connect(connection_info: ConnectionInfo) -> RedisFuture<Connection> {
     let connection = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = match (&host[..], port).to_socket_addrs() {
@@ -139,19 +133,8 @@ pub fn connect(
                 Err(err) => return Box::new(future::err(err.into())),
             };
 
-            let stream_result = (|| -> io::Result<_> {
-                let builder = match socket_addr {
-                    SocketAddr::V4(_) => TcpBuilder::new_v4()?,
-                    SocketAddr::V6(_) => TcpBuilder::new_v6()?,
-                };
-                Ok(builder.to_tcp_stream()?)
-            })();
-            let stream = match stream_result {
-                Ok(stream) => stream,
-                Err(err) => return Box::new(future::err(err.into())),
-            };
             Either::A(
-                TcpStream::connect_std(stream, &socket_addr, handle)
+                TcpStream::connect(&socket_addr)
                     .from_err()
                     .map(|con| ActualConnection::Tcp(BufReader::new(con))),
             )
