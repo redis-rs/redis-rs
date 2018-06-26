@@ -1,9 +1,8 @@
 extern crate redis;
+use redis::{transaction, Commands, PipelineCommands};
 use std::error::Error;
-use redis::{Commands, PipelineCommands, transaction};
 
 use std::collections::HashMap;
-
 
 /// This function demonstrates how a return value can be coerced into a
 /// hashmap of tuples.  This is particularly useful for responses like
@@ -13,23 +12,31 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // since rust cannot know what format we actually want we need to be
     // explicit here and define the type of our response.  In this case
     // String -> int fits all the items we query for.
-    let config: HashMap<String, isize> =
-        try!(redis::cmd("CONFIG").arg("GET").arg("*-max-*-entries").query(con));
+    let config: HashMap<String, isize> = try!(
+        redis::cmd("CONFIG")
+            .arg("GET")
+            .arg("*-max-*-entries")
+            .query(con)
+    );
 
     println!("Max entry limits:");
 
-    println!("  max-intset:        {}",
-             config.get("set-max-intset-entries")
-                 .unwrap_or(&0));
-    println!("  hash-max-ziplist:  {}",
-             config.get("hash-max-ziplist-entries")
-                 .unwrap_or(&0));
-    println!("  list-max-ziplist:  {}",
-             config.get("list-max-ziplist-entries")
-                 .unwrap_or(&0));
-    println!("  zset-max-ziplist:  {}",
-             config.get("zset-max-ziplist-entries")
-                 .unwrap_or(&0));
+    println!(
+        "  max-intset:        {}",
+        config.get("set-max-intset-entries").unwrap_or(&0)
+    );
+    println!(
+        "  hash-max-ziplist:  {}",
+        config.get("hash-max-ziplist-entries").unwrap_or(&0)
+    );
+    println!(
+        "  list-max-ziplist:  {}",
+        config.get("list-max-ziplist-entries").unwrap_or(&0)
+    );
+    println!(
+        "  zset-max-ziplist:  {}",
+        config.get("zset-max-ziplist-entries").unwrap_or(&0)
+    );
 
     Ok(())
 }
@@ -83,15 +90,17 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
 
         // at this point we can go into an atomic pipe (a multi block)
         // and set up the keys.
-        let response: Option<(isize,)> = try!(redis::pipe()
-            .atomic()
-            .cmd("SET")
-            .arg(key)
-            .arg(val + 1)
-            .ignore()
-            .cmd("GET")
-            .arg(key)
-            .query(con));
+        let response: Option<(isize,)> = try!(
+            redis::pipe()
+                .atomic()
+                .cmd("SET")
+                .arg(key)
+                .arg(val + 1)
+                .ignore()
+                .cmd("GET")
+                .arg(key)
+                .query(con)
+        );
 
         match response {
             None => {
@@ -121,10 +130,7 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
         // load the old value, so we know what to increment.
         let val: isize = try!(con.get(key));
         // increment
-        pipe.set(key, val + 1)
-            .ignore()
-            .get(key)
-            .query(con)
+        pipe.set(key, val + 1).ignore().get(key).query(con)
     }));
 
     // and print the result
@@ -132,7 +138,6 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
 
     Ok(())
 }
-
 
 /// Runs all the examples and propagates errors up.
 fn do_redis_code() -> redis::RedisResult<()> {
@@ -152,7 +157,6 @@ fn do_redis_code() -> redis::RedisResult<()> {
 
     Ok(())
 }
-
 
 fn main() {
     // at this point the errors are fatal, let's just fail hard.
