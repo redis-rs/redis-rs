@@ -349,7 +349,7 @@ pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
-pub type RedisFuture<T> = Box<Future<Item = T, Error = RedisError>>;
+pub type RedisFuture<T> = Box<Future<Item = T, Error = RedisError> + Send>;
 
 /// An info dictionary type.
 #[derive(Debug)]

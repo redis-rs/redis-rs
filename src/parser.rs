@@ -8,7 +8,7 @@ use tokio_io::AsyncRead;
 
 use combine;
 use combine::byte::{byte, crlf, newline};
-use combine::combinator::{any_partial_state, AnyPartialState};
+use combine::combinator::{any_send_partial_state, AnySendPartialState};
 #[allow(unused_imports)] // See https://github.com/rust-lang/rust/issues/43970
 use combine::error::StreamError;
 use combine::parser::choice::choice;
@@ -52,7 +52,7 @@ where
 }
 
 parser!{
-    type PartialState = AnyPartialState;
+    type PartialState = AnySendPartialState;
     fn value['a, I]()(I) -> RedisResult<Value>
         where [I: RangeStream<Item = u8, Range = &'a [u8]> ]
     {
@@ -124,7 +124,7 @@ parser!{
                 })
         };
 
-        any_partial_state(choice((
+        any_send_partial_state(choice((
            byte(b'+').with(status().map(Ok)),
            byte(b':').with(int().map(Value::Int).map(Ok)),
            byte(b'$').with(data().map(Ok)),
@@ -136,7 +136,7 @@ parser!{
 
 pub struct ValueFuture<R> {
     reader: Option<R>,
-    state: AnyPartialState,
+    state: AnySendPartialState,
     // Intermediate storage for data we know that we need to parse a value but we haven't been able
     // to parse completely yet
     remaining: Vec<u8>,
@@ -253,7 +253,7 @@ impl<'a, T: BufRead> Parser<T> {
     pub fn parse_value(&mut self) -> RedisResult<Value> {
         let mut parser = ValueFuture {
             reader: Some(&mut self.reader),
-            state: AnyPartialState::default(),
+            state: Default::default(),
             remaining: Vec::new(),
         };
         match parser.poll()? {
