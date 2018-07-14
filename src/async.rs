@@ -475,9 +475,6 @@ where
             senders.push(sender);
             receivers.push(receiver);
         }
-        // When sending the output back through these we need to use pop to go through them
-        // thus we reverse it to ensure that the messages end up in the correct order
-        senders.reverse();
 
         Box::new(
             self_
