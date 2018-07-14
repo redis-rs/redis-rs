@@ -40,6 +40,47 @@ fn test_args() {
 }
 
 #[test]
+fn dont_panic_on_closed_shared_connection() {
+    let ctx = TestContext::new();
+    let connect = ctx.shared_async_connection();
+    drop(ctx);
+
+    Runtime::new()
+        .unwrap()
+        .block_on(future::lazy(|| {
+            connect
+                .and_then(|con| {
+                    let cmd = move || {
+                        redis::cmd("SET")
+                            .arg("key1")
+                            .arg(b"foo")
+                            .query_async(con.clone())
+                            .map(|(_, ())| ())
+                    };
+                    cmd().then(move |result| {
+                        assert_eq!(
+                            result.as_ref().unwrap_err().kind(),
+                            redis::ErrorKind::IoError,
+                            "{}",
+                            result.as_ref().unwrap_err()
+                        );
+                        cmd()
+                    })
+                })
+                .then(|result| -> Result<(), ()> {
+                    assert_eq!(
+                        result.as_ref().unwrap_err().kind(),
+                        redis::ErrorKind::IoError,
+                        "{}",
+                        result.as_ref().unwrap_err()
+                    );
+                    Ok(())
+                })
+        }))
+        .unwrap();
+}
+
+#[test]
 fn test_pipeline_transaction() {
     let ctx = TestContext::new();
     block_on_all(ctx.async_connection().and_then(|con| {

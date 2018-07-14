@@ -479,7 +479,7 @@ where
         Box::new(
             self_
                 .send((item, senders))
-                .map_err(|_| panic!("Unexpected close of redis mpsc sender"))
+                .map_err(|_| None)
                 .map(|_| {
                     stream::futures_ordered(receivers.into_iter().map(|receiver| {
                         receiver.then(|result| match result {
