@@ -11,6 +11,7 @@ use redis::async::SharedConnection;
 use redis::RedisError;
 
 use tokio::executor::current_thread::block_on_all;
+use tokio::runtime::current_thread::Runtime;
 
 mod support;
 
@@ -106,74 +107,83 @@ fn test_error(con: &SharedConnection) -> Box<Future<Item = (), Error = RedisErro
 #[test]
 fn test_args_shared_connection() {
     let ctx = TestContext::new();
-    tokio::run(
-        ctx.shared_async_connection()
-            .and_then(|con| {
-                let cmds = (0..100).map(move |i| test_cmd(&con, i));
-                future::join_all(cmds).map(|results| {
-                    assert_eq!(results.len(), 100);
+    Runtime::new()
+        .unwrap()
+        .block_on(future::lazy(|| {
+            ctx.shared_async_connection()
+                .and_then(|con| {
+                    let cmds = (0..100).map(move |i| test_cmd(&con, i));
+                    future::join_all(cmds).map(|results| {
+                        assert_eq!(results.len(), 100);
+                    })
                 })
-            })
-            .map_err(|err| panic!("{}", err)),
-    );
+                .map_err(|err| panic!("{}", err))
+        }))
+        .unwrap();
 }
 
 #[test]
 fn test_args_with_errors_shared_connection() {
     let ctx = TestContext::new();
-    tokio::run(
-        ctx.shared_async_connection()
-            .and_then(|con| {
-                let cmds = (0..100).map(move |i| {
-                    if i % 2 == 0 {
-                        test_cmd(&con, i)
-                    } else {
-                        test_error(&con)
-                    }
-                });
-                future::join_all(cmds).map(|results| {
-                    assert_eq!(results.len(), 100);
+    Runtime::new()
+        .unwrap()
+        .block_on(future::lazy(|| {
+            ctx.shared_async_connection()
+                .and_then(|con| {
+                    let cmds = (0..100).map(move |i| {
+                        if i % 2 == 0 {
+                            test_cmd(&con, i)
+                        } else {
+                            test_error(&con)
+                        }
+                    });
+                    future::join_all(cmds).map(|results| {
+                        assert_eq!(results.len(), 100);
+                    })
                 })
-            })
-            .map_err(|err| panic!("{}", err)),
-    );
+                .map_err(|err| panic!("{}", err))
+        }))
+        .unwrap();
 }
 
 #[test]
 fn test_transaction_shared_connection() {
     let ctx = TestContext::new();
-    tokio::run(
-        ctx.shared_async_connection()
-            .and_then(|con| {
-                let cmds = (0..100).map(move |i| {
-                    let foo = i;
-                    let bar = format!("bar{}", i);
+    Runtime::new()
+        .unwrap()
+        .block_on(future::lazy(|| {
+            ctx.shared_async_connection()
+                .and_then(|con| {
+                    let cmds = (0..100).map(move |i| {
+                        let foo = i;
+                        let bar = format!("bar{}", i);
 
-                    let mut pipe = redis::pipe();
-                    pipe.atomic()
-                        .cmd("SET")
-                        .arg("key")
-                        .arg(foo)
-                        .ignore()
-                        .cmd("SET")
-                        .arg(&["key2", &bar[..]])
-                        .ignore()
-                        .cmd("MGET")
-                        .arg(&["key", "key2"]);
+                        let mut pipe = redis::pipe();
+                        pipe.atomic()
+                            .cmd("SET")
+                            .arg("key")
+                            .arg(foo)
+                            .ignore()
+                            .cmd("SET")
+                            .arg(&["key2", &bar[..]])
+                            .ignore()
+                            .cmd("MGET")
+                            .arg(&["key", "key2"]);
 
-                    pipe.query_async(con.clone())
-                        .map(|t| t.1)
-                        .then(move |result| {
-                            assert_eq!(Ok(((foo, bar.clone().into_bytes()),)), result);
-                            result
-                        })
-                });
-                future::join_all(cmds)
-            })
-            .and_then(|results| {
-                assert_eq!(results.len(), 100);
-                Ok(())
-            })
-            .map_err(|err| panic!("{}", err)),
-    );
+                        pipe.query_async(con.clone())
+                            .map(|t| t.1)
+                            .then(move |result| {
+                                assert_eq!(Ok(((foo, bar.clone().into_bytes()),)), result);
+                                result
+                            })
+                    });
+                    future::join_all(cmds)
+                })
+                .and_then(|results| {
+                    assert_eq!(results.len(), 100);
+                    Ok(())
+                })
+                .map_err(|err| panic!("{}", err))
+        }))
+        .unwrap();
 }
