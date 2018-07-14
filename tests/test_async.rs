@@ -7,6 +7,9 @@ use futures::{future, Future};
 
 use support::*;
 
+use redis::async::SharedConnection;
+use redis::RedisError;
+
 use tokio::executor::current_thread::block_on_all;
 
 mod support;
@@ -60,39 +63,73 @@ fn test_pipeline_transaction() {
     })).unwrap();
 }
 
+fn test_cmd(con: &SharedConnection, i: i32) -> Box<Future<Item = (), Error = RedisError> + Send> {
+    let key = format!("key{}", i);
+    let key_2 = key.clone();
+    let key2 = format!("key{}_2", i);
+    let key2_2 = key2.clone();
+
+    let foo = format!("foo{}", i);
+
+    let con1 = con.clone();
+    let con2 = con.clone();
+    Box::new(
+        redis::cmd("SET")
+            .arg(&key[..])
+            .arg(foo.as_bytes())
+            .query_async(con.clone())
+            .and_then(move |(_, ())| redis::cmd("SET").arg(&[&key2, "bar"]).query_async(con1))
+            .and_then(move |(_, ())| {
+                redis::cmd("MGET")
+                    .arg(&[&key_2, &key2_2])
+                    .query_async(con2)
+                    .map(|t| t.1)
+                    .then(|result| {
+                        assert_eq!(Ok((foo, b"bar".to_vec())), result);
+                        Ok(())
+                    })
+            }),
+    )
+}
+
+fn test_error(con: &SharedConnection) -> Box<Future<Item = (), Error = RedisError> + Send> {
+    Box::new(
+        redis::cmd("SET")
+            .query_async(con.clone())
+            .then(|result| match result {
+                Ok((_, ())) => panic!("Expected redis to return an error"),
+                Err(_) => Ok(()),
+            }),
+    )
+}
+
 #[test]
 fn test_args_shared_connection() {
     let ctx = TestContext::new();
     tokio::run(
         ctx.shared_async_connection()
             .and_then(|con| {
+                let cmds = (0..100).map(move |i| test_cmd(&con, i));
+                future::join_all(cmds).map(|results| {
+                    assert_eq!(results.len(), 100);
+                })
+            })
+            .map_err(|err| panic!("{}", err)),
+    );
+}
+
+#[test]
+fn test_args_with_errors_shared_connection() {
+    let ctx = TestContext::new();
+    tokio::run(
+        ctx.shared_async_connection()
+            .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
-                    let key = format!("key{}", i);
-                    let key_2 = key.clone();
-                    let key2 = format!("key{}_2", i);
-                    let key2_2 = key2.clone();
-
-                    let foo = format!("foo{}", i);
-
-                    let con1 = con.clone();
-                    let con2 = con.clone();
-                    redis::cmd("SET")
-                        .arg(&key[..])
-                        .arg(foo.as_bytes())
-                        .query_async(con.clone())
-                        .and_then(move |(_, ())| {
-                            redis::cmd("SET").arg(&[&key2, "bar"]).query_async(con1)
-                        })
-                        .and_then(move |(_, ())| {
-                            redis::cmd("MGET")
-                                .arg(&[&key_2, &key2_2])
-                                .query_async(con2)
-                                .map(|t| t.1)
-                                .then(|result| {
-                                    assert_eq!(Ok((foo, b"bar".to_vec())), result);
-                                    Ok(())
-                                })
-                        })
+                    if i % 2 == 0 {
+                        test_cmd(&con, i)
+                    } else {
+                        test_error(&con)
+                    }
                 });
                 future::join_all(cmds).map(|results| {
                     assert_eq!(results.len(), 100);
