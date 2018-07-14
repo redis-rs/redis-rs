@@ -286,7 +286,7 @@ type PipelineMessage<S, I, E> = (S, Vec<PipelineOutput<I, E>>);
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<T>(mpsc::UnboundedSender<PipelineMessage<T::SinkItem, T::Item, T::Error>>)
+struct Pipeline<T>(mpsc::Sender<PipelineMessage<T::SinkItem, T::Item, T::Error>>)
 where
     T: Stream + Sink;
 
@@ -311,7 +311,7 @@ where
 {
     sink_stream: T,
     in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
-    incoming: mpsc::UnboundedReceiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
+    incoming: mpsc::Receiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
     send_state: SendState<T::SinkItem>,
 }
 
@@ -438,7 +438,8 @@ where
     T::Error: ::std::fmt::Debug,
 {
     fn new(sink_stream: T) -> Self {
-        let (sender, receiver) = mpsc::unbounded();
+        const BUFFER_SIZE: usize = 50;
+        let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
         tokio_executor::spawn(PipelineFuture {
             sink_stream,
             in_flight: VecDeque::new(),
