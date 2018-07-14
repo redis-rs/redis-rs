@@ -277,10 +277,10 @@ impl ConnectionLike for Connection {
 }
 
 // Senders which the result of a single request are sent through
-type PipelineOutput<I, E> = Vec<oneshot::Sender<Result<I, E>>>;
+type PipelineOutput<I, E> = oneshot::Sender<Result<I, E>>;
 
 // A single message sent through the pipeline
-type PipelineMessage<S, I, E> = (S, PipelineOutput<I, E>);
+type PipelineMessage<S, I, E> = (S, Vec<PipelineOutput<I, E>>);
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
 /// items being output by the `Stream` (the number is specified at time of sending). With the
@@ -311,7 +311,6 @@ where
 {
     sink_stream: T,
     in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
-    senders: PipelineOutput<T::Item, T::Error>,
     incoming: mpsc::UnboundedReceiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
     send_state: SendState<T::SinkItem>,
 }
@@ -330,6 +329,8 @@ where
             match self.poll_write() {
                 Ok(Async::Ready(Some(()))) => (),
                 Ok(Async::Ready(None)) => {
+                    // Shutdown this future once the stream is done and all requests in
+                    // flight have been fulfilled
                     if self.in_flight.is_empty() {
                         return Ok(Async::Ready(()));
                     }
@@ -365,15 +366,9 @@ where
     }
 
     fn send_result(&mut self, item: Result<T::Item, T::Error>) {
-        let sender = match self.senders.pop() {
+        let sender = match self.in_flight.pop_front() {
             Some(sender) => sender,
-            None => {
-                self.senders = self.in_flight.pop_front().expect("Matching sender");
-                match self.senders.pop() {
-                    Some(sender) => sender,
-                    None => return,
-                }
-            }
+            None => return,
         };
         match sender.send(item) {
             Ok(_) => (),
@@ -399,7 +394,7 @@ where
                                 self.send_state = SendState::Sent
                             }
                             Ok(Async::Ready(Some((item, senders)))) => {
-                                self.in_flight.push_back(senders);
+                                self.in_flight.extend(senders);
                                 self.send_state = SendState::Unsent(item);
                             }
                         }
@@ -426,7 +421,7 @@ where
                         Ok(Async::Ready(Some(x))) => x,
                         Ok(Async::Ready(None)) | Err(()) => return Ok(Async::Ready(None)),
                     };
-                    self.in_flight.push_back(senders);
+                    self.in_flight.extend(senders);
                     self.send_state = SendState::Unsent(item);
                 }
             }
@@ -447,7 +442,6 @@ where
         tokio_executor::spawn(PipelineFuture {
             sink_stream,
             in_flight: VecDeque::new(),
-            senders: Vec::new(),
             send_state: SendState::Free,
             incoming: receiver,
         });
