@@ -276,9 +276,17 @@ impl ConnectionLike for Connection {
     }
 }
 
-struct Pipeline<T>(
-    mpsc::UnboundedSender<(T::SinkItem, Vec<oneshot::Sender<Result<T::Item, T::Error>>>)>,
-)
+// Senders which the result of a single request are sent through
+type PipelineOutput<I, E> = Vec<oneshot::Sender<Result<I, E>>>;
+
+// A single message sent through the pipeline
+type PipelineMessage<S, I, E> = (S, PipelineOutput<I, E>);
+
+/// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
+/// items being output by the `Stream` (the number is specified at time of sending). With the
+/// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
+/// and `Sink`.
+struct Pipeline<T>(mpsc::UnboundedSender<PipelineMessage<T::SinkItem, T::Item, T::Error>>)
 where
     T: Stream + Sink;
 
@@ -302,10 +310,9 @@ where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
     sink_stream: T,
-    in_flight: VecDeque<Vec<oneshot::Sender<Result<T::Item, T::Error>>>>,
-    senders: Vec<oneshot::Sender<Result<T::Item, T::Error>>>,
-    incoming:
-        mpsc::UnboundedReceiver<(T::SinkItem, Vec<oneshot::Sender<Result<T::Item, T::Error>>>)>,
+    in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
+    senders: PipelineOutput<T::Item, T::Error>,
+    incoming: mpsc::UnboundedReceiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
     send_state: SendState<T::SinkItem>,
 }
 
@@ -344,6 +351,7 @@ impl<T> PipelineFuture<T>
 where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
+    // Read messages from the stream and send them back to the caller
     fn poll_read(&mut self) -> Poll<(), ()> {
         loop {
             let item = match self.sink_stream.poll() {
@@ -355,12 +363,12 @@ where
             self.send_result(item);
         }
     }
+
     fn send_result(&mut self, item: Result<T::Item, T::Error>) {
         let sender = match self.senders.pop() {
             Some(sender) => sender,
             None => {
                 self.senders = self.in_flight.pop_front().expect("Matching sender");
-                self.senders.reverse();
                 match self.senders.pop() {
                     Some(sender) => sender,
                     None => return,
@@ -370,13 +378,14 @@ where
         match sender.send(item) {
             Ok(_) => (),
             Err(_) => {
-                // `Err` means that the receiver were dropped in which case it does not
+                // `Err` means that the receiver was dropped in which case it does not
                 // care about the output and we can continue by just dropping the value
                 // and sender
             }
         }
     }
 
+    // Retrieve incoming messages and write them to the sink
     fn poll_write(&mut self) -> Poll<Option<()>, T::Error> {
         loop {
             match mem::replace(&mut self.send_state, SendState::Free) {
@@ -465,13 +474,16 @@ where
     ) -> Box<Stream<Item = T::Item, Error = Option<T::Error>> + Send> {
         let self_ = self.0.clone();
 
-        let mut senders = Vec::new();
-        let mut receivers = Vec::new();
+        let mut senders = Vec::with_capacity(count);
+        let mut receivers = Vec::with_capacity(count);
         for _ in 0..count {
             let (sender, receiver) = oneshot::channel();
             senders.push(sender);
             receivers.push(receiver);
         }
+        // When sending the output back through these we need to use pop to go through them
+        // thus we reverse it to ensure that the messages end up in the correct order
+        senders.reverse();
 
         Box::new(
             self_
@@ -511,13 +523,15 @@ impl SharedConnection {
     pub fn new(con: Connection) -> RedisFuture<Self> {
         Box::new(future::lazy(|| {
             let pipeline = match con.con {
-                ActualConnection::Tcp(tcp) => ActualPipeline::Tcp(Pipeline::new(
-                    ValueCodec::default().framed(tcp.into_inner()),
-                )),
+                ActualConnection::Tcp(tcp) => {
+                    let codec = ValueCodec::default().framed(tcp.into_inner());
+                    ActualPipeline::Tcp(Pipeline::new(codec))
+                }
                 #[cfg(feature = "with-unix-sockets")]
-                ActualConnection::Unix(unix) => ActualPipeline::Unix(Pipeline::new(
-                    ValueCodec::default().framed(unix.into_inner()),
-                )),
+                ActualConnection::Unix(unix) => {
+                    let codec = ValueCodec::default().framed(unix.into_inner());
+                    ActualPipeline::Unix(Pipeline::new(codec))
+                }
             };
             Ok(SharedConnection {
                 pipeline,
