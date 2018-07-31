@@ -3,8 +3,10 @@ use std::str;
 
 use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
+use bytes::BytesMut;
 use futures::{Async, Future, Poll};
 use tokio_io::AsyncRead;
+use tokio_io::codec::{Decoder, Encoder};
 
 use combine;
 use combine::byte::{byte, crlf, newline};
@@ -96,9 +98,11 @@ parser!{
                     combine::value(Value::Nil).map(Ok).left()
                 } else {
                     let length = length as usize;
-                    combine::count_min_max(length, length, value()).map(|result: ResultExtend<_, _>| {
-                        result.0.map(Value::Bulk)
-                    }).right()
+                    combine::count_min_max(length, length, value())
+                        .map(|result: ResultExtend<_, _>| {
+                            result.0.map(Value::Bulk)
+                        })
+                        .right()
                 }
             })
         };
@@ -131,6 +135,50 @@ parser!{
            byte(b'*').with(bulk()),
            byte(b'-').with(error().map(Err))
         )))
+    }
+}
+
+#[derive(Default)]
+pub struct ValueCodec {
+    state: AnySendPartialState,
+}
+
+impl Encoder for ValueCodec {
+    type Item = Vec<u8>;
+    type Error = RedisError;
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend(item);
+        Ok(())
+    }
+}
+
+impl Decoder for ValueCodec {
+    type Item = Value;
+    type Error = RedisError;
+    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let (opt, removed_len) = {
+            let buffer = &bytes[..];
+            let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
+            match combine::stream::decode(value(), stream, &mut self.state) {
+                Ok(x) => x,
+                Err(err) => {
+                    let err = err.map_position(|pos| pos.translate_position(buffer))
+                        .map_range(|range| format!("{:?}", range))
+                        .to_string();
+                    return Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "parse error",
+                        err,
+                    )));
+                }
+            }
+        };
+
+        bytes.split_to(removed_len);
+        match opt {
+            Some(result) => Ok(Some(result?)),
+            None => Ok(None),
+        }
     }
 }
 

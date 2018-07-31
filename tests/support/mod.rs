@@ -156,4 +156,8 @@ impl TestContext {
     pub fn stop_server(&mut self) {
         self.server.stop();
     }
+
+    pub fn shared_async_connection(&self) -> RedisFuture<redis::async::SharedConnection> {
+        self.client.get_shared_async_connection()
+    }
 }

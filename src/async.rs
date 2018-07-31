@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fmt::Arguments;
 use std::io::{self, BufReader, Read, Write};
 use std::mem;
@@ -6,16 +7,21 @@ use std::net::ToSocketAddrs;
 #[cfg(feature = "with-unix-sockets")]
 use tokio_uds::UnixStream;
 
+use tokio_codec::{Decoder, Framed};
+use tokio_executor;
 use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::Either;
-use futures::{future, Async, Future, Poll};
+use futures::sync::{mpsc, oneshot};
+use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, Stream};
 
 use cmd::cmd;
 use types::{ErrorKind, RedisError, RedisFuture, Value};
 
 use connection::{ConnectionAddr, ConnectionInfo};
+
+use parser::ValueCodec;
 
 enum ActualConnection {
     Tcp(BufReader<TcpStream>),
@@ -260,6 +266,304 @@ impl ConnectionLike for Connection {
                             con.take().unwrap(),
                             mem::replace(&mut rv, Vec::new()),
                         )))
+                    })
+                }),
+        )
+    }
+
+    fn get_db(&self) -> i64 {
+        self.db
+    }
+}
+
+// Senders which the result of a single request are sent through
+type PipelineOutput<I, E> = oneshot::Sender<Result<I, E>>;
+
+// A single message sent through the pipeline
+type PipelineMessage<S, I, E> = (S, Vec<PipelineOutput<I, E>>);
+
+/// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
+/// items being output by the `Stream` (the number is specified at time of sending). With the
+/// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
+/// and `Sink`.
+struct Pipeline<T>(mpsc::Sender<PipelineMessage<T::SinkItem, T::Item, T::Error>>)
+where
+    T: Stream + Sink;
+
+impl<T> Clone for Pipeline<T>
+where
+    T: Stream + Sink,
+{
+    fn clone(&self) -> Self {
+        Pipeline(self.0.clone())
+    }
+}
+
+enum SendState<T> {
+    Unsent(T),
+    Sent,
+    Free,
+}
+
+struct PipelineFuture<T>
+where
+    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+{
+    sink_stream: T,
+    in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
+    incoming: mpsc::Receiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
+    send_state: SendState<T::SinkItem>,
+}
+
+impl<T> Future for PipelineFuture<T>
+where
+    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+    T::Error: ::std::fmt::Debug,
+{
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            let read_ready = self.poll_read()?;
+            match self.poll_write() {
+                Ok(Async::Ready(Some(()))) => (),
+                Ok(Async::Ready(None)) => {
+                    // Shutdown this future once the stream is done and all requests in
+                    // flight have been fulfilled
+                    if self.in_flight.is_empty() {
+                        return Ok(Async::Ready(()));
+                    }
+                }
+                Ok(Async::NotReady) => {
+                    return Ok(Async::NotReady);
+                }
+                Err(err) => {
+                    self.send_result(Err(err));
+                    continue;
+                }
+            }
+            return Ok(read_ready);
+        }
+    }
+}
+
+impl<T> PipelineFuture<T>
+where
+    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+{
+    // Read messages from the stream and send them back to the caller
+    fn poll_read(&mut self) -> Poll<(), ()> {
+        loop {
+            let item = match self.sink_stream.poll() {
+                Ok(Async::Ready(Some(item))) => Ok(item),
+                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
+                Err(err) => Err(err),
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+            };
+            self.send_result(item);
+        }
+    }
+
+    fn send_result(&mut self, item: Result<T::Item, T::Error>) {
+        let sender = match self.in_flight.pop_front() {
+            Some(sender) => sender,
+            None => return,
+        };
+        match sender.send(item) {
+            Ok(_) => (),
+            Err(_) => {
+                // `Err` means that the receiver was dropped in which case it does not
+                // care about the output and we can continue by just dropping the value
+                // and sender
+            }
+        }
+    }
+
+    // Retrieve incoming messages and write them to the sink
+    fn poll_write(&mut self) -> Poll<Option<()>, T::Error> {
+        loop {
+            match mem::replace(&mut self.send_state, SendState::Free) {
+                SendState::Unsent(item) => match self.sink_stream.start_send(item)? {
+                    AsyncSink::Ready => {
+                        // Try to take another incoming and start sending it as well
+                        // before completing the send to give the sink a chance to coalesce
+                        // multiple messages into a large one.
+                        match self.incoming.poll() {
+                            Ok(Async::NotReady) | Ok(Async::Ready(None)) | Err(()) => {
+                                self.send_state = SendState::Sent
+                            }
+                            Ok(Async::Ready(Some((item, senders)))) => {
+                                self.in_flight.extend(senders);
+                                self.send_state = SendState::Unsent(item);
+                            }
+                        }
+                    }
+                    AsyncSink::NotReady(item) => {
+                        self.send_state = SendState::Unsent(item);
+                        return Ok(Async::NotReady);
+                    }
+                },
+                SendState::Sent => {
+                    match self.sink_stream.poll_complete()? {
+                        Async::Ready(()) => (),
+                        Async::NotReady => {
+                            self.send_state = SendState::Sent;
+                            return Ok(Async::NotReady);
+                        }
+                    }
+                    self.send_state = SendState::Free;
+                    return Ok(Async::Ready(Some(())));
+                }
+                SendState::Free => {
+                    let (item, senders) = match self.incoming.poll() {
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Ok(Async::Ready(Some(x))) => x,
+                        Ok(Async::Ready(None)) | Err(()) => return Ok(Async::Ready(None)),
+                    };
+                    self.in_flight.extend(senders);
+                    self.send_state = SendState::Unsent(item);
+                }
+            }
+        }
+    }
+}
+
+impl<T> Pipeline<T>
+where
+    T: Sink<SinkError = <T as Stream>::Error> + Stream + Send + 'static,
+    T::SinkItem: Send,
+    T::Item: Send,
+    T::Error: Send,
+    T::Error: ::std::fmt::Debug,
+{
+    fn new(sink_stream: T) -> Self {
+        const BUFFER_SIZE: usize = 50;
+        let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
+        tokio_executor::spawn(PipelineFuture {
+            sink_stream,
+            in_flight: VecDeque::new(),
+            send_state: SendState::Free,
+            incoming: receiver,
+        });
+        Pipeline(sender)
+    }
+
+    // `None` means that the stream was out of items causing that poll loop to shut down.
+    fn send(
+        &self,
+        item: T::SinkItem,
+    ) -> Box<Future<Item = T::Item, Error = Option<T::Error>> + Send> {
+        Box::new(
+            self.send_recv_multiple(item, 1)
+                .into_future()
+                .map(|(item, _)| item.unwrap())
+                .map_err(|(err, _)| err),
+        )
+    }
+
+    fn send_recv_multiple(
+        &self,
+        item: T::SinkItem,
+        count: usize,
+    ) -> Box<Stream<Item = T::Item, Error = Option<T::Error>> + Send> {
+        let self_ = self.0.clone();
+
+        let mut senders = Vec::with_capacity(count);
+        let mut receivers = Vec::with_capacity(count);
+        for _ in 0..count {
+            let (sender, receiver) = oneshot::channel();
+            senders.push(sender);
+            receivers.push(receiver);
+        }
+
+        Box::new(
+            self_
+                .send((item, senders))
+                .map_err(|_| None)
+                .map(|_| {
+                    stream::futures_ordered(receivers.into_iter().map(|receiver| {
+                        receiver.then(|result| match result {
+                            Ok(result) => result.map_err(Some),
+                            Err(_) => {
+                                // The `sender` was dropped which likely means that the stream part
+                                // failed for one reason or another
+                                Err(None)
+                            }
+                        })
+                    }))
+                })
+                .flatten_stream(),
+        )
+    }
+}
+
+#[derive(Clone)]
+enum ActualPipeline {
+    Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
+    #[cfg(feature = "with-unix-sockets")]
+    Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
+}
+
+#[derive(Clone)]
+pub struct SharedConnection {
+    pipeline: ActualPipeline,
+    db: i64,
+}
+
+impl SharedConnection {
+    pub fn new(con: Connection) -> RedisFuture<Self> {
+        Box::new(future::lazy(|| {
+            let pipeline = match con.con {
+                ActualConnection::Tcp(tcp) => {
+                    let codec = ValueCodec::default().framed(tcp.into_inner());
+                    ActualPipeline::Tcp(Pipeline::new(codec))
+                }
+                #[cfg(feature = "with-unix-sockets")]
+                ActualConnection::Unix(unix) => {
+                    let codec = ValueCodec::default().framed(unix.into_inner());
+                    ActualPipeline::Unix(Pipeline::new(codec))
+                }
+            };
+            Ok(SharedConnection {
+                pipeline,
+                db: con.db,
+            })
+        }))
+    }
+}
+
+impl ConnectionLike for SharedConnection {
+    fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
+        let future = match self.pipeline {
+            ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
+            #[cfg(feature = "with-unix-sockets")]
+            ActualPipeline::Unix(ref pipeline) => pipeline.send(cmd),
+        };
+        Box::new(future.map(|value| (self, value)).map_err(|err| {
+            err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+        }))
+    }
+
+    fn req_packed_commands(
+        self,
+        cmd: Vec<u8>,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<(Self, Vec<Value>)> {
+        let stream = match self.pipeline {
+            ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
+            #[cfg(feature = "with-unix-sockets")]
+            ActualPipeline::Unix(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
+        };
+        Box::new(
+            stream
+                .skip(offset as u64)
+                .collect()
+                .map(|value| (self, value))
+                .map_err(|err| {
+                    err.unwrap_or_else(|| {
+                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
                     })
                 }),
         )

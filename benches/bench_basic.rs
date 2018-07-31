@@ -1,11 +1,12 @@
-extern crate redis;
 #[macro_use]
 extern crate bencher;
+extern crate redis;
 
 extern crate futures;
 extern crate tokio;
 
-use futures::Future;
+use futures::{future, stream, Future, Stream};
+
 use tokio::runtime::current_thread::Runtime;
 
 use bencher::Bencher;
@@ -130,6 +131,24 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
     });
 }
 
+fn bench_async_implicit_pipeline(b: &mut Bencher) {
+    let client = get_client();
+    let mut runtime = Runtime::new().unwrap();
+    let con = runtime
+        .block_on(client.get_shared_async_connection())
+        .unwrap();
+
+    let cmd = redis::cmd("SET").arg("foo").arg("bar").clone();
+    b.iter(|| {
+        let _: () = runtime
+            .block_on(future::lazy(|| {
+                stream::futures_unordered((0..1_000).map(|_| cmd.query_async(con.clone())))
+                    .for_each(|(_, ())| Ok(()))
+            }))
+            .unwrap();
+    });
+}
+
 benchmark_group!(
     bench,
     bench_simple_getsetdel,
@@ -138,6 +157,7 @@ benchmark_group!(
     bench_simple_getsetdel_pipeline_precreated,
     bench_long_pipeline,
     bench_encode_pipeline,
-    bench_encode_pipeline_nested
+    bench_encode_pipeline_nested,
+    bench_async_implicit_pipeline
 );
 benchmark_main!(bench);
