@@ -74,7 +74,7 @@
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
 //!
-//! In case the create is compiled with Unix socket support you can also
+//! In case the crate is compiled with Unix socket support you can also
 //! use a unix URL in this format:
 //!
 //! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
