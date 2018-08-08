@@ -13,11 +13,11 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.8.0"
+redis = "0.9.0"
 ```
 
 Documentation on the library can be found at
-[mitsuhiko.github.io/redis-rs](http://mitsuhiko.github.io/redis-rs/redis/).
+[docs.rs/redis](https://docs.rs/redis).
 
 ## Basic Operation
 

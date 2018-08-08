@@ -1,11 +1,11 @@
 [package]
 name = "redis"
-version = "0.8.1"
-authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
+version = "0.9.0"
+authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/mitsuhiko/redis-rs"
-documentation = "http://mitsuhiko.github.io/redis-rs/"
+documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 readme = "README.md"
 build = "build.rs"

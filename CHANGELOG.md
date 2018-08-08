@@ -1,3 +1,17 @@
+# 0.9.0 (2018-08-08)
+
+Some time has passed since the last release.
+This new release will bring less bugs, more commands, experimental async support and better performance.
+
+Highlights:
+
+* Implement flexible PubSub API (#136)
+* Avoid allocating some redundant Vec's during encoding (#140)
+* Add an async interface using futures-rs (#141)
+* Allow the async connection to have multiple in flight requests (#143)
+
+The async support is currently experimental.
+
 # 0.8.0 (2016-12-26)
 
 * Add publish command
