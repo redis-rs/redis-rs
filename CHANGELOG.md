@@ -1,3 +1,16 @@
+# 0.8.0 (2016-12-26)
+
+* Add publish command
+
+# 0.7.1 (2016-12-17)
+
+* Fix unix socket builds
+* Relax lifetimes for scripts
+
+# 0.7.0 (2016-07-23)
+
+* Add support for built-in unix sockets
+
 # 0.6.0 (2016-07-14)
 
 * feat: Make rustc-serialize an optional feature (#96)
