@@ -201,6 +201,11 @@ implement_commands! {
         cmd("PERSIST").arg(key)
     }
 
+    /// Check the expiration time of a key.
+    fn ttl<K: ToRedisArgs>(key: K) {
+        cmd("TTL").arg(key)
+    }
+
     /// Rename a key.
     fn rename<K: ToRedisArgs>(key: K, new_key: K) {
         cmd("RENAME").arg(key).arg(new_key)
