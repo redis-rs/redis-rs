@@ -111,7 +111,16 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
             ),
         },
-        passwd: url.password().and_then(|pw| Some(pw.to_string())),
+        passwd: match url.password() {
+            Some(pw) => match url::percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
+                Ok(decoded) => Some(decoded.into_owned()),
+                Err(_) => fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Password is not valid UTF-8 string"
+                )),
+            },
+            None => None,
+        },
     })
 }
 
