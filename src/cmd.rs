@@ -1,21 +1,23 @@
 use connection::ConnectionLike;
 use types::{
-    from_redis_value, ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, RedisFuture, RedisResult, RedisWrite, ToRedisArgs,
+    Value,
 };
 
 use futures::Future;
 
 #[derive(Clone)]
-enum Arg<'a> {
-    Simple(Vec<u8>),
+enum Arg<D> {
+    Simple(D),
     Cursor,
-    Borrowed(&'a [u8]),
 }
 
 /// Represents redis commands.
 #[derive(Clone)]
 pub struct Cmd {
-    args: Vec<Arg<'static>>,
+    data: Vec<u8>,
+    // Arg::Simple contains the offset that marks the end of the argument
+    args: Vec<Arg<usize>>,
     cursor: Option<u64>,
     is_ignored: bool,
 }
@@ -96,53 +98,103 @@ fn bulklen(len: usize) -> usize {
     return 1 + countdigits(len) + 2 + len + 2;
 }
 
-fn encode_command(args: &[Arg], cursor: u64) -> Vec<u8> {
-    use std::io::Write;
-
+fn args_len<'a, I>(args: I, cursor: u64) -> usize
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + ExactSizeIterator,
+{
     let mut totlen = 1 + countdigits(args.len()) + 2;
     for item in args {
-        totlen += bulklen(match *item {
+        totlen += bulklen(match item {
             Arg::Cursor => countdigits(cursor as usize),
-            Arg::Simple(ref val) => val.len(),
-            Arg::Borrowed(ptr) => ptr.len(),
+            Arg::Simple(val) => val.len(),
         });
     }
+    totlen
+}
 
-    let mut cmd = Vec::with_capacity(totlen);
-    write!(cmd, "*{}\r\n", args.len()).unwrap();
+fn cmd_len(cmd: &Cmd) -> usize {
+    args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
+}
+
+fn encode_command<'a, I>(args: I, cursor: u64) -> Vec<u8>
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
+{
+    let mut cmd = Vec::new();
+    write_command(&mut cmd, args, cursor);
+    cmd
+}
+
+fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
+{
+    let totlen = args_len(args.clone(), cursor);
+
+    cmd.reserve(totlen);
+
+    write_command_preallocated(cmd, args, cursor);
+}
+
+fn write_command_preallocated<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
+{
+    cmd.push(b'*');
+    ::itoa::write(&mut *cmd, args.len()).unwrap();
+    cmd.extend_from_slice(b"\r\n");
 
     {
-        let mut encode = |item: &[u8]| {
-            write!(cmd, "${}\r\n", item.len()).unwrap();
-            cmd.extend(item.iter());
-            cmd.push('\r' as u8);
-            cmd.push('\n' as u8);
-        };
+        let mut cursor_bytes = [0; 20];
+        for item in args {
+            let bytes = match item {
+                Arg::Cursor => {
+                    let n = ::itoa::write(&mut cursor_bytes[..], cursor).unwrap();
+                    &cursor_bytes[..n]
+                }
+                Arg::Simple(val) => val,
+            };
 
-        for item in args.iter() {
-            match *item {
-                Arg::Cursor => encode(cursor.to_string().as_bytes()),
-                Arg::Simple(ref val) => encode(val),
-                Arg::Borrowed(ptr) => encode(ptr),
-            }
+            cmd.push(b'$');
+            ::itoa::write(&mut *cmd, bytes.len()).unwrap();
+            cmd.extend_from_slice(b"\r\n");
+
+            cmd.extend_from_slice(bytes);
+            cmd.extend_from_slice(b"\r\n");
         }
     }
-
-    cmd
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
+    let cmds_len = cmds.iter().map(cmd_len).sum();
+
     if atomic {
-        rv.extend(cmd("MULTI").get_packed_command().into_iter());
-    }
-    for cmd in cmds.iter() {
-        rv.extend(cmd.get_packed_command().into_iter());
-    }
-    if atomic {
-        rv.extend(cmd("EXEC").get_packed_command().into_iter());
+        let multi = cmd("MULTI");
+        let exec = cmd("EXEC");
+        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
+
+        multi.write_packed_command_preallocated(&mut rv);
+        for cmd in cmds {
+            cmd.write_packed_command_preallocated(&mut rv);
+        }
+        exec.write_packed_command_preallocated(&mut rv);
+    } else {
+        rv.reserve(cmds_len);
+
+        for cmd in cmds {
+            cmd.write_packed_command_preallocated(&mut rv);
+        }
     }
     rv
+}
+
+impl RedisWrite for Cmd {
+    fn write_arg(&mut self, arg: &[u8]) {
+        let prev = self.data.len();
+        self.args.push(Arg::Simple(prev + arg.len()));
+        self.data.extend_from_slice(arg);
+    }
 }
 
 /// A command acts as a builder interface to creating encoded redis
@@ -170,12 +222,13 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let mut cmd = redis::cmd("SMEMBERS");
-/// let mut iter : redis::Iter<i32> = cmd.arg("my_set").iter(&con).unwrap();
+/// let mut iter : redis::Iter<i32> = cmd.arg("my_set").clone().iter(&con).unwrap();
 /// ```
 impl Cmd {
     /// Creates a new empty command.
     pub fn new() -> Cmd {
         Cmd {
+            data: vec![],
             args: vec![],
             cursor: None,
             is_ignored: false,
@@ -197,11 +250,7 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
-        let mut out = Vec::new();
-        arg.write_redis_args(&mut out);
-        for item in out {
-            self.args.push(Arg::Simple(item));
-        }
+        arg.write_redis_args(self);
         self
     }
 
@@ -214,7 +263,8 @@ impl Cmd {
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let con = client.get_connection().unwrap();
     /// let mut cmd = redis::cmd("SSCAN");
-    /// let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+    /// let mut iter : redis::Iter<isize> =
+    ///     cmd.arg("my_set").cursor_arg(0).clone().iter(&con).unwrap();
     /// for x in iter {
     ///     // do something with the item
     /// }
@@ -230,7 +280,17 @@ impl Cmd {
     /// Returns the packed command as a byte vector.
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
-        encode_command(&self.args, self.cursor.unwrap_or(0))
+        let mut cmd = Vec::new();
+        self.write_packed_command(&mut cmd);
+        cmd
+    }
+
+    fn write_packed_command(&self, cmd: &mut Vec<u8>) {
+        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+    }
+
+    fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
+        write_command_preallocated(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
@@ -241,7 +301,7 @@ impl Cmd {
         if !self.in_scan_mode() {
             None
         } else {
-            Some(encode_command(&self.args, cursor))
+            Some(encode_command(self.args_iter(), cursor))
         }
     }
 
@@ -291,7 +351,7 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike) -> RedisResult<Iter<'a, T>> {
+    pub fn iter<'a, T: FromRedisValue>(self, con: &'a ConnectionLike) -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
         let rv = con.req_packed_command(&pcmd)?;
         let mut batch: Vec<T>;
@@ -310,7 +370,7 @@ impl Cmd {
             batch: batch,
             cursor: cursor,
             con: con,
-            cmd: self.clone(),
+            cmd: self,
         })
     }
 
@@ -329,6 +389,19 @@ impl Cmd {
     #[inline]
     pub fn execute(&self, con: &ConnectionLike) {
         let _: () = self.query(con).unwrap();
+    }
+
+    fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+        let mut prev = 0;
+        self.args.iter().map(move |arg| match *arg {
+            Arg::Simple(i) => {
+                let arg = Arg::Simple(&self.data[prev..i]);
+                prev = i;
+                arg
+            }
+
+            Arg::Cursor => Arg::Cursor,
+        })
     }
 }
 
@@ -378,8 +451,8 @@ impl Pipeline {
 
     /// Adds a command to the pipeline.
     #[inline]
-    pub fn add_command(&mut self, cmd: &Cmd) -> &mut Pipeline {
-        self.commands.push(cmd.clone());
+    pub fn add_command(&mut self, cmd: Cmd) -> &mut Pipeline {
+        self.commands.push(cmd);
         self
     }
 
@@ -625,10 +698,7 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
 pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(
-        &args.iter().map(|x| Arg::Borrowed(x)).collect::<Vec<_>>(),
-        0,
-    )
+    encode_command(args.iter().map(|x| Arg::Simple(&x[..])), 0)
 }
 
 /// Shortcut for creating a new pipeline.

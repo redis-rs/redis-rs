@@ -205,6 +205,7 @@ fn test_scanning() {
     let iter = redis::cmd("SSCAN")
         .arg("foo")
         .cursor_arg(0)
+        .clone()
         .iter(&con)
         .unwrap();
 

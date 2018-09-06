@@ -166,7 +166,7 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let mut iter : redis::Iter<isize> = redis::cmd("SSCAN").arg("my_set")
-//!     .cursor_arg(0).iter(&con)?;
+//!     .cursor_arg(0).clone().iter(&con)?;
 //! for x in iter {
 //!     // do something with the item
 //! }
@@ -360,6 +360,8 @@
 #[macro_use]
 extern crate combine;
 extern crate bytes;
+extern crate dtoa;
+extern crate itoa;
 extern crate sha1;
 extern crate url;
 #[macro_use]
