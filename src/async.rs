@@ -551,6 +551,7 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
+        // TODO Use `Either` when `Stream` is implemented for it
         let stream: Box<Stream<Item = _, Error = _> + Send> = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => {
                 Box::new(pipeline.send_recv_multiple(cmd, offset + count))
