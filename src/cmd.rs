@@ -355,8 +355,14 @@ impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
     pub fn new() -> Pipeline {
+        Self::with_capacity(0)
+    }
+
+    /// Creates an empty pipeline with pre-allocated capacity.  For consistency with the `cmd`
+    /// api a `pipe` function is provided as alias.
+    pub fn with_capacity(capacity: usize) -> Pipeline {
         Pipeline {
-            commands: vec![],
+            commands: Vec::with_capacity(capacity),
             transaction_mode: false,
         }
     }
@@ -491,6 +497,15 @@ impl Pipeline {
                 try!(self.execute_pipelined(con))
             }),
         )
+    }
+
+    /// Like ``query()`` but clears the pooled commands from memory.  This allows reusal of a Pipeline
+    /// object with minimal re-allocation of memory.
+    #[inline]
+    pub fn query_clear<T: FromRedisValue>(&mut self, con: &ConnectionLike) -> RedisResult<T> {
+        let res = self.query(con);
+        self.commands.clear();
+        res
     }
 
     fn execute_pipelined_async<C>(self, con: C) -> RedisFuture<(C, Value)>
