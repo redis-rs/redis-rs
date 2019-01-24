@@ -351,8 +351,9 @@ fn test_pipeline_reuse_query_clear() {
         .ignore()
         .cmd("MGET")
         .arg(&["pkey_1"])
-        .query_clear(&con)
+        .query(&con)
         .unwrap();
+    pl.clear();
 
     assert_eq!(k1, 44);
 
@@ -366,8 +367,9 @@ fn test_pipeline_reuse_query_clear() {
         .cmd("MGET")
         .arg(&["pkey_1"])
         .arg(&["pkey_2"])
-        .query_clear(&con)
+        .query(&con)
         .unwrap();
+    pl.clear();
 
     assert_eq!(k1, false);
     assert_eq!(k2, 45);

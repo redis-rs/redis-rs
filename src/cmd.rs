@@ -486,6 +486,9 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_1")
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
+    ///
+    /// NOTE: In order to clear (and reuse) the `Pipeline` object after calling `query()`, one must
+    ///       explicitly call `clear()`.
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         from_redis_value(
@@ -499,13 +502,10 @@ impl Pipeline {
         )
     }
 
-    /// Like ``query()`` but clears the pooled commands from memory.  This allows reusal of a Pipeline
-    /// object with minimal re-allocation of memory.
+    /// Clear the internal data strcture of `Pipeline`, allowing it to be reused.
     #[inline]
-    pub fn query_clear<T: FromRedisValue>(&mut self, con: &ConnectionLike) -> RedisResult<T> {
-        let res = self.query(con);
+    pub fn clear(&mut self) {
         self.commands.clear();
-        res
     }
 
     fn execute_pipelined_async<C>(self, con: C) -> RedisFuture<(C, Value)>
@@ -569,6 +569,9 @@ impl Pipeline {
     /// # let con = client.get_connection().unwrap();
     /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
     /// ```
+    ///
+    /// NOTE: In order to clear (and reuse) the `Pipeline` object after calling `execute()`, one
+    ///       must explicitly call `clear()`.
     #[inline]
     pub fn execute(&self, con: &ConnectionLike) {
         let _: () = self.query(con).unwrap();
