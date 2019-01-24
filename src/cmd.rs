@@ -502,7 +502,7 @@ impl Pipeline {
         )
     }
 
-    /// Clear the internal data strcture of `Pipeline`, allowing it to be reused.
+    /// Clear the internal data structure of `Pipeline`, allowing it to be reused.
     #[inline]
     pub fn clear(&mut self) {
         self.commands.clear();
