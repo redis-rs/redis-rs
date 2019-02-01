@@ -39,7 +39,7 @@ tokio-uds = { version = "0.2", optional = true }
 rand = "0.4"
 net2 = "0.2"
 fnv = "1.0.5"
-bencher = "0.1"
+criterion = "0.2"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
 tokio = "0.1"
@@ -47,4 +47,3 @@ tokio = "0.1"
 [[bench]]
 name = "bench_basic"
 harness = false
-
