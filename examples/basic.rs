@@ -12,12 +12,10 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // since rust cannot know what format we actually want we need to be
     // explicit here and define the type of our response.  In this case
     // String -> int fits all the items we query for.
-    let config: HashMap<String, isize> = try!(
-        redis::cmd("CONFIG")
-            .arg("GET")
-            .arg("*-max-*-entries")
-            .query(con)
-    );
+    let config: HashMap<String, isize> = try!(redis::cmd("CONFIG")
+        .arg("GET")
+        .arg("*-max-*-entries")
+        .query(con));
 
     println!("Max entry limits:");
 
@@ -90,17 +88,15 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
 
         // at this point we can go into an atomic pipe (a multi block)
         // and set up the keys.
-        let response: Option<(isize,)> = try!(
-            redis::pipe()
-                .atomic()
-                .cmd("SET")
-                .arg(key)
-                .arg(val + 1)
-                .ignore()
-                .cmd("GET")
-                .arg(key)
-                .query(con)
-        );
+        let response: Option<(isize,)> = try!(redis::pipe()
+            .atomic()
+            .cmd("SET")
+            .arg(key)
+            .arg(val + 1)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
+            .query(con));
 
         match response {
             None => {

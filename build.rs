@@ -15,7 +15,8 @@ fn get_rustc_version() -> Result<(i32, i32), Box<Error>> {
             .output()
             .unwrap()
             .stdout,
-    ).unwrap();
+    )
+    .unwrap();
     let mut pieces = out.split(' ');
     let _ = pieces.next().ok_or(err())?;
 

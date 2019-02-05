@@ -385,32 +385,36 @@ pub use serialize::json::Json;
 pub use client::Client;
 pub use cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
 pub use commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
-pub use connection::{parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo,
-                     ConnectionLike, IntoConnectionInfo, Msg, PubSub};
+pub use connection::{
+    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    IntoConnectionInfo, Msg, PubSub,
+};
 pub use parser::{parse_async, parse_redis_value, Parser};
 pub use script::{Script, ScriptInvocation};
 
-pub use types::{// utility functions
-                from_redis_value,
+pub use types::{
+    // utility functions
+    from_redis_value,
 
-                // error kinds
-                ErrorKind,
+    // error kinds
+    ErrorKind,
 
-                // conversion traits
-                FromRedisValue,
+    // conversion traits
+    FromRedisValue,
 
-                // utility types
-                InfoDict,
-                NumericBehavior,
+    // utility types
+    InfoDict,
+    NumericBehavior,
 
-                // error and result types
-                RedisError,
-                RedisFuture,
-                RedisResult,
-                ToRedisArgs,
+    // error and result types
+    RedisError,
+    RedisFuture,
+    RedisResult,
+    ToRedisArgs,
 
-                // low level values
-                Value};
+    // low level values
+    Value,
+};
 
 mod macros;
 

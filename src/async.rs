@@ -99,8 +99,7 @@ macro_rules! with_write_connection {
             ),
             #[cfg(feature = "with-unix-sockets")]
             ActualConnection::Unix(con) => Either::B(
-                $f(WriteWrapper(con))
-                    .map(|(con, value)| (ActualConnection::Unix(con.0), value)),
+                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Unix(con.0), value)),
             ),
         }
     };
@@ -133,7 +132,7 @@ pub fn connect(connection_info: ConnectionInfo) -> RedisFuture<Connection> {
                         return Box::new(future::err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
                             "No address found for host",
-                        ))))
+                        ))));
                     }
                 },
                 Err(err) => return Box::new(future::err(err.into())),

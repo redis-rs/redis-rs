@@ -1,6 +1,7 @@
 use connection::ConnectionLike;
-use types::{from_redis_value, ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs,
-            Value};
+use types::{
+    from_redis_value, ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs, Value,
+};
 
 use futures::Future;
 
@@ -503,7 +504,8 @@ impl Pipeline {
                 encode_pipeline(&self.commands, false),
                 0,
                 self.commands.len(),
-            ).map(move |(con, value)| (con, self.make_pipeline_results(value))),
+            )
+            .map(move |(con, value)| (con, self.make_pipeline_results(value))),
         )
     }
 
@@ -511,18 +513,21 @@ impl Pipeline {
     where
         C: ::async::ConnectionLike + Send + 'static,
     {
-        Box::new(con.req_packed_commands(
-            encode_pipeline(&self.commands, true),
-            self.commands.len() + 1,
-            1,
-        ).and_then(move |(con, mut resp)| match resp.pop() {
-            Some(Value::Nil) => Ok((con, Value::Nil)),
-            Some(Value::Bulk(items)) => Ok((con, self.make_pipeline_results(items))),
-            _ => fail!((
-                ErrorKind::ResponseError,
-                "Invalid response when parsing multi response"
-            )),
-        }))
+        Box::new(
+            con.req_packed_commands(
+                encode_pipeline(&self.commands, true),
+                self.commands.len() + 1,
+                1,
+            )
+            .and_then(move |(con, mut resp)| match resp.pop() {
+                Some(Value::Nil) => Ok((con, Value::Nil)),
+                Some(Value::Bulk(items)) => Ok((con, self.make_pipeline_results(items))),
+                _ => fail!((
+                    ErrorKind::ResponseError,
+                    "Invalid response when parsing multi response"
+                )),
+            }),
+        )
     }
 
     #[inline]

@@ -224,7 +224,8 @@ fn test_filtered_scanning() {
     let mut unseen = HashSet::new();
 
     for x in 0..3000 {
-        let _: () = con.hset("foo", format!("key_{}_{}", x % 100, x), x)
+        let _: () = con
+            .hset("foo", format!("key_{}_{}", x % 100, x), x)
             .unwrap();
         if x % 100 == 0 {
             unseen.insert(x);
@@ -350,7 +351,8 @@ fn test_real_transaction_highlevel() {
             .cmd("GET")
             .arg(key)
             .query(&con)
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(response, (43,));
 }
