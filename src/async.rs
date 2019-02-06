@@ -311,13 +311,13 @@ where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
     // Read messages from the stream and send them back to the caller
-    fn poll_read(&mut self) -> Async<()> {
+    fn poll_read(&mut self) -> Poll<(), ()> {
         loop {
             let item = match self.sink_stream.poll() {
                 Ok(Async::Ready(Some(item))) => Ok(item),
-                Ok(Async::Ready(None)) => return Async::Ready(()),
+                Ok(Async::Ready(None)) => return Err(()),
                 Err(err) => Err(err),
-                Ok(Async::NotReady) => return Async::NotReady,
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
             };
             self.send_result(item);
         }
@@ -368,14 +368,14 @@ where
         try_ready!(self.sink_stream.poll_complete().map_err(|err| {
             self.send_result(Err(err));
         }));
-        Ok(self.poll_read())
+        self.poll_read()
     }
 
     fn close(&mut self) -> Poll<(), Self::SinkError> {
         try_ready!(self.sink_stream.close().map_err(|err| {
             self.send_result(Err(err));
         }));
-        Ok(self.poll_read())
+        self.poll_read()
     }
 }
 
@@ -441,7 +441,8 @@ where
                         }
                     })
                 }))
-            }).flatten_stream()
+            })
+            .flatten_stream()
     }
 }
 
