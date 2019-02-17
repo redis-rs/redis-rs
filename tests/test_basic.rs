@@ -300,6 +300,82 @@ fn test_pipeline_transaction() {
 }
 
 #[test]
+fn test_pipeline_reuse_query() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let mut pl = redis::pipe();
+
+    let ((k1,),): ((i32,),) = pl
+        .cmd("SET")
+        .arg("pkey_1")
+        .arg(42)
+        .ignore()
+        .cmd("MGET")
+        .arg(&["pkey_1"])
+        .query(&con)
+        .unwrap();
+
+    assert_eq!(k1, 42);
+
+    redis::cmd("DEL").arg("pkey_1").execute(&con);
+
+    // The internal commands vector of the pipeline still contains the previous commands.
+    let ((k1,), (k2, k3)): ((i32,), (i32, i32)) = pl
+        .cmd("SET")
+        .arg("pkey_2")
+        .arg(43)
+        .ignore()
+        .cmd("MGET")
+        .arg(&["pkey_1"])
+        .arg(&["pkey_2"])
+        .query(&con)
+        .unwrap();
+
+    assert_eq!(k1, 42);
+    assert_eq!(k2, 42);
+    assert_eq!(k3, 43);
+}
+
+#[test]
+fn test_pipeline_reuse_query_clear() {
+    let ctx = TestContext::new();
+    let con = ctx.connection();
+
+    let mut pl = redis::pipe();
+
+    let ((k1,),): ((i32,),) = pl
+        .cmd("SET")
+        .arg("pkey_1")
+        .arg(44)
+        .ignore()
+        .cmd("MGET")
+        .arg(&["pkey_1"])
+        .query(&con)
+        .unwrap();
+    pl.clear();
+
+    assert_eq!(k1, 44);
+
+    redis::cmd("DEL").arg("pkey_1").execute(&con);
+
+    let ((k1, k2),): ((bool, i32),) = pl
+        .cmd("SET")
+        .arg("pkey_2")
+        .arg(45)
+        .ignore()
+        .cmd("MGET")
+        .arg(&["pkey_1"])
+        .arg(&["pkey_2"])
+        .query(&con)
+        .unwrap();
+    pl.clear();
+
+    assert_eq!(k1, false);
+    assert_eq!(k2, 45);
+}
+
+#[test]
 fn test_real_transaction() {
     let ctx = TestContext::new();
     let con = ctx.connection();

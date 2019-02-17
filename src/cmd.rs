@@ -356,8 +356,13 @@ impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
     pub fn new() -> Pipeline {
+        Self::with_capacity(0)
+    }
+
+    /// Creates an empty pipeline with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Pipeline {
         Pipeline {
-            commands: vec![],
+            commands: Vec::with_capacity(capacity),
             transaction_mode: false,
         }
     }
@@ -481,6 +486,10 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_1")
     ///     .cmd("GET").arg("key_2").query(&con).unwrap();
     /// ```
+    ///
+    /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
+    ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
+    ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
         from_redis_value(
@@ -492,6 +501,15 @@ impl Pipeline {
                 try!(self.execute_pipelined(con))
             }),
         )
+    }
+
+    /// Clear a Pipeline object internal data structure.
+    ///
+    /// This allows reusing a Pipeline object as a clear object while performing a minimal amount of
+    /// memory released/reallocated.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.commands.clear();
     }
 
     fn execute_pipelined_async<C>(self, con: C) -> RedisFuture<(C, Value)>
@@ -555,6 +573,10 @@ impl Pipeline {
     /// # let con = client.get_connection().unwrap();
     /// let _ : () = redis::pipe().cmd("PING").query(&con).unwrap();
     /// ```
+    ///
+    /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
+    ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
+    ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
     pub fn execute(&self, con: &ConnectionLike) {
         let _: () = self.query(con).unwrap();
