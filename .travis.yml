@@ -1,10 +1,17 @@
 sudo: false
 language: rust
 cache: cargo
-rust:
-  - stable
-  - beta
-  - nightly
+
+matrix:
+  include:
+    - rust: stable
+      env: RUST_VERSION=stable
+
+    - rust: beta
+      env: RUST_VERSION=beta
+
+    - rust: nightly
+      env: RUST_VERSION=nightly
 
 addons:
   apt:
@@ -14,6 +21,10 @@ addons:
 script:
   - make test
   - cargo check --benches
+  - |
+    [ "$RUST_VERSION" = "nightly" ] && exit 0 # Don't cargo-fmt on nightly
+    rustup component add rustfmt
+    cargo fmt --all -- --check
 
 notifications:
   email: false
