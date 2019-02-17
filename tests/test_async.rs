@@ -36,7 +36,8 @@ fn test_args() {
                 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
                 result
             })
-    })).unwrap();
+    }))
+    .unwrap();
 }
 
 #[test]
@@ -102,7 +103,8 @@ fn test_pipeline_transaction() {
                 assert_eq!(k2, 43);
                 Ok(())
             })
-    })).unwrap();
+    }))
+    .unwrap();
 }
 
 fn test_cmd(con: &SharedConnection, i: i32) -> Box<Future<Item = (), Error = RedisError> + Send> {

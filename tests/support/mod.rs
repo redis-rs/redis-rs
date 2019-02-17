@@ -120,17 +120,20 @@ impl TestContext {
             addr: Box::new(server.get_client_addr().clone()),
             db: 0,
             passwd: None,
-        }).unwrap();
+        })
+        .unwrap();
         let con;
 
         let millisecond = Duration::from_millis(1);
         loop {
             match client.get_connection() {
-                Err(err) => if err.is_connection_refusal() {
-                    sleep(millisecond);
-                } else {
-                    panic!("Could not connect: {}", err);
-                },
+                Err(err) => {
+                    if err.is_connection_refusal() {
+                        sleep(millisecond);
+                    } else {
+                        panic!("Could not connect: {}", err);
+                    }
+                }
                 Ok(x) => {
                     con = x;
                     break;

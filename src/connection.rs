@@ -9,10 +9,14 @@ use url;
 
 use cmd::{cmd, pipe, Pipeline};
 use parser::Parser;
-use types::{from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs,
-            Value};
+use types::{
+    from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
+};
 
-#[cfg(all(feature = "with-system-unix-sockets", not(feature = "with-unix-sockets")))]
+#[cfg(all(
+    feature = "with-system-unix-sockets",
+    not(feature = "with-unix-sockets")
+))]
 use std::os::unix::net::UnixStream;
 #[cfg(feature = "with-unix-sockets")]
 use unix_socket::UnixStream;
@@ -122,7 +126,8 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
         ))),
-        db: match url.query_pairs()
+        db: match url
+            .query_pairs()
             .into_iter()
             .filter(|&(ref key, _)| key == "db")
             .next()
@@ -272,7 +277,8 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => reader as &mut BufRead,
             #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut BufRead,
-        }).parse_value();
+        })
+        .parse_value();
         // shutdown connection on protocol error
         match result {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => match *self {

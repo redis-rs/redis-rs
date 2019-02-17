@@ -6,7 +6,7 @@ use std::error;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
-use std::str::{Utf8Error, from_utf8};
+use std::str::{from_utf8, Utf8Error};
 
 use futures::Future;
 
@@ -802,13 +802,15 @@ impl FromRedisValue for bool {
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
-            Value::Status(ref s) => if &s[..] == "1" {
-                Ok(true)
-            } else if &s[..] == "0" {
-                Ok(false)
-            } else {
-                invalid_type_error!(v, "Response status not valid boolean");
-            },
+            Value::Status(ref s) => {
+                if &s[..] == "1" {
+                    Ok(true)
+                } else if &s[..] == "0" {
+                    Ok(false)
+                } else {
+                    invalid_type_error!(v, "Response status not valid boolean");
+                }
+            }
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
@@ -843,7 +845,8 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
 }
 
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for HashMap<K, V, S> {
+    for HashMap<K, V, S>
+{
     fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V, S>> {
         match *v {
             Value::Bulk(ref items) => {

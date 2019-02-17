@@ -29,7 +29,8 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
             Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
             Value::Bulk(ref xs) => {
-                let ys = xs.iter()
+                let ys = xs
+                    .iter()
                     .map(|x| ArbitraryValue(x.clone()))
                     .collect::<Vec<_>>();
                 Box::new(
@@ -109,7 +110,7 @@ where
     }
 }
 
-quickcheck!{
+quickcheck! {
     fn partial_io_parse(input: ArbitraryValue, seq: PartialWithErrors<GenWouldBlock>) -> () {
         let mut encoded_input = Vec::new();
         encode_value(&input.0, &mut encoded_input).unwrap();

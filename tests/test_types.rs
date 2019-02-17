@@ -27,7 +27,8 @@ fn test_info_dict() {
 
     let d: InfoDict = FromRedisValue::from_redis_value(&Value::Status(
         "# this is a comment\nkey1:foo\nkey2:42\n".into(),
-    )).unwrap();
+    ))
+    .unwrap();
 
     assert_eq!(d.get("key1"), Some("foo".to_string()));
     assert_eq!(d.get("key2"), Some(42i64));
@@ -78,18 +79,20 @@ fn test_vec() {
 #[test]
 fn test_hashmap() {
     use fnv::FnvHasher;
+    use redis::{FromRedisValue, Value};
     use std::collections::HashMap;
     use std::hash::BuildHasherDefault;
-    use redis::{FromRedisValue, Value};
 
     type Hm = HashMap<String, i32>;
 
-    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Data("a".into()),
-                                                                              Value::Data("1".into()),
-                                                                              Value::Data("b".into()),
-                                                                              Value::Data("2".into()),
-                                                                              Value::Data("c".into()),
-                                                                              Value::Data("3".into())]));
+    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Data("a".into()),
+        Value::Data("1".into()),
+        Value::Data("b".into()),
+        Value::Data("2".into()),
+        Value::Data("c".into()),
+        Value::Data("3".into()),
+    ]));
     let mut e: Hm = HashMap::new();
     e.insert("a".into(), 1);
     e.insert("b".into(), 2);
@@ -98,12 +101,14 @@ fn test_hashmap() {
 
     type Hasher = BuildHasherDefault<FnvHasher>;
     type HmHasher = HashMap<String, i32, Hasher>;
-    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Data("a".into()),
-                                                                                    Value::Data("1".into()),
-                                                                                    Value::Data("b".into()),
-                                                                                    Value::Data("2".into()),
-                                                                                    Value::Data("c".into()),
-                                                                                    Value::Data("3".into())]));
+    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Data("a".into()),
+        Value::Data("1".into()),
+        Value::Data("b".into()),
+        Value::Data("2".into()),
+        Value::Data("c".into()),
+        Value::Data("3".into()),
+    ]));
 
     let fnv = Hasher::default();
     let mut e: HmHasher = HashMap::with_hasher(fnv);
@@ -157,7 +162,8 @@ fn test_types_to_redis_args() {
             .cloned()
             .collect::<HashSet<_>>()
             .to_redis_args()
-            .len() > 0
+            .len()
+            > 0
     );
 
     assert!(
@@ -166,7 +172,8 @@ fn test_types_to_redis_args() {
             .cloned()
             .collect::<BTreeSet<_>>()
             .to_redis_args()
-            .len() > 0
+            .len()
+            > 0
     );
 
     // this can be used on something HMSET
@@ -176,6 +183,7 @@ fn test_types_to_redis_args() {
             .cloned()
             .collect::<BTreeMap<_, _>>()
             .to_redis_args()
-            .len() > 0
+            .len()
+            > 0
     );
 }

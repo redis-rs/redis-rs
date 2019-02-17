@@ -80,7 +80,8 @@ impl Script {
             script: self,
             args: vec![],
             keys: vec![],
-        }.invoke(con)
+        }
+        .invoke(con)
     }
 }
 
@@ -132,16 +133,16 @@ impl<'a> ScriptInvocation<'a> {
                 Ok(val) => {
                     return Ok(val);
                 }
-                Err(err) => if err.kind() == ErrorKind::NoScriptError {
-                    let _: () = try!(
-                        cmd("SCRIPT")
+                Err(err) => {
+                    if err.kind() == ErrorKind::NoScriptError {
+                        let _: () = try!(cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
-                            .query(con)
-                    );
-                } else {
-                    fail!(err);
-                },
+                            .query(con));
+                    } else {
+                        fail!(err);
+                    }
+                }
             }
         }
     }

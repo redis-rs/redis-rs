@@ -5,8 +5,8 @@ use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use bytes::BytesMut;
 use futures::{Async, Future, Poll};
-use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
+use tokio_io::AsyncRead;
 
 use combine;
 use combine::byte::{byte, crlf, newline};
@@ -53,7 +53,7 @@ where
     }
 }
 
-parser!{
+parser! {
     type PartialState = AnySendPartialState;
     fn value['a, I]()(I) -> RedisResult<Value>
         where [I: RangeStream<Item = u8, Range = &'a [u8]> ]
@@ -162,7 +162,8 @@ impl Decoder for ValueCodec {
             match combine::stream::decode(value(), stream, &mut self.state) {
                 Ok(x) => x,
                 Err(err) => {
-                    let err = err.map_position(|pos| pos.translate_position(buffer))
+                    let err = err
+                        .map_position(|pos| pos.translate_position(buffer))
                         .map_range(|range| format!("{:?}", range))
                         .to_string();
                     return Err(RedisError::from((
@@ -220,7 +221,8 @@ where
                 match combine::stream::decode(value(), stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
-                        let err = err.map_position(|pos| pos.translate_position(buffer))
+                        let err = err
+                            .map_position(|pos| pos.translate_position(buffer))
                             .map_range(|range| format!("{:?}", range))
                             .to_string();
                         return Err(RedisError::from((
