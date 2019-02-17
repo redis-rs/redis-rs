@@ -94,14 +94,14 @@ where
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{}\r\n", val),
         Value::Data(ref val) => {
-            try!(write!(writer, "${}\r\n", val.len()));
-            try!(writer.write_all(val));
+            write!(writer, "${}\r\n", val.len())?;
+            writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
         Value::Bulk(ref values) => {
-            try!(write!(writer, "*{}\r\n", values.len()));
+            write!(writer, "*{}\r\n", values.len())?;
             for val in values.iter() {
-                try!(encode_value(val, writer));
+                encode_value(val, writer)?;
             }
             Ok(())
         }

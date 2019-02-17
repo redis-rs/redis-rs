@@ -38,8 +38,8 @@
 //! extern crate redis;
 //!
 //! fn do_something() -> redis::RedisResult<()> {
-//!     let client = try!(redis::Client::open("redis://127.0.0.1/"));
-//!     let con = try!(client.get_connection());
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let con = client.get_connection()?;
 //!
 //!     /* do something here */
 //!
@@ -92,7 +92,7 @@
 //!
 //! ```rust,no_run
 //! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(redis::cmd("SET").arg("my_key").arg(42).query(con));
+//!     let _ : () = redis::cmd("SET").arg("my_key").arg(42).query(con)?;
 //!     Ok(())
 //! }
 //! ```
@@ -113,7 +113,7 @@
 //! use redis::Commands;
 //!
 //! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(con.set("my_key", 42));
+//!     let _ : () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
 //! # fn main() {}
@@ -140,15 +140,15 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let count : i32 = try!(con.get("my_counter"));
+//! let count : i32 = con.get("my_counter")?;
 //! let count = con.get("my_counter").unwrap_or(0i32);
-//! let k : Option<String> = try!(con.get("missing_key"));
-//! let name : String = try!(con.get("my_name"));
-//! let bin : Vec<u8> = try!(con.get("my_binary"));
-//! let map : HashMap<String, i32> = try!(con.hgetall("my_hash"));
-//! let keys : Vec<String> = try!(con.hkeys("my_hash"));
-//! let mems : HashSet<i32> = try!(con.smembers("my_set"));
-//! let (k1, k2) : (String, String) = try!(con.get(&["k1", "k2"]));
+//! let k : Option<String> = con.get("missing_key")?;
+//! let name : String = con.get("my_name")?;
+//! let bin : Vec<u8> = con.get("my_binary")?;
+//! let map : HashMap<String, i32> = con.hgetall("my_hash")?;
+//! let keys : Vec<String> = con.hkeys("my_hash")?;
+//! let mems : HashSet<i32> = con.smembers("my_set")?;
+//! let (k1, k2) : (String, String) = con.get(&["k1", "k2"])?;
 //! # Ok(())
 //! # }
 //! ```
@@ -245,7 +245,7 @@
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
 //! let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
-//!     let old_val : isize = try!(con.get(key));
+//!     let old_val : isize = con.get(key)?;
 //!     pipe
 //!         .set(key, old_val + 1).ignore()
 //!         .get(key).query(&con)
@@ -267,15 +267,15 @@
 //!
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
-//! let client = try!(redis::Client::open("redis://127.0.0.1/"));
-//! let mut con = try!(client.get_connection());
+//! let client = redis::Client::open("redis://127.0.0.1/")?;
+//! let mut con = client.get_connection()?;
 //! let mut pubsub = con.as_pubsub();
-//! try!(pubsub.subscribe("channel_1"));
-//! try!(pubsub.subscribe("channel_2"));
+//! pubsub.subscribe("channel_1")?;
+//! pubsub.subscribe("channel_2")?;
 //!
 //! loop {
-//!     let msg = try!(pubsub.get_message());
-//!     let payload : String = try!(msg.get_payload());
+//!     let msg = pubsub.get_message()?;
+//!     let payload : String = msg.get_payload()?;
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
 //! # }
@@ -296,7 +296,7 @@
 //! let script = redis::Script::new(r"
 //!     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 //! ");
-//! let result : isize = try!(script.arg(1).arg(2).invoke(&con));
+//! let result : isize = script.arg(1).arg(2).invoke(&con)?;
 //! assert_eq!(result, 3);
 //! # Ok(()) }
 //! ```

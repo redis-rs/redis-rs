@@ -293,16 +293,16 @@ impl Cmd {
     #[inline]
     pub fn iter<'a, T: FromRedisValue>(&self, con: &'a ConnectionLike) -> RedisResult<Iter<'a, T>> {
         let pcmd = self.get_packed_command();
-        let rv = try!(con.req_packed_command(&pcmd));
+        let rv = con.req_packed_command(&pcmd)?;
         let mut batch: Vec<T>;
         let mut cursor = 0;
 
         if rv.looks_like_cursor() {
-            let (next, b): (u64, Vec<T>) = try!(from_redis_value(&rv));
+            let (next, b): (u64, Vec<T>) = from_redis_value(&rv)?;
             batch = b;
             cursor = next;
         } else {
-            batch = try!(from_redis_value(&rv));
+            batch = from_redis_value(&rv)?;
         }
 
         batch.reverse();
@@ -451,19 +451,19 @@ impl Pipeline {
     }
 
     fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
-        Ok(self.make_pipeline_results(try!(con.req_packed_commands(
+        Ok(self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),
             0,
-            self.commands.len()
-        ))))
+            self.commands.len(),
+        )?))
     }
 
     fn execute_transaction(&self, con: &ConnectionLike) -> RedisResult<Value> {
-        let mut resp = try!(con.req_packed_commands(
+        let mut resp = con.req_packed_commands(
             &encode_pipeline(&self.commands, true),
             self.commands.len() + 1,
-            1
-        ));
+            1,
+        )?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
@@ -497,9 +497,9 @@ impl Pipeline {
             &(if self.commands.len() == 0 {
                 Value::Bulk(vec![])
             } else if self.transaction_mode {
-                try!(self.execute_transaction(con))
+                self.execute_transaction(con)?
             } else {
-                try!(self.execute_pipelined(con))
+                self.execute_pipelined(con)?
             }),
         )
     }
@@ -565,7 +565,7 @@ impl Pipeline {
         } else {
             self.execute_pipelined_async(con)
         };
-        Box::new(future.and_then(|(con, v)| Ok((con, try!(from_redis_value(&v))))))
+        Box::new(future.and_then(|(con, v)| Ok((con, from_redis_value(&v)?))))
     }
 
     /// This is a shortcut to `query()` that does not return a value and

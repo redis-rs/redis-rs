@@ -12,10 +12,10 @@ fn do_print_max_entry_limits(con: &redis::Connection) -> redis::RedisResult<()> 
     // since rust cannot know what format we actually want we need to be
     // explicit here and define the type of our response.  In this case
     // String -> int fits all the items we query for.
-    let config: HashMap<String, isize> = try!(redis::cmd("CONFIG")
+    let config: HashMap<String, isize> = redis::cmd("CONFIG")
         .arg("GET")
         .arg("*-max-*-entries")
-        .query(con));
+        .query(con)?;
 
     println!("Max entry limits:");
 
@@ -53,7 +53,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
 
     // since we don't care about the return value of the pipeline we can
     // just cast it into the unit type.
-    let _: () = try!(pipe.query(con));
+    let _: () = pipe.query(con)?;
 
     // since rust currently does not track temporaries for us, we need to
     // store it in a local variable.
@@ -63,7 +63,7 @@ fn do_show_scanning(con: &redis::Connection) -> redis::RedisResult<()> {
     // as a simple exercise we just sum up the iterator.  Since the fold
     // method carries an initial value we do not need to define the
     // type of the iterator, rust will figure "int" out for us.
-    let sum = try!(cmd.iter::<i32>(con)).fold(0, |a, b| a + b);
+    let sum = cmd.iter::<i32>(con)?.fold(0, |a, b| a + b);
 
     println!("The sum of all numbers in the set 0-1000: {}", sum);
 
@@ -76,19 +76,19 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
     println!("Run low-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _: () = try!(redis::cmd("SET").arg(key).arg(42).query(con));
+    let _: () = redis::cmd("SET").arg(key).arg(42).query(con)?;
 
     loop {
         // we need to start watching the key we care about, so that our
         // exec fails if the key changes.
-        let _: () = try!(redis::cmd("WATCH").arg(key).query(con));
+        let _: () = redis::cmd("WATCH").arg(key).query(con)?;
 
         // load the old value, so we know what to increment.
-        let val: isize = try!(redis::cmd("GET").arg(key).query(con));
+        let val: isize = redis::cmd("GET").arg(key).query(con)?;
 
         // at this point we can go into an atomic pipe (a multi block)
         // and set up the keys.
-        let response: Option<(isize,)> = try!(redis::pipe()
+        let response: Option<(isize,)> = redis::pipe()
             .atomic()
             .cmd("SET")
             .arg(key)
@@ -96,7 +96,7 @@ fn do_atomic_increment_lowlevel(con: &redis::Connection) -> redis::RedisResult<(
             .ignore()
             .cmd("GET")
             .arg(key)
-            .query(con));
+            .query(con)?;
 
         match response {
             None => {
@@ -119,15 +119,15 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _: () = try!(con.set(key, 42));
+    let _: () = con.set(key, 42)?;
 
     // run the transaction block.
-    let (new_val,): (isize,) = try!(transaction(con, &[key], |pipe| {
+    let (new_val,): (isize,) = transaction(con, &[key], |pipe| {
         // load the old value, so we know what to increment.
-        let val: isize = try!(con.get(key));
+        let val: isize = con.get(key)?;
         // increment
         pipe.set(key, val + 1).ignore().get(key).query(con)
-    }));
+    })?;
 
     // and print the result
     println!("New value: {}", new_val);
@@ -138,18 +138,18 @@ fn do_atomic_increment(con: &redis::Connection) -> redis::RedisResult<()> {
 /// Runs all the examples and propagates errors up.
 fn do_redis_code() -> redis::RedisResult<()> {
     // general connection handling
-    let client = try!(redis::Client::open("redis://127.0.0.1/"));
-    let con = try!(client.get_connection());
+    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let con = client.get_connection()?;
 
     // read some config and print it.
-    try!(do_print_max_entry_limits(&con));
+    do_print_max_entry_limits(&con)?;
 
     // demonstrate how scanning works.
-    try!(do_show_scanning(&con));
+    do_show_scanning(&con)?;
 
     // shows an atomic increment.
-    try!(do_atomic_increment_lowlevel(&con));
-    try!(do_atomic_increment(&con));
+    do_atomic_increment_lowlevel(&con)?;
+    do_atomic_increment(&con)?;
 
     Ok(())
 }

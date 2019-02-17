@@ -211,7 +211,7 @@ impl ActualConnection {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let host: &str = &*host;
-                let tcp = try!(TcpStream::connect((host, *port)));
+                let tcp = TcpStream::connect((host, *port))?;
                 let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(TcpConnection {
                     reader: buffered,
@@ -220,7 +220,7 @@ impl ActualConnection {
             }
             #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
-                sock: BufReader::new(try!(UnixStream::connect(path))),
+                sock: BufReader::new(UnixStream::connect(path)?),
                 open: true,
             }),
             #[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
@@ -300,11 +300,11 @@ impl ActualConnection {
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
-                try!(reader.get_ref().set_write_timeout(dur));
+                reader.get_ref().set_write_timeout(dur)?;
             }
             #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                try!(sock.get_ref().set_write_timeout(dur));
+                sock.get_ref().set_write_timeout(dur)?;
             }
         }
         Ok(())
@@ -313,11 +313,11 @@ impl ActualConnection {
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
-                try!(reader.get_ref().set_read_timeout(dur));
+                reader.get_ref().set_read_timeout(dur)?;
             }
             #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                try!(sock.get_ref().set_read_timeout(dur));
+                sock.get_ref().set_read_timeout(dur)?;
             }
         }
         Ok(())
@@ -333,7 +333,7 @@ impl ActualConnection {
 }
 
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = try!(ActualConnection::new(&connection_info.addr));
+    let con = ActualConnection::new(&connection_info.addr)?;
     let rv = Connection {
         con: RefCell::new(con),
         db: connection_info.db,
@@ -411,7 +411,7 @@ impl Connection {
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
     pub fn send_packed_command(&self, cmd: &[u8]) -> RedisResult<()> {
-        try!(self.con.borrow_mut().send_bytes(cmd));
+        self.con.borrow_mut().send_bytes(cmd)?;
         Ok(())
     }
 
@@ -526,7 +526,7 @@ impl ConnectionLike for Connection {
         }
 
         let mut con = self.con.borrow_mut();
-        try!(con.send_bytes(cmd));
+        con.send_bytes(cmd)?;
         con.read_response()
     }
 
@@ -540,10 +540,10 @@ impl ConnectionLike for Connection {
             self.exit_pubsub()?;
         }
         let mut con = self.con.borrow_mut();
-        try!(con.send_bytes(cmd));
+        con.send_bytes(cmd)?;
         let mut rv = vec![];
         for idx in 0..(offset + count) {
-            let item = try!(con.read_response());
+            let item = con.read_response()?;
             if idx >= offset {
                 rv.push(item);
             }
@@ -564,15 +564,15 @@ impl ConnectionLike for Connection {
 ///
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
-/// let client = try!(redis::Client::open("redis://127.0.0.1/"));
+/// let client = redis::Client::open("redis://127.0.0.1/")?;
 /// let mut con = client.get_connection()?;
 /// let mut pubsub = con.as_pubsub();
-/// try!(pubsub.subscribe("channel_1"));
-/// try!(pubsub.subscribe("channel_2"));
+/// pubsub.subscribe("channel_1")?;
+/// pubsub.subscribe("channel_2")?;
 ///
 /// loop {
-///     let msg = try!(pubsub.get_message());
-///     let payload : String = try!(msg.get_payload());
+///     let msg = pubsub.get_message()?;
+///     let payload : String = msg.get_payload()?;
 ///     println!("channel '{}': {}", msg.get_channel_name(), payload);
 /// }
 /// # }
@@ -731,12 +731,12 @@ impl Msg {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
 /// let key = "the_key";
-/// let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
-///     let old_val : isize = try!(con.get(key));
+/// let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
+///     let old_val : isize = con.get(key)?;
 ///     pipe
 ///         .set(key, old_val + 1).ignore()
 ///         .get(key).query(&con)
-/// }));
+/// })?;
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
@@ -751,9 +751,9 @@ pub fn transaction<
 ) -> RedisResult<T> {
     let mut func = func;
     loop {
-        let _: () = try!(cmd("WATCH").arg(keys).query(con));
+        let _: () = cmd("WATCH").arg(keys).query(con)?;
         let mut p = pipe();
-        let response: Option<T> = try!(func(p.atomic()));
+        let response: Option<T> = func(p.atomic())?;
         match response {
             None => {
                 continue;
@@ -761,7 +761,7 @@ pub fn transaction<
             Some(response) => {
                 // make sure no watch is left in the connection, even if
                 // someone forgot to use the pipeline.
-                let _: () = try!(cmd("UNWATCH").query(con));
+                let _: () = cmd("UNWATCH").query(con)?;
                 return Ok(response);
             }
         }

@@ -1,1 +1,2 @@
 format_strings = false
+use_try_shorthand = true

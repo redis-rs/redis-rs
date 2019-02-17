@@ -119,13 +119,13 @@ impl fmt::Debug for Value {
                 Err(_) => write!(fmt, "binary-data({:?})", val),
             },
             Value::Bulk(ref values) => {
-                try!(write!(fmt, "bulk("));
+                write!(fmt, "bulk(")?;
                 let mut is_first = true;
                 for val in values.iter() {
                     if !is_first {
-                        try!(write!(fmt, ", "));
+                        write!(fmt, ", ")?;
                     }
-                    try!(write!(fmt, "{:?}", val));
+                    write!(fmt, "{:?}", val)?;
                     is_first = false;
                 }
                 write!(fmt, ")")
@@ -224,13 +224,13 @@ impl fmt::Display for RedisError {
         match self.repr {
             ErrorRepr::WithDescription(_, desc) => desc.fmt(f),
             ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
-                try!(desc.fmt(f));
-                try!(f.write_str(": "));
+                desc.fmt(f)?;
+                f.write_str(": ")?;
                 detail.fmt(f)
             }
             ErrorRepr::ExtensionError(ref code, ref detail) => {
-                try!(code.fmt(f));
-                try!(f.write_str(": "));
+                code.fmt(f)?;
+                f.write_str(": ")?;
                 detail.fmt(f)
             }
             ErrorRepr::IoError(ref err) => err.fmt(f),
@@ -370,7 +370,7 @@ pub struct InfoDict {
 /// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let con = client.get_connection().unwrap();
-/// let info : redis::InfoDict = try!(redis::cmd("INFO").query(&con));
+/// let info : redis::InfoDict = redis::cmd("INFO").query(&con)?;
 /// let role : Option<String> = info.get("role");
 /// # Ok(()) }
 /// ```
@@ -756,7 +756,7 @@ macro_rules! from_redis_value_for_num_internal {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
-            Value::Data(ref bytes) => match try!(from_utf8(bytes)).parse::<$t>() {
+            Value::Data(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
@@ -820,7 +820,7 @@ impl FromRedisValue for bool {
 impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         match *v {
-            Value::Data(ref bytes) => Ok(try!(from_utf8(bytes)).to_string()),
+            Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
             _ => invalid_type_error!(v, "Response type not string compatible."),
@@ -855,7 +855,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
                 loop {
                     let k = unwrap_or!(iter.next(), break);
                     let v = unwrap_or!(iter.next(), break);
-                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
+                    rv.insert(from_redis_value(k)?, from_redis_value(v)?);
                 }
                 Ok(rv)
             }
@@ -876,7 +876,7 @@ where
                 loop {
                     let k = unwrap_or!(iter.next(), break);
                     let v = unwrap_or!(iter.next(), break);
-                    rv.insert(try!(from_redis_value(k)), try!(from_redis_value(v)));
+                    rv.insert(from_redis_value(k)?, from_redis_value(v)?);
                 }
                 Ok(rv)
             }
@@ -891,7 +891,7 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue for
             Value::Bulk(ref items) => {
                 let mut rv = HashSet::default();
                 for item in items.iter() {
-                    rv.insert(try!(from_redis_value(item)));
+                    rv.insert(from_redis_value(item)?);
                 }
                 Ok(rv)
             }
@@ -909,7 +909,7 @@ where
             Value::Bulk(ref items) => {
                 let mut rv = BTreeSet::new();
                 for item in items.iter() {
-                    rv.insert(try!(from_redis_value(item)));
+                    rv.insert(from_redis_value(item)?);
                 }
                 Ok(rv)
             }
@@ -951,8 +951,8 @@ macro_rules! from_redis_value_for_tuple {
                         // this is pretty ugly too.  The { i += 1; i - 1} is rust's
                         // postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); try!(from_redis_value(
-                             &items[{ i += 1; i - 1 }]))},)*))
+                        Ok(($({let $name = (); from_redis_value(
+                             &items[{ i += 1; i - 1 }])?},)*))
                     }
                     _ => invalid_type_error!(v, "Not a bulk response")
                 }
@@ -975,8 +975,8 @@ macro_rules! from_redis_value_for_tuple {
                 }
                 let mut offset = 0;
                 while offset < items.len() - 1 {
-                    rv.push(($({let $name = (); try!(from_redis_value(
-                         &items[{ offset += 1; offset - 1 }]))},)*));
+                    rv.push(($({let $name = (); from_redis_value(
+                         &items[{ offset += 1; offset - 1 }])?},)*));
                 }
                 Ok(rv)
             }
@@ -996,7 +996,7 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
-        let s: String = try!(from_redis_value(v));
+        let s: String = from_redis_value(v)?;
         Ok(InfoDict::new(&s))
     }
 }
@@ -1005,7 +1005,7 @@ impl FromRedisValue for InfoDict {
 impl FromRedisValue for json::Json {
     fn from_redis_value(v: &Value) -> RedisResult<json::Json> {
         let rv = match *v {
-            Value::Data(ref b) => json::Json::from_str(try!(from_utf8(b))),
+            Value::Data(ref b) => json::Json::from_str(from_utf8(b)?),
             Value::Status(ref s) => json::Json::from_str(s),
             _ => invalid_type_error!(v, "Not JSON compatible"),
         };
@@ -1024,7 +1024,7 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
             }
             _ => {}
         }
-        Ok(Some(try!(from_redis_value(v))))
+        Ok(Some(from_redis_value(v)?))
     }
 }
 

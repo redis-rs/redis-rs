@@ -256,7 +256,7 @@ where
                     // the current buffer are necessary. Consume all the buffered data to ensure
                     // that the next iteration actually reads more data.
                     let buffer_len = {
-                        let buffer = try!(self.reader.as_mut().unwrap().fill_buf());
+                        let buffer = self.reader.as_mut().unwrap().fill_buf()?;
                         if remaining_data == 0 {
                             self.remaining.extend(&buffer[removed..]);
                         }
