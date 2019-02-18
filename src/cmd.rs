@@ -450,6 +450,10 @@ impl Pipeline {
         Value::Bulk(rv)
     }
 
+    pub fn get_packed_pipeline(&self, atomic: bool) -> Vec<u8> {
+        encode_pipeline(&self.commands, atomic)
+    }
+
     fn execute_pipelined(&self, con: &ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),

@@ -203,6 +203,29 @@ fn bench_query(c: &mut Criterion) {
     );
 }
 
+fn bench_encode_small(b: &mut Bencher) {
+    b.iter(|| {
+        let mut cmd = redis::cmd("HSETX");
+
+        cmd.arg("ABC:1237897325302:878241asdyuxpioaswehqwu")
+            .arg("some hash key")
+            .arg(124757920);
+
+        cmd.get_packed_command()
+    });
+}
+
+fn bench_encode_integer(b: &mut Bencher) {
+    b.iter(|| {
+        let mut pipe = redis::pipe();
+
+        for _ in 0..1_000 {
+            pipe.set(123, 45679123).ignore();
+        }
+        pipe.get_packed_pipeline(false)
+    });
+}
+
 fn bench_encode_pipeline(b: &mut Bencher) {
     b.iter(|| {
         let mut pipe = redis::pipe();
@@ -210,7 +233,7 @@ fn bench_encode_pipeline(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.set("foo", "bar").ignore();
         }
-        pipe
+        pipe.get_packed_pipeline(false)
     });
 }
 
@@ -225,7 +248,7 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
             )
             .ignore();
         }
-        pipe
+        pipe.get_packed_pipeline(false)
     });
 }
 
@@ -233,7 +256,9 @@ fn bench_encode(c: &mut Criterion) {
     c.bench(
         "encode",
         Benchmark::new("pipeline", bench_encode_pipeline)
-            .with_function("pipeline_nested", bench_encode_pipeline_nested),
+            .with_function("pipeline_nested", bench_encode_pipeline_nested)
+            .with_function("integer", bench_encode_integer)
+            .with_function("small", bench_encode_small),
     );
 }
 
