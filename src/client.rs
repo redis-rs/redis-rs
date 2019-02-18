@@ -1,5 +1,7 @@
+use futures::Future;
+
 use connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
-use types::{RedisFuture, RedisResult, Value};
+use types::{RedisError, RedisResult, Value};
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -42,16 +44,17 @@ impl Client {
         Ok(connect(&self.connection_info)?)
     }
 
-    pub fn get_async_connection(&self) -> RedisFuture<::async::Connection> {
+    pub fn get_async_connection(
+        &self,
+    ) -> impl Future<Item = ::async::Connection, Error = RedisError> {
         ::async::connect(self.connection_info.clone())
     }
 
-    pub fn get_shared_async_connection(&self) -> RedisFuture<::async::SharedConnection> {
-        use futures::Future;
-        Box::new(
-            self.get_async_connection()
-                .and_then(move |con| ::async::SharedConnection::new(con)),
-        )
+    pub fn get_shared_async_connection(
+        &self,
+    ) -> impl Future<Item = ::async::SharedConnection, Error = RedisError> {
+        self.get_async_connection()
+            .and_then(move |con| ::async::SharedConnection::new(con))
     }
 }
 

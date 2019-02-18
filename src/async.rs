@@ -106,36 +106,36 @@ macro_rules! with_write_connection {
 }
 
 impl Connection {
-    pub fn read_response(self) -> RedisFuture<(Self, Value)> {
+    pub fn read_response(self) -> impl Future<Item = (Self, Value), Error = RedisError> {
         let db = self.db;
-        Box::new(
-            with_connection!(self.con, ::parser::parse_async).then(move |result| {
-                match result {
-                    Ok((con, value)) => Ok((Connection { con: con, db }, value)),
-                    Err(err) => {
-                        // TODO Do we need to shutdown here as we do in the sync version?
-                        Err(err)
-                    }
+        with_connection!(self.con, ::parser::parse_async).then(move |result| {
+            match result {
+                Ok((con, value)) => Ok((Connection { con: con, db }, value)),
+                Err(err) => {
+                    // TODO Do we need to shutdown here as we do in the sync version?
+                    Err(err)
                 }
-            }),
-        )
+            }
+        })
     }
 }
 
-pub fn connect(connection_info: ConnectionInfo) -> RedisFuture<Connection> {
+pub fn connect(
+    connection_info: ConnectionInfo,
+) -> impl Future<Item = Connection, Error = RedisError> {
     let connection = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = match (&host[..], port).to_socket_addrs() {
                 Ok(mut socket_addrs) => match socket_addrs.next() {
                     Some(socket_addr) => socket_addr,
                     None => {
-                        return Box::new(future::err(RedisError::from((
+                        return Either::A(future::err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
                             "No address found for host",
                         ))));
                     }
                 },
-                Err(err) => return Box::new(future::err(err.into())),
+                Err(err) => return Either::A(future::err(err.into())),
             };
 
             Either::A(
@@ -156,7 +156,7 @@ pub fn connect(connection_info: ConnectionInfo) -> RedisFuture<Connection> {
         )))),
     };
 
-    Box::new(connection.from_err().and_then(move |con| {
+    Either::B(connection.from_err().and_then(move |con| {
         let rv = Connection {
             con,
             db: connection_info.db,
@@ -452,20 +452,18 @@ where
     fn send(
         &self,
         item: T::SinkItem,
-    ) -> Box<Future<Item = T::Item, Error = Option<T::Error>> + Send> {
-        Box::new(
-            self.send_recv_multiple(item, 1)
-                .into_future()
-                .map(|(item, _)| item.unwrap())
-                .map_err(|(err, _)| err),
-        )
+    ) -> impl Future<Item = T::Item, Error = Option<T::Error>> + Send {
+        self.send_recv_multiple(item, 1)
+            .into_future()
+            .map(|(item, _)| item.unwrap())
+            .map_err(|(err, _)| err)
     }
 
     fn send_recv_multiple(
         &self,
         item: T::SinkItem,
         count: usize,
-    ) -> Box<Stream<Item = T::Item, Error = Option<T::Error>> + Send> {
+    ) -> impl Stream<Item = T::Item, Error = Option<T::Error>> + Send {
         let self_ = self.0.clone();
 
         let mut senders = Vec::with_capacity(count);
@@ -476,24 +474,21 @@ where
             receivers.push(receiver);
         }
 
-        Box::new(
-            self_
-                .send((item, senders))
-                .map_err(|_| None)
-                .map(|_| {
-                    stream::futures_ordered(receivers.into_iter().map(|receiver| {
-                        receiver.then(|result| match result {
-                            Ok(result) => result.map_err(Some),
-                            Err(_) => {
-                                // The `sender` was dropped which likely means that the stream part
-                                // failed for one reason or another
-                                Err(None)
-                            }
-                        })
-                    }))
-                })
-                .flatten_stream(),
-        )
+        self_
+            .send((item, senders))
+            .map_err(|_| None)
+            .map(|_| {
+                stream::futures_ordered(receivers.into_iter().map(|receiver| {
+                    receiver.then(|result| match result {
+                        Ok(result) => result.map_err(Some),
+                        Err(_) => {
+                            // The `sender` was dropped which likely means that the stream part
+                            // failed for one reason or another
+                            Err(None)
+                        }
+                    })
+                }))
+            }).flatten_stream()
     }
 }
 
@@ -511,8 +506,8 @@ pub struct SharedConnection {
 }
 
 impl SharedConnection {
-    pub fn new(con: Connection) -> RedisFuture<Self> {
-        Box::new(future::lazy(|| {
+    pub fn new(con: Connection) -> impl Future<Item = Self, Error = RedisError> {
+        future::lazy(|| {
             let pipeline = match con.con {
                 ActualConnection::Tcp(tcp) => {
                     let codec = ValueCodec::default().framed(tcp.into_inner());
@@ -528,17 +523,23 @@ impl SharedConnection {
                 pipeline,
                 db: con.db,
             })
-        }))
+        })
     }
 }
 
 impl ConnectionLike for SharedConnection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
+        #[cfg(not(feature = "with-unix-sockets"))]
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
-            #[cfg(feature = "with-unix-sockets")]
-            ActualPipeline::Unix(ref pipeline) => pipeline.send(cmd),
         };
+
+        #[cfg(feature = "with-unix-sockets")]
+        let future = match self.pipeline {
+            ActualPipeline::Tcp(ref pipeline) => Either::A(pipeline.send(cmd)),
+            ActualPipeline::Unix(ref pipeline) => Either::B(pipeline.send(cmd)),
+        };
+
         Box::new(future.map(|value| (self, value)).map_err(|err| {
             err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
         }))
@@ -550,10 +551,15 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
-        let stream = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
+        // TODO Use `Either` when `Stream` is implemented for it
+        let stream: Box<Stream<Item = _, Error = _> + Send> = match self.pipeline {
+            ActualPipeline::Tcp(ref pipeline) => {
+                Box::new(pipeline.send_recv_multiple(cmd, offset + count))
+            }
             #[cfg(feature = "with-unix-sockets")]
-            ActualPipeline::Unix(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
+            ActualPipeline::Unix(ref pipeline) => {
+                Box::new(pipeline.send_recv_multiple(cmd, offset + count))
+            }
         };
         Box::new(
             stream

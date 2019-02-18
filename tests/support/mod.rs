@@ -1,9 +1,10 @@
 #![allow(dead_code)]
 
+extern crate futures;
 extern crate net2;
 extern crate rand;
 
-use redis::{self, RedisFuture};
+use redis;
 
 use std::env;
 use std::fs;
@@ -12,6 +13,10 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use std::path::PathBuf;
+
+use self::futures::Future;
+
+use redis::RedisError;
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -152,7 +157,9 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub fn async_connection(&self) -> RedisFuture<redis::async::Connection> {
+    pub fn async_connection(
+        &self,
+    ) -> impl Future<Item = redis::async::Connection, Error = RedisError> {
         self.client.get_async_connection()
     }
 
@@ -160,7 +167,9 @@ impl TestContext {
         self.server.stop();
     }
 
-    pub fn shared_async_connection(&self) -> RedisFuture<redis::async::SharedConnection> {
+    pub fn shared_async_connection(
+        &self,
+    ) -> impl Future<Item = redis::async::SharedConnection, Error = RedisError> {
         self.client.get_shared_async_connection()
     }
 }
