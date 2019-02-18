@@ -419,7 +419,7 @@ fn test_real_transaction_highlevel() {
     let _: () = redis::cmd("SET").arg(key).arg(42).query(&con).unwrap();
 
     let response: (isize,) = redis::transaction(&con, &[key], |pipe| {
-        let val: isize = try!(redis::cmd("GET").arg(key).query(&con));
+        let val: isize = redis::cmd("GET").arg(key).query(&con)?;
         pipe.cmd("SET")
             .arg(key)
             .arg(val + 1)
@@ -770,10 +770,10 @@ fn test_invalid_protocol() {
     let port = listener.local_addr().unwrap().port();
 
     let child = thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
-        let mut stream = BufReader::new(try!(listener.incoming().next().unwrap()));
+        let mut stream = BufReader::new(listener.incoming().next().unwrap()?);
         // read the request and respond with garbage
-        let _: redis::Value = try!(Parser::new(&mut stream).parse_value());
-        try!(stream.get_mut().write_all(b"garbage ---!#!#\r\n\r\n\n\r"));
+        let _: redis::Value = Parser::new(&mut stream).parse_value()?;
+        stream.get_mut().write_all(b"garbage ---!#!#\r\n\r\n\n\r")?;
         // block until the stream is shutdown by the client
         let _: RedisResult<redis::Value> = Parser::new(&mut stream).parse_value();
         Ok(())

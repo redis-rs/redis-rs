@@ -25,8 +25,8 @@ macro_rules! implement_commands {
         ///
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
-        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-        /// let con = try!(client.get_connection());
+        /// let client = redis::Client::open("redis://127.0.0.1/")?;
+        /// let con = client.get_connection()?;
         /// redis::cmd("SET").arg("my_key").arg(42).execute(&con);
         /// assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42));
         /// # Ok(()) }
@@ -37,8 +37,8 @@ macro_rules! implement_commands {
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
-        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-        /// let con = try!(client.get_connection());
+        /// let client = redis::Client::open("redis://127.0.0.1/")?;
+        /// let con = client.get_connection()?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```

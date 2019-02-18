@@ -29,7 +29,7 @@ impl Client {
     /// checks on the URL that might make the operation fail.
     pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
         Ok(Client {
-            connection_info: try!(params.into_connection_info()),
+            connection_info: params.into_connection_info()?,
         })
     }
 
@@ -39,7 +39,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(try!(connect(&self.connection_info)))
+        Ok(connect(&self.connection_info)?)
     }
 
     pub fn get_async_connection(&self) -> RedisFuture<::async::Connection> {
@@ -57,7 +57,7 @@ impl Client {
 
 impl ConnectionLike for Client {
     fn req_packed_command(&self, cmd: &[u8]) -> RedisResult<Value> {
-        try!(self.get_connection()).req_packed_command(cmd)
+        self.get_connection()?.req_packed_command(cmd)
     }
 
     fn req_packed_commands(
@@ -66,7 +66,8 @@ impl ConnectionLike for Client {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        try!(self.get_connection()).req_packed_commands(cmd, offset, count)
+        self.get_connection()?
+            .req_packed_commands(cmd, offset, count)
     }
 
     fn get_db(&self) -> i64 {
