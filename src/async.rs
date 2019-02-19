@@ -315,6 +315,8 @@ where
         loop {
             let item = match self.sink_stream.poll() {
                 Ok(Async::Ready(Some(item))) => Ok(item),
+                // The redis response stream is not going to produce any more items so we `Err`
+                // to break out of the `forward` combinator and stop handling requests
                 Ok(Async::Ready(None)) => return Err(()),
                 Err(err) => Err(err),
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
