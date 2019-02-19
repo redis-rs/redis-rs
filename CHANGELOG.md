@@ -2,6 +2,13 @@
 
 ## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...Unreleased) - ReleaseDate
 
+* Fix handling of passwords with special characters (#163)
+* Better performance for async code due to less boxing (#167)
+    * CAUTION: redis-rs will now require Rust 1.26
+* Add `clear` method to the pipeline (#176)
+* Better benchmarking (#179)
+* Fully formatted source code (#181)
+
 ## [0.9.1](https://github.com/mitsuhiko/redis-rs/compare/0.9.0...0.9.1) (2018-09-10)
 
 * Add ttl command
