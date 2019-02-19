@@ -19,6 +19,8 @@ redis = "0.9.0"
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
 
+**Note: redis-rs requires at least [Rust 1.26](https://blog.rust-lang.org/2018/05/10/Rust-1.26.html).**
+
 ## Basic Operation
 
 To open a connection you need to create a client and then to fetch a
