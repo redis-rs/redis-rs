@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...Unreleased) - ReleaseDate
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...HEAD) - ReleaseDate
 
 * Fix handling of passwords with special characters (#163)
 * Better performance for async code due to less boxing (#167)
