@@ -181,26 +181,6 @@ fn test_optionals() {
     assert_eq!(a, 0i32);
 }
 
-#[cfg(feature = "with-rustc-json")]
-#[test]
-fn test_json() {
-    use redis::Json;
-
-    let ctx = TestContext::new();
-    let mut con = ctx.connection();
-
-    redis::cmd("SET")
-        .arg("foo")
-        .arg("[1, 2, 3]")
-        .execute(&mut con);
-
-    let json: Json = redis::cmd("GET").arg("foo").query(&mut con).unwrap();
-    assert_eq!(
-        json,
-        Json::Array(vec![Json::U64(1), Json::U64(2), Json::U64(3)])
-    );
-}
-
 #[test]
 fn test_scanning() {
     let ctx = TestContext::new();
