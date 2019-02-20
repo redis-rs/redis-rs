@@ -59,9 +59,6 @@
 //!   enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
 //!   this is not needed.
 //!
-//! `with-rustc-json`:
-//!   This feature flag enables the `rustc_serialize` JSON support.
-//!
 //! ## Connection Parameters
 //!
 //! redis-rs knows different ways to define where a connection should
@@ -373,16 +370,10 @@ extern crate tokio_codec;
 extern crate tokio_sync;
 extern crate tokio_tcp;
 
-#[cfg(feature = "with-rustc-json")]
-pub extern crate rustc_serialize as serialize;
 #[cfg(feature = "with-unix-sockets")]
 extern crate tokio_uds;
 #[cfg(feature = "with-unix-sockets")]
 extern crate unix_socket;
-
-#[doc(hidden)]
-#[cfg(feature = "with-rustc-json")]
-pub use serialize::json::Json;
 
 // public api
 pub use client::Client;
