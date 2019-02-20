@@ -165,8 +165,8 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let mut iter : redis::Iter<isize> = try!(redis::cmd("SSCAN").arg("my_set")
-//!     .cursor_arg(0).iter(&con));
+//! let mut iter : redis::Iter<isize> = redis::cmd("SSCAN").arg("my_set")
+//!     .cursor_arg(0).iter(&con)?;
 //! for x in iter {
 //!     // do something with the item
 //! }
@@ -189,11 +189,11 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
 //!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con));
+//!     .cmd("GET").arg("key_2").query(&con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -206,12 +206,12 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
 //!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con));
+//!     .cmd("GET").arg("key_2").query(&con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -223,12 +223,12 @@
 //! use redis::PipelineCommands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .set("key_1", 42).ignore()
 //!     .set("key_2", 43).ignore()
 //!     .get("key_1")
-//!     .get("key_2").query(&con));
+//!     .get("key_2").query(&con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -244,12 +244,12 @@
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
+//! let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
 //!     let old_val : isize = con.get(key)?;
 //!     pipe
 //!         .set(key, old_val + 1).ignore()
 //!         .get(key).query(&con)
-//! }));
+//! })?;
 //! println!("The incremented number is: {}", new_val);
 //! # Ok(()) }
 //! ```
