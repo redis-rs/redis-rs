@@ -14,7 +14,7 @@ use tokio_tcp::TcpStream;
 
 use futures::future::Either;
 use futures::sync::{mpsc, oneshot};
-use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 
 use cmd::cmd;
 use types::{ErrorKind, RedisError, RedisFuture, Value};
@@ -298,56 +298,15 @@ where
     }
 }
 
-enum SendState<T> {
-    Unsent(T),
-    Sent,
-    Free,
-}
-
-struct PipelineFuture<T>
+struct PipelineSink<T>
 where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
     sink_stream: T,
     in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
-    incoming: mpsc::Receiver<PipelineMessage<T::SinkItem, T::Item, T::Error>>,
-    send_state: SendState<T::SinkItem>,
 }
 
-impl<T> Future for PipelineFuture<T>
-where
-    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
-    T::Error: ::std::fmt::Debug,
-{
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            let read_ready = self.poll_read()?;
-            match self.poll_write() {
-                Ok(Async::Ready(Some(()))) => (),
-                Ok(Async::Ready(None)) => {
-                    // Shutdown this future once the stream is done and all requests in
-                    // flight have been fulfilled
-                    if self.in_flight.is_empty() {
-                        return Ok(Async::Ready(()));
-                    }
-                }
-                Ok(Async::NotReady) => {
-                    return Ok(Async::NotReady);
-                }
-                Err(err) => {
-                    self.send_result(Err(err));
-                    continue;
-                }
-            }
-            return Ok(read_ready);
-        }
-    }
-}
-
-impl<T> PipelineFuture<T>
+impl<T> PipelineSink<T>
 where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
@@ -356,7 +315,9 @@ where
         loop {
             let item = match self.sink_stream.poll() {
                 Ok(Async::Ready(Some(item))) => Ok(item),
-                Ok(Async::Ready(None)) => return Ok(Async::Ready(())),
+                // The redis response stream is not going to produce any more items so we `Err`
+                // to break out of the `forward` combinator and stop handling requests
+                Ok(Async::Ready(None)) => return Err(()),
                 Err(err) => Err(err),
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
             };
@@ -378,53 +339,45 @@ where
             }
         }
     }
+}
+
+impl<T> Sink for PipelineSink<T>
+where
+    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+{
+    type SinkItem = PipelineMessage<T::SinkItem, T::Item, T::Error>;
+    type SinkError = ();
 
     // Retrieve incoming messages and write them to the sink
-    fn poll_write(&mut self) -> Poll<Option<()>, T::Error> {
-        loop {
-            match mem::replace(&mut self.send_state, SendState::Free) {
-                SendState::Unsent(item) => match self.sink_stream.start_send(item)? {
-                    AsyncSink::Ready => {
-                        // Try to take another incoming and start sending it as well
-                        // before completing the send to give the sink a chance to coalesce
-                        // multiple messages into a large one.
-                        match self.incoming.poll() {
-                            Ok(Async::NotReady) | Ok(Async::Ready(None)) | Err(()) => {
-                                self.send_state = SendState::Sent
-                            }
-                            Ok(Async::Ready(Some((item, senders)))) => {
-                                self.in_flight.extend(senders);
-                                self.send_state = SendState::Unsent(item);
-                            }
-                        }
-                    }
-                    AsyncSink::NotReady(item) => {
-                        self.send_state = SendState::Unsent(item);
-                        return Ok(Async::NotReady);
-                    }
-                },
-                SendState::Sent => {
-                    match self.sink_stream.poll_complete()? {
-                        Async::Ready(()) => (),
-                        Async::NotReady => {
-                            self.send_state = SendState::Sent;
-                            return Ok(Async::NotReady);
-                        }
-                    }
-                    self.send_state = SendState::Free;
-                    return Ok(Async::Ready(Some(())));
-                }
-                SendState::Free => {
-                    let (item, senders) = match self.incoming.poll() {
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(Some(x))) => x,
-                        Ok(Async::Ready(None)) | Err(()) => return Ok(Async::Ready(None)),
-                    };
-                    self.in_flight.extend(senders);
-                    self.send_state = SendState::Unsent(item);
-                }
+    fn start_send(
+        &mut self,
+        (item, mut senders): Self::SinkItem,
+    ) -> StartSend<Self::SinkItem, Self::SinkError> {
+        match self.sink_stream.start_send(item) {
+            Ok(AsyncSink::NotReady(item)) => Ok(AsyncSink::NotReady((item, senders))),
+            Ok(AsyncSink::Ready) => {
+                self.in_flight.extend(senders);
+                Ok(AsyncSink::Ready)
+            }
+            Err(err) => {
+                let _ = senders.swap_remove(0).send(Err(err));
+                Err(())
             }
         }
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        try_ready!(self.sink_stream.poll_complete().map_err(|err| {
+            self.send_result(Err(err));
+        }));
+        self.poll_read()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        try_ready!(self.sink_stream.close().map_err(|err| {
+            self.send_result(Err(err));
+        }));
+        self.poll_read()
     }
 }
 
@@ -439,12 +392,14 @@ where
     fn new(sink_stream: T) -> Self {
         const BUFFER_SIZE: usize = 50;
         let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
-        tokio_executor::spawn(PipelineFuture {
-            sink_stream,
-            in_flight: VecDeque::new(),
-            send_state: SendState::Free,
-            incoming: receiver,
-        });
+        tokio_executor::spawn(
+            receiver
+                .forward(PipelineSink {
+                    sink_stream,
+                    in_flight: VecDeque::new(),
+                })
+                .map(|_| ()),
+        );
         Pipeline(sender)
     }
 
@@ -488,7 +443,8 @@ where
                         }
                     })
                 }))
-            }).flatten_stream()
+            })
+            .flatten_stream()
     }
 }
 
