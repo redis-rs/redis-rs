@@ -488,7 +488,8 @@ where
                         }
                     })
                 }))
-            }).flatten_stream()
+            })
+            .flatten_stream()
     }
 }
 
