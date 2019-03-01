@@ -46,15 +46,15 @@ impl Client {
 
     pub fn get_async_connection(
         &self,
-    ) -> impl Future<Item = ::async::Connection, Error = RedisError> {
-        ::async::connect(self.connection_info.clone())
+    ) -> impl Future<Item = ::aio::Connection, Error = RedisError> {
+        ::aio::connect(self.connection_info.clone())
     }
 
     pub fn get_shared_async_connection(
         &self,
-    ) -> impl Future<Item = ::async::SharedConnection, Error = RedisError> {
+    ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError> {
         self.get_async_connection()
-            .and_then(move |con| ::async::SharedConnection::new(con))
+            .and_then(move |con| ::aio::SharedConnection::new(con))
     }
 }
 
