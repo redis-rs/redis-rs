@@ -418,7 +418,7 @@ pub use types::{
 
 mod macros;
 
-pub mod async;
+pub mod aio;
 
 mod client;
 mod cmd;

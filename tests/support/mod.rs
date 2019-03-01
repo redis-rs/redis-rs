@@ -159,7 +159,7 @@ impl TestContext {
 
     pub fn async_connection(
         &self,
-    ) -> impl Future<Item = redis::async::Connection, Error = RedisError> {
+    ) -> impl Future<Item = redis::aio::Connection, Error = RedisError> {
         self.client.get_async_connection()
     }
 
@@ -169,7 +169,7 @@ impl TestContext {
 
     pub fn shared_async_connection(
         &self,
-    ) -> impl Future<Item = redis::async::SharedConnection, Error = RedisError> {
+    ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
         self.client.get_shared_async_connection()
     }
 }

@@ -7,7 +7,7 @@ use futures::{future, Future};
 
 use support::*;
 
-use redis::async::SharedConnection;
+use redis::aio::SharedConnection;
 use redis::RedisError;
 
 use tokio::executor::current_thread::block_on_all;
