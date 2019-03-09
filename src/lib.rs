@@ -389,7 +389,7 @@ pub use connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use parser::{parse_async, parse_redis_value, Parser};
+pub use parser::{parse_async, parse_redis_value, Parser, ValueFuture};
 pub use script::{Script, ScriptInvocation};
 
 pub use types::{
