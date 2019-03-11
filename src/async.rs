@@ -13,8 +13,8 @@ use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::Either;
-use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use tokio_sync::{mpsc, oneshot};
 
 use cmd::cmd;
 use types::{ErrorKind, RedisError, RedisFuture, Value};
@@ -394,6 +394,7 @@ where
         let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
         tokio_executor::spawn(
             receiver
+                .map_err(|_| ())
                 .forward(PipelineSink {
                     sink_stream,
                     in_flight: VecDeque::new(),

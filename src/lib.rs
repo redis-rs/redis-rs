@@ -368,6 +368,7 @@ extern crate tokio_executor;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio_codec;
+extern crate tokio_sync;
 extern crate tokio_tcp;
 
 #[cfg(feature = "with-rustc-json")]
