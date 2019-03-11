@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead};
 use std::str;
 
 use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
@@ -318,6 +318,6 @@ impl<'a, T: BufRead> Parser<T> {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
-    let mut parser = Parser::new(BufReader::new(bytes));
+    let mut parser = Parser::new(bytes);
     parser.parse_value()
 }
