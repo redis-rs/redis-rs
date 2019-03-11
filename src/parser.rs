@@ -269,7 +269,7 @@ where
     }
 }
 
-pub fn parse_async<R>(reader: R) -> ValueFuture<R>
+pub fn parse_async<R>(reader: R) -> impl Future<Item = (R, Value), Error = RedisError>
 where
     R: AsyncRead + BufRead,
 {
