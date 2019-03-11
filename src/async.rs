@@ -13,7 +13,7 @@ use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::Either;
-use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::{future, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use tokio_sync::{mpsc, oneshot};
 
 use cmd::cmd;
@@ -276,10 +276,20 @@ impl ConnectionLike for Connection {
 }
 
 // Senders which the result of a single request are sent through
-type PipelineOutput<I, E> = oneshot::Sender<Result<I, E>>;
+type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
+
+struct InFlight<O, E> {
+    output: PipelineOutput<O, E>,
+    response_count: usize,
+    buffer: Vec<O>,
+}
 
 // A single message sent through the pipeline
-type PipelineMessage<S, I, E> = (S, Vec<PipelineOutput<I, E>>);
+struct PipelineMessage<S, I, E> {
+    input: S,
+    output: PipelineOutput<I, E>,
+    response_count: usize,
+}
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
 /// items being output by the `Stream` (the number is specified at time of sending). With the
@@ -303,7 +313,7 @@ where
     T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
 {
     sink_stream: T,
-    in_flight: VecDeque<PipelineOutput<T::Item, T::Error>>,
+    in_flight: VecDeque<InFlight<T::Item, T::Error>>,
 }
 
 impl<T> PipelineSink<T>
@@ -325,12 +335,28 @@ where
         }
     }
 
-    fn send_result(&mut self, item: Result<T::Item, T::Error>) {
-        let sender = match self.in_flight.pop_front() {
-            Some(sender) => sender,
-            None => return,
+    fn send_result(&mut self, result: Result<T::Item, T::Error>) {
+        let response = {
+            let entry = match self.in_flight.front_mut() {
+                Some(entry) => entry,
+                None => return,
+            };
+            match result {
+                Ok(item) => {
+                    entry.buffer.push(item);
+                    if entry.response_count > entry.buffer.len() {
+                        // Need to gather more response values
+                        return;
+                    }
+                    Ok(mem::replace(&mut entry.buffer, Vec::new()))
+                }
+                // If we fail we must respond immediately
+                Err(err) => Err(err),
+            }
         };
-        match sender.send(item) {
+
+        let entry = self.in_flight.pop_front().unwrap();
+        match entry.output.send(response) {
             Ok(_) => (),
             Err(_) => {
                 // `Err` means that the receiver was dropped in which case it does not
@@ -351,16 +377,28 @@ where
     // Retrieve incoming messages and write them to the sink
     fn start_send(
         &mut self,
-        (item, mut senders): Self::SinkItem,
+        PipelineMessage {
+            input,
+            output,
+            response_count,
+        }: Self::SinkItem,
     ) -> StartSend<Self::SinkItem, Self::SinkError> {
-        match self.sink_stream.start_send(item) {
-            Ok(AsyncSink::NotReady(item)) => Ok(AsyncSink::NotReady((item, senders))),
+        match self.sink_stream.start_send(input) {
+            Ok(AsyncSink::NotReady(input)) => Ok(AsyncSink::NotReady(PipelineMessage {
+                input,
+                output,
+                response_count,
+            })),
             Ok(AsyncSink::Ready) => {
-                self.in_flight.extend(senders);
+                self.in_flight.push_back(InFlight {
+                    output,
+                    response_count,
+                    buffer: Vec::new(),
+                });
                 Ok(AsyncSink::Ready)
             }
             Err(err) => {
-                let _ = senders.swap_remove(0).send(Err(err));
+                let _ = output.send(Err(err));
                 Err(())
             }
         }
@@ -410,42 +448,35 @@ where
         item: T::SinkItem,
     ) -> impl Future<Item = T::Item, Error = Option<T::Error>> + Send {
         self.send_recv_multiple(item, 1)
-            .into_future()
-            .map(|(item, _)| item.unwrap())
-            .map_err(|(err, _)| err)
+            .map(|mut item| item.pop().unwrap())
     }
 
     fn send_recv_multiple(
         &self,
-        item: T::SinkItem,
+        input: T::SinkItem,
         count: usize,
-    ) -> impl Stream<Item = T::Item, Error = Option<T::Error>> + Send {
+    ) -> impl Future<Item = Vec<T::Item>, Error = Option<T::Error>> + Send {
         let self_ = self.0.clone();
 
-        let mut senders = Vec::with_capacity(count);
-        let mut receivers = Vec::with_capacity(count);
-        for _ in 0..count {
-            let (sender, receiver) = oneshot::channel();
-            senders.push(sender);
-            receivers.push(receiver);
-        }
+        let (sender, receiver) = oneshot::channel();
 
         self_
-            .send((item, senders))
-            .map_err(|_| None)
-            .map(|_| {
-                stream::futures_ordered(receivers.into_iter().map(|receiver| {
-                    receiver.then(|result| match result {
-                        Ok(result) => result.map_err(Some),
-                        Err(_) => {
-                            // The `sender` was dropped which likely means that the stream part
-                            // failed for one reason or another
-                            Err(None)
-                        }
-                    })
-                }))
+            .send(PipelineMessage {
+                input,
+                response_count: count,
+                output: sender,
             })
-            .flatten_stream()
+            .map_err(|_| None)
+            .and_then(|_| {
+                receiver.then(|result| match result {
+                    Ok(result) => result.map_err(Some),
+                    Err(_) => {
+                        // The `sender` was dropped which likely means that the stream part
+                        // failed for one reason or another
+                        Err(None)
+                    }
+                })
+            })
     }
 }
 
@@ -508,21 +539,27 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
-        // TODO Use `Either` when `Stream` is implemented for it
-        let stream: Box<Stream<Item = _, Error = _> + Send> = match self.pipeline {
+        #[cfg(not(feature = "with-unix-sockets"))]
+        let future = match self.pipeline {
+            ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
+        };
+
+        #[cfg(feature = "with-unix-sockets")]
+        let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => {
-                Box::new(pipeline.send_recv_multiple(cmd, offset + count))
+                Either::A(pipeline.send_recv_multiple(cmd, offset + count))
             }
-            #[cfg(feature = "with-unix-sockets")]
             ActualPipeline::Unix(ref pipeline) => {
-                Box::new(pipeline.send_recv_multiple(cmd, offset + count))
+                Either::B(pipeline.send_recv_multiple(cmd, offset + count))
             }
         };
+
         Box::new(
-            stream
-                .skip(offset as u64)
-                .collect()
-                .map(|value| (self, value))
+            future
+                .map(move |mut value| {
+                    value.drain(..offset);
+                    (self, value)
+                })
                 .map_err(|err| {
                     err.unwrap_or_else(|| {
                         RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
