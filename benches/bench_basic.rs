@@ -5,13 +5,16 @@ extern crate redis;
 extern crate futures;
 extern crate tokio;
 
+#[path = "../tests/support/mod.rs"]
+mod support;
+
 use futures::{future, stream, Future, Stream};
 
 use tokio::runtime::current_thread::Runtime;
 
 use criterion::{Bencher, Benchmark, Criterion, Throughput};
 
-use redis::PipelineCommands;
+use redis::{PipelineCommands, Value};
 
 fn get_client() -> redis::Client {
     redis::Client::open("redis://127.0.0.1:6379").unwrap()
@@ -234,5 +237,23 @@ fn bench_encode(c: &mut Criterion) {
     );
 }
 
-criterion_group!(bench, bench_query, bench_encode,);
+fn bench_decode_simple(b: &mut Bencher) {
+    let value = Value::Bulk(vec![
+        Value::Okay,
+        Value::Status("testing".to_string()),
+        Value::Bulk(vec![]),
+        Value::Nil,
+        Value::Data(vec![b'a'; 1000]),
+        Value::Int(7512182390),
+    ]);
+
+    let mut input = Vec::new();
+    support::encode_value(&value, &mut input).unwrap();
+    b.iter(|| redis::parse_redis_value(&input).unwrap());
+}
+fn bench_decode(c: &mut Criterion) {
+    c.bench("decode", Benchmark::new("decode", bench_decode_simple));
+}
+
+criterion_group!(bench, bench_query, bench_encode, bench_decode);
 criterion_main!(bench);
