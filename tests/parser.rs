@@ -6,6 +6,8 @@ extern crate partial_io;
 extern crate quickcheck;
 extern crate tokio;
 
+mod support;
+
 use std::io::{self, BufReader};
 
 use partial_io::{GenWouldBlock, PartialAsyncRead, PartialWithErrors};
@@ -15,6 +17,8 @@ use tokio::executor::current_thread::block_on_all;
 use futures::Future;
 
 use redis::Value;
+
+use support::encode_value;
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);
@@ -82,31 +86,6 @@ fn arbitrary_value<G: ::quickcheck::Gen>(g: &mut G, recursive_size: usize) -> Va
             5 => Value::Okay,
             _ => unreachable!(),
         }
-    }
-}
-
-#[doc(hidden)]
-pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
-where
-    W: io::Write,
-{
-    match *value {
-        Value::Nil => write!(writer, "$-1\r\n"),
-        Value::Int(val) => write!(writer, ":{}\r\n", val),
-        Value::Data(ref val) => {
-            write!(writer, "${}\r\n", val.len())?;
-            writer.write_all(val)?;
-            writer.write_all(b"\r\n")
-        }
-        Value::Bulk(ref values) => {
-            write!(writer, "*{}\r\n", values.len())?;
-            for val in values.iter() {
-                encode_value(val, writer)?;
-            }
-            Ok(())
-        }
-        Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{}\r\n", s),
     }
 }
 

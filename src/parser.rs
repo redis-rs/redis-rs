@@ -9,13 +9,13 @@ use tokio_io::codec::{Decoder, Encoder};
 use tokio_io::AsyncRead;
 
 use combine;
-use combine::byte::{byte, crlf, newline};
+use combine::byte::{byte, crlf, take_until_bytes};
 use combine::combinator::{any_send_partial_state, AnySendPartialState};
 #[allow(unused_imports)] // See https://github.com/rust-lang/rust/issues/43970
 use combine::error::StreamError;
 use combine::parser::choice::choice;
-use combine::range::{recognize, take, take_until_range};
-use combine::stream::{RangeStream, StreamErrorFor};
+use combine::range::{recognize, take};
+use combine::stream::{FullRangeStream, StreamErrorFor};
 
 struct ResultExtend<T, E>(Result<T, E>);
 
@@ -56,13 +56,11 @@ where
 parser! {
     type PartialState = AnySendPartialState;
     fn value['a, I]()(I) -> RedisResult<Value>
-        where [I: RangeStream<Item = u8, Range = &'a [u8]> ]
+        where [I: FullRangeStream<Item = u8, Range = &'a [u8]> ]
     {
-        let end_of_line: fn () -> _ = || crlf().or(newline());
-        let line = || recognize(take_until_range(&b"\r\n"[..]).with(end_of_line()))
+        let line = || recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ())))
             .and_then(|line: &[u8]| {
-                str::from_utf8(line)
-                    .map(|line| line.trim_right_matches(|c: char| c == '\r' || c == '\n'))
+                str::from_utf8(&line[..line.len() - 2])
                     .map_err(StreamErrorFor::<I>::other)
             });
 
@@ -87,7 +85,7 @@ parser! {
             } else {
                 take(*size as usize)
                     .map(|bs: &[u8]| Value::Data(bs.to_vec()))
-                    .skip(end_of_line())
+                    .skip(crlf())
                     .right()
             }
         });

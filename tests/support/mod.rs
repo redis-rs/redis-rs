@@ -8,6 +8,7 @@ use redis;
 
 use std::env;
 use std::fs;
+use std::io;
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 
 use self::futures::Future;
 
-use redis::RedisError;
+use redis::{RedisError, Value};
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -171,5 +172,29 @@ impl TestContext {
         &self,
     ) -> impl Future<Item = redis::async::SharedConnection, Error = RedisError> {
         self.client.get_shared_async_connection()
+    }
+}
+
+pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
+where
+    W: io::Write,
+{
+    match *value {
+        Value::Nil => write!(writer, "$-1\r\n"),
+        Value::Int(val) => write!(writer, ":{}\r\n", val),
+        Value::Data(ref val) => {
+            write!(writer, "${}\r\n", val.len())?;
+            writer.write_all(val)?;
+            writer.write_all(b"\r\n")
+        }
+        Value::Bulk(ref values) => {
+            write!(writer, "*{}\r\n", values.len())?;
+            for val in values.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
+        }
+        Value::Okay => write!(writer, "+OK\r\n"),
+        Value::Status(ref s) => write!(writer, "+{}\r\n", s),
     }
 }
