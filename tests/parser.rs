@@ -8,7 +8,7 @@ extern crate tokio;
 
 mod support;
 
-use std::io::{self, BufReader};
+use std::io::BufReader;
 
 use partial_io::{GenWouldBlock, PartialAsyncRead, PartialWithErrors};
 
