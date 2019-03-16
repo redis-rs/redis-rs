@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.10.0...HEAD) - ReleaseDate
+
+**Fixes and improvements**
+
+* (async) Simplify implicit pipeline handling ([#182](https://github.com/mitsuhiko/redis-rs/pull/182))
+* Remove redundant BufReader when parsing ([#197](https://github.com/mitsuhiko/redis-rs/pull/197))
+* Hide actual type returned from async parser ([#193](https://github.com/mitsuhiko/redis-rs/pull/193))
+* (async) Use `tokio_sync`'s channels instead of futures ([#195](https://github.com/mitsuhiko/redis-rs/pull/195))
+* Use more performant operations for line parsing ([#198](https://github.com/mitsuhiko/redis-rs/pull/198))
+* (async) Only allocate one oneshot per request ([#194](https://github.com/mitsuhiko/redis-rs/pull/194))
+
+**BREAKING CHANGE**
+
+* Rename the async module to aio ([#189](https://github.com/mitsuhiko/redis-rs/pull/189))
+
+`async` is a reserved keyword in rust 2018 so this avoids the need to write `r#async` in it.
+
+Old code:
+
+```rust
+use redis::async::SharedConnection;
+```
+
+New code:
+
+```rust
+use redis::aio::SharedConnection;
+```
+
 ## [0.10.0](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...0.10.0) - 2019-02-19
 
 * Fix handling of passwords with special characters (#163)
