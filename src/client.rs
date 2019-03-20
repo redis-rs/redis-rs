@@ -41,8 +41,8 @@ impl Client {
     /// return a client pointing to the current master.
     /// This opens a short-lived connection to the sentinal server but does not open
     /// yet a connection to the master.
-    pub fn with_sentinel<T: IntoConnectionInfo>(
-        cluster_name: &str,
+    pub fn open_with_sentinel<T: IntoConnectionInfo>(
+        master_group_name: &str,
         params: T,
     ) -> RedisResult<Client> {
         let connection_info = params.into_connection_info()?;
@@ -51,7 +51,7 @@ impl Client {
         };
         let (master_addr, master_port): (String, u16) = crate::cmd("SENTINEL")
             .arg("get-master-addr-by-name")
-            .arg(cluster_name)
+            .arg(master_group_name)
             .query(&sentinel_client)?;
 
         Ok(Client {
