@@ -1,6 +1,8 @@
 use futures::Future;
 
-use connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
+use connection::{
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+};
 use types::{RedisError, RedisResult, Value};
 
 /// The client type.
@@ -32,6 +34,31 @@ impl Client {
     pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
         Ok(Client {
             connection_info: params.into_connection_info()?,
+        })
+    }
+
+    /// Connects to a redis-server in sentinel mode (used in redis clusters) and
+    /// return a client pointing to the current master.
+    /// This opens a short-lived connection to the sentinal server but does not open
+    /// yet a connection to the master.
+    pub fn with_sentinel<T: IntoConnectionInfo>(
+        cluster_name: &str,
+        params: T,
+    ) -> RedisResult<Client> {
+        let connection_info = params.into_connection_info()?;
+        let sentinel_client = Client {
+            connection_info: connection_info.clone(),
+        };
+        let (master_addr, master_port): (String, u16) = crate::cmd("SENTINEL")
+            .arg("get-master-addr-by-name")
+            .arg(cluster_name)
+            .query(&sentinel_client)?;
+
+        Ok(Client {
+            connection_info: ConnectionInfo {
+                addr: Box::new(ConnectionAddr::Tcp(master_addr, master_port)),
+                ..connection_info
+            },
         })
     }
 
