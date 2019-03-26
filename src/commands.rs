@@ -54,19 +54,25 @@ macro_rules! implement_commands {
             /// Incrementally iterate the keys space.
             #[inline]
             fn scan<RV: FromRedisValue>(&self) -> RedisResult<Iter<RV>> {
-                cmd("SCAN").cursor_arg(0).iter(self)
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("SCAN").cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values.
             #[inline]
             fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("HSCAN").arg(key).cursor_arg(0).iter(self)
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values for
@@ -74,33 +80,43 @@ macro_rules! implement_commands {
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("HSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate set elements.
             #[inline]
             fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("SSCAN").arg(key).cursor_arg(0).iter(self)
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("SSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate sorted set elements.
             #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("ZSCAN").arg(key).cursor_arg(0).iter(self)
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("ZSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
         }
 
@@ -110,14 +126,14 @@ macro_rules! implement_commands {
         pub trait PipelineCommands {
             #[doc(hidden)]
             #[inline]
-            fn perform(&mut self, con: &Cmd) -> &mut Self;
+            fn perform(&mut self, con: Cmd) -> &mut Self;
 
             $(
                 $(#[$attr])*
                 #[inline]
                 fn $name<'a $(, $tyargs: $ty)*>(
                     &mut self $(, $argname: $argty)*) -> &mut Self
-                    { self.perform($body) }
+                    { self.perform(::std::mem::replace($body, Cmd::new())) }
             )*
         }
     )
@@ -841,7 +857,7 @@ impl PubSubCommands for Connection {
 }
 
 impl PipelineCommands for Pipeline {
-    fn perform(&mut self, cmd: &Cmd) -> &mut Pipeline {
+    fn perform(&mut self, cmd: Cmd) -> &mut Pipeline {
         self.add_command(cmd)
     }
 }

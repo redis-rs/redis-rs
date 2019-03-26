@@ -22,6 +22,8 @@ with-unix-sockets = ["unix_socket", "tokio-uds"]
 with-system-unix-sockets = []
 
 [dependencies]
+dtoa = "0.4"
+itoa = "0.4.3"
 sha1 = ">= 0.2, < 0.7"
 url = "1.2"
 rustc-serialize = { version = "0.3.16", optional = true }
