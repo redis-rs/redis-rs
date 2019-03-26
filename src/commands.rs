@@ -183,6 +183,11 @@ implement_commands! {
         cmd("GETSET").arg(key).arg(value)
     }
 
+    /// Get a range of bytes/substring from the value of a key. Negative values provide an offset from the end of the value.
+    fn getrange<K: ToRedisArgs>(key: K, from: isize, to: isize) {
+        cmd("GETRANGE").arg(key).arg(from).arg(to)
+    }
+
     /// Delete one or more keys.
     fn del<K: ToRedisArgs>(key: K) {
         cmd("DEL").arg(key)
