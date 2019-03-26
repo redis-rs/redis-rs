@@ -57,6 +57,57 @@ let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).clone().iter
 
 (The above line calls `clone()`.)
 
+#### A mutable connection object is now required ([#148](https://github.com/mitsuhiko/redis-rs/pull/148))
+
+We remove the internal usage of `RefCell` and `Cell` and instead require a mutable reference,  `&mut ConnectionLike`,
+on all command calls.
+
+Old code:
+
+```rust
+let client = redis::Client::open("redis://127.0.0.1/")?;
+let con = client.get_connection()?;
+redis::cmd("SET").arg("my_key").arg(42).execute(&con);
+```
+
+New code:
+
+```rust
+let client = redis::Client::open("redis://127.0.0.1/")?;
+let mut con = client.get_connection()?;
+redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
+```
+
+Due to this, `transaction` has changed. The callback now also receives a mutable reference to the used connection.
+
+Old code:
+
+```rust
+let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+let con = client.get_connection().unwrap();
+let key = "the_key";
+let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
+    let old_val : isize = con.get(key)?;
+    pipe
+        .set(key, old_val + 1).ignore()
+        .get(key).query(&con)
+})?;
+```
+
+New code:
+
+```rust
+let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+let mut con = client.get_connection().unwrap();
+let key = "the_key";
+let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
+    let old_val : isize = con.get(key)?;
+    pipe
+        .set(key, old_val + 1).ignore()
+        .get(key).query(&con)
+})?;
+```
+
 ## [0.10.0](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...0.10.0) - 2019-02-19
 
 * Fix handling of passwords with special characters (#163)
