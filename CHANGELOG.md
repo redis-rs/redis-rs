@@ -5,17 +5,18 @@
 **Fixes and improvements**
 
 * (async) Simplify implicit pipeline handling ([#182](https://github.com/mitsuhiko/redis-rs/pull/182))
+* (async) Use `tokio_sync`'s channels instead of futures ([#195](https://github.com/mitsuhiko/redis-rs/pull/195))
+* (async) Only allocate one oneshot per request ([#194](https://github.com/mitsuhiko/redis-rs/pull/194))
 * Remove redundant BufReader when parsing ([#197](https://github.com/mitsuhiko/redis-rs/pull/197))
 * Hide actual type returned from async parser ([#193](https://github.com/mitsuhiko/redis-rs/pull/193))
-* (async) Use `tokio_sync`'s channels instead of futures ([#195](https://github.com/mitsuhiko/redis-rs/pull/195))
 * Use more performant operations for line parsing ([#198](https://github.com/mitsuhiko/redis-rs/pull/198))
-* (async) Only allocate one oneshot per request ([#194](https://github.com/mitsuhiko/redis-rs/pull/194))
+* Optimize the command encoding, see below for **breaking changes** ([#165](https://github.com/mitsuhiko/redis-rs/pull/165))
 
-**BREAKING CHANGE**
+### BREAKING CHANGES
 
-* Rename the async module to aio ([#189](https://github.com/mitsuhiko/redis-rs/pull/189))
+#### Renamed the async module to aio ([#189](https://github.com/mitsuhiko/redis-rs/pull/189))
 
-`async` is a reserved keyword in rust 2018 so this avoids the need to write `r#async` in it.
+`async` is a reserved keyword in Rust 2018, so this avoids the need to write `r#async` in it.
 
 Old code:
 
@@ -28,6 +29,33 @@ New code:
 ```rust
 use redis::aio::SharedConnection;
 ```
+
+#### The trait `ToRedisArgs` was changed ([#165](https://github.com/mitsuhiko/redis-rs/pull/165))
+
+`ToRedisArgs` has been changed to take take an instance of `RedisWrite` instead of `Vec<Vec<u8>>`. Use the `write_arg` method instead of `Vec::push`.
+
+#### Minimum Rust version is now 1.26 ([#165](https://github.com/mitsuhiko/redis-rs/pull/165))
+
+Upgrade your compiler.
+`impl Iterator` is used, requiring a more recent version of the Rust compiler.
+
+#### `iter` now takes `self` by value ([#165](https://github.com/mitsuhiko/redis-rs/pull/165))
+
+`iter` now takes `self` by value instead of cloning `self` inside the method.
+
+Old code:
+
+```rust
+let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).iter(&con).unwrap();
+```
+
+New code:
+
+```rust
+let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).clone().iter(&con).unwrap();
+```
+
+(The above line calls `clone()`.)
 
 ## [0.10.0](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...0.10.0) - 2019-02-19
 
