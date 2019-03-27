@@ -4,7 +4,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::mem;
 use std::net::ToSocketAddrs;
 
-#[cfg(feature = "with-unix-sockets")]
+#[cfg(unix)]
 use tokio_uds::UnixStream;
 
 use tokio_codec::{Decoder, Framed};
@@ -25,7 +25,7 @@ use parser::ValueCodec;
 
 enum ActualConnection {
     Tcp(BufReader<TcpStream>),
-    #[cfg(feature = "with-unix-sockets")]
+    #[cfg(unix)]
     Unix(BufReader<UnixStream>),
 }
 
@@ -68,16 +68,16 @@ pub struct Connection {
 macro_rules! with_connection {
     ($con:expr, $f:expr) => {
         match $con {
-            #[cfg(not(feature = "with-unix-sockets"))]
+            #[cfg(not(unix))]
             ActualConnection::Tcp(con) => {
                 $f(con).map(|(con, value)| (ActualConnection::Tcp(con), value))
             }
 
-            #[cfg(feature = "with-unix-sockets")]
+            #[cfg(unix)]
             ActualConnection::Tcp(con) => {
                 Either::A($f(con).map(|(con, value)| (ActualConnection::Tcp(con), value)))
             }
-            #[cfg(feature = "with-unix-sockets")]
+            #[cfg(unix)]
             ActualConnection::Unix(con) => {
                 Either::B($f(con).map(|(con, value)| (ActualConnection::Unix(con), value)))
             }
@@ -88,16 +88,16 @@ macro_rules! with_connection {
 macro_rules! with_write_connection {
     ($con:expr, $f:expr) => {
         match $con {
-            #[cfg(not(feature = "with-unix-sockets"))]
+            #[cfg(not(unix))]
             ActualConnection::Tcp(con) => {
                 $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value))
             }
 
-            #[cfg(feature = "with-unix-sockets")]
+            #[cfg(unix)]
             ActualConnection::Tcp(con) => Either::A(
                 $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value)),
             ),
-            #[cfg(feature = "with-unix-sockets")]
+            #[cfg(unix)]
             ActualConnection::Unix(con) => Either::B(
                 $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Unix(con.0), value)),
             ),
@@ -144,11 +144,11 @@ pub fn connect(
                     .map(|con| ActualConnection::Tcp(BufReader::new(con))),
             )
         }
-        #[cfg(feature = "with-unix-sockets")]
+        #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => Either::B(
             UnixStream::connect(path).map(|stream| ActualConnection::Unix(BufReader::new(stream))),
         ),
-        #[cfg(not(feature = "with-unix-sockets"))]
+        #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => Either::B(future::err(RedisError::from((
             ErrorKind::InvalidClientConfig,
             "Cannot connect to unix sockets \
@@ -483,7 +483,7 @@ where
 #[derive(Clone)]
 enum ActualPipeline {
     Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
-    #[cfg(feature = "with-unix-sockets")]
+    #[cfg(unix)]
     Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
 }
 
@@ -501,7 +501,7 @@ impl SharedConnection {
                     let codec = ValueCodec::default().framed(tcp.into_inner());
                     ActualPipeline::Tcp(Pipeline::new(codec))
                 }
-                #[cfg(feature = "with-unix-sockets")]
+                #[cfg(unix)]
                 ActualConnection::Unix(unix) => {
                     let codec = ValueCodec::default().framed(unix.into_inner());
                     ActualPipeline::Unix(Pipeline::new(codec))
@@ -517,12 +517,12 @@ impl SharedConnection {
 
 impl ConnectionLike for SharedConnection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
-        #[cfg(not(feature = "with-unix-sockets"))]
+        #[cfg(not(unix))]
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
         };
 
-        #[cfg(feature = "with-unix-sockets")]
+        #[cfg(unix)]
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => Either::A(pipeline.send(cmd)),
             ActualPipeline::Unix(ref pipeline) => Either::B(pipeline.send(cmd)),
@@ -539,12 +539,12 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
-        #[cfg(not(feature = "with-unix-sockets"))]
+        #[cfg(not(unix))]
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
         };
 
-        #[cfg(feature = "with-unix-sockets")]
+        #[cfg(unix)]
         let future = match self.pipeline {
             ActualPipeline::Tcp(ref pipeline) => {
                 Either::A(pipeline.send_recv_multiple(cmd, offset + count))

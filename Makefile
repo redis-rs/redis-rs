@@ -12,7 +12,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test --features="with-unix-sockets"
+	@REDISRS_SERVER_TYPE=unix cargo test
 
 test-single: RUST_TEST_THREADS=1
 test-single: test
