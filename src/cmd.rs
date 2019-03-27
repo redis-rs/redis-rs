@@ -690,13 +690,12 @@ pub fn cmd<'a>(name: &'a str) -> Cmd {
 ///
 /// Example:
 ///
-/// ```rust,ignore
-/// # this is ignore because it uses unstable APIs.
+/// ```rust
 /// # use redis::ToRedisArgs;
 /// let mut args = vec![];
-/// args.push_all(&"SET".to_redis_args());
-/// args.push_all(&"my_key".to_redis_args());
-/// args.push_all(&42.to_redis_args());
+/// args.extend("SET".to_redis_args());
+/// args.extend("my_key".to_redis_args());
+/// args.extend(42.to_redis_args());
 /// let cmd = redis::pack_command(&args);
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
