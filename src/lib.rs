@@ -53,12 +53,6 @@
 //! There are currently two features defined that can enable additional
 //! functionality if so desired.
 //!
-//! `with-unix-sockets`:
-//!   By default this library does not support unix sockets on older versions
-//!   of Rust but you can optionally compile it with unix sockets enabled by
-//!   enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
-//!   this is not needed.
-//!
 //! ## Connection Parameters
 //!
 //! redis-rs knows different ways to define where a connection should
@@ -71,8 +65,7 @@
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
 //!
-//! In case the crate is compiled with Unix socket support you can also
-//! use a unix URL in this format:
+//! If Unix socket support is available you can use a unix URL in this format:
 //!
 //! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
 //!
@@ -370,10 +363,8 @@ extern crate tokio_codec;
 extern crate tokio_sync;
 extern crate tokio_tcp;
 
-#[cfg(feature = "with-unix-sockets")]
+#[cfg(unix)]
 extern crate tokio_uds;
-#[cfg(feature = "with-unix-sockets")]
-extern crate unix_socket;
 
 // public api
 pub use client::Client;

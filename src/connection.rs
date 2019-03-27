@@ -12,13 +12,8 @@ use types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
 };
 
-#[cfg(all(
-    feature = "with-system-unix-sockets",
-    not(feature = "with-unix-sockets")
-))]
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
-#[cfg(feature = "with-unix-sockets")]
-use unix_socket::UnixStream;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -57,10 +52,7 @@ impl ConnectionAddr {
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
-            ConnectionAddr::Unix(_) => true,
-            #[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
-            ConnectionAddr::Unix(_) => false,
+            ConnectionAddr::Unix(_) => cfg!(unix),
         }
     }
 }
@@ -127,7 +119,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     })
 }
 
-#[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+#[cfg(unix)]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     Ok(ConnectionInfo {
         addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
@@ -150,7 +142,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     })
 }
 
-#[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
+#[cfg(not(unix))]
 fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
     fail!((
         ErrorKind::InvalidClientConfig,
@@ -178,7 +170,7 @@ struct TcpConnection {
     open: bool,
 }
 
-#[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+#[cfg(unix)]
 struct UnixConnection {
     sock: BufReader<UnixStream>,
     open: bool,
@@ -186,7 +178,7 @@ struct UnixConnection {
 
 enum ActualConnection {
     Tcp(TcpConnection),
-    #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+    #[cfg(unix)]
     Unix(UnixConnection),
 }
 
@@ -226,12 +218,12 @@ impl ActualConnection {
                     open: true,
                 })
             }
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
                 sock: BufReader::new(UnixStream::connect(path)?),
                 open: true,
             }),
-            #[cfg(not(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets")))]
+            #[cfg(not(unix))]
             ConnectionAddr::Unix(ref path) => {
                 fail!((
                     ErrorKind::InvalidClientConfig,
@@ -260,7 +252,7 @@ impl ActualConnection {
                     Ok(_) => Ok(Value::Okay),
                 }
             }
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ActualConnection::Unix(ref mut connection) => {
                 let result = connection
                     .sock
@@ -283,7 +275,7 @@ impl ActualConnection {
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => reader as &mut BufRead,
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut BufRead,
         })
         .parse_value();
@@ -294,7 +286,7 @@ impl ActualConnection {
                     let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
                     connection.open = false;
                 }
-                #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+                #[cfg(unix)]
                 ActualConnection::Unix(ref mut connection) => {
                     let _ = connection.sock.get_mut().shutdown(net::Shutdown::Both);
                     connection.open = false;
@@ -310,7 +302,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.get_ref().set_write_timeout(dur)?;
             }
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 sock.get_ref().set_write_timeout(dur)?;
             }
@@ -323,7 +315,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.get_ref().set_read_timeout(dur)?;
             }
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 sock.get_ref().set_read_timeout(dur)?;
             }
@@ -334,7 +326,7 @@ impl ActualConnection {
     pub fn is_open(&self) -> bool {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
-            #[cfg(any(feature = "with-unix-sockets", feature = "with-system-unix-sockets"))]
+            #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
     }
