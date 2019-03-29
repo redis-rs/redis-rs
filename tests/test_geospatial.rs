@@ -39,7 +39,8 @@ fn test_geodist_existing_members() {
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
-    let dist: f64 = con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Kilometers)
+    let dist: f64 = con
+        .geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Kilometers)
         .unwrap();
     assert_approx_eq!(dist, 166.2742, 0.001);
 }
@@ -82,7 +83,6 @@ fn test_geohash() {
             String::from("sqdtr74hyu0"),
         ])
     );
-
 }
 
 #[test]
@@ -178,7 +178,6 @@ fn test_georadius() {
     assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361389);
     assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115556);
     assert_eq!(result[0].dist, None);
-
 }
 
 #[test]
@@ -190,9 +189,9 @@ fn test_georadius_by_member() {
 
     // Simple request, without extra data
     let opts = RadiusOptions::default().order(RadiusOrder::Asc);
-    let result: Vec<RadiusSearchResult> =
-        con.geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
-            .unwrap();
+    let result: Vec<RadiusSearchResult> = con
+        .geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
+        .unwrap();
     let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
 
     assert_eq!(names, vec!["Agrigento", "Palermo"]);

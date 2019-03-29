@@ -1,14 +1,16 @@
 //! Defines types to use with the geospatial commands.
 
 use super::{ErrorKind, RedisResult};
-use types::{FromRedisValue, ToRedisArgs, Value, RedisWrite};
+use types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => ({
-        fail!((ErrorKind::TypeError,
-               "Response was of incompatible type",
-               format!("{:?} (response was {:?})", $det, $v)));
-    })
+    ($v:expr, $det:expr) => {{
+        fail!((
+            ErrorKind::TypeError,
+            "Response was of incompatible type",
+            format!("{:?} (response was {:?})", $det, $v)
+        ));
+    }};
 }
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
@@ -23,7 +25,10 @@ pub enum Unit {
 }
 
 impl ToRedisArgs for Unit {
-    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
         let unit = match *self {
             Unit::Meters => "m",
             Unit::Kilometers => "km",
@@ -74,7 +79,10 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
-    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
         ToRedisArgs::write_redis_args(&self.longitude, out);
         ToRedisArgs::write_redis_args(&self.latitude, out);
     }
@@ -183,7 +191,10 @@ impl RadiusOptions {
 }
 
 impl ToRedisArgs for RadiusOptions {
-    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
         if self.with_coord {
             out.write_arg("WITHCOORD".as_bytes());
         }
@@ -235,7 +246,6 @@ pub struct RadiusSearchResult {
 
 impl FromRedisValue for RadiusSearchResult {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-
         // If we receive only the member name, it will be a plain string
         if let Ok(name) = FromRedisValue::from_redis_value(v) {
             return Ok(RadiusSearchResult {
@@ -290,9 +300,9 @@ impl RadiusSearchResult {
 
 #[cfg(test)]
 mod tests {
-    use types::ToRedisArgs;
     use super::{Coord, RadiusOptions, RadiusOrder};
     use std::str;
+    use types::ToRedisArgs;
 
     macro_rules! assert_args {
         ($value:expr, $($args:expr),+) => {
@@ -340,6 +350,5 @@ mod tests {
             "10",
             "ASC"
         );
-
     }
 }
