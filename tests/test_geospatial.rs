@@ -8,8 +8,8 @@ extern crate assert_approx_eq;
 use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{Commands, RedisResult};
 
-mod common;
-use common::*;
+mod support;
+use support::*;
 
 const PALERMO: (&'static str, &'static str, &'static str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&'static str, &'static str, &'static str) = ("15.087269", "37.502669", "Catania");
@@ -19,7 +19,7 @@ const AGRIGENTO: (&'static str, &'static str, &'static str) =
 #[test]
 fn test_geoadd_single_tuple() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", PALERMO), Ok(1));
 }
@@ -27,7 +27,7 @@ fn test_geoadd_single_tuple() {
 #[test]
 fn test_geoadd_multiple_tuples() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 }
@@ -35,7 +35,7 @@ fn test_geoadd_multiple_tuples() {
 #[test]
 fn test_geodist_existing_members() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
@@ -47,7 +47,7 @@ fn test_geodist_existing_members() {
 #[test]
 fn test_geodist_support_option() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
@@ -68,7 +68,7 @@ fn test_geodist_support_option() {
 #[test]
 fn test_geohash() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
     let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", PALERMO.2);
@@ -88,7 +88,7 @@ fn test_geohash() {
 #[test]
 fn test_geopos() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
@@ -112,7 +112,7 @@ fn test_geopos() {
 #[test]
 fn test_use_coord_struct() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(
         con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo")),
@@ -129,11 +129,11 @@ fn test_use_coord_struct() {
 #[test]
 fn test_georadius() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
-    let geo_radius = |opts: RadiusOptions| -> Vec<RadiusSearchResult> {
+    let mut geo_radius = |opts: RadiusOptions| -> Vec<RadiusSearchResult> {
         con.geo_radius("my_gis", 15.0, 37.0, 200.0, Unit::Kilometers, opts)
             .unwrap()
     };
@@ -184,7 +184,7 @@ fn test_georadius() {
 #[test]
 fn test_georadius_by_member() {
     let ctx = TestContext::new();
-    let con = ctx.connection();
+    let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA, AGRIGENTO]), Ok(3));
 

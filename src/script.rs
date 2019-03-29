@@ -1,8 +1,8 @@
 use sha1::Sha1;
 
 use cmd::cmd;
-use types::{ToRedisArgs, FromRedisValue, RedisResult, ErrorKind};
 use connection::ConnectionLike;
+use types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -18,11 +18,11 @@ pub struct Script {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection().unwrap();
 /// let script = redis::Script::new(r"
 ///     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 /// ");
-/// let result = script.arg(1).arg(2).invoke(&con);
+/// let result = script.arg(1).arg(2).invoke(&mut con);
 /// assert_eq!(result, Ok(3));
 /// ```
 impl Script {
@@ -75,13 +75,13 @@ impl Script {
 
     /// Invokes the script directly without arguments.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
-                script: self,
-                args: vec![],
-                keys: vec![],
-            }
-            .invoke(con)
+            script: self,
+            args: vec![],
+            keys: vec![],
+        }
+        .invoke(con)
     }
 }
 
@@ -101,9 +101,10 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut ScriptInvocation<'a>
-        where 'a: 'b
+    where
+        'a: 'b,
     {
-        self.args.extend(arg.to_redis_args().into_iter());
+        arg.write_redis_args(&mut self.args);
         self
     }
 
@@ -111,31 +112,33 @@ impl<'a> ScriptInvocation<'a> {
     /// in the script.
     #[inline]
     pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut ScriptInvocation<'a>
-        where 'a: 'b
+    where
+        'a: 'b,
     {
-        self.keys.extend(key.to_redis_args().into_iter());
+        key.write_redis_args(&mut self.keys);
         self
     }
 
     /// Invokes the script and returns the result.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")
                 .arg(self.script.hash.as_bytes())
                 .arg(self.keys.len())
                 .arg(&*self.keys)
                 .arg(&*self.args)
-                .query(con) {
+                .query(con)
+            {
                 Ok(val) => {
                     return Ok(val);
                 }
                 Err(err) => {
                     if err.kind() == ErrorKind::NoScriptError {
-                        let _: () = try!(cmd("SCRIPT")
+                        let _: () = cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
-                            .query(con));
+                            .query(con)?;
                     } else {
                         fail!(err);
                     }

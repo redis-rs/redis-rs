@@ -14,7 +14,7 @@ fn redis_url() -> String {
 
 fn run() -> RedisResult<()> {
     let client = redis::Client::open(redis_url().as_str())?;
-    let con = client.get_connection()?;
+    let mut con = client.get_connection()?;
 
     // Add some members to the geospatial index.
 

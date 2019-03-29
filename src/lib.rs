@@ -38,8 +38,8 @@
 //! extern crate redis;
 //!
 //! fn do_something() -> redis::RedisResult<()> {
-//!     let client = try!(redis::Client::open("redis://127.0.0.1/"));
-//!     let con = try!(client.get_connection());
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let mut con = client.get_connection()?;
 //!
 //!     /* do something here */
 //!
@@ -53,15 +53,6 @@
 //! There are currently two features defined that can enable additional
 //! functionality if so desired.
 //!
-//! `with-unix-sockets`:
-//!   By default this library does not support unix sockets on older versions
-//!   of Rust but you can optionally compile it with unix sockets enabled by
-//!   enabling the `with-unix-sockets` feature flag.  On rust 1.10 or later
-//!   this is not needed.
-//!
-//! `with-rustc-json`:
-//!   This feature flag enables the `rustc_serialize` JSON support.
-//!
 //! ## Connection Parameters
 //!
 //! redis-rs knows different ways to define where a connection should
@@ -74,8 +65,7 @@
 //!
 //! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
 //!
-//! In case the create is compiled with Unix socket support you can also
-//! use a unix URL in this format:
+//! If Unix socket support is available you can use a unix URL in this format:
 //!
 //! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
 //!
@@ -91,8 +81,8 @@
 //! to your liking you can send a query into any `ConnectionLike` object:
 //!
 //! ```rust,no_run
-//! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(redis::cmd("SET").arg("my_key").arg(42).query(con));
+//! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
+//!     let _ : () = redis::cmd("SET").arg("my_key").arg(42).query(con)?;
 //!     Ok(())
 //! }
 //! ```
@@ -112,8 +102,8 @@
 //! extern crate redis;
 //! use redis::Commands;
 //!
-//! fn do_something(con: &redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = try!(con.set("my_key", 42));
+//! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
+//!     let _ : () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
 //! # fn main() {}
@@ -126,8 +116,7 @@
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
 //! exactly friendly to developers, this library provides flexible support
-//! for casting values to the intended results.  This is driven through the
-//! `FromRedisValue` and `ToRedisArgs` traits.
+//! for casting values to the intended results.  This is driven through the `FromRedisValue` and `ToRedisArgs` traits.
 //!
 //! The `arg` method of the command will accept a wide range of types through
 //! the `ToRedisArgs` trait and the `query` method of a command can convert the
@@ -140,16 +129,16 @@
 //! # use std::collections::{HashMap, HashSet};
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
-//! let count : i32 = try!(con.get("my_counter"));
+//! # let mut con = client.get_connection().unwrap();
+//! let count : i32 = con.get("my_counter")?;
 //! let count = con.get("my_counter").unwrap_or(0i32);
-//! let k : Option<String> = try!(con.get("missing_key"));
-//! let name : String = try!(con.get("my_name"));
-//! let bin : Vec<u8> = try!(con.get("my_binary"));
-//! let map : HashMap<String, i32> = try!(con.hgetall("my_hash"));
-//! let keys : Vec<String> = try!(con.hkeys("my_hash"));
-//! let mems : HashSet<i32> = try!(con.smembers("my_set"));
-//! let (k1, k2) : (String, String) = try!(con.get(&["k1", "k2"]));
+//! let k : Option<String> = con.get("missing_key")?;
+//! let name : String = con.get("my_name")?;
+//! let bin : Vec<u8> = con.get("my_binary")?;
+//! let map : HashMap<String, i32> = con.hgetall("my_hash")?;
+//! let keys : Vec<String> = con.hkeys("my_hash")?;
+//! let mems : HashSet<i32> = con.smembers("my_set")?;
+//! let (k1, k2) : (String, String) = con.get(&["k1", "k2"])?;
 //! # Ok(())
 //! # }
 //! ```
@@ -165,9 +154,9 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
-//! let mut iter : redis::Iter<isize> = try!(redis::cmd("SSCAN").arg("my_set")
-//!     .cursor_arg(0).iter(&con));
+//! # let mut con = client.get_connection().unwrap();
+//! let mut iter : redis::Iter<isize> = redis::cmd("SSCAN").arg("my_set")
+//!     .cursor_arg(0).clone().iter(&mut con)?;
 //! for x in iter {
 //!     // do something with the item
 //! }
@@ -189,12 +178,12 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! # let mut con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
 //!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con));
+//!     .cmd("GET").arg("key_2").query(&mut con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -206,13 +195,13 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! # let mut con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
 //!     .cmd("SET").arg("key_2").arg(43).ignore()
 //!     .cmd("GET").arg("key_1")
-//!     .cmd("GET").arg("key_2").query(&con));
+//!     .cmd("GET").arg("key_2").query(&mut con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -223,13 +212,13 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! use redis::PipelineCommands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
-//! let (k1, k2) : (i32, i32) = try!(redis::pipe()
+//! # let mut con = client.get_connection().unwrap();
+//! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .set("key_1", 42).ignore()
 //!     .set("key_2", 43).ignore()
 //!     .get("key_1")
-//!     .get("key_2").query(&con));
+//!     .get("key_2").query(&mut con)?;
 //! # Ok(()) }
 //! ```
 //!
@@ -243,14 +232,14 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! use redis::{Commands, PipelineCommands};
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection().unwrap();
 //! let key = "the_key";
-//! let (new_val,) : (isize,) = try!(redis::transaction(&con, &[key], |pipe| {
-//!     let old_val : isize = try!(con.get(key));
+//! let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
+//!     let old_val : isize = con.get(key)?;
 //!     pipe
 //!         .set(key, old_val + 1).ignore()
-//!         .get(key).query(&con)
-//! }));
+//!         .get(key).query(con)
+//! })?;
 //! println!("The incremented number is: {}", new_val);
 //! # Ok(()) }
 //! ```
@@ -268,14 +257,15 @@
 //!
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
-//! let client = try!(redis::Client::open("redis://127.0.0.1/"));
-//! let mut pubsub = try!(client.get_pubsub());
-//! try!(pubsub.subscribe("channel_1"));
-//! try!(pubsub.subscribe("channel_2"));
+//! let client = redis::Client::open("redis://127.0.0.1/")?;
+//! let mut con = client.get_connection()?;
+//! let mut pubsub = con.as_pubsub();
+//! pubsub.subscribe("channel_1")?;
+//! pubsub.subscribe("channel_2")?;
 //!
 //! loop {
-//!     let msg = try!(pubsub.get_message());
-//!     let payload : String = try!(msg.get_payload());
+//!     let msg = pubsub.get_message()?;
+//!     let payload : String = msg.get_payload()?;
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
 //! # }
@@ -292,14 +282,61 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection().unwrap();
 //! let script = redis::Script::new(r"
 //!     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 //! ");
-//! let result : isize = try!(script.arg(1).arg(2).invoke(&con));
+//! let result : isize = script.arg(1).arg(2).invoke(&mut con)?;
 //! assert_eq!(result, 3);
 //! # Ok(()) }
 //! ```
+//!
+//! # Async
+//!
+//! In addition to the synchronous interface that's been explained above there also exists an
+//! asynchronous interface based on [`futures`][] and [`tokio`][].
+//!
+//! This interface exists under the `async` module and largely mirrors the synchronous with a few
+//! concessions to make it fit the constraints of `futures`.
+//!
+//! ```rust,no_run
+//! extern crate redis;
+//! extern crate futures;
+//! extern crate tokio;
+//!
+//! use futures::Future;
+//!
+//! # fn main() {
+//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! let connect = client.get_async_connection();
+//!
+//! tokio::run(connect.and_then(|con| {
+//!     redis::cmd("SET")
+//!         .arg("key1")
+//!         .arg(b"foo")
+//!         // `query_async` acts in the same way as `query` but requires the connection to be
+//!         // taken by value as the method returns a `Future` instead of `Result`.
+//!         // This connection will be returned after the future has been completed allowing it to
+//!         // be used again.
+//!         .query_async(con)
+//!         .and_then(|(con, ())| {
+//!             redis::cmd("SET").arg(&["key2", "bar"]).query_async(con)
+//!         })
+//!         .and_then(|(con, ())| {
+//!             redis::cmd("MGET")
+//!                 .arg(&["key1", "key2"])
+//!                 .query_async(con)
+//!                 .map(|t| t.1)
+//!         })
+//! }).then(|result| {
+//!     assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+//!     Ok(())
+//! }));
+//! # }
+//! ```
+//!
+//! [`futures`]:https://crates.io/crates/futures
+//! [`tokio`]:https://tokio.rs
 //!
 //! ## Breaking Changes
 //!
@@ -310,58 +347,69 @@
 
 #![deny(non_camel_case_types)]
 
-extern crate url;
+#[macro_use]
+extern crate combine;
+extern crate bytes;
+extern crate dtoa;
+extern crate itoa;
 extern crate sha1;
+extern crate url;
+#[macro_use]
+extern crate futures;
+extern crate tokio_executor;
+#[macro_use]
+extern crate tokio_io;
+extern crate tokio_codec;
+extern crate tokio_sync;
+extern crate tokio_tcp;
 
-#[cfg(feature="with-rustc-json")]
-pub extern crate rustc_serialize as serialize;
-#[cfg(feature="with-unix-sockets")]
-extern crate unix_socket;
-
-#[doc(hidden)]
-#[cfg(feature="with-rustc-json")]
-pub use serialize::json::Json;
+#[cfg(unix)]
+extern crate tokio_uds;
 
 // public api
-pub use parser::{parse_redis_value, Parser};
 pub use client::Client;
+pub use cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
+pub use commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
+pub use connection::{
+    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    IntoConnectionInfo, Msg, PubSub,
+};
+pub use parser::{parse_async, parse_redis_value, Parser};
 pub use script::{Script, ScriptInvocation};
-pub use connection::{Connection, ConnectionLike, ConnectionInfo, ConnectionAddr,
-                     IntoConnectionInfo, PubSub, Msg, transaction, parse_redis_url};
-pub use cmd::{cmd, Cmd, pipe, Pipeline, Iter, pack_command};
-pub use commands::{Commands, PipelineCommands};
 
 pub use types::{
-    /* low level values */
-    Value,
+    // utility functions
+    from_redis_value,
 
-    /* error and result types */
-    RedisError,
-    RedisResult,
-
-    /* error kinds */
+    // error kinds
     ErrorKind,
 
-    /* utility types */
+    // conversion traits
+    FromRedisValue,
+
+    // utility types
     InfoDict,
     NumericBehavior,
 
-    /* conversion traits */
-    FromRedisValue,
+    // error and result types
+    RedisError,
+    RedisFuture,
+    RedisResult,
     ToRedisArgs,
 
-    /* utility functions */
-    from_redis_value,
+    // low level values
+    Value,
 };
 
 mod macros;
 
-mod parser;
+pub mod aio;
+pub mod geo;
+
 mod client;
-mod connection;
-mod types;
-mod script;
 mod cmd;
 mod commands;
-
-pub mod geo;
+mod connection;
+mod parser;
+mod script;
+mod types;

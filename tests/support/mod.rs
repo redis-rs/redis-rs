@@ -1,15 +1,26 @@
-use net2;
-use rand;
+#![allow(dead_code)]
+
+extern crate futures;
+extern crate net2;
+extern crate rand;
+
 use redis;
+
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::io;
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
+use std::path::PathBuf;
+
+use self::futures::Future;
+
+use redis::{RedisError, Value};
+
 #[derive(PartialEq)]
-pub enum ServerType {
+enum ServerType {
     Tcp,
     Unix,
 }
@@ -20,8 +31,12 @@ pub struct RedisServer {
 }
 
 impl ServerType {
-    pub fn get_intended() -> ServerType {
-        match env::var("REDISRS_SERVER_TYPE").ok().as_ref().map(|x| &x[..]) {
+    fn get_intended() -> ServerType {
+        match env::var("REDISRS_SERVER_TYPE")
+            .ok()
+            .as_ref()
+            .map(|x| &x[..])
+        {
             Some("tcp") => ServerType::Tcp,
             Some("unix") => ServerType::Unix,
             val => {
@@ -60,10 +75,7 @@ impl RedisServer {
             ServerType::Unix => {
                 let (a, b) = rand::random::<(u64, u64)>();
                 let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
-                cmd.arg("--port")
-                    .arg("0")
-                    .arg("--unixsocket")
-                    .arg(&path);
+                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
@@ -75,13 +87,15 @@ impl RedisServer {
         }
     }
 
+    pub fn wait(&mut self) {
+        self.process.wait().unwrap();
+    }
+
     pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
         &self.addr
     }
-}
 
-impl Drop for RedisServer {
-    fn drop(&mut self) {
+    pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
         match *self.get_client_addr() {
@@ -90,6 +104,12 @@ impl Drop for RedisServer {
             }
             _ => {}
         }
+    }
+}
+
+impl Drop for RedisServer {
+    fn drop(&mut self) {
+        self.stop()
     }
 }
 
@@ -103,12 +123,12 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-                addr: Box::new(server.get_client_addr().clone()),
-                db: 0,
-                passwd: None,
-            })
-            .unwrap();
-        let con;
+            addr: Box::new(server.get_client_addr().clone()),
+            db: 0,
+            passwd: None,
+        })
+        .unwrap();
+        let mut con;
 
         let millisecond = Duration::from_millis(1);
         loop {
@@ -126,7 +146,7 @@ impl TestContext {
                 }
             }
         }
-        redis::cmd("FLUSHDB").execute(&con);
+        redis::cmd("FLUSHDB").execute(&mut con);
 
         TestContext {
             server: server,
@@ -138,8 +158,43 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    #[allow(dead_code)]
-    pub fn pubsub(&self) -> redis::PubSub {
-        self.client.get_pubsub().unwrap()
+    pub fn async_connection(
+        &self,
+    ) -> impl Future<Item = redis::aio::Connection, Error = RedisError> {
+        self.client.get_async_connection()
+    }
+
+    pub fn stop_server(&mut self) {
+        self.server.stop();
+    }
+
+    pub fn shared_async_connection(
+        &self,
+    ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
+        self.client.get_shared_async_connection()
+    }
+}
+
+pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
+where
+    W: io::Write,
+{
+    match *value {
+        Value::Nil => write!(writer, "$-1\r\n"),
+        Value::Int(val) => write!(writer, ":{}\r\n", val),
+        Value::Data(ref val) => {
+            write!(writer, "${}\r\n", val.len())?;
+            writer.write_all(val)?;
+            writer.write_all(b"\r\n")
+        }
+        Value::Bulk(ref values) => {
+            write!(writer, "*{}\r\n", values.len())?;
+            for val in values.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
+        }
+        Value::Okay => write!(writer, "+OK\r\n"),
+        Value::Status(ref s) => write!(writer, "+{}\r\n", s),
     }
 }

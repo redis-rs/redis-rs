@@ -1,7 +1,7 @@
 //! Defines types to use with the geospatial commands.
 
 use super::{ErrorKind, RedisResult};
-use types::{FromRedisValue, ToRedisArgs, Value};
+use types::{FromRedisValue, ToRedisArgs, Value, RedisWrite};
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => ({
@@ -23,14 +23,14 @@ pub enum Unit {
 }
 
 impl ToRedisArgs for Unit {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let args = match *self {
+    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
+        let unit = match *self {
             Unit::Meters => "m",
             Unit::Kilometers => "km",
             Unit::Miles => "mi",
             Unit::Feet => "ft",
         };
-        vec![args.as_bytes().to_vec()]
+        out.write_arg(unit.as_bytes());
     }
 }
 
@@ -74,12 +74,13 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let mut args = Vec::new();
-        for field in &[&self.longitude, &self.latitude] {
-            args.extend(ToRedisArgs::to_redis_args(*field));
-        }
-        args
+    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
+        ToRedisArgs::write_redis_args(&self.longitude, out);
+        ToRedisArgs::write_redis_args(&self.latitude, out);
+    }
+
+    fn is_single_arg(&self) -> bool {
+        false
     }
 }
 
@@ -115,7 +116,7 @@ impl Default for RadiusOrder {
 /// use redis::{Commands, RedisResult};
 /// use redis::geo::{RadiusSearchResult, RadiusOptions, RadiusOrder, Unit};
 /// fn nearest_in_radius(
-///     con: &redis::Connection,
+///     con: &mut redis::Connection,
 ///     key: &str,
 ///     longitude: f64,
 ///     latitude: f64,
@@ -182,39 +183,43 @@ impl RadiusOptions {
 }
 
 impl ToRedisArgs for RadiusOptions {
-    fn to_redis_args(&self) -> Vec<Vec<u8>> {
-        let mut args = Vec::new();
-
+    fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
         if self.with_coord {
-            args.push("WITHCOORD".as_bytes().to_vec());
+            out.write_arg("WITHCOORD".as_bytes());
         }
 
         if self.with_dist {
-            args.push("WITHDIST".as_bytes().to_vec());
+            out.write_arg("WITHDIST".as_bytes());
         }
 
         if let Some(n) = self.count {
-            args.push("COUNT".as_bytes().to_vec());
-            args.push(format!("{}", n).into_bytes());
+            out.write_arg("COUNT".as_bytes());
+            out.write_arg(format!("{}", n).as_bytes());
         }
 
         match self.order {
-            RadiusOrder::Asc => args.push("ASC".as_bytes().to_vec()),
-            RadiusOrder::Desc => args.push("DESC".as_bytes().to_vec()),
+            RadiusOrder::Asc => out.write_arg("ASC".as_bytes()),
+            RadiusOrder::Desc => out.write_arg("DESC".as_bytes()),
             _ => (),
         };
 
         if let Some(ref store) = self.store {
-            args.push("STORE".as_bytes().to_vec());
-            args.extend_from_slice(&store[..]);
+            out.write_arg("STORE".as_bytes());
+            for i in store {
+                out.write_arg(i);
+            }
         }
 
         if let Some(ref store_dist) = self.store_dist {
-            args.push("STOREDIST".as_bytes().to_vec());
-            args.extend_from_slice(&store_dist[..]);
+            out.write_arg("STOREDIST".as_bytes());
+            for i in store_dist {
+                out.write_arg(i);
+            }
         }
+    }
 
-        args
+    fn is_single_arg(&self) -> bool {
+        false
     }
 }
 

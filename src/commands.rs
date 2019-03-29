@@ -1,8 +1,7 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
 use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
-use client::Client;
-use connection::{Connection, ConnectionLike};
+use connection::{ConnectionLike, Msg, Connection};
 use cmd::{cmd, Cmd, Pipeline, Iter};
 use geo;
 
@@ -25,10 +24,10 @@ macro_rules! implement_commands {
         ///
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
-        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-        /// let con = try!(client.get_connection());
-        /// redis::cmd("SET").arg("my_key").arg(42).execute(&con);
-        /// assert_eq!(redis::cmd("GET").arg("my_key").query(&con), Ok(42));
+        /// let client = redis::Client::open("redis://127.0.0.1/")?;
+        /// let mut con = client.get_connection()?;
+        /// redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
+        /// assert_eq!(redis::cmd("GET").arg("my_key").query(&mut con), Ok(42));
         /// # Ok(()) }
         /// ```
         ///
@@ -37,8 +36,8 @@ macro_rules! implement_commands {
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
-        /// let client = try!(redis::Client::open("redis://127.0.0.1/"));
-        /// let con = try!(client.get_connection());
+        /// let client = redis::Client::open("redis://127.0.0.1/")?;
+        /// let mut con = client.get_connection()?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```
@@ -47,60 +46,76 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
-                    &self $(, $argname: $argty)*) -> RedisResult<RV>
+                    &mut self $(, $argname: $argty)*) -> RedisResult<RV>
                     { ($body).query(self) }
             )*
 
             /// Incrementally iterate the keys space.
             #[inline]
-            fn scan<RV: FromRedisValue>(&self) -> RedisResult<Iter<RV>> {
-                cmd("SCAN").cursor_arg(0).iter(self)
+            fn scan<RV: FromRedisValue>(&mut self) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&self, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("SCAN").cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values.
             #[inline]
-            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("HSCAN").arg(key).cursor_arg(0).iter(self)
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate hash fields and associated values for
             /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("HSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate set elements.
             #[inline]
-            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("SSCAN").arg(key).cursor_arg(0).iter(self)
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("SSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
 
             /// Incrementally iterate sorted set elements.
             #[inline]
-            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&self, key: K) -> RedisResult<Iter<RV>> {
-                cmd("ZSCAN").arg(key).cursor_arg(0).iter(self)
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0);
+                c.iter(self)
             }
 
             /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
-                cmd("ZSCAN").arg(key).cursor_arg(0).arg("MATCH").arg(pattern).iter(self)
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                c.iter(self)
             }
         }
 
@@ -110,14 +125,14 @@ macro_rules! implement_commands {
         pub trait PipelineCommands {
             #[doc(hidden)]
             #[inline]
-            fn perform(&mut self, con: &Cmd) -> &mut Self;
+            fn perform(&mut self, con: Cmd) -> &mut Self;
 
             $(
                 $(#[$attr])*
                 #[inline]
                 fn $name<'a $(, $tyargs: $ty)*>(
                     &mut self $(, $argname: $argty)*) -> &mut Self
-                    { self.perform($body) }
+                    { self.perform(::std::mem::replace($body, Cmd::new())) }
             )*
         }
     )
@@ -199,6 +214,11 @@ implement_commands! {
     /// Remove the expiration from a key.
     fn persist<K: ToRedisArgs>(key: K) {
         cmd("PERSIST").arg(key)
+    }
+
+    /// Check the expiration time of a key.
+    fn ttl<K: ToRedisArgs>(key: K) {
+        cmd("TTL").arg(key)
     }
 
     /// Rename a key.
@@ -753,15 +773,15 @@ implement_commands! {
     /// use redis::{Commands, Connection, RedisResult};
     /// use redis::geo::Coord;
     ///
-    /// fn add_point(con: &Connection) -> RedisResult<isize> {
+    /// fn add_point(con: &mut Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo"))
     /// }
     ///
-    /// fn add_point_with_tuples(con: &Connection) -> RedisResult<isize> {
+    /// fn add_point_with_tuples(con: &mut Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", ("13.361389", "38.115556", "Palermo"))
     /// }
     ///
-    /// fn add_many_points(con: &Connection) -> RedisResult<isize> {
+    /// fn add_many_points(con: &mut Connection) -> RedisResult<isize> {
     ///     con.geo_add("my_gis", &[
     ///         ("13.361389", "38.115556", "Palermo"),
     ///         ("15.087269", "37.502669", "Catania")
@@ -785,7 +805,7 @@ implement_commands! {
     /// use redis::{Commands, RedisResult};
     /// use redis::geo::Unit;
     ///
-    /// fn get_dists(con: &redis::Connection) {
+    /// fn get_dists(con: &mut redis::Connection) {
     ///     let x: RedisResult<f64> = con.geo_dist(
     ///         "my_gis",
     ///         "Palermo",
@@ -827,7 +847,7 @@ implement_commands! {
     /// ```rust,no_run
     /// use redis::{Commands, RedisResult};
     ///
-    /// fn get_hash(con: &redis::Connection) {
+    /// fn get_hash(con: &mut redis::Connection) {
     ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", "Palermo");
     ///     // x is vec!["sqc8b49rny0"]
     ///
@@ -853,7 +873,7 @@ implement_commands! {
     /// use redis::{Commands, RedisResult};
     /// use redis::geo::Coord;
     ///
-    /// fn get_position(con: &redis::Connection) {
+    /// fn get_position(con: &mut redis::Connection) {
     ///     let x: RedisResult<Vec<Vec<f64>>> = con.geo_pos("my_gis", &["Palermo", "Catania"]);
     ///     // x is [ [ 13.361389, 38.115556 ], [ 15.087269, 37.502669 ] ];
     ///
@@ -880,7 +900,7 @@ implement_commands! {
     /// use redis::{Commands, RedisResult};
     /// use redis::geo::{RadiusOptions, RadiusSearchResult, RadiusOrder, Unit};
     ///
-    /// fn radius(con: &redis::Connection) -> Vec<RadiusSearchResult> {
+    /// fn radius(con: &mut redis::Connection) -> Vec<RadiusSearchResult> {
     ///     let opts = RadiusOptions::default().with_dist().order(RadiusOrder::Asc);
     ///     con.geo_radius("my_gis", 15.90, 37.21, 51.39, Unit::Kilometers, opts).unwrap()
     /// }
@@ -923,11 +943,108 @@ implement_commands! {
 
 }
 
-impl Commands for Connection {}
-impl Commands for Client {}
+/// Allows pubsub callbacks to stop receiving messages.
+///
+/// Arbitrary data may be returned from `Break`.
+pub enum ControlFlow<U> {
+    Continue,
+    Break(U),
+}
+
+/// The PubSub trait allows subscribing to one or more channels
+/// and receiving a callback whenever a message arrives.
+///
+/// Each method handles subscribing to the list of keys, waiting for
+/// messages, and unsubscribing from the same list of channels once
+/// a ControlFlow::Break is encountered.
+///
+/// Once (p)subscribe returns Ok(U), the connection is again safe to use
+/// for calling other methods.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// # fn do_something() -> redis::RedisResult<()> {
+/// use redis::{PubSubCommands, ControlFlow};
+/// let client = redis::Client::open("redis://127.0.0.1/")?;
+/// let mut con = client.get_connection()?;
+/// let mut count = 0;
+/// con.subscribe(&["foo"], |msg| {
+///     // do something with message
+///     assert_eq!(msg.get_channel(), Ok(String::from("foo")));
+///
+///     // increment messages seen counter
+///     count += 1;
+///     match count {
+///         // stop after receiving 10 messages
+///         10 => ControlFlow::Break(()),
+///         _ => ControlFlow::Continue,
+///     }
+/// });
+/// # Ok(()) }
+/// ```
+// TODO In the future, it would be nice to implement Try such that `?` will work
+//      within the closure.
+pub trait PubSubCommands: Sized {
+    /// Subscribe to a list of channels using SUBSCRIBE and run the provided
+    /// closure for each message received.
+    ///
+    /// For every `Msg` passed to the provided closure, either
+    /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
+    /// method will not return until `ControlFlow::Break` is observed.
+    fn subscribe<'a, C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
+        where F: FnMut(Msg) -> ControlFlow<U>,
+              C: ToRedisArgs;
+
+    /// Subscribe to a list of channels using PSUBSCRIBE and run the provided
+    /// closure for each message received.
+    ///
+    /// For every `Msg` passed to the provided closure, either
+    /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
+    /// method will not return until `ControlFlow::Break` is observed.
+    fn psubscribe<'a, P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
+        where F: FnMut(Msg) -> ControlFlow<U>,
+              P: ToRedisArgs;
+}
+
+impl<T> Commands for T where T: ConnectionLike {}
+
+impl PubSubCommands for Connection {
+    fn subscribe<'a, C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
+        where F: FnMut(Msg) -> ControlFlow<U>,
+              C: ToRedisArgs
+    {
+        let mut pubsub = self.as_pubsub();
+        pubsub.subscribe(channels)?;
+
+        loop {
+            let msg = pubsub.get_message()?;
+            match func(msg) {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(value) => return Ok(value),
+            }
+        }
+    }
+
+    fn psubscribe<'a, P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
+        where F: FnMut(Msg) -> ControlFlow<U>,
+              P: ToRedisArgs
+    {
+        let mut pubsub = self.as_pubsub();
+        pubsub.psubscribe(patterns)?;
+
+        loop {
+            let msg = pubsub.get_message()?;
+            match func(msg) {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(value) => return Ok(value),
+            }
+        };
+    }
+}
 
 impl PipelineCommands for Pipeline {
-    fn perform(&mut self, cmd: &Cmd) -> &mut Pipeline {
+    fn perform(&mut self, cmd: Cmd) -> &mut Pipeline {
         self.add_command(cmd)
     }
 }
