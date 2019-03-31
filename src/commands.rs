@@ -188,6 +188,11 @@ implement_commands! {
         cmd("GETRANGE").arg(key).arg(from).arg(to)
     }
 
+    /// Overwrite the part of the value stored in key at the specified offset.
+    fn setrange<K: ToRedisArgs, V: ToRedisArgs>(key: K, offset: isize, value: V) {
+        cmd("SETRANGE").arg(key).arg(offset).arg(value)
+    }
+
     /// Delete one or more keys.
     fn del<K: ToRedisArgs>(key: K) {
         cmd("DEL").arg(key)
