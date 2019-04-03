@@ -59,7 +59,7 @@ let mut iter : redis::Iter<isize> = cmd.arg("my_set").cursor_arg(0).clone().iter
 
 #### A mutable connection object is now required ([#148](https://github.com/mitsuhiko/redis-rs/pull/148))
 
-We remove the internal usage of `RefCell` and `Cell` and instead require a mutable reference,  `&mut ConnectionLike`,
+We removed the internal usage of `RefCell` and `Cell` and instead require a mutable reference, `&mut ConnectionLike`,
 on all command calls.
 
 Old code:
@@ -107,6 +107,36 @@ let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
         .get(key).query(&con)
 })?;
 ```
+
+#### Remove `rustc-serialize` feature ([#200](https://github.com/mitsuhiko/redis-rs/pull/200))
+
+We removed serialization to/from JSON. The underlying library is deprecated for a long time.
+
+Old code in `Cargo.toml`:
+
+```
+[dependencies.redis]
+version = "0.9.1"
+features = ["with-rustc-json"]
+```
+
+There's no replacement for the feature.
+Use [serde](https://serde.rs/) and handle the serialization/deserialization in your own code.
+
+#### Remove `with-unix-sockets` feature ([#201](https://github.com/mitsuhiko/redis-rs/pull/201))
+
+We removed the Unix socket feature. It is now always enabled.
+We also removed auto-detection.
+
+Old code in `Cargo.toml`:
+
+```
+[dependencies.redis]
+version = "0.9.1"
+features = ["with-unix-sockets"]
+```
+
+There's no replacement for the feature. Unix sockets will continue to work by default.
 
 ## [0.10.0](https://github.com/mitsuhiko/redis-rs/compare/0.9.1...0.10.0) - 2019-02-19
 
