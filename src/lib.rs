@@ -395,6 +395,7 @@ pub use types::{
     RedisError,
     RedisFuture,
     RedisResult,
+    RedisWrite,
     ToRedisArgs,
 
     // low level values
