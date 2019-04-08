@@ -67,14 +67,12 @@ impl<T> Coord<T> {
 impl<T: FromRedisValue> FromRedisValue for Coord<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
-        if values.len() != 2 {
-            invalid_type_error!(v, "Expect a pair of numbers");
-        }
         let mut values = values.into_iter();
-        Ok(Coord {
-            longitude: values.next().unwrap(),
-            latitude: values.next().unwrap(),
-        })
+        let (longitude, latitude) = match (values.next(), values.next(), values.next()) {
+            (Some(longitude), Some(latitude), None) => (longitude, latitude),
+            _ => invalid_type_error!(v, "Expect a pair of numbers"),
+        };
+        Ok(Coord { longitude, latitude })
     }
 }
 
@@ -162,7 +160,7 @@ impl RadiusOptions {
         self
     }
 
-    /// Return the longitude,latitude coordinates of the matching items.
+    /// Return the `longitude, latitude` coordinates of the matching items.
     pub fn with_coord(mut self) -> Self {
         self.with_coord = true;
         self
@@ -174,7 +172,7 @@ impl RadiusOptions {
         self
     }
 
-    /// Store the results in a sorted set at key, instead of returning them.
+    /// Store the results in a sorted set at `key`, instead of returning them.
     ///
     /// This feature can't be used with any `with_*` method.
     pub fn store<K: ToRedisArgs>(mut self, key: K) -> Self {
@@ -182,8 +180,8 @@ impl RadiusOptions {
         self
     }
 
-    /// Similar to `store`, but includes the distance of every member from the
-    /// center. This feature can't be used with any `with_*` method.
+    /// Store the results in a sorted set at `key`, with the distance from the
+    /// center as its score. This feature can't be used with any `with_*` method.
     pub fn store_dist<K: ToRedisArgs>(mut self, key: K) -> Self {
         self.store_dist = Some(ToRedisArgs::to_redis_args(&key));
         self
@@ -327,7 +325,7 @@ mod tests {
         assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
         // Some combinations with WITH* options
-        let opts = || RadiusOptions::default();
+        let opts = RadiusOptions::default;
 
         assert_args!(opts().with_coord().with_dist(), "WITHCOORD", "WITHDIST");
 
