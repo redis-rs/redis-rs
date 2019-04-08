@@ -929,10 +929,8 @@ implement_commands! {
             .arg(options)
     }
 
-    /// This command is exactly like [`geo_radius`](#method.geo_radius) with the sole
-    /// difference that instead of taking, as the center of the area to query, a
-    /// longitude and latitude value, it takes the name of a member already
-    /// existing inside the geospatial index represented by the sorted set.
+    /// Retrieve members selected by distance with the center of `member`. The
+    /// member itself is always contained in the results.
     #[cfg(feature = "geospatial")]
     fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
         key: K,
