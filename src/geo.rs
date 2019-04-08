@@ -72,7 +72,10 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
             (Some(longitude), Some(latitude), None) => (longitude, latitude),
             _ => invalid_type_error!(v, "Expect a pair of numbers"),
         };
-        Ok(Coord { longitude, latitude })
+        Ok(Coord {
+            longitude,
+            latitude,
+        })
     }
 }
 
