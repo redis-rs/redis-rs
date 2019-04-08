@@ -23,6 +23,11 @@ tokio-io = "0.1"
 tokio-codec = "0.1"
 tokio-sync = "0.1"
 
+[features]
+default = [ "geospatial" ]
+
+geospatial = []
+
 [target.'cfg(unix)'.dependencies]
 tokio-uds = { version = "0.2" }
 

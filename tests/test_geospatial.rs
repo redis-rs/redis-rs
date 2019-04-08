@@ -1,3 +1,5 @@
+#![cfg(feature = "geospatial")]
+
 extern crate net2;
 extern crate rand;
 extern crate redis;

@@ -404,6 +404,8 @@ pub use types::{
 mod macros;
 
 pub mod aio;
+
+#[cfg(feature = "geospatial")]
 pub mod geo;
 
 mod client;

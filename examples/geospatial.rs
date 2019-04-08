@@ -1,19 +1,20 @@
 extern crate redis;
 
-use redis::{geo, Commands, RedisResult};
-use std::env;
-use std::f64;
+use redis::RedisResult;
 use std::process::exit;
 
-fn redis_url() -> String {
-    match env::var("REDIS_URL") {
+#[cfg(feature = "geospatial")]
+fn run() -> RedisResult<()> {
+    use redis::{geo, Commands};
+    use std::env;
+    use std::f64;
+
+    let redis_url = match env::var("REDIS_URL") {
         Ok(url) => url,
         Err(..) => "redis://127.0.0.1/".to_string(),
-    }
-}
+    };
 
-fn run() -> RedisResult<()> {
-    let client = redis::Client::open(redis_url().as_str())?;
+    let client = redis::Client::open(redis_url.as_str())?;
     let mut con = client.get_connection()?;
 
     // Add some members to the geospatial index.
@@ -51,6 +52,11 @@ fn run() -> RedisResult<()> {
         );
     }
 
+    Ok(())
+}
+
+#[cfg(not(feature = "geospatial"))]
+fn run() -> RedisResult<()> {
     Ok(())
 }
 

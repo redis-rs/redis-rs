@@ -3,6 +3,8 @@
 use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
 use connection::{ConnectionLike, Msg, Connection};
 use cmd::{cmd, Cmd, Pipeline, Iter};
+
+#[cfg(feature = "geospatial")]
 use geo;
 
 macro_rules! implement_commands {
@@ -788,6 +790,7 @@ implement_commands! {
     ///     ])
     /// }
     /// ```
+    #[cfg(feature = "geospatial")]
     fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOADD").arg(key).arg(members)
     }
@@ -823,6 +826,7 @@ implement_commands! {
     ///     // x is Ok(None)
     /// }
     /// ```
+    #[cfg(feature = "geospatial")]
     fn geo_dist<K: ToRedisArgs, M1: ToRedisArgs, M2: ToRedisArgs>(
         key: K,
         member1: M1,
@@ -855,6 +859,7 @@ implement_commands! {
     ///     // x is vec!["sqc8b49rny0", "sqdtr74hyu0"]
     /// }
     /// ```
+    #[cfg(feature = "geospatial")]
     fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOHASH").arg(key).arg(members)
     }
@@ -882,6 +887,7 @@ implement_commands! {
     ///     // x[0].latitude is 38.115556
     /// }
     /// ```
+    #[cfg(feature = "geospatial")]
     fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOPOS").arg(key).arg(members)
     }
@@ -905,6 +911,7 @@ implement_commands! {
     ///     con.geo_radius("my_gis", 15.90, 37.21, 51.39, Unit::Kilometers, opts).unwrap()
     /// }
     /// ```
+    #[cfg(feature = "geospatial")]
     fn geo_radius<K: ToRedisArgs>(
         key: K,
         longitude: f64,
@@ -926,6 +933,7 @@ implement_commands! {
     /// difference that instead of taking, as the center of the area to query, a
     /// longitude and latitude value, it takes the name of a member already
     /// existing inside the geospatial index represented by the sorted set.
+    #[cfg(feature = "geospatial")]
     fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
         key: K,
         member: M,

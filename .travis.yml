@@ -13,14 +13,8 @@ matrix:
     - rust: nightly
       env: RUST_VERSION=nightly
 
-before_install:
-  - mkdir -p /tmp/redis
-  - curl http://download.redis.io/releases/redis-3.2.9.tar.gz | tar --strip-components 1 -C /tmp/redis -zx
-  - make -C /tmp/redis -j 2
-  - make -C /tmp/redis PREFIX=/tmp/redis install
-
 script:
-  - PATH=/tmp/redis/bin:$PATH make test
+  - make test
   - cargo check --benches
   - |
     [ "$RUST_VERSION" = "nightly" ] && exit 0 # Don't cargo-fmt on nightly
