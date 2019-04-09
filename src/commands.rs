@@ -4,6 +4,8 @@ use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
 use connection::{ConnectionLike, Msg, Connection};
 use cmd::{cmd, Cmd, Pipeline, Iter};
 
+#[cfg(feature = "geospatial")]
+use geo;
 
 macro_rules! implement_commands {
     (
@@ -752,6 +754,199 @@ implement_commands! {
     fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
         cmd("PUBLISH").arg(channel).arg(message)
     }
+
+    // geospatial commands
+
+    /// Adds the specified geospatial items to the specified key.
+    ///
+    /// Every member has to be written as a tuple of `(longitude, latitude,
+    /// member_name)`. It can be a single tuple, or a vector of tuples.
+    ///
+    /// `longitude, latitude` can be set using [`redis::geo::Coord`][1].
+    ///
+    /// [1]: ./geo/struct.Coord.html
+    ///
+    /// Returns the number of elements added to the sorted set, not including
+    /// elements already existing for which the score was updated.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, Connection, RedisResult};
+    /// use redis::geo::Coord;
+    ///
+    /// fn add_point(con: &mut Connection) -> RedisResult<isize> {
+    ///     con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo"))
+    /// }
+    ///
+    /// fn add_point_with_tuples(con: &mut Connection) -> RedisResult<isize> {
+    ///     con.geo_add("my_gis", ("13.361389", "38.115556", "Palermo"))
+    /// }
+    ///
+    /// fn add_many_points(con: &mut Connection) -> RedisResult<isize> {
+    ///     con.geo_add("my_gis", &[
+    ///         ("13.361389", "38.115556", "Palermo"),
+    ///         ("15.087269", "37.502669", "Catania")
+    ///     ])
+    /// }
+    /// ```
+    #[cfg(feature = "geospatial")]
+    fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOADD").arg(key).arg(members)
+    }
+
+    /// Return the distance between two members in the geospatial index
+    /// represented by the sorted set.
+    ///
+    /// If one or both the members are missing, the command returns NULL, so
+    /// it may be convenient to parse its response as either `Option<f64>` or
+    /// `Option<String>`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::Unit;
+    ///
+    /// fn get_dists(con: &mut redis::Connection) {
+    ///     let x: RedisResult<f64> = con.geo_dist(
+    ///         "my_gis",
+    ///         "Palermo",
+    ///         "Catania",
+    ///         Unit::Kilometers
+    ///     );
+    ///     // x is Ok(166.2742)
+    ///
+    ///     let x: RedisResult<Option<f64>> = con.geo_dist(
+    ///         "my_gis",
+    ///         "Palermo",
+    ///         "Atlantis",
+    ///         Unit::Meters
+    ///     );
+    ///     // x is Ok(None)
+    /// }
+    /// ```
+    #[cfg(feature = "geospatial")]
+    fn geo_dist<K: ToRedisArgs, M1: ToRedisArgs, M2: ToRedisArgs>(
+        key: K,
+        member1: M1,
+        member2: M2,
+        unit: geo::Unit
+    ) {
+        cmd("GEODIST")
+            .arg(key)
+            .arg(member1)
+            .arg(member2)
+            .arg(unit)
+    }
+
+    /// Return valid [Geohash][1] strings representing the position of one or
+    /// more members of the geospatial index represented by the sorted set at
+    /// key.
+    ///
+    /// [1]: https://en.wikipedia.org/wiki/Geohash
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    ///
+    /// fn get_hash(con: &mut redis::Connection) {
+    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", "Palermo");
+    ///     // x is vec!["sqc8b49rny0"]
+    ///
+    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", &["Palermo", "Catania"]);
+    ///     // x is vec!["sqc8b49rny0", "sqdtr74hyu0"]
+    /// }
+    /// ```
+    #[cfg(feature = "geospatial")]
+    fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOHASH").arg(key).arg(members)
+    }
+
+    /// Return the positions of all the specified members of the geospatial
+    /// index represented by the sorted set at key.
+    ///
+    /// Every position is a pair of `(longitude, latitude)`. [`redis::geo::Coord`][1]
+    /// can be used to convert these value in a struct.
+    ///
+    /// [1]: ./geo/struct.Coord.html
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::Coord;
+    ///
+    /// fn get_position(con: &mut redis::Connection) {
+    ///     let x: RedisResult<Vec<Vec<f64>>> = con.geo_pos("my_gis", &["Palermo", "Catania"]);
+    ///     // x is [ [ 13.361389, 38.115556 ], [ 15.087269, 37.502669 ] ];
+    ///
+    ///     let x: Vec<Coord<f64>> = con.geo_pos("my_gis", "Palermo").unwrap();
+    ///     // x[0].longitude is 13.361389
+    ///     // x[0].latitude is 38.115556
+    /// }
+    /// ```
+    #[cfg(feature = "geospatial")]
+    fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("GEOPOS").arg(key).arg(members)
+    }
+
+    /// Return the members of a sorted set populated with geospatial information
+    /// using [`geo_add`](#method.geo_add), which are within the borders of the area
+    /// specified with the center location and the maximum distance from the center
+    /// (the radius).
+    ///
+    /// Every item in the result can be read with [`redis::geo::RadiusSearchResult`][1],
+    /// which support the multiple formats returned by `GEORADIUS`.
+    ///
+    /// [1]: ./geo/struct.RadiusSearchResult.html
+    ///
+    /// ```rust,no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::geo::{RadiusOptions, RadiusSearchResult, RadiusOrder, Unit};
+    ///
+    /// fn radius(con: &mut redis::Connection) -> Vec<RadiusSearchResult> {
+    ///     let opts = RadiusOptions::default().with_dist().order(RadiusOrder::Asc);
+    ///     con.geo_radius("my_gis", 15.90, 37.21, 51.39, Unit::Kilometers, opts).unwrap()
+    /// }
+    /// ```
+    #[cfg(feature = "geospatial")]
+    fn geo_radius<K: ToRedisArgs>(
+        key: K,
+        longitude: f64,
+        latitude: f64,
+        radius: f64,
+        unit: geo::Unit,
+        options: geo::RadiusOptions
+    ) {
+        cmd("GEORADIUS")
+            .arg(key)
+            .arg(longitude)
+            .arg(latitude)
+            .arg(radius)
+            .arg(unit)
+            .arg(options)
+    }
+
+    /// Retrieve members selected by distance with the center of `member`. The
+    /// member itself is always contained in the results.
+    #[cfg(feature = "geospatial")]
+    fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
+        key: K,
+        member: M,
+        radius: f64,
+        unit: geo::Unit,
+        options: geo::RadiusOptions
+    ) {
+        cmd("GEORADIUSBYMEMBER")
+            .arg(key)
+            .arg(member)
+            .arg(radius)
+            .arg(unit)
+            .arg(options)
+    }
+
 }
 
 /// Allows pubsub callbacks to stop receiving messages.

@@ -23,12 +23,18 @@ tokio-io = "0.1"
 tokio-codec = "0.1"
 tokio-sync = "0.1"
 
+[features]
+default = [ "geospatial" ]
+
+geospatial = []
+
 [target.'cfg(unix)'.dependencies]
 tokio-uds = { version = "0.2" }
 
 [dev-dependencies]
 rand = "0.4"
 net2 = "0.2"
+assert_approx_eq = "1.0"
 fnv = "1.0.5"
 criterion = "0.2"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }

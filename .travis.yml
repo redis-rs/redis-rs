@@ -13,11 +13,6 @@ matrix:
     - rust: nightly
       env: RUST_VERSION=nightly
 
-addons:
-  apt:
-    packages:
-      - redis-server
-
 script:
   - make test
   - cargo check --benches
