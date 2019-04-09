@@ -11,6 +11,7 @@
 * Hide actual type returned from async parser ([#193](https://github.com/mitsuhiko/redis-rs/pull/193))
 * Use more performant operations for line parsing ([#198](https://github.com/mitsuhiko/redis-rs/pull/198))
 * Optimize the command encoding, see below for **breaking changes** ([#165](https://github.com/mitsuhiko/redis-rs/pull/165))
+* Add support for geospatial commands ([#130](https://github.com/mitsuhiko/redis-rs/pull/130))
 
 ### BREAKING CHANGES
 
