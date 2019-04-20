@@ -1,11 +1,29 @@
 use sha1::Sha1;
 
+use aio::ConnectionLike as AsyncConnectionLike;
 use cmd::cmd;
 use connection::ConnectionLike;
-use types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
+use futures::{
+    future::{err, Either},
+    Future,
+};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use types::{ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
+#[derive(Clone)]
 pub struct Script {
+    inner: Arc<ScriptInner>,
+    // This stores whether the script has already been loaded into Redis
+    // by this instance. It is possible that the script could have been loaded
+    // by another instance before even if this value is false.
+    already_loaded: Arc<AtomicBool>,
+}
+
+struct ScriptInner {
     code: String,
     hash: String,
 }
@@ -31,21 +49,24 @@ impl Script {
         let mut hash = Sha1::new();
         hash.update(code.as_bytes());
         Script {
-            code: code.to_string(),
-            hash: hash.digest().to_string(),
+            inner: Arc::new(ScriptInner {
+                code: code.to_string(),
+                hash: hash.digest().to_string(),
+            }),
+            already_loaded: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Returns the script's SHA1 hash in hexadecimal format.
     pub fn get_hash(&self) -> &str {
-        &self.hash
+        &self.inner.hash
     }
 
     /// Creates a script invocation object with a key filled in.
     #[inline]
     pub fn key<T: ToRedisArgs>(&self, key: T) -> ScriptInvocation {
         ScriptInvocation {
-            script: self,
+            script: self.clone(),
             args: vec![],
             keys: key.to_redis_args(),
         }
@@ -55,7 +76,7 @@ impl Script {
     #[inline]
     pub fn arg<T: ToRedisArgs>(&self, arg: T) -> ScriptInvocation {
         ScriptInvocation {
-            script: self,
+            script: self.clone(),
             args: arg.to_redis_args(),
             keys: vec![],
         }
@@ -67,7 +88,7 @@ impl Script {
     #[inline]
     pub fn prepare_invoke(&self) -> ScriptInvocation {
         ScriptInvocation {
-            script: self,
+            script: self.clone(),
             args: vec![],
             keys: vec![],
         }
@@ -77,17 +98,32 @@ impl Script {
     #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
-            script: self,
+            script: self.clone(),
             args: vec![],
             keys: vec![],
         }
         .invoke(con)
     }
+
+    #[inline]
+    pub fn invoke_async<T, C>(&self, con: C) -> RedisFuture<(C, T)>
+    where
+        T: FromRedisValue + Send + 'static,
+        C: AsyncConnectionLike + Send + Clone + 'static,
+    {
+        ScriptInvocation {
+            script: self.clone(),
+            args: vec![],
+            keys: vec![],
+        }
+        .invoke_async(con)
+    }
 }
 
 /// Represents a prepared script call.
-pub struct ScriptInvocation<'a> {
-    script: &'a Script,
+#[derive(Clone)]
+pub struct ScriptInvocation {
+    script: Script,
     args: Vec<Vec<u8>>,
     keys: Vec<Vec<u8>>,
 }
@@ -96,14 +132,11 @@ pub struct ScriptInvocation<'a> {
 /// can be then invoked.  While the `Script` type itself holds the script,
 /// the `ScriptInvocation` holds the arguments that should be invoked until
 /// it's sent to the server.
-impl<'a> ScriptInvocation<'a> {
+impl ScriptInvocation {
     /// Adds a regular argument to the invocation.  This ends up as `ARGV[i]`
     /// in the script.
     #[inline]
-    pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut ScriptInvocation<'a>
-    where
-        'a: 'b,
-    {
+    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut ScriptInvocation {
         arg.write_redis_args(&mut self.args);
         self
     }
@@ -111,10 +144,7 @@ impl<'a> ScriptInvocation<'a> {
     /// Adds a key argument to the invocation.  This ends up as `KEYS[i]`
     /// in the script.
     #[inline]
-    pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut ScriptInvocation<'a>
-    where
-        'a: 'b,
-    {
+    pub fn key<T: ToRedisArgs>(&mut self, key: T) -> &mut ScriptInvocation {
         key.write_redis_args(&mut self.keys);
         self
     }
@@ -124,7 +154,7 @@ impl<'a> ScriptInvocation<'a> {
     pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")
-                .arg(self.script.hash.as_bytes())
+                .arg(self.script.inner.hash.as_bytes())
                 .arg(self.keys.len())
                 .arg(&*self.keys)
                 .arg(&*self.args)
@@ -137,13 +167,70 @@ impl<'a> ScriptInvocation<'a> {
                     if err.kind() == ErrorKind::NoScriptError {
                         let _: () = cmd("SCRIPT")
                             .arg("LOAD")
-                            .arg(self.script.code.as_bytes())
+                            .arg(self.script.inner.code.as_bytes())
                             .query(con)?;
                     } else {
                         fail!(err);
                     }
                 }
             }
+        }
+    }
+
+    /// Invokes the script and returns the result.
+    #[inline]
+    pub fn invoke_async<T, C>(&self, con: C) -> RedisFuture<(C, T)>
+    where
+        T: FromRedisValue + Send + 'static,
+        C: AsyncConnectionLike + Send + Clone + 'static,
+    {
+        let code = self.script.inner.code.to_string();
+
+        // Check if the script has already been loaded into Redis by this instance
+        // Note that storing this boolean makes it so that we do not need to clone
+        // the ScriptInvocation in the normal case when we know that the script has
+        // already been loaded.
+        let already_loaded = self
+            .script
+            .already_loaded
+            .fetch_and(true, Ordering::Relaxed);
+        if already_loaded {
+            Box::new(
+                cmd("EVALSHA")
+                    .arg(self.script.inner.hash.as_bytes())
+                    .arg(self.keys.len())
+                    .arg(&*self.keys)
+                    .arg(&*self.args)
+                    .query_async(con.clone()),
+            )
+        } else {
+            let self_clone = self.clone();
+            let already_loaded_ref = self.script.already_loaded.clone();
+            Box::new(
+                cmd("EVALSHA")
+                    .arg(self.script.inner.hash.as_bytes())
+                    .arg(self.keys.len())
+                    .arg(&*self.keys)
+                    .arg(&*self.args)
+                    .query_async(con.clone())
+                    .or_else(move |error| {
+                        if error.kind() == ErrorKind::NoScriptError {
+                            Either::A(
+                                cmd("SCRIPT")
+                                    .arg("LOAD")
+                                    .arg(code.as_bytes())
+                                    .query_async(con)
+                                    .and_then(move |(con, _result): (C, String)| {
+                                        already_loaded_ref.store(true, Ordering::Relaxed);
+                                        self_clone.invoke_async(con)
+                                    }),
+                            )
+                        } else {
+                            Either::B(err(error))
+                        }
+                    })
+                    .then(|result| result),
+            )
         }
     }
 }
