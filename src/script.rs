@@ -7,7 +7,6 @@ use futures::{Async, Future, Poll};
 use types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
-#[derive(Clone)]
 pub struct Script {
     code: String,
     hash: String,
