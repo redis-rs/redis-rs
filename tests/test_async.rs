@@ -230,3 +230,35 @@ fn test_transaction_shared_connection() {
         }))
         .unwrap();
 }
+
+#[test]
+fn test_script() {
+    // Note this test runs both scripts twice to test when they have already been loaded
+    // into Redis and when they need to be loaded in
+    let script1 = redis::Script::new("return redis.call('SET', KEYS[1], ARGV[1])");
+    let script2 = redis::Script::new("return redis.call('GET', KEYS[1])");
+
+    let ctx = TestContext::new();
+
+    Runtime::new()
+        .unwrap()
+        .block_on(future::lazy(|| {
+            ctx.shared_async_connection().and_then(|con| {
+                script1
+                    .key("key1")
+                    .arg("foo")
+                    .invoke_async(con)
+                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
+                    .and_then(|(con, val): (SharedConnection, String)| {
+                        assert_eq!(val, "foo");
+                        script1.key("key1").arg("bar").invoke_async(con)
+                    })
+                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
+                    .and_then(|(_con, val): (SharedConnection, String)| {
+                        assert_eq!(val, "bar");
+                        Ok(())
+                    })
+            })
+        }))
+        .unwrap();
+}
