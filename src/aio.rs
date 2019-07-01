@@ -412,10 +412,14 @@ where
     }
 
     fn close(&mut self) -> Poll<(), Self::SinkError> {
-        try_ready!(self.sink_stream.close().map_err(|err| {
+        // No new requests will come in after the first call to `close` but we need to complete any
+        // in progress requests before closing
+        if !self.in_flight.is_empty() {
+            try_ready!(self.poll_complete());
+        }
+        self.sink_stream.close().map_err(|err| {
             self.send_result(Err(err));
-        }));
-        self.poll_read()
+        })
     }
 }
 
