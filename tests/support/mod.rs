@@ -17,7 +17,19 @@ use std::path::PathBuf;
 
 use self::futures::Future;
 
-use redis::{RedisError, Value};
+use redis::{RedisResult, Value};
+
+use tokio::runtime::current_thread::Runtime;
+
+pub fn block_on_all<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    let mut runtime = Runtime::new().unwrap();
+    let output = runtime.block_on(f);
+    runtime.run().unwrap();
+    output
+}
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -149,9 +161,7 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub fn async_connection(
-        &self,
-    ) -> impl Future<Item = redis::aio::Connection, Error = RedisError> {
+    pub fn async_connection(&self) -> impl Future<Output = RedisResult<redis::aio::Connection>> {
         self.client.get_async_connection()
     }
 
@@ -159,9 +169,10 @@ impl TestContext {
         self.server.stop();
     }
 
+    #[cfg(feature = "executor")]
     pub fn shared_async_connection(
         &self,
-    ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
+    ) -> impl Future<Output = RedisResult<redis::aio::SharedConnection>> {
         self.client.get_shared_async_connection()
     }
 }

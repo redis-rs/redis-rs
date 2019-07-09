@@ -1,61 +1,171 @@
 //! Adds experimental async IO support to redis.
 use std::collections::VecDeque;
-use std::fmt::Arguments;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self};
 use std::mem;
 use std::net::ToSocketAddrs;
+use std::pin::Pin;
 
 #[cfg(unix)]
-use tokio_uds::UnixStream;
+use tokio::net::unix::UnixStream;
 
-use tokio_codec::{Decoder, Framed};
-use tokio_io::{self, AsyncWrite};
-use tokio_tcp::TcpStream;
+use tokio::codec::Decoder;
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::tcp::TcpStream;
+use tokio::sync::{mpsc, oneshot};
 
-use futures::future::{Either, Executor};
-use futures::{future, try_ready, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
-use tokio_sync::{mpsc, oneshot};
+use futures::{future::Either, task::{Spawn, SpawnExt}, prelude::*, ready, task, Future, Poll, Sink, Stream};
+
+use pin_project::{project, unsafe_project};
 
 use crate::cmd::cmd;
-use crate::types::{ErrorKind, RedisError, RedisFuture, Value};
+use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 
 use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 use crate::parser::ValueCodec;
 
+#[unsafe_project(Unpin)]
 enum ActualConnection {
-    Tcp(BufReader<TcpStream>),
+    Tcp(#[pin] WriteWrapper<TcpStream>),
     #[cfg(unix)]
-    Unix(BufReader<UnixStream>),
+    Unix(#[pin] WriteWrapper<UnixStream>),
 }
 
 struct WriteWrapper<T>(BufReader<T>);
 
-impl<T> Write for WriteWrapper<T>
+impl<T> WriteWrapper<T>
 where
-    T: Read + Write,
+    T: AsyncRead,
 {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.get_mut().write(buf)
+    fn get_inner(self: Pin<&mut Self>) -> Pin<&mut T> {
+        unsafe { Pin::new_unchecked(self.get_unchecked_mut().0.get_mut()) }
     }
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.get_mut().flush()
-    }
+}
 
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.0.get_mut().write_all(buf)
-    }
-    fn write_fmt(&mut self, fmt: Arguments<'_>) -> io::Result<()> {
-        self.0.get_mut().write_fmt(fmt)
+impl<T> WriteWrapper<T> {
+    fn get_buf_reader(self: Pin<&mut Self>) -> Pin<&mut BufReader<T>> {
+        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) }
     }
 }
 
 impl<T> AsyncWrite for WriteWrapper<T>
 where
-    T: Read + AsyncWrite,
+    T: AsyncRead + AsyncWrite,
 {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.0.get_mut().shutdown()
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.get_inner().poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        self.get_inner().poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        self.get_inner().poll_shutdown(cx)
+    }
+}
+
+impl<T> AsyncRead for WriteWrapper<T>
+where
+    T: AsyncRead,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.get_buf_reader().poll_read(cx, buf)
+    }
+}
+
+impl<T> AsyncBufRead for WriteWrapper<T>
+where
+    T: AsyncRead,
+{
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
+        self.get_buf_reader().poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.get_buf_reader().consume(amt)
+    }
+}
+
+impl AsyncWrite for ActualConnection {
+    #[project]
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.poll_write(cx, buf),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.poll_write(cx, buf),
+        }
+    }
+
+    #[project]
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.poll_flush(cx),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.poll_flush(cx),
+        }
+    }
+
+    #[project]
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.poll_shutdown(cx),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.poll_shutdown(cx),
+        }
+    }
+}
+
+impl AsyncRead for ActualConnection {
+    #[project]
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.poll_read(cx, buf),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncBufRead for ActualConnection {
+    #[project]
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.poll_fill_buf(cx),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.poll_fill_buf(cx),
+        }
+    }
+
+    #[project]
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        #[project]
+        match self.project() {
+            ActualConnection::Tcp(r) => r.consume(amt),
+            #[cfg(unix)]
+            ActualConnection::Unix(r) => r.consume(amt),
+        }
     }
 }
 
@@ -65,100 +175,47 @@ pub struct Connection {
     db: i64,
 }
 
-macro_rules! with_connection {
-    ($con:expr, $f:expr) => {
-        match $con {
-            #[cfg(not(unix))]
-            ActualConnection::Tcp(con) => {
-                $f(con).map(|(con, value)| (ActualConnection::Tcp(con), value))
-            }
-
-            #[cfg(unix)]
-            ActualConnection::Tcp(con) => {
-                Either::A($f(con).map(|(con, value)| (ActualConnection::Tcp(con), value)))
-            }
-            #[cfg(unix)]
-            ActualConnection::Unix(con) => {
-                Either::B($f(con).map(|(con, value)| (ActualConnection::Unix(con), value)))
-            }
-        }
-    };
-}
-
-macro_rules! with_write_connection {
-    ($con:expr, $f:expr) => {
-        match $con {
-            #[cfg(not(unix))]
-            ActualConnection::Tcp(con) => {
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value))
-            }
-
-            #[cfg(unix)]
-            ActualConnection::Tcp(con) => Either::A(
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value)),
-            ),
-            #[cfg(unix)]
-            ActualConnection::Unix(con) => Either::B(
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Unix(con.0), value)),
-            ),
-        }
-    };
-}
-
 impl Connection {
-    /// Retrieves a single response from the connection.
-    pub fn read_response(self) -> impl Future<Item = (Self, Value), Error = RedisError> {
+    pub async fn read_response(self) -> RedisResult<(Self, Value)> {
         let db = self.db;
-        with_connection!(self.con, crate::parser::parse_redis_value_async).then(move |result| {
-            match result {
-                Ok((con, value)) => Ok((Connection { con, db }, value)),
-                Err(err) => {
-                    // TODO Do we need to shutdown here as we do in the sync version?
-                    Err(err)
-                }
-            }
-        })
+        let (con, value) = crate::parser::parse_redis_value_async(self.con).await?;
+        Ok((Connection { con, db }, value))
     }
 }
 
-/// Opens a connection.
-pub fn connect(
-    connection_info: ConnectionInfo,
-) -> impl Future<Item = Connection, Error = RedisError> {
-    let connection = match *connection_info.addr {
+pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection> {
+    let con = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = match (&host[..], port).to_socket_addrs() {
                 Ok(mut socket_addrs) => match socket_addrs.next() {
                     Some(socket_addr) => socket_addr,
                     None => {
-                        return Either::A(future::err(RedisError::from((
+                        return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
                             "No address found for host",
-                        ))));
+                        )));
                     }
                 },
-                Err(err) => return Either::A(future::err(err.into())),
+                Err(err) => return Err(err.into()),
             };
 
-            Either::A(
                 TcpStream::connect(&socket_addr)
-                    .from_err()
-                    .map(|con| ActualConnection::Tcp(BufReader::new(con))),
-            )
+                    .map_ok(|con| ActualConnection::Tcp(WriteWrapper(BufReader::new(con))))
+                    .await?
         }
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => Either::B(
-            UnixStream::connect(path).map(|stream| ActualConnection::Unix(BufReader::new(stream))),
-        ),
+        ConnectionAddr::Unix(ref path) => 
+            UnixStream::connect(path.clone())
+                .map_ok(|stream| ActualConnection::Unix(WriteWrapper(BufReader::new(stream)))).await?,
+        
         #[cfg(not(unix))]
-        ConnectionAddr::Unix(_) => Either::B(future::err(RedisError::from((
+        ConnectionAddr::Unix(_) => return Err(RedisError::from((
             ErrorKind::InvalidClientConfig,
             "Cannot connect to unix sockets \
              on this platform",
-        )))),
+        ))),
     };
 
-    Either::B(connection.from_err().and_then(move |con| {
         let rv = Connection {
             con,
             db: connection_info.db,
@@ -166,7 +223,7 @@ pub fn connect(
 
         let login = match connection_info.passwd {
             Some(ref passwd) => {
-                Either::A(cmd("AUTH").arg(&**passwd).query_async::<_, Value>(rv).then(
+                Either::Left(cmd("AUTH").arg(&**passwd).query_async::<_, Value>(rv).map(
                     |x| match x {
                         Ok((rv, Value::Okay)) => Ok(rv),
                         _ => {
@@ -178,16 +235,16 @@ pub fn connect(
                     },
                 ))
             }
-            None => Either::B(future::ok(rv)),
+            None => Either::Right(future::ok(rv)),
         };
 
         login.and_then(move |rv| {
             if connection_info.db != 0 {
-                Either::A(
+                Either::Left(
                     cmd("SELECT")
                         .arg(connection_info.db)
                         .query_async::<_, Value>(rv)
-                        .then(|result| match result {
+                        .map(|result| match result {
                             Ok((rv, Value::Okay)) => Ok(rv),
                             _ => fail!((
                                 ErrorKind::ResponseError,
@@ -196,10 +253,9 @@ pub fn connect(
                         }),
                 )
             } else {
-                Either::B(future::ok(rv))
+                Either::Right(future::ok(rv))
             }
-        })
-    }))
+        }).await
 }
 
 /// An async abstraction over connections.
@@ -228,11 +284,12 @@ pub trait ConnectionLike: Sized {
 impl ConnectionLike for Connection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
         let db = self.db;
-        Box::new(
-            with_write_connection!(self.con, |con| tokio_io::io::write_all(con, cmd))
-                .from_err()
-                .and_then(move |(con, _)| Connection { con, db }.read_response()),
-        )
+        let mut con = self.con;
+        (async move {
+            con.write_all(&cmd).await?;
+            Connection { con, db }.read_response().await
+        })
+            .boxed()
     }
 
     fn req_packed_commands(
@@ -242,35 +299,32 @@ impl ConnectionLike for Connection {
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
         let db = self.db;
-        Box::new(
-            with_write_connection!(self.con, |con| tokio_io::io::write_all(con, cmd))
-                .from_err()
-                .and_then(move |(con, _)| {
-                    let mut con = Some(Connection { con, db });
-                    let mut rv = vec![];
-                    let mut future = None;
-                    let mut idx = 0;
-                    future::poll_fn(move || {
-                        while idx < offset + count {
-                            if future.is_none() {
-                                future = Some(con.take().unwrap().read_response());
-                            }
-                            let (con2, item) = try_ready!(future.as_mut().unwrap().poll());
-                            con = Some(con2);
-                            future = None;
+        let mut con = self.con;
+        (async move {
+            con.write_all(&cmd).await?;
+            let mut con = Some(Connection { con, db });
+            let mut rv = vec![];
+            let mut future = None;
+            let mut idx = 0;
+            future::poll_fn(move |cx| {
+                while idx < offset + count {
+                    if future.is_none() {
+                        future = Some(con.take().unwrap().read_response().boxed());
+                    }
+                    let (con2, item) = ready!(future.as_mut().unwrap().as_mut().poll(cx))?;
+                    con = Some(con2);
+                    future = None;
 
-                            if idx >= offset {
-                                rv.push(item);
-                            }
-                            idx += 1;
-                        }
-                        Ok(Async::Ready((
-                            con.take().unwrap(),
-                            mem::replace(&mut rv, Vec::new()),
-                        )))
-                    })
-                }),
-        )
+                    if idx >= offset {
+                        rv.push(item);
+                    }
+                    idx += 1;
+                }
+                Poll::Ready(Ok((con.take().unwrap(), mem::replace(&mut rv, Vec::new()))))
+            })
+            .await
+        })
+            .boxed()
     }
 
     fn get_db(&self) -> i64 {
@@ -298,49 +352,58 @@ struct PipelineMessage<S, I, E> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<T>(mpsc::Sender<PipelineMessage<T::SinkItem, T::Item, T::Error>>)
-where
-    T: Stream + Sink;
+struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
 
-impl<T> Clone for Pipeline<T>
-where
-    T: Stream + Sink,
-{
+impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
     fn clone(&self) -> Self {
         Pipeline(self.0.clone())
     }
 }
 
-struct PipelineSink<T>
+#[unsafe_project(Unpin)]
+struct PipelineSink<T, I, E>
 where
-    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+    T: Stream<Item = Result<I, E>> + 'static,
 {
+    #[pin]
     sink_stream: T,
-    in_flight: VecDeque<InFlight<T::Item, T::Error>>,
+    in_flight: VecDeque<InFlight<I, E>>,
+    error: Option<E>,
 }
 
-impl<T> PipelineSink<T>
+impl<T, I, E> PipelineSink<T, I, E>
 where
-    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+    T: Stream<Item = Result<I, E>> + 'static,
 {
-    // Read messages from the stream and send them back to the caller
-    fn poll_read(&mut self) -> Poll<(), ()> {
-        loop {
-            let item = match self.sink_stream.poll() {
-                Ok(Async::Ready(Some(item))) => Ok(item),
-                // The redis response stream is not going to produce any more items so we `Err`
-                // to break out of the `forward` combinator and stop handling requests
-                Ok(Async::Ready(None)) => return Err(()),
-                Err(err) => Err(err),
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-            };
-            self.send_result(item);
+    fn new<SinkItem>(sink_stream: T) -> Self
+    where
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+    {
+        PipelineSink {
+            sink_stream,
+            in_flight: VecDeque::new(),
+            error: None,
         }
     }
 
-    fn send_result(&mut self, result: Result<T::Item, T::Error>) {
+    // Read messages from the stream and send them back to the caller
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<()> {
+        loop {
+            let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
+                Some(Ok(item)) => Ok(item),
+                Some(Err(err)) => Err(err),
+                // The redis response stream is not going to produce any more items so we `Err`
+                // to break out of the `forward` combinator and stop handling requests
+                None => return Poll::Ready(()),
+            };
+            self.as_mut().send_result(item);
+        }
+    }
+
+    fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
+        let self_ = self.project();
         let response = {
-            let entry = match self.in_flight.front_mut() {
+            let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
@@ -358,7 +421,7 @@ where
             }
         };
 
-        let entry = self.in_flight.pop_front().unwrap();
+        let entry = self_.in_flight.pop_front().unwrap();
         // `Err` means that the receiver was dropped in which case it does not
         // care about the output and we can continue by just dropping the value
         // and sender
@@ -366,35 +429,47 @@ where
     }
 }
 
-impl<T> Sink for PipelineSink<T>
+impl<SinkItem, T, I, E> Sink<PipelineMessage<SinkItem, I, E>> for PipelineSink<T, I, E>
 where
-    T: Sink<SinkError = <T as Stream>::Error> + Stream + 'static,
+    T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
 {
-    type SinkItem = PipelineMessage<T::SinkItem, T::Item, T::Error>;
-    type SinkError = ();
+    type Error = ();
 
     // Retrieve incoming messages and write them to the sink
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context,
+    ) -> Poll<Result<(), Self::Error>> {
+        match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
+            Ok(()) => Ok(()).into(),
+            Err(err) => {
+                *self.project().error = Some(err);
+                Ok(()).into()
+            }
+        }
+    }
+
     fn start_send(
-        &mut self,
+        mut self: Pin<&mut Self>,
         PipelineMessage {
             input,
             output,
             response_count,
-        }: Self::SinkItem,
-    ) -> StartSend<Self::SinkItem, Self::SinkError> {
-        match self.sink_stream.start_send(input) {
-            Ok(AsyncSink::NotReady(input)) => Ok(AsyncSink::NotReady(PipelineMessage {
-                input,
-                output,
-                response_count,
-            })),
-            Ok(AsyncSink::Ready) => {
-                self.in_flight.push_back(InFlight {
+        }: PipelineMessage<SinkItem, I, E>,
+    ) -> Result<(), Self::Error> {
+        let self_ = self.as_mut().project();
+        if let Some(err) = self_.error.take() {
+            let _ = output.send(Err(err));
+            return Err(());
+        }
+        match self_.sink_stream.start_send(input) {
+            Ok(()) => {
+                self_.in_flight.push_back(InFlight {
                     output,
                     response_count,
                     buffer: Vec::new(),
                 });
-                Ok(AsyncSink::Ready)
+                Ok(())
             }
             Err(err) => {
                 let _ = output.send(Err(err));
@@ -403,119 +478,123 @@ where
         }
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        try_ready!(self.sink_stream.poll_complete().map_err(|err| {
-            self.send_result(Err(err));
-        }));
-        self.poll_read()
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context,
+    ) -> Poll<Result<(), Self::Error>> {
+        ready!(self
+            .as_mut()
+            .project()
+            .sink_stream
+            .poll_flush(cx)
+            .map_err(|err| {
+                self.as_mut().send_result(Err(err));
+            }))?;
+        self.poll_read(cx).map(Ok)
     }
 
-    fn close(&mut self) -> Poll<(), Self::SinkError> {
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context,
+    ) -> Poll<Result<(), Self::Error>> {
         // No new requests will come in after the first call to `close` but we need to complete any
         // in progress requests before closing
         if !self.in_flight.is_empty() {
-            try_ready!(self.poll_complete());
+            ready!(self.as_mut().poll_flush(cx))?;
         }
-        self.sink_stream.close().map_err(|err| {
+        let this = self.as_mut().project();
+        this.sink_stream.poll_close(cx).map_err(|err| {
             self.send_result(Err(err));
         })
     }
 }
 
-impl<T> Pipeline<T>
+impl<SinkItem, I, E> Pipeline<SinkItem, I, E>
 where
-    T: Sink<SinkError = <T as Stream>::Error> + Stream + Send + 'static,
-    T::SinkItem: Send,
-    T::Item: Send,
-    T::Error: Send,
-    T::Error: ::std::fmt::Debug,
+    SinkItem: Send + 'static,
+    I: Send + 'static,
+    E: Send + 'static,
 {
-    fn new<E>(sink_stream: T, executor: E) -> Self
+    fn new<T, F>(sink_stream: T, mut executor: F) -> Self
     where
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+        F: Spawn,
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Send + 'static,
+        T::Item: Send,
+        T::Error: Send,
+        T::Error: ::std::fmt::Debug,
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
         let f = receiver
-            .map_err(|_| ())
-            .forward(PipelineSink {
-                sink_stream,
-                in_flight: VecDeque::new(),
-            })
+            .map(Ok)
+            .forward(PipelineSink::new::<SinkItem>(sink_stream))
             .map(|_| ());
-
-        executor.execute(Box::new(f)).unwrap();
+        executor.spawn(f).expect("Unable to spawn redis task");
         Pipeline(sender)
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    fn send(
-        &self,
-        item: T::SinkItem,
-    ) -> impl Future<Item = T::Item, Error = Option<T::Error>> + Send {
+    fn send(&self, item: SinkItem) -> impl Future<Output = Result<I, Option<E>>> + Send {
         self.send_recv_multiple(item, 1)
-            .map(|mut item| item.pop().unwrap())
+            .map_ok(|mut item| item.pop().unwrap())
     }
 
     fn send_recv_multiple(
         &self,
-        input: T::SinkItem,
+        input: SinkItem,
         count: usize,
-    ) -> impl Future<Item = Vec<T::Item>, Error = Option<T::Error>> + Send {
-        let self_ = self.0.clone();
+    ) -> impl Future<Output = Result<Vec<I>, Option<E>>> + Send {
+        let mut self_ = self.0.clone();
+        async move {
+            let (sender, receiver) = oneshot::channel();
 
-        let (sender, receiver) = oneshot::channel();
-
-        self_
-            .send(PipelineMessage {
-                input,
-                response_count: count,
-                output: sender,
-            })
-            .map_err(|_| None)
-            .and_then(|_| {
-                receiver.then(|result| match result {
-                    Ok(result) => result.map_err(Some),
-                    Err(_) => {
-                        // The `sender` was dropped which likely means that the stream part
-                        // failed for one reason or another
-                        Err(None)
-                    }
+            self_
+                .send(PipelineMessage {
+                    input,
+                    response_count: count,
+                    output: sender,
                 })
-            })
+                .map_err(|_| None)
+                .and_then(|_| {
+                    receiver.then(|result| {
+                        future::ready(match result {
+                            Ok(result) => result.map_err(Some),
+                            Err(_) => {
+                                // The `sender` was dropped which likely means that the stream part
+                                // failed for one reason or another
+                                Err(None)
+                            }
+                        })
+                    })
+                })
+                .await
+        }
     }
 }
 
 #[derive(Clone)]
-enum ActualPipeline {
-    Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
-    #[cfg(unix)]
-    Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
-}
-
-/// A connection object bound to an executor.
-#[derive(Clone)]
 pub struct SharedConnection {
-    pipeline: ActualPipeline,
+    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
 }
 
 impl SharedConnection {
     /// Creates a shared connection from a connection and executor.
-    pub fn new<E>(con: Connection, executor: E) -> impl Future<Item = Self, Error = RedisError>
+    pub fn new<E>(con: Connection, executor: E) -> impl Future<Output = RedisResult<Self>>
     where
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+        E: Spawn,
     {
-        future::lazy(|| {
+        future::lazy(|_| {
             let pipeline = match con.con {
                 ActualConnection::Tcp(tcp) => {
-                    let codec = ValueCodec::default().framed(tcp.into_inner());
-                    ActualPipeline::Tcp(Pipeline::new(codec, executor))
+                    let codec = ValueCodec::default().framed(tcp.0.into_inner());
+                    Pipeline::new(codec, executor)
                 }
                 #[cfg(unix)]
                 ActualConnection::Unix(unix) => {
-                    let codec = ValueCodec::default().framed(unix.into_inner());
-                    ActualPipeline::Unix(Pipeline::new(codec, executor))
+                    let codec = ValueCodec::default().framed(unix.0.into_inner());
+                    Pipeline::new(codec, executor)
                 }
             };
             Ok(SharedConnection {
@@ -528,20 +607,14 @@ impl SharedConnection {
 
 impl ConnectionLike for SharedConnection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
-        #[cfg(not(unix))]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
-        };
+        let future = self.pipeline.send(cmd);
 
-        #[cfg(unix)]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => Either::A(pipeline.send(cmd)),
-            ActualPipeline::Unix(ref pipeline) => Either::B(pipeline.send(cmd)),
-        };
-
-        Box::new(future.map(|value| (self, value)).map_err(|err| {
-            err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-        }))
+        future
+            .map_ok(|value| (self, value))
+            .map_err(|err| {
+                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+            })
+            .boxed()
     }
 
     fn req_packed_commands(
@@ -550,33 +623,17 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
-        #[cfg(not(unix))]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
-        };
+        let future = self.pipeline.send_recv_multiple(cmd, offset + count);
 
-        #[cfg(unix)]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => {
-                Either::A(pipeline.send_recv_multiple(cmd, offset + count))
-            }
-            ActualPipeline::Unix(ref pipeline) => {
-                Either::B(pipeline.send_recv_multiple(cmd, offset + count))
-            }
-        };
-
-        Box::new(
-            future
-                .map(move |mut value| {
-                    value.drain(..offset);
-                    (self, value)
-                })
-                .map_err(|err| {
-                    err.unwrap_or_else(|| {
-                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
-                    })
-                }),
-        )
+        future
+            .map_ok(move |mut value| {
+                value.drain(..offset);
+                (self, value)
+            })
+            .map_err(|err| {
+                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+            })
+            .boxed()
     }
 
     fn get_db(&self) -> i64 {

@@ -1,10 +1,13 @@
+use std::pin::Pin;
+
 use sha1::Sha1;
+
+use futures::{prelude::*, ready, task, Poll};
 
 use crate::aio;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
-use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
-use futures::{try_ready, Async, Future, Poll};
+use crate::types::{ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -151,7 +154,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Asynchronously invokes the script and returns the result.
     #[inline]
-    pub fn invoke_async<C, T>(&self, con: C) -> impl Future<Item = (C, T), Error = RedisError>
+    pub fn invoke_async<C, T>(&self, con: C) -> impl Future<Item = RedisResult<(C, T)>>
     where
         C: aio::ConnectionLike + Clone + Send + 'static,
         T: FromRedisValue + Send + 'static,
@@ -166,7 +169,7 @@ impl<'a> ScriptInvocation<'a> {
         let mut load_cmd = cmd("SCRIPT");
         load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
 
-        let future = eval_cmd.query_async(con.clone());
+        let future = eval_cmd.query_async(con.clone()).boxed();
         InvokeAsyncFuture {
             con: con.clone(),
             eval_cmd,
@@ -195,29 +198,28 @@ where
     C: aio::ConnectionLike + Clone + Send + 'static,
     T: FromRedisValue + Send + 'static,
 {
-    type Item = (C, T);
-    type Error = RedisError;
+    type Output = RedisResult<(C, T)>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
+        let self_ = self.get_mut();
         loop {
-            self.future = match self.future {
+            self_.future = match self_.future {
                 CmdFuture::Load(ref mut future) => {
                     // When we're done loading the script into Redis, try eval'ing it again
-                    let (con, _hash) = try_ready!(future.poll());
-                    CmdFuture::Eval(self.eval_cmd.query_async(con))
+                    let (con, _hash) = ready!(future.as_mut().poll(cx))?;
+                    CmdFuture::Eval(self_.eval_cmd.query_async(con).boxed())
                 }
-                CmdFuture::Eval(ref mut future) => match future.poll() {
-                    Ok(Async::NotReady) => return Ok(Async::NotReady),
-                    Ok(Async::Ready((con, val))) => {
+                CmdFuture::Eval(ref mut future) => match ready!(future.as_mut().poll(cx)) {
+                    Ok((con, val)) => {
                         // Return the value from the script evaluation
-                        return Ok(Async::Ready((con, val)));
+                        return Ok((con, val)).into();
                     }
                     Err(err) => {
                         // Load the script into Redis if the script hash wasn't there already
                         if err.kind() == ErrorKind::NoScriptError {
-                            CmdFuture::Load(self.load_cmd.query_async(self.con.clone()))
+                            CmdFuture::Load(self_.load_cmd.query_async(self_.con.clone()).boxed())
                         } else {
-                            return Err(err);
+                            return Err(err).into();
                         }
                     }
                 },

@@ -19,21 +19,15 @@ sha1 = ">= 0.2, < 0.7"
 url = "2.1"
 combine = "3.8.1"
 bytes = "0.4"
-futures = "0.1"
-tokio-executor = { version = "0.1", optional = true }
-tokio-tcp = "0.1"
-tokio-io = "0.1"
-tokio-codec = "0.1"
-tokio-sync = "0.1"
+futures = { version = "0.3.0-alpha.18", package = "futures-preview" }
+pin-project = "0.3"
+tokio = "0.2.0-alpha.2"
+tokio-net = "0.2.0-alpha.2"
 
 [features]
-default = [ "executor", "geospatial" ]
+default = [ "geospatial" ]
 
 geospatial = []
-executor = [ "tokio-executor" ]
-
-[target.'cfg(unix)'.dependencies]
-tokio-uds = { version = "0.2" }
 
 [dev-dependencies]
 rand = "0.4"
@@ -43,7 +37,6 @@ fnv = "1.0.5"
 criterion = "0.2"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = "0.1"
 
 [[bench]]
 name = "bench_basic"

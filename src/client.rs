@@ -1,8 +1,7 @@
-use futures::{future::Executor, Future};
+use futures::{prelude::*, task};
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisError, RedisResult, Value};
-use std::time::Duration;
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -57,7 +56,7 @@ impl Client {
     /// Returns an async connection from the client.
     pub fn get_async_connection(
         &self,
-    ) -> impl Future<Item = crate::aio::Connection, Error = RedisError> {
+    ) -> impl Future<Output = RedisResult<crate::aio::Connection>> {
         crate::aio::connect(self.connection_info.clone())
     }
 
@@ -67,19 +66,31 @@ impl Client {
     #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(
         &self,
-    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError> {
-        let executor = tokio_executor::DefaultExecutor::current();
+    ) -> impl Future<Output = RedisResult<crate::aio::SharedConnection>> {
+        struct TokioExecutor;
+        impl task::Spawn for TokioExecutor {
+            fn spawn_obj(
+                &mut self,
+                future: future::FutureObj<'static, ()>,
+            ) -> Result<(), task::SpawnError> {
+                use tokio::executor::Executor;
+                tokio::executor::DefaultExecutor::current()
+                    .spawn(future.boxed())
+                    .map_err(|_| task::SpawnError::shutdown())
+            }
+        }
+
         self.get_async_connection()
-            .and_then(move |con| crate::aio::SharedConnection::new(con, executor))
+            .and_then(move |con| crate::aio::SharedConnection::new(con, TokioExecutor))
     }
 
     /// Returns a async shared connection with a specific executor.
     pub fn get_shared_async_connection_with_executor<E>(
         &self,
         executor: E,
-    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError>
+    ) -> impl Future<Output = RedisResult<crate::aio::SharedConnection>>
     where
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+        E: task::Spawn,
     {
         self.get_async_connection()
             .and_then(move |con| crate::aio::SharedConnection::new(con, executor))

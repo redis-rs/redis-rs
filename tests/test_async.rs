@@ -1,15 +1,15 @@
+#![feature(async_await)]
+#![cfg(feature = "executor")]
+
 use redis;
 
 use futures;
 
-use futures::{future, Future};
+use futures::{future, prelude::*};
 
 use crate::support::*;
 
-use redis::aio::SharedConnection;
-use redis::RedisError;
-
-use tokio::runtime::current_thread::block_on_all;
+use redis::{aio::SharedConnection, RedisResult};
 
 mod support;
 
@@ -28,9 +28,9 @@ fn test_args() {
                 redis::cmd("MGET")
                     .arg(&["key1", "key2"])
                     .query_async(con)
-                    .map(|t| t.1)
+                    .map_ok(|t| t.1)
             })
-            .then(|result| {
+            .map(|result| {
                 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
                 result
             })
@@ -44,7 +44,7 @@ fn dont_panic_on_closed_shared_connection() {
     let connect = ctx.shared_async_connection();
     drop(ctx);
 
-    block_on_all(future::lazy(|| {
+    block_on_all(async move {
         connect
             .and_then(|con| {
                 let cmd = move || {
@@ -52,7 +52,7 @@ fn dont_panic_on_closed_shared_connection() {
                         .arg("key1")
                         .arg(b"foo")
                         .query_async(con.clone())
-                        .map(|(_, ())| ())
+                        .map_ok(|(_, ())| ())
                 };
                 cmd().then(move |result| {
                     assert_eq!(
@@ -64,17 +64,16 @@ fn dont_panic_on_closed_shared_connection() {
                     cmd()
                 })
             })
-            .then(|result| -> Result<(), ()> {
+            .map(|result| {
                 assert_eq!(
                     result.as_ref().unwrap_err().kind(),
                     redis::ErrorKind::IoError,
                     "{}",
                     result.as_ref().unwrap_err()
                 );
-                Ok(())
             })
-    }))
-    .unwrap();
+            .await
+    });
 }
 
 #[test]
@@ -94,19 +93,15 @@ fn test_pipeline_transaction() {
             .cmd("MGET")
             .arg(&["key_1", "key_2"]);
         pipe.query_async(con)
-            .and_then(|(_con, ((k1, k2),)): (_, ((i32, i32),))| {
+            .map_ok(|(_con, ((k1, k2),)): (_, ((i32, i32),))| {
                 assert_eq!(k1, 42);
                 assert_eq!(k2, 43);
-                Ok(())
             })
     }))
     .unwrap();
 }
 
-fn test_cmd(
-    con: &SharedConnection,
-    i: i32,
-) -> Box<dyn Future<Item = (), Error = RedisError> + Send> {
+fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let key = format!("key{}", i);
     let key_2 = key.clone();
     let key2 = format!("key{}_2", i);
@@ -126,8 +121,8 @@ fn test_cmd(
                 redis::cmd("MGET")
                     .arg(&[&key_2, &key2_2])
                     .query_async(con2)
-                    .map(|t| t.1)
-                    .then(|result| {
+                    .map_ok(|t| t.1)
+                    .map(|result| {
                         assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
                         Ok(())
                     })
@@ -135,59 +130,62 @@ fn test_cmd(
     )
 }
 
-fn test_error(con: &SharedConnection) -> Box<dyn Future<Item = (), Error = RedisError> + Send> {
-    Box::new(
-        redis::cmd("SET")
-            .query_async(con.clone())
-            .then(|result| match result {
-                Ok((_, ())) => panic!("Expected redis to return an error"),
-                Err(_) => Ok(()),
-            }),
-    )
+fn test_error(con: &SharedConnection) -> impl Future<Output = RedisResult<()>> {
+    redis::cmd("SET")
+        .query_async(con.clone())
+        .map(|result| match result {
+            Ok((_, ())) => panic!("Expected redis to return an error"),
+            Err(_) => Ok(()),
+        })
 }
 
 #[test]
 fn test_args_shared_connection() {
     let ctx = TestContext::new();
-    block_on_all(future::lazy(|| {
+    block_on_all(async move {
         ctx.shared_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| test_cmd(&con, i));
-                future::join_all(cmds).map(|results| {
+                future::try_join_all(cmds).map_ok(|results| {
                     assert_eq!(results.len(), 100);
                 })
             })
             .map_err(|err| panic!("{}", err))
-    }))
+            .await
+    })
     .unwrap();
 }
 
 #[test]
 fn test_args_with_errors_shared_connection() {
     let ctx = TestContext::new();
-    block_on_all(future::lazy(|| {
+    block_on_all(async move {
         ctx.shared_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
-                    if i % 2 == 0 {
-                        test_cmd(&con, i)
-                    } else {
-                        test_error(&con)
+                    let con = con.clone();
+                    async move {
+                        if i % 2 == 0 {
+                            test_cmd(&con, i).await
+                        } else {
+                            test_error(&con).await
+                        }
                     }
                 });
-                future::join_all(cmds).map(|results| {
+                future::try_join_all(cmds).map_ok(|results| {
                     assert_eq!(results.len(), 100);
                 })
             })
             .map_err(|err| panic!("{}", err))
-    }))
+            .await
+    })
     .unwrap();
 }
 
 #[test]
 fn test_transaction_shared_connection() {
     let ctx = TestContext::new();
-    block_on_all(future::lazy(|| {
+    block_on_all(async move {
         ctx.shared_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
@@ -207,20 +205,20 @@ fn test_transaction_shared_connection() {
                         .arg(&["key", "key2"]);
 
                     pipe.query_async(con.clone())
-                        .map(|t| t.1)
-                        .then(move |result| {
-                            assert_eq!(Ok(((foo_val, bar_val.clone().into_bytes()),)), result);
+                        .map_ok(|t| t.1)
+                        .map(move |result| {
+                            assert_eq!(Ok(((foo_val, bar.clone().into_bytes()),)), result);
                             result
                         })
                 });
-                future::join_all(cmds)
+                future::try_join_all(cmds)
             })
-            .and_then(|results| {
+            .map_ok(|results| {
                 assert_eq!(results.len(), 100);
-                Ok(())
             })
             .map_err(|err| panic!("{}", err))
-    }))
+            .await
+    })
     .unwrap();
 }
 
@@ -233,44 +231,44 @@ fn test_script() {
 
     let ctx = TestContext::new();
 
-    block_on_all(future::lazy(|| {
-        ctx.shared_async_connection().and_then(|con| {
-            script1
-                .key("key1")
-                .arg("foo")
-                .invoke_async(con)
-                .and_then(|(con, ())| script2.key("key1").invoke_async(con))
-                .and_then(|(con, val): (SharedConnection, String)| {
-                    assert_eq!(val, "foo");
-                    script1.key("key1").arg("bar").invoke_async(con)
-                })
-                .and_then(|(con, ())| script2.key("key1").invoke_async(con))
-                .and_then(|(_con, val): (SharedConnection, String)| {
-                    assert_eq!(val, "bar");
-                    Ok(())
-                })
-        })
-    }))
+    block_on_all(async move {
+        ctx.shared_async_connection()
+            .and_then(|con| {
+                script1
+                    .key("key1")
+                    .arg("foo")
+                    .invoke_async(con)
+                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
+                    .and_then(|(con, val): (SharedConnection, String)| {
+                        assert_eq!(val, "foo");
+                        script1.key("key1").arg("bar").invoke_async(con)
+                    })
+                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
+                    .map_ok(|(_con, val): (SharedConnection, String)| {
+                        assert_eq!(val, "bar");
+                    })
+            })
+            .await
+    })
     .unwrap();
 }
 
 #[test]
 fn test_script_returning_complex_type() {
     let ctx = TestContext::new();
-    block_on_all(future::lazy(|| {
+    block_on_all(async {
         ctx.shared_async_connection().and_then(|con| {
             redis::Script::new("return {1, ARGV[1], true}")
                 .arg("hello")
                 .invoke_async(con)
-                .and_then(
+                .map_ok(
                     |(_con, (i, s, b)): (SharedConnection, (i32, String, bool))| {
                         assert_eq!(i, 1);
                         assert_eq!(s, "hello");
                         assert_eq!(b, true);
-                        Ok(())
                     },
                 )
-        })
-    }))
+        }).await
+    })
     .unwrap();
 }
