@@ -1,10 +1,13 @@
+use std::pin::Pin;
+
 use sha1::Sha1;
+
+use futures::{prelude::*, ready, task, Poll};
 
 use crate::aio::SharedConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
-use futures::{Async, Future, Poll};
-use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
+use crate::types::{ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -154,7 +157,7 @@ impl<'a> ScriptInvocation<'a> {
     pub fn invoke_async<T: FromRedisValue + Send + 'static>(
         &self,
         con: SharedConnection,
-    ) -> impl Future<Item = (SharedConnection, T), Error = RedisError> {
+    ) -> impl Future<Output = RedisResult<(SharedConnection, T)>> {
         let mut eval_cmd = cmd("EVALSHA");
         eval_cmd
             .arg(self.script.hash.as_bytes())
@@ -165,7 +168,7 @@ impl<'a> ScriptInvocation<'a> {
         let mut load_cmd = cmd("SCRIPT");
         load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
 
-        let future = eval_cmd.query_async(con.clone());
+        let future = eval_cmd.query_async(con.clone()).boxed();
         InvokeAsyncFuture {
             con: con.clone(),
             eval_cmd,
@@ -197,29 +200,28 @@ impl<T> Future for InvokeAsyncFuture<T>
 where
     T: FromRedisValue + Send + 'static,
 {
-    type Item = (SharedConnection, T);
-    type Error = RedisError;
+    type Output = RedisResult<(SharedConnection, T)>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
+        let self_ = self.get_mut();
         loop {
-            match self.future.poll() {
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Ok(Async::Ready((con, val))) => {
-                    if self.status == ScriptStatus::Loading {
-                        self.status = ScriptStatus::Loaded;
-                        self.future = self.eval_cmd.query_async(con);
+            match ready!(self_.future.as_mut().poll(cx)) {
+                Ok((con, val)) => {
+                    if self_.status == ScriptStatus::Loading {
+                        self_.status = ScriptStatus::Loaded;
+                        self_.future = self_.eval_cmd.query_async(con).boxed();
                     } else {
-                        return Ok(Async::Ready((con, val)));
+                        return Ok((con, val)).into();
                     }
                 }
                 Err(err) => {
                     if err.kind() == ErrorKind::NoScriptError
-                        && self.status == ScriptStatus::NotLoaded
+                        && self_.status == ScriptStatus::NotLoaded
                     {
-                        self.status = ScriptStatus::Loading;
-                        self.future = self.load_cmd.query_async(self.con.clone())
+                        self_.status = ScriptStatus::Loading;
+                        self_.future = self_.load_cmd.query_async(self_.con.clone()).boxed();
                     } else {
-                        return Err(err);
+                        return Err(err).into();
                     }
                 }
             }

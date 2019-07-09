@@ -1,6 +1,3 @@
-
-
-
 #[test]
 fn test_is_single_arg() {
     use redis::ToRedisArgs;

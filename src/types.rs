@@ -8,7 +8,7 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 
-use futures::Future;
+use futures::prelude::*;
 
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
@@ -344,7 +344,7 @@ pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
-pub type RedisFuture<T> = Box<dyn Future<Item = T, Error = RedisError> + Send>;
+pub type RedisFuture<T> = future::BoxFuture<'static, RedisResult<T>>;
 
 /// An info dictionary type.
 #[derive(Debug)]

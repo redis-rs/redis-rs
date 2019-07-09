@@ -302,8 +302,8 @@ impl RadiusSearchResult {
 #[cfg(test)]
 mod tests {
     use super::{Coord, RadiusOptions, RadiusOrder};
-    use std::str;
     use crate::types::ToRedisArgs;
+    use std::str;
 
     macro_rules! assert_args {
         ($value:expr, $($args:expr),+) => {
