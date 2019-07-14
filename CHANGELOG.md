@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.2...Unreleased) - ReleaseDate
+
+This release includes all fixes & improvements from the two beta releases listed below.
+This release contains breaking changes.
+
+**Fixes and improvements**
+
+* (async) Fix performance problem for SharedConnection ([#222](https://github.com/mitsuhiko/redis-rs/pull/222))
+
 ## [0.11.0-beta.2](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.1...0.11.0-beta.2) - 2019-07-14
 
 **Fixes and improvements**
