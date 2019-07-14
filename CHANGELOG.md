@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.1...Unreleased) - ReleaseDate
+## [0.11.0-beta.2](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.1...0.11.0-beta.2) - 2019-07-14
 
 **Fixes and improvements**
 
