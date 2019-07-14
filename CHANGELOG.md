@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.1...Unreleased) - ReleaseDate
+
+**Fixes and improvements**
+
+* (async) Don't block the executor from shutting down ([#217](https://github.com/mitsuhiko/redis-rs/pull/217))
+
 ## [0.11.0-beta.1](https://github.com/mitsuhiko/redis-rs/compare/0.10.0...0.11.0-beta.1) - 2019-05-30
 
 **Fixes and improvements**
