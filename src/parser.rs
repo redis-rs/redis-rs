@@ -145,7 +145,7 @@ impl Encoder for ValueCodec {
     type Item = Vec<u8>;
     type Error = RedisError;
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend(item);
+        dst.extend_from_slice(item.as_ref());
         Ok(())
     }
 }
