@@ -1,2 +1,3 @@
-pre-release-replacements = [ {file="CHANGELOG.md", search="Unreleased", replace="{{version}}"}, {file="CHANGELOG.md", search="HEAD", replace="{{version}}"}, {file="CHANGELOG.md", search="ReleaseDate", replace="{{date}}"}, {file="README.md", search="{{prev_version}}", replace="{{version}}"} ]
-tag-prefix = ""
+pre-release-replacements = [ {file="CHANGELOG.md", search="Unreleased", replace="{{version}}"}, {file="CHANGELOG.md", search="HEAD", replace="{{version}}"}, {file="CHANGELOG.md", search="ReleaseDate", replace="{{date}}"} ]
+pre-release-hook = "scripts/update-versions.sh"
+tag-name = "{{version}}"
