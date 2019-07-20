@@ -77,7 +77,7 @@ impl Script {
 
     /// Invokes the script directly without arguments.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -123,7 +123,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Invokes the script and returns the result.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         loop {
             match cmd("EVALSHA")
                 .arg(self.script.hash.as_bytes())

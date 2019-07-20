@@ -19,7 +19,7 @@ redis = "0.11.0"
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
 
-**Note: redis-rs requires at least [Rust 1.26](https://blog.rust-lang.org/2018/05/10/Rust-1.26.html).**
+**Note: redis-rs requires at least [Rust 1.27](https://blog.rust-lang.org/2018/06/21/Rust-1.27.html).**
 
 ## Basic Operation
 

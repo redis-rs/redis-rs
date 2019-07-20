@@ -208,9 +208,9 @@ impl error::Error for RedisError {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match self.repr {
-            ErrorRepr::IoError(ref err) => Some(err as &error::Error),
+            ErrorRepr::IoError(ref err) => Some(err as &dyn error::Error),
             _ => None,
         }
     }
@@ -344,7 +344,7 @@ pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
-pub type RedisFuture<T> = Box<Future<Item = T, Error = RedisError> + Send>;
+pub type RedisFuture<T> = Box<dyn Future<Item = T, Error = RedisError> + Send>;
 
 /// An info dictionary type.
 #[derive(Debug)]
