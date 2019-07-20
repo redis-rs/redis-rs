@@ -274,9 +274,11 @@ impl ActualConnection {
 
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
-            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => reader as &mut BufRead,
+            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
+                reader as &mut dyn BufRead
+            }
             #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut BufRead,
+            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut dyn BufRead,
         })
         .parse_value();
         // shutdown connection on protocol error

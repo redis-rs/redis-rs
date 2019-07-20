@@ -33,7 +33,7 @@ pub struct Pipeline {
 pub struct Iter<'a, T: FromRedisValue> {
     batch: Vec<T>,
     cursor: u64,
-    con: &'a mut (ConnectionLike + 'a),
+    con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
 }
 
@@ -315,7 +315,7 @@ impl Cmd {
     /// result to the target redis value.  This is the general way how
     /// you can retrieve data.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         let pcmd = self.get_packed_command();
         match con.req_packed_command(&pcmd) {
             Ok(val) => from_redis_value(&val),
@@ -353,7 +353,7 @@ impl Cmd {
     #[inline]
     pub fn iter<'a, T: FromRedisValue>(
         self,
-        con: &'a mut ConnectionLike,
+        con: &'a mut dyn ConnectionLike,
     ) -> RedisResult<Iter<'a, T>> {
         let mut pcmd = self.get_packed_command();
         let rv = con.req_packed_command(&mut pcmd)?;
@@ -390,7 +390,7 @@ impl Cmd {
     /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
     /// ```
     #[inline]
-    pub fn execute(&self, con: &mut ConnectionLike) {
+    pub fn execute(&self, con: &mut dyn ConnectionLike) {
         let _: () = self.query(con).unwrap();
     }
 
@@ -530,7 +530,7 @@ impl Pipeline {
         encode_pipeline(&self.commands, atomic)
     }
 
-    fn execute_pipelined(&self, con: &mut ConnectionLike) -> RedisResult<Value> {
+    fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),
             0,
@@ -538,7 +538,7 @@ impl Pipeline {
         )?))
     }
 
-    fn execute_transaction(&self, con: &mut ConnectionLike) -> RedisResult<Value> {
+    fn execute_transaction(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
         let mut resp = con.req_packed_commands(
             &encode_pipeline(&self.commands, true),
             self.commands.len() + 1,
@@ -572,7 +572,7 @@ impl Pipeline {
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &mut ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         from_redis_value(
             &(if self.commands.len() == 0 {
                 Value::Bulk(vec![])
@@ -663,7 +663,7 @@ impl Pipeline {
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn execute(&self, con: &mut ConnectionLike) {
+    pub fn execute(&self, con: &mut dyn ConnectionLike) {
         let _: () = self.query(con).unwrap();
     }
 }

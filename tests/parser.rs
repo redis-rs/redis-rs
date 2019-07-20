@@ -27,7 +27,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
         let size = g.size();
         ArbitraryValue(arbitrary_value(g, size))
     }
-    fn shrink(&self) -> Box<Iterator<Item = Self>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match self.0 {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),

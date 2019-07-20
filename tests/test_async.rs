@@ -104,7 +104,10 @@ fn test_pipeline_transaction() {
     .unwrap();
 }
 
-fn test_cmd(con: &SharedConnection, i: i32) -> Box<Future<Item = (), Error = RedisError> + Send> {
+fn test_cmd(
+    con: &SharedConnection,
+    i: i32,
+) -> Box<dyn Future<Item = (), Error = RedisError> + Send> {
     let key = format!("key{}", i);
     let key_2 = key.clone();
     let key2 = format!("key{}_2", i);
@@ -133,7 +136,7 @@ fn test_cmd(con: &SharedConnection, i: i32) -> Box<Future<Item = (), Error = Red
     )
 }
 
-fn test_error(con: &SharedConnection) -> Box<Future<Item = (), Error = RedisError> + Send> {
+fn test_error(con: &SharedConnection) -> Box<dyn Future<Item = (), Error = RedisError> + Send> {
     Box::new(
         redis::cmd("SET")
             .query_async(con.clone())

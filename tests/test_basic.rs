@@ -766,7 +766,7 @@ fn test_invalid_protocol() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
-    let child = thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
+    let child = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut stream = BufReader::new(listener.incoming().next().unwrap()?);
         // read the request and respond with garbage
         let _: redis::Value = Parser::new(&mut stream).parse_value()?;
