@@ -487,7 +487,7 @@ implement_commands! {
     }
 
     /// Intersect multiple sets and store the resulting set in a key.
-    fn sdinterstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sinterstore<K: ToRedisArgs>(dstkey: K, keys: K) {
         cmd("SINTERSTORE").arg(dstkey).arg(keys)
     }
 
