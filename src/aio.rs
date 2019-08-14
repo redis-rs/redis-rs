@@ -15,12 +15,12 @@ use futures::future::{Either, Executor};
 use futures::{future, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use tokio_sync::{mpsc, oneshot};
 
-use cmd::cmd;
-use types::{ErrorKind, RedisError, RedisFuture, Value};
+use crate::cmd::cmd;
+use crate::types::{ErrorKind, RedisError, RedisFuture, Value};
 
-use connection::{ConnectionAddr, ConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo};
 
-use parser::ValueCodec;
+use crate::parser::ValueCodec;
 
 enum ActualConnection {
     Tcp(BufReader<TcpStream>),
@@ -44,7 +44,7 @@ where
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         self.0.get_mut().write_all(buf)
     }
-    fn write_fmt(&mut self, fmt: Arguments) -> io::Result<()> {
+    fn write_fmt(&mut self, fmt: Arguments<'_>) -> io::Result<()> {
         self.0.get_mut().write_fmt(fmt)
     }
 }
@@ -107,7 +107,7 @@ macro_rules! with_write_connection {
 impl Connection {
     pub fn read_response(self) -> impl Future<Item = (Self, Value), Error = RedisError> {
         let db = self.db;
-        with_connection!(self.con, ::parser::parse_async).then(move |result| {
+        with_connection!(self.con, crate::parser::parse_async).then(move |result| {
             match result {
                 Ok((con, value)) => Ok((Connection { con: con, db }, value)),
                 Err(err) => {

@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use url;
 
-use cmd::{cmd, pipe, Pipeline};
-use parser::Parser;
-use types::{
+use crate::cmd::{cmd, pipe, Pipeline};
+use crate::parser::Parser;
+use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
 };
 
