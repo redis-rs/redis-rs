@@ -1,5 +1,5 @@
-extern crate fnv;
-extern crate redis;
+
+
 
 #[test]
 fn test_is_single_arg() {

@@ -1,7 +1,7 @@
 use std::io::{self, BufRead};
 use std::str;
 
-use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
+use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use bytes::BytesMut;
 use futures::{Async, Future, Poll};

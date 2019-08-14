@@ -1,11 +1,11 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
-use connection::{ConnectionLike, Msg, Connection};
-use cmd::{cmd, Cmd, Pipeline, Iter};
+use crate::types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
+use crate::connection::{ConnectionLike, Msg, Connection};
+use crate::cmd::{cmd, Cmd, Pipeline, Iter};
 
 #[cfg(feature = "geospatial")]
-use geo;
+use crate::geo;
 
 macro_rules! implement_commands {
     (
@@ -54,7 +54,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate the keys space.
             #[inline]
-            fn scan<RV: FromRedisValue>(&mut self) -> RedisResult<Iter<RV>> {
+            fn scan<RV: FromRedisValue>(&mut self) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0);
                 c.iter(self)
@@ -62,7 +62,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<RV>> {
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -70,7 +70,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate hash fields and associated values.
             #[inline]
-            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -80,7 +80,7 @@ macro_rules! implement_commands {
             /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -88,7 +88,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate set elements.
             #[inline]
-            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -97,7 +97,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
@@ -105,7 +105,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate sorted set elements.
             #[inline]
-            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<RV>> {
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0);
                 c.iter(self)
@@ -114,7 +114,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<RV>> {
+                    (&mut self, key: K, pattern: P) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)

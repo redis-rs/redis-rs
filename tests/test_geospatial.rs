@@ -1,8 +1,6 @@
 #![cfg(feature = "geospatial")]
 
-extern crate net2;
-extern crate rand;
-extern crate redis;
+use redis;
 
 #[macro_use]
 extern crate assert_approx_eq;
@@ -11,7 +9,7 @@ use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{Commands, RedisResult};
 
 mod support;
-use support::*;
+use crate::support::*;
 
 const PALERMO: (&'static str, &'static str, &'static str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&'static str, &'static str, &'static str) = ("15.087269", "37.502669", "Catania");
