@@ -349,35 +349,24 @@
 
 #[macro_use]
 extern crate combine;
-extern crate bytes;
-extern crate dtoa;
-extern crate itoa;
-extern crate percent_encoding;
-extern crate sha1;
-extern crate url;
+
 #[macro_use]
 extern crate futures;
 #[macro_use]
 extern crate tokio_io;
-extern crate tokio_codec;
-extern crate tokio_sync;
-extern crate tokio_tcp;
-
-#[cfg(unix)]
-extern crate tokio_uds;
 
 // public api
-pub use client::Client;
-pub use cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
-pub use commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
-pub use connection::{
+pub use crate::client::Client;
+pub use crate::cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
+pub use crate::commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
+pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use parser::{parse_async, parse_redis_value, Parser};
-pub use script::{Script, ScriptInvocation};
+pub use crate::parser::{parse_async, parse_redis_value, Parser};
+pub use crate::script::{Script, ScriptInvocation};
 
-pub use types::{
+pub use crate::types::{
     // utility functions
     from_redis_value,
 

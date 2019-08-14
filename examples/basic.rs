@@ -1,4 +1,4 @@
-extern crate redis;
+use redis;
 use redis::{transaction, Commands, PipelineCommands};
 use std::error::Error;
 

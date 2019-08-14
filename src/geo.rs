@@ -1,7 +1,7 @@
 //! Defines types to use with the geospatial commands.
 
 use super::{ErrorKind, RedisResult};
-use types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
+use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -303,7 +303,7 @@ impl RadiusSearchResult {
 mod tests {
     use super::{Coord, RadiusOptions, RadiusOrder};
     use std::str;
-    use types::ToRedisArgs;
+    use crate::types::ToRedisArgs;
 
     macro_rules! assert_args {
         ($value:expr, $($args:expr),+) => {

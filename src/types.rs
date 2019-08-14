@@ -107,7 +107,7 @@ impl Value {
 }
 
 impl fmt::Debug for Value {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Value::Nil => write!(fmt, "nil"),
             Value::Int(val) => write!(fmt, "int({:?})", val),
@@ -217,7 +217,7 @@ impl error::Error for RedisError {
 }
 
 impl fmt::Display for RedisError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.repr {
             ErrorRepr::WithDescription(_, desc) => desc.fmt(f),
             ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
@@ -236,7 +236,7 @@ impl fmt::Display for RedisError {
 }
 
 impl fmt::Debug for RedisError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         fmt::Display::fmt(self, f)
     }
 }

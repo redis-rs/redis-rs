@@ -1,10 +1,10 @@
 use sha1::Sha1;
 
-use aio::SharedConnection;
-use cmd::{cmd, Cmd};
-use connection::ConnectionLike;
+use crate::aio::SharedConnection;
+use crate::cmd::{cmd, Cmd};
+use crate::connection::ConnectionLike;
 use futures::{try_ready, Async, Future, Poll};
-use types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
+use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -45,7 +45,7 @@ impl Script {
 
     /// Creates a script invocation object with a key filled in.
     #[inline]
-    pub fn key<T: ToRedisArgs>(&self, key: T) -> ScriptInvocation {
+    pub fn key<T: ToRedisArgs>(&self, key: T) -> ScriptInvocation<'_> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -55,7 +55,7 @@ impl Script {
 
     /// Creates a script invocation object with an argument filled in.
     #[inline]
-    pub fn arg<T: ToRedisArgs>(&self, arg: T) -> ScriptInvocation {
+    pub fn arg<T: ToRedisArgs>(&self, arg: T) -> ScriptInvocation<'_> {
         ScriptInvocation {
             script: self,
             args: arg.to_redis_args(),
@@ -67,7 +67,7 @@ impl Script {
     /// for programmatically adding arguments and keys because the type will
     /// not change.  Normally you can use `arg` and `key` directly.
     #[inline]
-    pub fn prepare_invoke(&self) -> ScriptInvocation {
+    pub fn prepare_invoke(&self) -> ScriptInvocation<'_> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -205,21 +205,21 @@ where
                     CmdFuture::Eval(self.eval_cmd.query_async(con))
                 }
                 CmdFuture::Eval(ref mut future) => match future.poll() {
-                    Ok(Async::NotReady) => return Ok(Async::NotReady),
-                    Ok(Async::Ready((con, val))) => {
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::Ready((con, val))) => {
                         // Return the value from the script evaluation
                         return Ok(Async::Ready((con, val)));
                     }
-                    Err(err) => {
+                Err(err) => {
                         // Load the script into Redis if the script hash wasn't there already
                         if err.kind() == ErrorKind::NoScriptError {
                             CmdFuture::Load(self.load_cmd.query_async(self.con.clone()))
-                        } else {
-                            return Err(err);
-                        }
+                    } else {
+                        return Err(err);
                     }
+                }
                 },
             };
+            }
         }
-    }
 }
