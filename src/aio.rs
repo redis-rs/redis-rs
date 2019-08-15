@@ -8,11 +8,10 @@ use std::net::ToSocketAddrs;
 use tokio_uds::UnixStream;
 
 use tokio_codec::{Decoder, Framed};
-use tokio_executor;
 use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
-use futures::future::Either;
+use futures::future::{Either, Executor};
 use futures::{future, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use tokio_sync::{mpsc, oneshot};
 
@@ -431,18 +430,21 @@ where
     T::Error: Send,
     T::Error: ::std::fmt::Debug,
 {
-    fn new(sink_stream: T) -> Self {
+    fn new<E>(sink_stream: T, executor: E) -> Self
+    where
+        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+    {
         const BUFFER_SIZE: usize = 50;
         let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
-        tokio_executor::spawn(
-            receiver
-                .map_err(|_| ())
-                .forward(PipelineSink {
-                    sink_stream,
-                    in_flight: VecDeque::new(),
-                })
-                .map(|_| ()),
-        );
+        let f = receiver
+            .map_err(|_| ())
+            .forward(PipelineSink {
+                sink_stream,
+                in_flight: VecDeque::new(),
+            })
+            .map(|_| ());
+
+        executor.execute(Box::new(f));
         Pipeline(sender)
     }
 
@@ -498,17 +500,20 @@ pub struct SharedConnection {
 }
 
 impl SharedConnection {
-    pub fn new(con: Connection) -> impl Future<Item = Self, Error = RedisError> {
+    pub fn new<E>(con: Connection, executor: E) -> impl Future<Item = Self, Error = RedisError>
+    where
+        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+    {
         future::lazy(|| {
             let pipeline = match con.con {
                 ActualConnection::Tcp(tcp) => {
                     let codec = ValueCodec::default().framed(tcp.into_inner());
-                    ActualPipeline::Tcp(Pipeline::new(codec))
+                    ActualPipeline::Tcp(Pipeline::new(codec, executor))
                 }
                 #[cfg(unix)]
                 ActualConnection::Unix(unix) => {
                     let codec = ValueCodec::default().framed(unix.into_inner());
-                    ActualPipeline::Unix(Pipeline::new(codec))
+                    ActualPipeline::Unix(Pipeline::new(codec, executor))
                 }
             };
             Ok(SharedConnection {

@@ -356,7 +356,6 @@ extern crate sha1;
 extern crate url;
 #[macro_use]
 extern crate futures;
-extern crate tokio_executor;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio_codec;
