@@ -51,6 +51,7 @@ impl Client {
         ::aio::connect(self.connection_info.clone())
     }
 
+    #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(
         &self,
     ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError> {
