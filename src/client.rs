@@ -1,6 +1,7 @@
 use futures::Future;
 
 use connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
+use futures::future::Executor;
 use types::{RedisError, RedisResult, Value};
 
 /// The client type.
@@ -50,11 +51,24 @@ impl Client {
         ::aio::connect(self.connection_info.clone())
     }
 
+    #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(
         &self,
     ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError> {
+        let executor = tokio_executor::DefaultExecutor::current();
         self.get_async_connection()
-            .and_then(move |con| ::aio::SharedConnection::new(con))
+            .and_then(move |con| ::aio::SharedConnection::new(con, executor))
+    }
+
+    pub fn get_shared_async_connection_with_executor<E>(
+        &self,
+        executor: E,
+    ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError>
+    where
+        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
+    {
+        self.get_async_connection()
+            .and_then(move |con| ::aio::SharedConnection::new(con, executor))
     }
 }
 
