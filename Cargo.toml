@@ -28,7 +28,7 @@ tokio-sync = "0.1"
 default = [ "executor", "geospatial" ]
 
 geospatial = []
-executor = ["tokio-executor"]
+executor = [ "tokio-executor" ]
 
 [target.'cfg(unix)'.dependencies]
 tokio-uds = { version = "0.2" }
