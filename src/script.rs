@@ -154,27 +154,38 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Asynchronously invokes the script and returns the result.
     #[inline]
-    pub fn invoke_async<C, T>(&self, con: C) -> impl Future<Item = RedisResult<(C, T)>>
+    pub fn invoke_async<'c, C, T: FromRedisValue + Send + 'static>(
+        &'c self,
+        con: &'c mut C,
+    ) -> impl Future<Output = RedisResult<T>> + 'c
     where
         C: aio::ConnectionLike + Clone + Send + 'static,
         T: FromRedisValue + Send + 'static,
     {
-        let mut eval_cmd = cmd("EVALSHA");
-        eval_cmd
-            .arg(self.script.hash.as_bytes())
-            .arg(self.keys.len())
-            .arg(&*self.keys)
-            .arg(&*self.args);
+        async move {
+            let mut eval_cmd = cmd("EVALSHA");
+            eval_cmd
+                .arg(self.script.hash.as_bytes())
+                .arg(self.keys.len())
+                .arg(&*self.keys)
+                .arg(&*self.args);
 
-        let mut load_cmd = cmd("SCRIPT");
-        load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
+            let mut load_cmd = cmd("SCRIPT");
+            load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
 
-        let future = eval_cmd.query_async(con.clone()).boxed();
-        InvokeAsyncFuture {
-            con: con.clone(),
-            eval_cmd,
-            load_cmd,
-            future: CmdFuture::Eval(future),
+            let future = {
+                let mut con = con.clone();
+                let eval_cmd = eval_cmd.clone();
+                CmdFuture::Eval((async move { eval_cmd.query_async(&mut con).await }).boxed())
+            };
+            InvokeAsyncFuture {
+                con: con.clone(),
+                eval_cmd,
+                load_cmd,
+                status: ScriptStatus::NotLoaded,
+                future,
+            }
+            .await
         }
     }
 }
@@ -185,12 +196,12 @@ struct InvokeAsyncFuture<C, T> {
     con: C,
     eval_cmd: Cmd,
     load_cmd: Cmd,
-    future: CmdFuture<C, T>,
+    future: CmdFuture<T>,
 }
 
-enum CmdFuture<C, T> {
-    Load(RedisFuture<(C, String)>),
-    Eval(RedisFuture<(C, T)>),
+enum CmdFuture<T> {
+    Load(RedisFuture<'static, String>),
+    Eval(RedisFuture<'static, T>),
 }
 
 impl<C, T> Future for InvokeAsyncFuture<C, T>
@@ -198,7 +209,7 @@ where
     C: aio::ConnectionLike + Clone + Send + 'static,
     T: FromRedisValue + Send + 'static,
 {
-    type Output = RedisResult<(C, T)>;
+    type Output = RedisResult<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let self_ = self.get_mut();

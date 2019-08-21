@@ -208,7 +208,7 @@ impl<R> Future for ValueFuture<R>
 where
     R: AsyncBufRead + Unpin,
 {
-    type Output = RedisResult<(R, Value)>;
+    type Output = RedisResult<Value>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         loop {
@@ -268,7 +268,7 @@ where
                 Some(value) => {
                     self.reader().consume(removed);
                     let reader = self.reader.take().unwrap();
-                    return Ok((reader, value?)).into();
+                    return Ok(value?).into();
                 }
                 None => {
                     // We have not enough data to produce a Value but we know that all the data of
@@ -291,7 +291,7 @@ where
 }
 
 /// Parses a redis value asynchronously.
-pub fn parse_redis_value_async<R>(reader: R) -> impl Future<Output = RedisResult<(R, Value)>>
+pub fn parse_redis_value_async<R>(reader: R) -> impl Future<Output = RedisResult<Value>>
 where
     R: AsyncRead + AsyncBufRead + Unpin,
 {
@@ -357,7 +357,7 @@ impl<'a, T: BufRead> Parser<T> {
             state: Default::default(),
             remaining: Vec::new(),
         };
-        futures::executor::block_on(parser).map(|(_, v)| v)
+        futures::executor::block_on(parser)
     }
 }
 

@@ -327,17 +327,14 @@ impl Cmd {
 
     /// Async version of `query`.
     #[inline]
-    pub fn query_async<C, T: FromRedisValue>(
-        &self,
-        con: C,
-    ) -> impl Future<Output = RedisResult<(C, T)>>
+    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
         T: Send + 'static,
     {
         let pcmd = self.get_packed_command();
-        con.req_packed_command(pcmd)
-            .and_then(|(con, val)| future::ready(from_redis_value(&val).map(|t| (con, t))))
+        let val = con.req_packed_command(pcmd).await?;
+        from_redis_value(&val)
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
@@ -600,62 +597,57 @@ impl Pipeline {
         self.commands.clear();
     }
 
-    fn execute_pipelined_async<C>(self, con: C) -> impl Future<Output = RedisResult<(C, Value)>>
+    async fn execute_pipelined_async<C>(self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
     {
-        con.req_packed_commands(
-            encode_pipeline(&self.commands, false),
-            0,
-            self.commands.len(),
-        )
-        .map_ok(move |(con, value)| (con, self.make_pipeline_results(value)))
+        let value = con
+            .req_packed_commands(
+                encode_pipeline(&self.commands, false),
+                0,
+                self.commands.len(),
+            )
+            .await?;
+        Ok(self.make_pipeline_results(value))
     }
 
-    fn execute_transaction_async<C>(self, con: C) -> impl Future<Output = RedisResult<(C, Value)>>
+    async fn execute_transaction_async<C>(self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
     {
-        con.req_packed_commands(
-            encode_pipeline(&self.commands, true),
-            self.commands.len() + 1,
-            1,
-        )
-        .and_then(move |(con, mut resp)| {
-            future::ready(match resp.pop() {
-                Some(Value::Nil) => Ok((con, Value::Nil)),
-                Some(Value::Bulk(items)) => Ok((con, self.make_pipeline_results(items))),
-                _ => Err((
-                    ErrorKind::ResponseError,
-                    "Invalid response when parsing multi response",
-                )
-                    .into()),
-            })
-        })
+        let mut resp = con
+            .req_packed_commands(
+                encode_pipeline(&self.commands, true),
+                self.commands.len() + 1,
+                1,
+            )
+            .await?;
+        match resp.pop() {
+            Some(Value::Nil) => Ok(Value::Nil),
+            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            _ => Err((
+                ErrorKind::ResponseError,
+                "Invalid response when parsing multi response",
+            )
+                .into()),
+        }
     }
 
     /// Async version of `query`.
     #[inline]
-    pub fn query_async<C, T: FromRedisValue>(
-        self,
-        con: C,
-    ) -> impl Future<Output = RedisResult<(C, T)>>
+    pub async fn query_async<C, T: FromRedisValue>(self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
         T: Send + 'static,
     {
-        let future = if self.commands.is_empty() {
-            return future::Either::Left(future::ready(
-                from_redis_value(&Value::Bulk(vec![])).map(|v| (con, v)),
-            ));
+        let v = if self.commands.is_empty() {
+            return from_redis_value(&Value::Bulk(vec![]));
         } else if self.transaction_mode {
-            Either::Left(self.execute_transaction_async(con))
+            self.execute_transaction_async(con).await?
         } else {
-            Either::Right(self.execute_pipelined_async(con))
+            self.execute_pipelined_async(con).await?
         };
-        future::Either::Right(
-            future.and_then(|(con, v)| future::ready(from_redis_value(&v).map(|v| (con, v)))),
-        )
+        from_redis_value(&v)
     }
 
     /// This is a shortcut to `query()` that does not return a value and

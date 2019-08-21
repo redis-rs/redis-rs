@@ -9,7 +9,7 @@ use futures::{future, prelude::*};
 
 use crate::support::*;
 
-use redis::{aio::SharedConnection, RedisResult};
+use redis::{aio::SharedConnection, RedisError, RedisResult};
 
 mod support;
 
@@ -18,22 +18,24 @@ fn test_args() {
     let ctx = TestContext::new();
     let connect = ctx.async_connection();
 
-    block_on_all(connect.and_then(|con| {
-        redis::cmd("SET")
-            .arg("key1")
-            .arg(b"foo")
-            .query_async(con)
-            .and_then(|(con, ())| redis::cmd("SET").arg(&["key2", "bar"]).query_async(con))
-            .and_then(|(con, ())| {
-                redis::cmd("MGET")
-                    .arg(&["key1", "key2"])
-                    .query_async(con)
-                    .map_ok(|t| t.1)
-            })
-            .map(|result| {
-                assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-                result
-            })
+    block_on_all(connect.and_then(|mut con| {
+        async move {
+            let () = redis::cmd("SET")
+                .arg("key1")
+                .arg(b"foo")
+                .query_async(&mut con)
+                .await?;
+            let () = redis::cmd("SET")
+                .arg(&["key2", "bar"])
+                .query_async(&mut con)
+                .await?;
+            let result = redis::cmd("MGET")
+                .arg(&["key1", "key2"])
+                .query_async(&mut con)
+                .await;
+            assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+            result
+        }
     }))
     .unwrap();
 }
@@ -46,23 +48,26 @@ fn dont_panic_on_closed_shared_connection() {
 
     block_on_all(async move {
         connect
-            .and_then(|con| {
-                let cmd = move || {
-                    redis::cmd("SET")
-                        .arg("key1")
-                        .arg(b"foo")
-                        .query_async(con.clone())
-                        .map_ok(|(_, ())| ())
-                };
-                cmd().then(move |result| {
+            .and_then(|mut con| {
+                async move {
+                    let cmd = move || {
+                        async move {
+                            redis::cmd("SET")
+                                .arg("key1")
+                                .arg(b"foo")
+                                .query_async(&mut con)
+                                .await
+                        }
+                    };
+                    let result: RedisResult<()> = cmd().await;
                     assert_eq!(
                         result.as_ref().unwrap_err().kind(),
                         redis::ErrorKind::IoError,
                         "{}",
                         result.as_ref().unwrap_err()
                     );
-                    cmd()
-                })
+                    cmd().await
+                }
             })
             .map(|result| {
                 assert_eq!(
@@ -79,7 +84,7 @@ fn dont_panic_on_closed_shared_connection() {
 #[test]
 fn test_pipeline_transaction() {
     let ctx = TestContext::new();
-    block_on_all(ctx.async_connection().and_then(|con| {
+    block_on_all(ctx.async_connection().and_then(|mut con| {
         let mut pipe = redis::pipe();
         pipe.atomic()
             .cmd("SET")
@@ -92,8 +97,8 @@ fn test_pipeline_transaction() {
             .ignore()
             .cmd("MGET")
             .arg(&["key_1", "key_2"]);
-        pipe.query_async(con)
-            .map_ok(|(_con, ((k1, k2),)): (_, ((i32, i32),))| {
+        pipe.query_async(&mut con)
+            .map_ok(|((k1, k2),): ((i32, i32),)| {
                 assert_eq!(k1, 42);
                 assert_eq!(k2, 43);
             })
@@ -102,41 +107,46 @@ fn test_pipeline_transaction() {
 }
 
 fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
-    let key = format!("key{}", i);
-    let key_2 = key.clone();
-    let key2 = format!("key{}_2", i);
-    let key2_2 = key2.clone();
+    let mut con = con.clone();
+    async move {
+        let key = format!("key{}", i);
+        let key_2 = key.clone();
+        let key2 = format!("key{}_2", i);
+        let key2_2 = key2.clone();
 
     let foo_val = format!("foo{}", i);
 
-    let con1 = con.clone();
-    let con2 = con.clone();
-    Box::new(
-        redis::cmd("SET")
+        let () = redis::cmd("SET")
             .arg(&key[..])
-            .arg(foo_val.as_bytes())
-            .query_async(con.clone())
-            .and_then(move |(_, ())| redis::cmd("SET").arg(&[&key2, "bar"]).query_async(con1))
-            .and_then(move |(_, ())| {
-                redis::cmd("MGET")
-                    .arg(&[&key_2, &key2_2])
-                    .query_async(con2)
-                    .map_ok(|t| t.1)
-                    .map(|result| {
-                        assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
-                        Ok(())
-                    })
-            }),
-    )
+            .arg(foo.as_bytes())
+            .query_async(&mut con)
+            .await?;
+        let () = redis::cmd("SET")
+            .arg(&[&key2, "bar"])
+            .query_async(&mut con)
+            .await?;
+        redis::cmd("MGET")
+            .arg(&[&key_2, &key2_2])
+            .query_async(&mut con)
+            .map(|result| {
+                assert_eq!(Ok((foo, b"bar".to_vec())), result);
+                Ok(())
+            })
+            .await
+    }
 }
 
 fn test_error(con: &SharedConnection) -> impl Future<Output = RedisResult<()>> {
-    redis::cmd("SET")
-        .query_async(con.clone())
-        .map(|result| match result {
-            Ok((_, ())) => panic!("Expected redis to return an error"),
-            Err(_) => Ok(()),
-        })
+    let mut con = con.clone();
+    async move {
+        redis::cmd("SET")
+            .query_async(&mut con)
+            .map(|result| match result {
+                Ok(()) => panic!("Expected redis to return an error"),
+                Err(_) => Ok(()),
+            })
+            .await
+    }
 }
 
 #[test]
@@ -187,29 +197,31 @@ fn test_transaction_shared_connection() {
     let ctx = TestContext::new();
     block_on_all(async move {
         ctx.shared_async_connection()
-            .and_then(|con| {
+            .and_then(|mut con| {
                 let cmds = (0..100).map(move |i| {
-                    let foo_val = i;
-                    let bar_val = format!("bar{}", i);
+                    async move {
+                        let foo_val = i;
+                        let bar = format!("bar{}", i);
 
-                    let mut pipe = redis::pipe();
-                    pipe.atomic()
-                        .cmd("SET")
-                        .arg("key")
-                        .arg(foo_val)
-                        .ignore()
-                        .cmd("SET")
-                        .arg(&["key2", &bar_val[..]])
-                        .ignore()
-                        .cmd("MGET")
-                        .arg(&["key", "key2"]);
+                        let mut pipe = redis::pipe();
+                        pipe.atomic()
+                            .cmd("SET")
+                            .arg("key")
+                            .arg(foo)
+                            .ignore()
+                            .cmd("SET")
+                            .arg(&["key2", &bar[..]])
+                            .ignore()
+                            .cmd("MGET")
+                            .arg(&["key", "key2"]);
 
-                    pipe.query_async(con.clone())
-                        .map_ok(|t| t.1)
-                        .map(move |result| {
-                            assert_eq!(Ok(((foo_val, bar.clone().into_bytes()),)), result);
-                            result
-                        })
+                        pipe.query_async(&mut con)
+                            .map(move |result| {
+                                assert_eq!(Ok(((foo, bar.clone().into_bytes()),)), result);
+                                result
+                            })
+                            .await
+                    }
                 });
                 future::try_join_all(cmds)
             })
@@ -232,24 +244,24 @@ fn test_script() {
     let ctx = TestContext::new();
 
     block_on_all(async move {
-        ctx.shared_async_connection()
-            .and_then(|con| {
-                script1
-                    .key("key1")
-                    .arg("foo")
-                    .invoke_async(con)
-                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
-                    .and_then(|(con, val): (SharedConnection, String)| {
-                        assert_eq!(val, "foo");
-                        script1.key("key1").arg("bar").invoke_async(con)
-                    })
-                    .and_then(|(con, ())| script2.key("key1").invoke_async(con))
-                    .map_ok(|(_con, val): (SharedConnection, String)| {
-                        assert_eq!(val, "bar");
-                    })
-            })
-            .await
+        let mut con = ctx.shared_async_connection().await?;
+        let () = script1
+            .key("key1")
+            .arg("foo")
+            .invoke_async(&mut con)
+            .await?;
+        let val: String = script2.key("key1").invoke_async(&mut con).await?;
+        assert_eq!(val, "foo");
+        let () = script1
+            .key("key1")
+            .arg("bar")
+            .invoke_async(&mut con)
+            .await?;
+        let val: String = script2.key("key1").invoke_async(&mut con).await?;
+        assert_eq!(val, "bar");
+        Ok(())
     })
+    .map_err(|err: RedisError| err)
     .unwrap();
 }
 
