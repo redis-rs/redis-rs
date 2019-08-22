@@ -303,25 +303,20 @@
 //! # #[tokio::main]
 //! # async fn main() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! let con = client.get_async_connection().await?;
+//! let mut con = client.get_async_connection().await?;
 //!
-//! let (con, ()) = redis::cmd("SET")
+//! let () = redis::cmd("SET")
 //!     .arg("key1")
 //!     .arg(b"foo")
-//!     // `query_async` acts in the same way as `query` but requires the connection to be
-//!     // taken by value as the method returns a `Future` instead of `Result`.
-//!     // This connection will be returned after the future has been completed allowing it to
-//!     // be used again.
-//!     .query_async(con)
+//!     .query_async(&mut con)
 //!     .await?;
 //!
-//! let (con, ()) = redis::cmd("SET").arg(&["key2", "bar"]).query_async(con).await?;
+//! let () = redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
 //!
 //! let result = redis::cmd("MGET")
 //!     .arg(&["key1", "key2"])
-//!     .query_async(con)
-//!     .await
-//!     .map(|t| t.1);
+//!     .query_async(&mut con)
+//!     .await;
 //! assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //! Ok(())
 //! # }

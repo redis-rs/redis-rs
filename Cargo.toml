@@ -27,6 +27,7 @@ tokio-net = "0.2.0-alpha.2"
 [features]
 default = [ "geospatial" ]
 
+executor = []
 geospatial = []
 
 [dev-dependencies]

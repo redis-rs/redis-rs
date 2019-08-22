@@ -14,7 +14,6 @@ use tokio::net::tcp::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 
 use futures::{
-    future::Either,
     prelude::*,
     ready, task,
     task::{Spawn, SpawnExt},
@@ -188,6 +187,7 @@ impl ActualConnection {
     }
 }
 
+/// Opens a connection.
 pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection> {
     let con = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
@@ -204,61 +204,64 @@ pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection>
                 Err(err) => return Err(err.into()),
             };
 
-                TcpStream::connect(&socket_addr)
-                    .map_ok(|con| ActualConnection::Tcp(WriteWrapper(BufReader::new(con))))
-                    .await?
+            TcpStream::connect(&socket_addr)
+                .map_ok(|con| ActualConnection::Tcp(WriteWrapper(BufReader::new(con))))
+                .await?
         }
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => 
+        ConnectionAddr::Unix(ref path) => {
             UnixStream::connect(path.clone())
-                .map_ok(|stream| ActualConnection::Unix(WriteWrapper(BufReader::new(stream)))).await?,
-        
+                .map_ok(|stream| ActualConnection::Unix(WriteWrapper(BufReader::new(stream))))
+                .await?
+        }
+
         #[cfg(not(unix))]
-        ConnectionAddr::Unix(_) => return Err(RedisError::from((
-            ErrorKind::InvalidClientConfig,
-            "Cannot connect to unix sockets \
-             on this platform",
-        ))),
+        ConnectionAddr::Unix(_) => {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Cannot connect to unix sockets \
+                 on this platform",
+            )))
+        }
     };
 
-        let mut rv = Connection {
-            con,
-            db: connection_info.db,
-        };
+    let mut rv = Connection {
+        con,
+        db: connection_info.db,
+    };
 
-            match connection_info.passwd {
-                Some(ref passwd) => {
-                    let mut cmd = cmd("AUTH");
-                    cmd.arg(&**passwd);
-                    let x = cmd.query_async::<_, Value>(&mut rv).await;
-                    match x {
-                        Ok(Value::Okay) => (),
-                        _ => {
-                            fail!((
-                                ErrorKind::AuthenticationFailed,
-                                "Password authentication failed"
-                            ));
-                        }
-                    }
+    match connection_info.passwd {
+        Some(ref passwd) => {
+            let mut cmd = cmd("AUTH");
+            cmd.arg(&**passwd);
+            let x = cmd.query_async::<_, Value>(&mut rv).await;
+            match x {
+                Ok(Value::Okay) => (),
+                _ => {
+                    fail!((
+                        ErrorKind::AuthenticationFailed,
+                        "Password authentication failed"
+                    ));
                 }
-                None => (),
             }
+        }
+        None => (),
+    }
 
-            if connection_info.db != 0 {
-                let mut cmd = cmd("SELECT");
-                cmd.arg(connection_info.db);
-                let result = cmd.query_async::<_, Value>(&mut rv).await;
-                match result {
-                    Ok(Value::Okay) => Ok(rv),
-                    _ => fail!((
-                        ErrorKind::ResponseError,
-                        "Redis server refused to switch database"
-                    )),
-                }
-            } else {
-                Ok(rv)
-            }
-        }).await
+    if connection_info.db != 0 {
+        let mut cmd = cmd("SELECT");
+        cmd.arg(connection_info.db);
+        let result = cmd.query_async::<_, Value>(&mut rv).await;
+        match result {
+            Ok(Value::Okay) => Ok(rv),
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to switch database"
+            )),
+        }
+    } else {
+        Ok(rv)
+    }
 }
 
 /// An async abstraction over connections.
@@ -563,6 +566,7 @@ where
     }
 }
 
+/// A connection object bound to an executor.
 #[derive(Clone)]
 pub struct SharedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
@@ -571,26 +575,24 @@ pub struct SharedConnection {
 
 impl SharedConnection {
     /// Creates a shared connection from a connection and executor.
-    pub fn new<E>(con: Connection, executor: E) -> impl Future<Output = RedisResult<Self>>
+    pub fn new<E>(con: Connection, executor: E) -> RedisResult<Self>
     where
         E: Spawn,
     {
-        future::lazy(|_| {
-            let pipeline = match con.con {
-                ActualConnection::Tcp(tcp) => {
-                    let codec = ValueCodec::default().framed(tcp.0.into_inner());
-                    Pipeline::new(codec, executor)
-                }
-                #[cfg(unix)]
-                ActualConnection::Unix(unix) => {
-                    let codec = ValueCodec::default().framed(unix.0.into_inner());
-                    Pipeline::new(codec, executor)
-                }
-            };
-            Ok(SharedConnection {
-                pipeline,
-                db: con.db,
-            })
+        let pipeline = match con.con {
+            ActualConnection::Tcp(tcp) => {
+                let codec = ValueCodec::default().framed(tcp.0.into_inner());
+                Pipeline::new(codec, executor)
+            }
+            #[cfg(unix)]
+            ActualConnection::Unix(unix) => {
+                let codec = ValueCodec::default().framed(unix.0.into_inner());
+                Pipeline::new(codec, executor)
+            }
+        };
+        Ok(SharedConnection {
+            pipeline,
+            db: con.db,
         })
     }
 }

@@ -267,7 +267,7 @@ where
             match opt {
                 Some(value) => {
                     self.reader().consume(removed);
-                    let reader = self.reader.take().unwrap();
+                    self.reader.take().unwrap();
                     return Ok(value?).into();
                 }
                 None => {

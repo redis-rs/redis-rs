@@ -3,7 +3,7 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-use futures::{future::Either, prelude::*};
+use futures::prelude::*;
 
 #[derive(Clone)]
 enum Arg<D> {
@@ -327,14 +327,19 @@ impl Cmd {
 
     /// Async version of `query`.
     #[inline]
-    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
+    pub fn query_async<'c, C, T: FromRedisValue>(
+        &self,
+        con: &'c mut C,
+    ) -> impl Future<Output = RedisResult<T>> + 'c
     where
         C: crate::aio::ConnectionLike + Send + 'static,
         T: Send + 'static,
     {
         let pcmd = self.get_packed_command();
-        let val = con.req_packed_command(pcmd).await?;
-        from_redis_value(&val)
+        async move {
+            let val = con.req_packed_command(pcmd).await?;
+            from_redis_value(&val)
+        }
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
