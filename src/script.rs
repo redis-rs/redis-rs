@@ -3,7 +3,7 @@ use sha1::Sha1;
 use aio::SharedConnection;
 use cmd::{cmd, Cmd};
 use connection::ConnectionLike;
-use futures::{Async, Future, Poll};
+use futures::{try_ready, Async, Future, Poll};
 use types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
@@ -170,17 +170,9 @@ impl<'a> ScriptInvocation<'a> {
             con: con.clone(),
             eval_cmd,
             load_cmd,
-            status: ScriptStatus::NotLoaded,
-            future,
+            future: CmdFuture::Eval(future),
         }
     }
-}
-
-#[derive(PartialEq)]
-enum ScriptStatus {
-    NotLoaded,
-    Loading,
-    Loaded,
 }
 
 /// A future that runs the given script and loads it into Redis if
@@ -189,8 +181,12 @@ struct InvokeAsyncFuture<T> {
     con: SharedConnection,
     eval_cmd: Cmd,
     load_cmd: Cmd,
-    status: ScriptStatus,
-    future: RedisFuture<(SharedConnection, T)>,
+    future: CmdFuture<T>,
+}
+
+enum CmdFuture<T> {
+    Load(RedisFuture<(SharedConnection, String)>),
+    Eval(RedisFuture<(SharedConnection, T)>),
 }
 
 impl<T> Future for InvokeAsyncFuture<T>
@@ -202,27 +198,28 @@ where
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
-            match self.future.poll() {
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Ok(Async::Ready((con, val))) => {
-                    if self.status == ScriptStatus::Loading {
-                        self.status = ScriptStatus::Loaded;
-                        self.future = self.eval_cmd.query_async(con);
-                    } else {
+            self.future = match self.future {
+                CmdFuture::Load(ref mut future) => {
+                    // When we're done loading the script into Redis, try eval'ing it again
+                    let (con, _hash) = try_ready!(future.poll());
+                    CmdFuture::Eval(self.eval_cmd.query_async(con))
+                }
+                CmdFuture::Eval(ref mut future) => match future.poll() {
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Ok(Async::Ready((con, val))) => {
+                        // Return the value from the script evaluation
                         return Ok(Async::Ready((con, val)));
                     }
-                }
-                Err(err) => {
-                    if err.kind() == ErrorKind::NoScriptError
-                        && self.status == ScriptStatus::NotLoaded
-                    {
-                        self.status = ScriptStatus::Loading;
-                        self.future = self.load_cmd.query_async(self.con.clone())
-                    } else {
-                        return Err(err);
+                    Err(err) => {
+                        // Load the script into Redis if the script hash wasn't there already
+                        if err.kind() == ErrorKind::NoScriptError {
+                            CmdFuture::Load(self.load_cmd.query_async(self.con.clone()))
+                        } else {
+                            return Err(err);
+                        }
                     }
-                }
-            }
+                },
+            };
         }
     }
 }
