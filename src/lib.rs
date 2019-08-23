@@ -352,6 +352,7 @@ extern crate combine;
 extern crate bytes;
 extern crate dtoa;
 extern crate itoa;
+extern crate percent_encoding;
 extern crate sha1;
 extern crate url;
 #[macro_use]

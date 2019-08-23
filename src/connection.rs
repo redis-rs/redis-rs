@@ -107,7 +107,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             ),
         },
         passwd: match url.password() {
-            Some(pw) => match url::percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
+            Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
                 Ok(decoded) => Some(decoded.into_owned()),
                 Err(_) => fail!((
                     ErrorKind::InvalidClientConfig,
