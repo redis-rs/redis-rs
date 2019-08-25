@@ -254,3 +254,24 @@ fn test_script() {
     }))
     .unwrap();
 }
+
+#[test]
+fn test_script_returning_complex_type() {
+    let ctx = TestContext::new();
+    block_on_all(future::lazy(|| {
+        ctx.shared_async_connection().and_then(|con| {
+            redis::Script::new("return {1, ARGV[1], true}")
+                .arg("hello")
+                .invoke_async(con)
+                .and_then(
+                    |(_con, (i, s, b)): (SharedConnection, (i32, String, bool))| {
+                        assert_eq!(i, 1);
+                        assert_eq!(s, "hello");
+                        assert_eq!(b, true);
+                        Ok(())
+                    },
+                )
+        })
+    }))
+    .unwrap();
+}
