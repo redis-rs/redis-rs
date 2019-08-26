@@ -4,7 +4,6 @@ use redis;
 
 use futures;
 
-
 #[path = "../tests/support/mod.rs"]
 mod support;
 

@@ -1,5 +1,3 @@
-use net2;
-use rand;
 use redis;
 
 use redis::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
