@@ -348,8 +348,6 @@
 #![deny(non_camel_case_types)]
 
 #[macro_use]
-extern crate futures;
-#[macro_use]
 extern crate tokio_io;
 
 // public api

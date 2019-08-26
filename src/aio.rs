@@ -12,7 +12,7 @@ use tokio_io::{self, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::{Either, Executor};
-use futures::{future, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::{future, try_ready, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use tokio_sync::{mpsc, oneshot};
 
 use crate::cmd::cmd;
