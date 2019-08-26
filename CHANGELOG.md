@@ -2,6 +2,41 @@
 
 ## [0.12.0](https://github.com/mitsuhiko/redis-rs/compare/0.11.0...Unreleased) - ReleaseDate
 
+**Fixes and improvements**
+
+* **Breaking change:** Use `dyn` keyword to avoid deprecation warning ([#223](https://github.com/mitsuhiko/redis-rs/pull/223))
+* **Breaking change:** Update url dependency to v2 ([#234](https://github.com/mitsuhiko/redis-rs/pull/234))
+* **Breaking change:** (async) Fix `Script::invoke_async` return type error ([#233](https://github.com/mitsuhiko/redis-rs/pull/233))
+* Add `GETRANGE` and `SETRANGE` commands ([#202](https://github.com/mitsuhiko/redis-rs/pull/202))
+* Fix `SINTERSTORE` wrapper name, it's now correctly `sinterstore` ([#225](https://github.com/mitsuhiko/redis-rs/pull/225))
+* Allow running `SharedConnection` with any other runtime ([#229](https://github.com/mitsuhiko/redis-rs/pull/229))
+* Reformatted as Edition 2018 code ([#235](https://github.com/mitsuhiko/redis-rs/pull/235))
+
+### BREAKING CHANGES
+
+#### Use `dyn` keyword to avoid deprecation warning ([#223](https://github.com/mitsuhiko/redis-rs/pull/223))
+
+Rust nightly deprecated bare trait objects.
+This PR adds the `dyn` keyword to all trait objects in order to get rid of the warning.
+This bumps the minimal supported Rust version to [Rust 1.27](https://blog.rust-lang.org/2018/06/21/Rust-1.27.html).
+
+#### Update url dependency to v2 ([#234](https://github.com/mitsuhiko/redis-rs/pull/234))
+
+We updated the `url` dependency to v2. We do expose this on our public API on the `redis::parse_redis_url` function. If you depend on that, make sure to also upgrade your direct dependency.
+
+#### (async) Fix Script::invoke_async return type error ([#233](https://github.com/mitsuhiko/redis-rs/pull/233))
+
+Previously, invoking a script with a complex return type would cause the following error:
+
+```
+Response was of incompatible type: "Not a bulk response" (response was string data('"4b98bef92b171357ddc437b395c7c1a5145ca2bd"'))
+```
+
+This was because the Future returned when loading the script into the database returns the hash of the script, and thus the return type of `String` would not match the intended return type.
+
+This commit adds an enum to account for the different Future return types.
+
+
 ## [0.11.0](https://github.com/mitsuhiko/redis-rs/compare/0.11.0-beta.2...0.11.0) - 2019-07-19
 
 This release includes all fixes & improvements from the two beta releases listed below.
