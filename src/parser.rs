@@ -4,6 +4,7 @@ use std::str;
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use bytes::BytesMut;
+use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures::{Async, Future, Poll};
 use tokio_io::codec::{Decoder, Encoder};
 use tokio_io::AsyncRead;
