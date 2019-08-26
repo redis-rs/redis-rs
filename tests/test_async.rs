@@ -1,11 +1,10 @@
-extern crate redis;
+use redis;
 
-extern crate futures;
-extern crate tokio;
+use futures;
 
 use futures::{future, Future};
 
-use support::*;
+use crate::support::*;
 
 use redis::aio::SharedConnection;
 use redis::RedisError;

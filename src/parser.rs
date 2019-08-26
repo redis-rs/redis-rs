@@ -1,12 +1,13 @@
 use std::io::{self, BufRead};
 use std::str;
 
-use types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
+use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use bytes::BytesMut;
+use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures::{Async, Future, Poll};
 use tokio_io::codec::{Decoder, Encoder};
-use tokio_io::AsyncRead;
+use tokio_io::{try_nb, AsyncRead};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};

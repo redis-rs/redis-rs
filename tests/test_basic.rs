@@ -1,6 +1,4 @@
-extern crate net2;
-extern crate rand;
-extern crate redis;
+use redis;
 
 use redis::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
 
@@ -10,7 +8,7 @@ use std::io::BufReader;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use support::*;
+use crate::support::*;
 
 mod support;
 
@@ -699,7 +697,7 @@ fn test_nice_hash_api() {
     assert_eq!(con.hdel("my_hash", &["f1", "f2"]), Ok(()));
     assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
-    let iter: redis::Iter<(String, isize)> = con.hscan("my_hash").unwrap();
+    let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
     let mut found = HashSet::new();
     for item in iter {
         found.insert(item);

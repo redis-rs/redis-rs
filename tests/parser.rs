@@ -1,10 +1,7 @@
-extern crate redis;
+use redis;
 
-extern crate futures;
-extern crate partial_io;
 #[macro_use]
 extern crate quickcheck;
-extern crate tokio;
 
 mod support;
 
@@ -18,7 +15,7 @@ use futures::Future;
 
 use redis::Value;
 
-use support::encode_value;
+use crate::support::encode_value;
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);
