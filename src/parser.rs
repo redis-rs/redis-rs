@@ -7,7 +7,7 @@ use bytes::BytesMut;
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures::{Async, Future, Poll};
 use tokio_io::codec::{Decoder, Encoder};
-use tokio_io::AsyncRead;
+use tokio_io::{try_nb, AsyncRead};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};

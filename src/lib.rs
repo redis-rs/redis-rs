@@ -347,9 +347,6 @@
 
 #![deny(non_camel_case_types)]
 
-#[macro_use]
-extern crate tokio_io;
-
 // public api
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
