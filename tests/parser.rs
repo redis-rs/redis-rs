@@ -1,10 +1,7 @@
 use redis;
 
-
-
 #[macro_use]
 extern crate quickcheck;
-
 
 mod support;
 

@@ -3,8 +3,8 @@ use sha1::Sha1;
 use crate::aio::SharedConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
-use futures::{try_ready, Async, Future, Poll};
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
+use futures::{try_ready, Async, Future, Poll};
 
 /// Represents a lua script.
 pub struct Script {
@@ -205,21 +205,21 @@ where
                     CmdFuture::Eval(self.eval_cmd.query_async(con))
                 }
                 CmdFuture::Eval(ref mut future) => match future.poll() {
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Ok(Async::Ready((con, val))) => {
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Ok(Async::Ready((con, val))) => {
                         // Return the value from the script evaluation
                         return Ok(Async::Ready((con, val)));
                     }
-                Err(err) => {
+                    Err(err) => {
                         // Load the script into Redis if the script hash wasn't there already
                         if err.kind() == ErrorKind::NoScriptError {
                             CmdFuture::Load(self.load_cmd.query_async(self.con.clone()))
-                    } else {
-                        return Err(err);
+                        } else {
+                            return Err(err);
+                        }
                     }
-                }
                 },
             };
-            }
         }
+    }
 }

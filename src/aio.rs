@@ -444,7 +444,7 @@ where
             })
             .map(|_| ());
 
-        executor.execute(Box::new(f));
+        executor.execute(Box::new(f)).unwrap();
         Pipeline(sender)
     }
 

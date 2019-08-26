@@ -1,4 +1,4 @@
-use futures::Future;
+use futures::{future::Executor, Future};
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisError, RedisResult, Value};
@@ -53,7 +53,7 @@ impl Client {
     #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(
         &self,
-    ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError> {
+    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError> {
         let executor = tokio_executor::DefaultExecutor::current();
         self.get_async_connection()
             .and_then(move |con| crate::aio::SharedConnection::new(con, executor))
@@ -62,7 +62,7 @@ impl Client {
     pub fn get_shared_async_connection_with_executor<E>(
         &self,
         executor: E,
-    ) -> impl Future<Item = ::aio::SharedConnection, Error = RedisError>
+    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError>
     where
         E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
     {
