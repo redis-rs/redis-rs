@@ -111,7 +111,7 @@ impl Connection {
         let db = self.db;
         with_connection!(self.con, crate::parser::parse_redis_value_async).then(move |result| {
             match result {
-                Ok((con, value)) => Ok((Connection { con: con, db }, value)),
+                Ok((con, value)) => Ok((Connection { con, db }, value)),
                 Err(err) => {
                     // TODO Do we need to shutdown here as we do in the sync version?
                     Err(err)
@@ -359,14 +359,10 @@ where
         };
 
         let entry = self.in_flight.pop_front().unwrap();
-        match entry.output.send(response) {
-            Ok(_) => (),
-            Err(_) => {
-                // `Err` means that the receiver was dropped in which case it does not
-                // care about the output and we can continue by just dropping the value
-                // and sender
-            }
-        }
+        // `Err` means that the receiver was dropped in which case it does not
+        // care about the output and we can continue by just dropping the value
+        // and sender
+        entry.output.send(response).ok();
     }
 }
 

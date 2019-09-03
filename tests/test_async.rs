@@ -112,14 +112,14 @@ fn test_cmd(
     let key2 = format!("key{}_2", i);
     let key2_2 = key2.clone();
 
-    let foo = format!("foo{}", i);
+    let foo_val = format!("foo{}", i);
 
     let con1 = con.clone();
     let con2 = con.clone();
     Box::new(
         redis::cmd("SET")
             .arg(&key[..])
-            .arg(foo.as_bytes())
+            .arg(foo_val.as_bytes())
             .query_async(con.clone())
             .and_then(move |(_, ())| redis::cmd("SET").arg(&[&key2, "bar"]).query_async(con1))
             .and_then(move |(_, ())| {
@@ -128,7 +128,7 @@ fn test_cmd(
                     .query_async(con2)
                     .map(|t| t.1)
                     .then(|result| {
-                        assert_eq!(Ok((foo, b"bar".to_vec())), result);
+                        assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
                         Ok(())
                     })
             }),
@@ -191,17 +191,17 @@ fn test_transaction_shared_connection() {
         ctx.shared_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
-                    let foo = i;
-                    let bar = format!("bar{}", i);
+                    let foo_val = i;
+                    let bar_val = format!("bar{}", i);
 
                     let mut pipe = redis::pipe();
                     pipe.atomic()
                         .cmd("SET")
                         .arg("key")
-                        .arg(foo)
+                        .arg(foo_val)
                         .ignore()
                         .cmd("SET")
-                        .arg(&["key2", &bar[..]])
+                        .arg(&["key2", &bar_val[..]])
                         .ignore()
                         .cmd("MGET")
                         .arg(&["key", "key2"]);
@@ -209,7 +209,7 @@ fn test_transaction_shared_connection() {
                     pipe.query_async(con.clone())
                         .map(|t| t.1)
                         .then(move |result| {
-                            assert_eq!(Ok(((foo, bar.clone().into_bytes()),)), result);
+                            assert_eq!(Ok(((foo_val, bar_val.clone().into_bytes()),)), result);
                             result
                         })
                 });

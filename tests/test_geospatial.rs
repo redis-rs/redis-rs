@@ -11,10 +11,9 @@ use redis::{Commands, RedisResult};
 mod support;
 use crate::support::*;
 
-const PALERMO: (&'static str, &'static str, &'static str) = ("13.361389", "38.115556", "Palermo");
-const CATANIA: (&'static str, &'static str, &'static str) = ("15.087269", "37.502669", "Catania");
-const AGRIGENTO: (&'static str, &'static str, &'static str) =
-    ("13.5833332", "37.316667", "Agrigento");
+const PALERMO: (&str, &str, &str) = ("13.361389", "38.115556", "Palermo");
+const CATANIA: (&str, &str, &str) = ("15.087269", "37.502669", "Catania");
+const AGRIGENTO: (&str, &str, &str) = ("13.5833332", "37.316667", "Agrigento");
 
 #[test]
 fn test_geoadd_single_tuple() {
@@ -63,7 +62,7 @@ fn test_geodist_support_option() {
     assert_ne!(result, Ok(None));
 
     let dist = result.unwrap().unwrap();
-    assert_approx_eq!(dist, 166274.1516, 0.01);
+    assert_approx_eq!(dist, 166_274.151_6, 0.01);
 }
 
 #[test]
@@ -115,7 +114,10 @@ fn test_use_coord_struct() {
     let mut con = ctx.connection();
 
     assert_eq!(
-        con.geo_add("my_gis", (Coord::lon_lat(13.361389, 38.115556), "Palermo")),
+        con.geo_add(
+            "my_gis",
+            (Coord::lon_lat(13.361_389, 38.115_556), "Palermo")
+        ),
         Ok(1)
     );
 
@@ -175,8 +177,8 @@ fn test_georadius() {
     assert_eq!(result.len(), 1);
 
     assert_eq!(result[0].name.as_str(), "Palermo");
-    assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361389);
-    assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115556);
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361_389);
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115_556);
     assert_eq!(result[0].dist, None);
 }
 

@@ -129,12 +129,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
         ))),
-        db: match url
-            .query_pairs()
-            .into_iter()
-            .filter(|&(ref key, _)| key == "db")
-            .next()
-        {
+        db: match url.query_pairs().find(|&(ref key, _)| key == "db") {
             Some((_, db)) => unwrap_or!(
                 db.parse::<i64>().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
@@ -244,7 +239,7 @@ impl ActualConnection {
                     .reader
                     .get_mut()
                     .write_all(bytes)
-                    .map_err(|e| RedisError::from(e));
+                    .map_err(RedisError::from);
                 match res {
                     Err(e) => {
                         if e.is_connection_dropped() {
@@ -261,7 +256,7 @@ impl ActualConnection {
                     .sock
                     .get_mut()
                     .write_all(bytes)
-                    .map_err(|e| RedisError::from(e));
+                    .map_err(RedisError::from);
                 match result {
                     Err(e) => {
                         if e.is_connection_dropped() {
@@ -341,13 +336,13 @@ impl ActualConnection {
 pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr)?;
     let mut rv = Connection {
-        con: con,
+        con,
         db: connection_info.db,
         pubsub: false,
     };
 
-    match connection_info.passwd {
-        Some(ref passwd) => match cmd("AUTH").arg(&**passwd).query::<Value>(&mut rv) {
+    if let Some(ref passwd) = connection_info.passwd {
+        match cmd("AUTH").arg(&**passwd).query::<Value>(&mut rv) {
             Ok(Value::Okay) => {}
             _ => {
                 fail!((
@@ -355,8 +350,7 @@ pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
                     "Password authentication failed"
                 ));
             }
-        },
-        None => {}
+        }
     }
 
     if connection_info.db != 0 {
@@ -449,7 +443,7 @@ impl Connection {
     }
 
     /// Creats a pubsub instance.for this connection.
-    pub fn as_pubsub<'a>(&'a mut self) -> PubSub<'a> {
+    pub fn as_pubsub(&mut self) -> PubSub<'_> {
         // NOTE: The pubsub flag is intentionally not raised at this time since
         // running commands within the pubsub state should not try and exit from
         // the pubsub state.
@@ -502,9 +496,9 @@ impl Connection {
         loop {
             let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
 
-            match res.0.first().map(|v| *v) {
-                Some(b'u') => received_unsub = true,
-                Some(b'p') => received_punsub = true,
+            match res.0.first() {
+                Some(&b'u') => received_unsub = true,
+                Some(&b'p') => received_punsub = true,
                 _ => (),
             }
 
@@ -595,26 +589,22 @@ impl<'a> PubSub<'a> {
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let _: () = cmd("SUBSCRIBE").arg(channel).query(self.con)?;
-        Ok(())
+        Ok(cmd("SUBSCRIBE").arg(channel).query(self.con)?)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let _: () = cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?;
-        Ok(())
+        Ok(cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?)
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        let _: () = cmd("UNSUBSCRIBE").arg(channel).query(self.con)?;
-        Ok(())
+        Ok(cmd("UNSUBSCRIBE").arg(channel).query(self.con)?)
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        let _: () = cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?;
-        Ok(())
+        Ok(cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -644,9 +634,9 @@ impl<'a> PubSub<'a> {
             }
 
             return Ok(Msg {
-                payload: payload,
-                channel: channel,
-                pattern: pattern,
+                payload,
+                channel,
+                pattern,
             });
         }
     }
@@ -703,6 +693,7 @@ impl Msg {
 
     /// Returns true if the message was constructed from a pattern
     /// subscription.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_pattern(&self) -> bool {
         self.pattern.is_some()
     }
@@ -763,7 +754,7 @@ pub fn transaction<
 ) -> RedisResult<T> {
     let mut func = func;
     loop {
-        let _: () = cmd("WATCH").arg(keys).query(con)?;
+        cmd("WATCH").arg(keys).query::<()>(con)?;
         let mut p = pipe();
         let response: Option<T> = func(con, p.atomic())?;
         match response {
@@ -773,7 +764,7 @@ pub fn transaction<
             Some(response) => {
                 // make sure no watch is left in the connection, even if
                 // someone forgot to use the pipeline.
-                let _: () = cmd("UNWATCH").query(con)?;
+                cmd("UNWATCH").query::<()>(con)?;
                 return Ok(response);
             }
         }

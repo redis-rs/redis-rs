@@ -203,33 +203,33 @@ impl ToRedisArgs for RadiusOptions {
         W: ?Sized + RedisWrite,
     {
         if self.with_coord {
-            out.write_arg("WITHCOORD".as_bytes());
+            out.write_arg(b"WITHCOORD");
         }
 
         if self.with_dist {
-            out.write_arg("WITHDIST".as_bytes());
+            out.write_arg(b"WITHDIST");
         }
 
         if let Some(n) = self.count {
-            out.write_arg("COUNT".as_bytes());
+            out.write_arg(b"COUNT");
             out.write_arg(format!("{}", n).as_bytes());
         }
 
         match self.order {
-            RadiusOrder::Asc => out.write_arg("ASC".as_bytes()),
-            RadiusOrder::Desc => out.write_arg("DESC".as_bytes()),
+            RadiusOrder::Asc => out.write_arg(b"ASC"),
+            RadiusOrder::Desc => out.write_arg(b"DESC"),
             _ => (),
         };
 
         if let Some(ref store) = self.store {
-            out.write_arg("STORE".as_bytes());
+            out.write_arg(b"STORE");
             for i in store {
                 out.write_arg(i);
             }
         }
 
         if let Some(ref store_dist) = self.store_dist {
-            out.write_arg("STOREDIST".as_bytes());
+            out.write_arg(b"STOREDIST");
             for i in store_dist {
                 out.write_arg(i);
             }
@@ -259,7 +259,7 @@ impl FromRedisValue for RadiusSearchResult {
         // If we receive only the member name, it will be a plain string
         if let Ok(name) = FromRedisValue::from_redis_value(v) {
             return Ok(RadiusSearchResult {
-                name: name,
+                name,
                 coord: None,
                 dist: None,
             });
