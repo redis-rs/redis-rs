@@ -28,7 +28,7 @@ upload-docs: docs
 
 style-check:
 	@rustup component add rustfmt --toolchain stable 2> /dev/null
-	cargo +stable style-check -- --check
+	cargo +stable fmt -- --check
 
 lint:
 	@rustup component add clippy --toolchain stable 2> /dev/null
