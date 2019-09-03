@@ -391,6 +391,9 @@ pub mod aio;
 #[cfg(feature = "geospatial")]
 pub mod geo;
 
+#[cfg(feature = "cluster")]
+pub mod cluster;
+
 mod client;
 mod cmd;
 mod commands;
