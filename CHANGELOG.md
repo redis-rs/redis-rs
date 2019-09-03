@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0 (unreleased)
+
+* **Breaking change:** rename `parse_async` to `parse_redis_value_async` for consistency.
+
 ## [0.12.0](https://github.com/mitsuhiko/redis-rs/compare/0.11.0...0.12.0) - 2019-08-26
 
 **Fixes and improvements**
