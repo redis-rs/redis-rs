@@ -52,7 +52,7 @@ impl Client {
     }
 
     /// Returns a async shared connection from the client.
-    /// 
+    ///
     /// This uses the default tokio executor.
     #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(

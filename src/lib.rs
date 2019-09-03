@@ -356,7 +356,7 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use crate::parser::{parse_redis_value_async, parse_redis_value, Parser};
+pub use crate::parser::{parse_redis_value, parse_redis_value_async, Parser};
 pub use crate::script::{Script, ScriptInvocation};
 
 pub use crate::types::{

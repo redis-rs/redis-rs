@@ -45,7 +45,7 @@ pub enum ConnectionAddr {
 
 impl ConnectionAddr {
     /// Checks if this address is supported.
-    /// 
+    ///
     /// Because not all platforms support all connection addresses this is a
     /// quick way to figure out if a connection method is supported.  Currently
     /// this only affects unix connections which are only supported on unix
