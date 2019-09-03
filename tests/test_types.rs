@@ -148,39 +148,30 @@ fn test_types_to_redis_args() {
     use std::collections::BTreeSet;
     use std::collections::HashSet;
 
-    assert!(5i32.to_redis_args().len() > 0);
-    assert!("abc".to_redis_args().len() > 0);
-    assert!("abc".to_redis_args().len() > 0);
-    assert!(String::from("x").to_redis_args().len() > 0);
+    assert!(!5i32.to_redis_args().is_empty());
+    assert!(!"abc".to_redis_args().is_empty());
+    assert!(!"abc".to_redis_args().is_empty());
+    assert!(!String::from("x").to_redis_args().is_empty());
 
-    assert!(
-        [5, 4]
-            .into_iter()
-            .cloned()
-            .collect::<HashSet<_>>()
-            .to_redis_args()
-            .len()
-            > 0
-    );
+    assert!(![5, 4]
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>()
+        .to_redis_args()
+        .is_empty());
 
-    assert!(
-        [5, 4]
-            .into_iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .to_redis_args()
-            .len()
-            > 0
-    );
+    assert!(![5, 4]
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .to_redis_args()
+        .is_empty());
 
     // this can be used on something HMSET
-    assert!(
-        [("a", 5), ("b", 6), ("C", 7)]
-            .into_iter()
-            .cloned()
-            .collect::<BTreeMap<_, _>>()
-            .to_redis_args()
-            .len()
-            > 0
-    );
+    assert!(![("a", 5), ("b", 6), ("C", 7)]
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>()
+        .to_redis_args()
+        .is_empty());
 }

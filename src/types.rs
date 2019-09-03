@@ -100,11 +100,9 @@ impl Value {
                         return false;
                     }
                 }
-                return true;
+                true
             }
-            _ => {
-                return false;
-            }
+            _ => false,
         }
     }
 }
@@ -380,7 +378,7 @@ impl InfoDict {
     pub fn new(kvpairs: &str) -> InfoDict {
         let mut map = HashMap::new();
         for line in kvpairs.lines() {
-            if line.len() == 0 || line.starts_with("#") {
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let mut p = line.splitn(2, ':');
@@ -388,7 +386,7 @@ impl InfoDict {
             let v = unwrap_or!(p.next(), continue).to_string();
             map.insert(k, Value::Status(v));
         }
-        InfoDict { map: map }
+        InfoDict { map }
     }
 
     /// Fetches a value by key and converts it into the given type.
@@ -413,6 +411,11 @@ impl InfoDict {
     /// Returns the size of the info dict.
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    /// Checks if the dict is empty.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 }
 
@@ -649,9 +652,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     where
         W: ?Sized + RedisWrite,
     {
-        match *self {
-            Some(ref x) => x.write_redis_args(out),
-            None => (),
+        if let Some(ref x) = *self {
+            x.write_redis_args(out);
         }
     }
 
@@ -804,9 +806,8 @@ pub trait FromRedisValue: Sized {
     fn from_redis_values(items: &[Value]) -> RedisResult<Vec<Self>> {
         let mut rv = vec![];
         for item in items.iter() {
-            match FromRedisValue::from_redis_value(item) {
-                Ok(val) => rv.push(val),
-                Err(_) => {}
+            if let Ok(val) = FromRedisValue::from_redis_value(item) {
+                rv.push(val);
             }
         }
         Ok(rv)
@@ -925,9 +926,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
             Value::Bulk(ref items) => {
                 let mut rv = HashMap::default();
                 let mut iter = items.iter();
-                loop {
-                    let k = unwrap_or!(iter.next(), break);
-                    let v = unwrap_or!(iter.next(), break);
+                while let (Some(k), Some(v)) = (iter.next(), iter.next()) {
                     rv.insert(from_redis_value(k)?, from_redis_value(v)?);
                 }
                 Ok(rv)
@@ -946,9 +945,7 @@ where
             Value::Bulk(ref items) => {
                 let mut rv = BTreeMap::new();
                 let mut iter = items.iter();
-                loop {
-                    let k = unwrap_or!(iter.next(), break);
-                    let v = unwrap_or!(iter.next(), break);
+                while let (Some(k), Some(v)) = (iter.next(), iter.next()) {
                     rv.insert(from_redis_value(k)?, from_redis_value(v)?);
                 }
                 Ok(rv)
@@ -1076,11 +1073,8 @@ impl FromRedisValue for InfoDict {
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
-        match *v {
-            Value::Nil => {
-                return Ok(None);
-            }
-            _ => {}
+        if let Value::Nil = *v {
+            return Ok(None);
         }
         Ok(Some(from_redis_value(v)?))
     }

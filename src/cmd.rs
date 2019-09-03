@@ -47,21 +47,18 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            match self.batch.pop() {
-                Some(v) => {
-                    return Some(v);
-                }
-                None => {}
+            if let Some(v) = self.batch.pop() {
+                return Some(v);
             };
             if self.cursor == 0 {
                 return None;
             }
 
-            let mut pcmd = unwrap_or!(
+            let pcmd = unwrap_or!(
                 self.cmd.get_packed_command_with_cursor(self.cursor),
                 return None
             );
-            let rv = unwrap_or!(self.con.req_packed_command(&mut pcmd).ok(), return None);
+            let rv = unwrap_or!(self.con.req_packed_command(&pcmd).ok(), return None);
             let (cur, mut batch): (u64, Vec<T>) =
                 unwrap_or!(from_redis_value(&rv).ok(), return None);
             batch.reverse();
@@ -95,7 +92,7 @@ fn countdigits(mut v: usize) -> usize {
 
 #[inline]
 fn bulklen(len: usize) -> usize {
-    return 1 + countdigits(len) + 2 + len + 2;
+    1 + countdigits(len) + 2 + len + 2
 }
 
 fn args_len<'a, I>(args: I, cursor: u64) -> usize
@@ -194,6 +191,12 @@ impl RedisWrite for Cmd {
         let prev = self.data.len();
         self.args.push(Arg::Simple(prev + arg.len()));
         self.data.extend_from_slice(arg);
+    }
+}
+
+impl Default for Cmd {
+    fn default() -> Cmd {
+        Cmd::new()
     }
 }
 
@@ -356,24 +359,20 @@ impl Cmd {
         self,
         con: &'a mut dyn ConnectionLike,
     ) -> RedisResult<Iter<'a, T>> {
-        let mut pcmd = self.get_packed_command();
-        let rv = con.req_packed_command(&mut pcmd)?;
-        let mut batch: Vec<T>;
-        let mut cursor = 0;
+        let pcmd = self.get_packed_command();
+        let rv = con.req_packed_command(&pcmd)?;
 
-        if rv.looks_like_cursor() {
-            let (next, b): (u64, Vec<T>) = from_redis_value(&rv)?;
-            batch = b;
-            cursor = next;
+        let (cursor, mut batch) = if rv.looks_like_cursor() {
+            from_redis_value::<(u64, Vec<T>)>(&rv)?
         } else {
-            batch = from_redis_value(&rv)?;
-        }
+            (0, from_redis_value(&rv)?)
+        };
 
         batch.reverse();
         Ok(Iter {
-            batch: batch,
-            cursor: cursor,
-            con: con,
+            batch,
+            cursor,
+            con,
             cmd: self,
         })
     }
@@ -392,7 +391,7 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        let _: () = self.query(con).unwrap();
+        self.query::<()>(con).unwrap();
     }
 
     fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
@@ -406,6 +405,12 @@ impl Cmd {
 
             Arg::Cursor => Arg::Cursor,
         })
+    }
+}
+
+impl Default for Pipeline {
+    fn default() -> Pipeline {
+        Pipeline::new()
     }
 }
 
@@ -576,7 +581,7 @@ impl Pipeline {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         from_redis_value(
-            &(if self.commands.len() == 0 {
+            &(if self.commands.is_empty() {
                 Value::Bulk(vec![])
             } else if self.transaction_mode {
                 self.execute_transaction(con)?
@@ -639,7 +644,7 @@ impl Pipeline {
     {
         use futures::future;
 
-        let future = if self.commands.len() == 0 {
+        let future = if self.commands.is_empty() {
             return Box::new(future::result(
                 from_redis_value(&Value::Bulk(vec![])).map(|v| (con, v)),
             ));
@@ -667,7 +672,7 @@ impl Pipeline {
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        let _: () = self.query(con).unwrap();
+        self.query::<()>(con).unwrap();
     }
 }
 
@@ -680,7 +685,7 @@ impl Pipeline {
 /// ```rust
 /// redis::cmd("PING");
 /// ```
-pub fn cmd<'a>(name: &'a str) -> Cmd {
+pub fn cmd(name: &str) -> Cmd {
     let mut rv = Cmd::new();
     rv.arg(name);
     rv

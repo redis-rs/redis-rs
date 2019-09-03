@@ -137,7 +137,7 @@ impl<'a> ScriptInvocation<'a> {
                 }
                 Err(err) => {
                     if err.kind() == ErrorKind::NoScriptError {
-                        let _: () = cmd("SCRIPT")
+                        cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
                             .query(con)?;

@@ -81,10 +81,7 @@ impl RedisServer {
         };
 
         let process = cmd.spawn().unwrap();
-        RedisServer {
-            process: process,
-            addr: addr,
-        }
+        RedisServer { process, addr }
     }
 
     pub fn wait(&mut self) {
@@ -98,11 +95,8 @@ impl RedisServer {
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
-        match *self.get_client_addr() {
-            redis::ConnectionAddr::Unix(ref path) => {
-                fs::remove_file(&path).ok();
-            }
-            _ => {}
+        if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
+            fs::remove_file(&path).ok();
         }
     }
 }
@@ -148,10 +142,7 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext {
-            server: server,
-            client: client,
-        }
+        TestContext { server, client }
     }
 
     pub fn connection(&self) -> redis::Connection {
@@ -179,6 +170,7 @@ pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
 where
     W: io::Write,
 {
+    #![allow(clippy::write_with_newline)]
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{}\r\n", val),

@@ -126,13 +126,12 @@ macro_rules! implement_commands {
         /// directly.  Other than that it works the same however.
         pub trait PipelineCommands {
             #[doc(hidden)]
-            #[inline]
             fn perform(&mut self, con: Cmd) -> &mut Self;
 
             $(
                 $(#[$attr])*
                 #[inline]
-                fn $name<'a $(, $tyargs: $ty)*>(
+                fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*) -> &mut Self
                     { self.perform(::std::mem::replace($body, Cmd::new())) }
             )*
@@ -1010,7 +1009,7 @@ pub trait PubSubCommands: Sized {
     /// For every `Msg` passed to the provided closure, either
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
-    fn subscribe<'a, C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
+    fn subscribe<C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               C: ToRedisArgs;
 
@@ -1020,7 +1019,7 @@ pub trait PubSubCommands: Sized {
     /// For every `Msg` passed to the provided closure, either
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
-    fn psubscribe<'a, P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
+    fn psubscribe<P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               P: ToRedisArgs;
 }
@@ -1028,7 +1027,7 @@ pub trait PubSubCommands: Sized {
 impl<T> Commands for T where T: ConnectionLike {}
 
 impl PubSubCommands for Connection {
-    fn subscribe<'a, C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
+    fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               C: ToRedisArgs
     {
@@ -1044,7 +1043,7 @@ impl PubSubCommands for Connection {
         }
     }
 
-    fn psubscribe<'a, P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
+    fn psubscribe<P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
         where F: FnMut(Msg) -> ControlFlow<U>,
               P: ToRedisArgs
     {

@@ -26,4 +26,12 @@ docs: build
 upload-docs: docs
 	@./upload-docs.sh
 
-.PHONY: build test bench docs upload-docs
+style-check:
+	@rustup component add rustfmt --toolchain stable 2> /dev/null
+	cargo +stable style-check -- --check
+
+lint:
+	@rustup component add clippy --toolchain stable 2> /dev/null
+	cargo clippy --all-features
+
+.PHONY: build test bench docs upload-docs style-check lint

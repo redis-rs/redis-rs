@@ -1,3 +1,4 @@
+#![allow(clippy::let_unit_value)]
 use redis;
 
 use redis::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
@@ -14,19 +15,10 @@ mod support;
 
 #[test]
 fn test_parse_redis_url() {
-    let redis_url = format!("redis://127.0.0.1:1234/0");
-    match redis::parse_redis_url(&redis_url) {
-        Ok(_) => assert!(true),
-        Err(_) => assert!(false),
-    }
-    match redis::parse_redis_url("unix:/var/run/redis/redis.sock") {
-        Ok(_) => assert!(true),
-        Err(_) => assert!(false),
-    }
-    match redis::parse_redis_url("127.0.0.1") {
-        Ok(_) => assert!(false),
-        Err(_) => assert!(true),
-    }
+    let redis_url = "redis://127.0.0.1:1234/0".to_string();
+    redis::parse_redis_url(&redis_url).unwrap();
+    redis::parse_redis_url("unix:/var/run/redis/redis.sock").unwrap();
+    assert!(redis::parse_redis_url("127.0.0.1").is_err());
 }
 
 #[test]
@@ -79,7 +71,7 @@ fn test_info() {
     );
     assert_eq!(info.get("role"), Some("master".to_string()));
     assert_eq!(info.get("loading"), Some(false));
-    assert!(info.len() > 0);
+    assert!(!info.is_empty());
     assert!(info.contains_key(&"role"));
 }
 
@@ -456,7 +448,7 @@ fn test_pubsub() {
     // We can also call the command directly
     assert_eq!(con.publish("foo", 23), Ok(1));
 
-    thread.join().ok().expect("Something went wrong");
+    thread.join().expect("Something went wrong");
 }
 
 #[test]
@@ -476,8 +468,8 @@ fn test_pubsub_unsubscribe() {
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
-    let foo: String = con.get("foo").unwrap();
-    assert_eq!(&foo[..], "bar");
+    let value: String = con.get("foo").unwrap();
+    assert_eq!(&value[..], "bar");
 }
 
 #[test]
@@ -491,8 +483,8 @@ fn test_pubsub_unsubscribe_no_subs() {
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
-    let foo: String = con.get("foo").unwrap();
-    assert_eq!(&foo[..], "bar");
+    let value: String = con.get("foo").unwrap();
+    assert_eq!(&value[..], "bar");
 }
 
 #[test]
@@ -507,8 +499,8 @@ fn test_pubsub_unsubscribe_one_sub() {
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
-    let foo: String = con.get("foo").unwrap();
-    assert_eq!(&foo[..], "bar");
+    let value: String = con.get("foo").unwrap();
+    assert_eq!(&value[..], "bar");
 }
 
 #[test]
@@ -524,8 +516,8 @@ fn test_pubsub_unsubscribe_one_sub_one_psub() {
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = con.set("foo", "bar").unwrap();
-    let foo: String = con.get("foo").unwrap();
-    assert_eq!(&foo[..], "bar");
+    let value: String = con.get("foo").unwrap();
+    assert_eq!(&value[..], "bar");
 }
 
 #[test]
@@ -568,12 +560,12 @@ fn scoped_pubsub() {
     assert_eq!(con.publish("bar", 23), Ok(1));
 
     // Wait for thread
-    let mut pubsub_con = thread.join().ok().expect("pubsub thread terminates ok");
+    let mut pubsub_con = thread.join().expect("pubsub thread terminates ok");
 
     // Connection should be usable again for non-pubsub commands
     let _: redis::Value = pubsub_con.set("foo", "bar").unwrap();
-    let foo: String = pubsub_con.get("foo").unwrap();
-    assert_eq!(&foo[..], "bar");
+    let value: String = pubsub_con.get("foo").unwrap();
+    assert_eq!(&value[..], "bar");
 }
 
 #[test]

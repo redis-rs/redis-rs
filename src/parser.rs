@@ -38,15 +38,14 @@ where
         I: IntoIterator<Item = Result<U, E>>,
     {
         let mut returned_err = None;
-        match self.0 {
-            Ok(ref mut elems) => elems.extend(iter.into_iter().scan((), |_, item| match item {
+        if let Ok(ref mut elems) = self.0 {
+            elems.extend(iter.into_iter().scan((), |_, item| match item {
                 Ok(item) => Some(item),
                 Err(err) => {
                     returned_err = Some(err);
                     None
                 }
-            })),
-            Err(_) => (),
+            }));
         }
         if let Some(err) = returned_err {
             self.0 = Err(err);
@@ -207,7 +206,7 @@ where
 
             let (opt, mut removed) = {
                 let buffer = try_nb!(self.reader.as_mut().unwrap().fill_buf());
-                if buffer.len() == 0 {
+                if buffer.is_empty() {
                     fail!((ErrorKind::ResponseError, "Could not read enough bytes"))
                 }
                 let buffer = if !self.remaining.is_empty() {
@@ -238,7 +237,7 @@ where
                 // consumed from `self.reader`
                 self.remaining.drain(..removed);
                 if removed >= remaining_data {
-                    removed = removed - remaining_data;
+                    removed -= remaining_data;
                 } else {
                     removed = 0;
                 }
@@ -295,12 +294,12 @@ impl<'a, T: BufRead> Parser<T> {
     /// be invoked multiple times.  In other words: the stream does not have
     /// to be terminated.
     pub fn new(reader: T) -> Parser<T> {
-        Parser { reader: reader }
+        Parser { reader }
     }
 
     // public api
 
-    /// Parses a single value from the reader.
+    /// Parses synchronously into a single value from the reader.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
         let mut parser = ValueFuture {
             reader: Some(&mut self.reader),
