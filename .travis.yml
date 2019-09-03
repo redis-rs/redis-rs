@@ -5,21 +5,23 @@ cache: cargo
 matrix:
   include:
     - rust: stable
-      env: RUST_VERSION=stable
+      env: RUST_VERSION=stable COMMAND=test
 
     - rust: beta
-      env: RUST_VERSION=beta
+      env: RUST_VERSION=beta COMMAND=test
 
     - rust: nightly
-      env: RUST_VERSION=nightly
+      env: RUST_VERSION=nightly COMMAND=test
+
+    - rust: stable
+      env: COMMAND=lint
 
 script:
-  - make test
+  - make $COMMAND
   - cargo check --benches
   - |
     [ "$RUST_VERSION" = "nightly" ] && exit 0 # Don't cargo-fmt on nightly
-    rustup component add rustfmt
-    cargo fmt --all -- --check
+    make style-check
 
 notifications:
   email: false
