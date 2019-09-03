@@ -7,7 +7,8 @@ description = "Redis driver for Rust."
 homepage = "https://github.com/mitsuhiko/redis-rs"
 repository = "https://github.com/mitsuhiko/redis-rs"
 documentation = "https://docs.rs/redis"
-license = "MIT"
+# XXX: some code here is MIT licensed (cluster). Resolve before releasing
+license = "BSD-3-Clause"
 readme = "README.md"
 edition = "2018"
 
