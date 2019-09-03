@@ -323,6 +323,7 @@ impl Cmd {
         }
     }
 
+    /// Async version of `query`.
     #[inline]
     pub fn query_async<C, T: FromRedisValue>(&self, con: C) -> RedisFuture<(C, T)>
     where
@@ -526,6 +527,7 @@ impl Pipeline {
         Value::Bulk(rv)
     }
 
+    /// Returns the encoded pipeline commands.
     pub fn get_packed_pipeline(&self, atomic: bool) -> Vec<u8> {
         encode_pipeline(&self.commands, atomic)
     }
@@ -628,6 +630,7 @@ impl Pipeline {
         )
     }
 
+    /// Async version of `query`.
     #[inline]
     pub fn query_async<C, T: FromRedisValue>(self, con: C) -> RedisFuture<(C, T)>
     where

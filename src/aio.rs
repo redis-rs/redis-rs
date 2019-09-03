@@ -1,3 +1,4 @@
+//! Adds experimental async IO support to redis.
 use std::collections::VecDeque;
 use std::fmt::Arguments;
 use std::io::{self, BufReader, Read, Write};
@@ -105,9 +106,10 @@ macro_rules! with_write_connection {
 }
 
 impl Connection {
+    /// Retrieves a single response from the connection.
     pub fn read_response(self) -> impl Future<Item = (Self, Value), Error = RedisError> {
         let db = self.db;
-        with_connection!(self.con, crate::parser::parse_async).then(move |result| {
+        with_connection!(self.con, crate::parser::parse_redis_value_async).then(move |result| {
             match result {
                 Ok((con, value)) => Ok((Connection { con: con, db }, value)),
                 Err(err) => {
@@ -119,6 +121,7 @@ impl Connection {
     }
 }
 
+/// Opens a connection.
 pub fn connect(
     connection_info: ConnectionInfo,
 ) -> impl Future<Item = Connection, Error = RedisError> {
@@ -199,6 +202,7 @@ pub fn connect(
     }))
 }
 
+/// An async abstraction over connections.
 pub trait ConnectionLike: Sized {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
@@ -493,6 +497,7 @@ enum ActualPipeline {
     Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
 }
 
+/// A connection object bound to an executor.
 #[derive(Clone)]
 pub struct SharedConnection {
     pipeline: ActualPipeline,
@@ -500,6 +505,7 @@ pub struct SharedConnection {
 }
 
 impl SharedConnection {
+    /// Creates a shared connection from a connection and executor.
     pub fn new<E>(con: Connection, executor: E) -> impl Future<Item = Self, Error = RedisError>
     where
         E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,

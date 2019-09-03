@@ -18,9 +18,13 @@ macro_rules! invalid_type_error {
 /// [1]: ../trait.Commands.html#method.geo_dist
 /// [2]: ../trait.Commands.html#method.geo_radius
 pub enum Unit {
+    /// Represents meters.
     Meters,
+    /// Represents kilometers.
     Kilometers,
+    /// Represents miles.
     Miles,
+    /// Represents feed.
     Feet,
 }
 
@@ -50,7 +54,9 @@ impl ToRedisArgs for Unit {
 /// * To keep the raw value from Redis, use `String`.
 #[derive(Debug, PartialEq)]
 pub struct Coord<T> {
+    /// Longitude
     pub longitude: T,
+    /// Latitude
     pub latitude: T,
 }
 
@@ -240,8 +246,11 @@ impl ToRedisArgs for RadiusOptions {
 /// [1]: ../trait.Commands.html#method.geo_radius
 /// [2]: ../trait.Commands.html#method.geo_radius_by_member
 pub struct RadiusSearchResult {
+    /// The name that was found.
     pub name: String,
+    /// The coordinate if available.
     pub coord: Option<Coord<f64>>,
+    /// The distance if available.
     pub dist: Option<f64>,
 }
 

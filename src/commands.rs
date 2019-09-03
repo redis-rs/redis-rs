@@ -963,7 +963,9 @@ implement_commands! {
 ///
 /// Arbitrary data may be returned from `Break`.
 pub enum ControlFlow<U> {
+    /// Continues.
     Continue,
+    /// Breaks with a value.
     Break(U),
 }
 

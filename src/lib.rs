@@ -346,6 +346,7 @@
 //! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
+#![deny(missing_docs)]
 
 // public api
 pub use crate::client::Client;
@@ -355,7 +356,7 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use crate::parser::{parse_async, parse_redis_value, Parser};
+pub use crate::parser::{parse_redis_value_async, parse_redis_value, Parser};
 pub use crate::script::{Script, ScriptInvocation};
 
 pub use crate::types::{

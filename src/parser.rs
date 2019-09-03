@@ -268,7 +268,8 @@ where
     }
 }
 
-pub fn parse_async<R>(reader: R) -> impl Future<Item = (R, Value), Error = RedisError>
+/// Parses a redis value asynchronously.
+pub fn parse_redis_value_async<R>(reader: R) -> impl Future<Item = (R, Value), Error = RedisError>
 where
     R: AsyncRead + BufRead,
 {
@@ -299,6 +300,7 @@ impl<'a, T: BufRead> Parser<T> {
 
     // public api
 
+    /// Parses a single value from the reader.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
         let mut parser = ValueFuture {
             reader: Some(&mut self.reader),

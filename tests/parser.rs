@@ -94,7 +94,7 @@ quickcheck! {
         let mut reader = &encoded_input[..];
         let partial_reader = PartialAsyncRead::new(&mut reader, seq);
 
-        let result = block_on_all(redis::parse_async(BufReader::new(partial_reader))
+        let result = block_on_all(redis::parse_redis_value_async(BufReader::new(partial_reader))
             .map(|t| t.1));
         assert!(result.as_ref().is_ok(), "{}", result.unwrap_err());
         assert_eq!(

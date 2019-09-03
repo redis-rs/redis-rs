@@ -14,8 +14,11 @@ use futures::Future;
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum NumericBehavior {
+    /// This argument is not numeric.
     NonNumeric,
+    /// This argument is an integer.
     NumberIsInteger,
+    /// This argument is a floating point value.
     NumberIsFloat,
 }
 
@@ -344,6 +347,7 @@ pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
+/// Library generic future type.
 pub type RedisFuture<T> = Box<dyn Future<Item = T, Error = RedisError> + Send>;
 
 /// An info dictionary type.
@@ -396,20 +400,25 @@ impl InfoDict {
         }
     }
 
+    /// Looks up a key in the info dict.
     pub fn find(&self, key: &&str) -> Option<&Value> {
         self.map.get(*key)
     }
 
+    /// Checks if a key is contained in the info dicf.
     pub fn contains_key(&self, key: &&str) -> bool {
         self.find(key).is_some()
     }
 
+    /// Returns the size of the info dict.
     pub fn len(&self) -> usize {
         self.map.len()
     }
 }
 
+/// Abstraction trait for redis command abstractions.
 pub trait RedisWrite {
+    /// Accepts a serialized redis command.
     fn write_arg(&mut self, arg: &[u8]);
 }
 

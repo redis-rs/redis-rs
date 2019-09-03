@@ -44,11 +44,13 @@ pub enum ConnectionAddr {
 }
 
 impl ConnectionAddr {
-    // Because not all platforms uspport all connection addresses this is a
-    // quick way to figure out if a connection method is supported.  Currently
-    // this only affects unix connections which are only supported on unix
-    // platforms and on older versions of rust also require an explicit feature
-    // to be enabled.
+    /// Checks if this address is supported.
+    /// 
+    /// Because not all platforms support all connection addresses this is a
+    /// quick way to figure out if a connection method is supported.  Currently
+    /// this only affects unix connections which are only supported on unix
+    /// platforms and on older versions of rust also require an explicit feature
+    /// to be enabled.
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
@@ -72,6 +74,7 @@ pub struct ConnectionInfo {
 /// constructor of the client to accept connection information in a
 /// range of different formats.
 pub trait IntoConnectionInfo {
+    /// Converts the object into a connection info object.
     fn into_connection_info(self) -> RedisResult<ConnectionInfo>;
 }
 
@@ -272,6 +275,7 @@ impl ActualConnection {
         }
     }
 
+    /// Fetches a single response from the connection.
     pub fn read_response(&mut self) -> RedisResult<Value> {
         let result = Parser::new(match *self {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
@@ -444,9 +448,11 @@ impl Connection {
         self.con.set_read_timeout(dur)
     }
 
+    /// Creats a pubsub instance.for this connection.
     pub fn as_pubsub<'a>(&'a mut self) -> PubSub<'a> {
-        // NOTE: The pubsub flag is intentionally not raised at this time since running commands
-        // within the pubsub state should not try and exit from the pubsub state.
+        // NOTE: The pubsub flag is intentionally not raised at this time since
+        // running commands within the pubsub state should not try and exit from
+        // the pubsub state.
         PubSub::new(self)
     }
 

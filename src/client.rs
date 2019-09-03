@@ -44,12 +44,16 @@ impl Client {
         Ok(connect(&self.connection_info)?)
     }
 
+    /// Returns an async connection from the client.
     pub fn get_async_connection(
         &self,
     ) -> impl Future<Item = crate::aio::Connection, Error = RedisError> {
         crate::aio::connect(self.connection_info.clone())
     }
 
+    /// Returns a async shared connection from the client.
+    /// 
+    /// This uses the default tokio executor.
     #[cfg(feature = "executor")]
     pub fn get_shared_async_connection(
         &self,
@@ -59,6 +63,7 @@ impl Client {
             .and_then(move |con| crate::aio::SharedConnection::new(con, executor))
     }
 
+    /// Returns a async shared connection with a specific executor.
     pub fn get_shared_async_connection_with_executor<E>(
         &self,
         executor: E,
