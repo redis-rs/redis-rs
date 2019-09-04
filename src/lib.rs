@@ -346,7 +346,7 @@
 //! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 
 // public api
 pub use crate::client::Client;
