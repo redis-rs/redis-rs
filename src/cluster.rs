@@ -146,7 +146,6 @@ impl ClusterClient {
         let mut connection_info_password = None::<String>;
 
         for (index, info) in initial_nodes.into_iter().enumerate() {
-            let info = info.into_connection_info()?;
             if let ConnectionAddr::Unix(_) = *info.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
