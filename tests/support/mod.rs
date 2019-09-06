@@ -49,10 +49,6 @@ impl ServerType {
 impl RedisServer {
     pub fn new() -> RedisServer {
         let server_type = ServerType::get_intended();
-        let mut cmd = process::Command::new("redis-server");
-        cmd.stdout(process::Stdio::null())
-            .stderr(process::Stdio::null());
-
         let addr = match server_type {
             ServerType::Tcp => {
                 // this is technically a race but we can't do better with
@@ -66,22 +62,41 @@ impl RedisServer {
                     .listen(1)
                     .unwrap();
                 let server_port = listener.local_addr().unwrap().port();
-                cmd.arg("--port")
-                    .arg(server_port.to_string())
-                    .arg("--bind")
-                    .arg("127.0.0.1");
                 redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), server_port)
             }
             ServerType::Unix => {
                 let (a, b) = rand::random::<(u64, u64)>();
                 let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
-                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
+        RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
+    }
 
-        let process = cmd.spawn().unwrap();
-        RedisServer { process, addr }
+    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
+        addr: redis::ConnectionAddr,
+        spawner: F,
+    ) -> RedisServer {
+        let mut cmd = process::Command::new("redis-server");
+        cmd.stdout(process::Stdio::null())
+            .stderr(process::Stdio::null());
+
+        match addr {
+            redis::ConnectionAddr::Tcp(ref bind, server_port) => {
+                cmd.arg("--port")
+                    .arg(server_port.to_string())
+                    .arg("--bind")
+                    .arg(bind);
+            }
+            redis::ConnectionAddr::Unix(ref path) => {
+                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
+            }
+        };
+
+        RedisServer {
+            process: spawner(&mut cmd),
+            addr,
+        }
     }
 
     pub fn wait(&mut self) {
@@ -102,6 +117,80 @@ impl RedisServer {
 }
 
 impl Drop for RedisServer {
+    fn drop(&mut self) {
+        self.stop()
+    }
+}
+
+pub struct RedisCluster {
+    pub servers: Vec<RedisServer>,
+    pub folders: Vec<PathBuf>,
+}
+
+impl RedisCluster {
+    pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
+        let mut servers = vec![];
+        let mut folders = vec![];
+        let mut addrs = vec![];
+        let start_port = 7000;
+        for node in 0..nodes {
+            let port = start_port + node;
+
+            servers.push(RedisServer::new_with_addr(
+                redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
+                |cmd| {
+                    let (a, b) = rand::random::<(u64, u64)>();
+                    let path = PathBuf::from(format!("/tmp/redis-rs-cluster-test-{}-{}-dir", a, b));
+                    fs::create_dir_all(&path).unwrap();
+                    cmd.arg("--cluster-enabled")
+                        .arg("yes")
+                        .arg("--cluster-config-file")
+                        .arg(&path.join("nodes.conf"))
+                        .arg("--cluster-node-timeout")
+                        .arg("5000")
+                        .arg("--appendonly")
+                        .arg("yes");
+                    cmd.current_dir(&path);
+                    folders.push(path);
+                    addrs.push(format!("127.0.0.1:{}", port));
+                    dbg!(&cmd);
+                    cmd.spawn().unwrap()
+                },
+            ));
+        }
+
+        sleep(Duration::from_millis(100));
+
+        let status = process::Command::new("redis-cli")
+            .stdout(process::Stdio::null())
+            .arg("--cluster")
+            .arg("create")
+            .args(&addrs)
+            .arg("--cluster-replicas")
+            .arg(replicas.to_string())
+            .arg("--cluster-yes")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        RedisCluster { servers, folders }
+    }
+
+    pub fn stop(&mut self) {
+        for server in &mut self.servers {
+            server.stop();
+        }
+        for folder in &self.folders {
+            fs::remove_dir_all(&folder).unwrap();
+        }
+    }
+
+    pub fn iter_servers(&self) -> impl Iterator<Item = &RedisServer> {
+        self.servers.iter()
+    }
+}
+
+impl Drop for RedisCluster {
     fn drop(&mut self) {
         self.stop()
     }
@@ -163,6 +252,29 @@ impl TestContext {
         &self,
     ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
         self.client.get_shared_async_connection()
+    }
+}
+
+pub struct TestClusterContext {
+    pub cluster: RedisCluster,
+    pub client: redis::cluster::ClusterClient,
+}
+
+impl TestClusterContext {
+    pub fn new(nodes: u16, replicas: u16) -> TestClusterContext {
+        let cluster = RedisCluster::new(nodes, replicas);
+        let client = redis::cluster::ClusterClient::open(
+            cluster
+                .iter_servers()
+                .map(|x| format!("redis://{}/", x.get_client_addr()))
+                .collect(),
+        )
+        .unwrap();
+        TestClusterContext { cluster, client }
+    }
+
+    pub fn connection(&self) -> redis::cluster::ClusterConnection {
+        self.client.get_connection().unwrap()
     }
 }
 

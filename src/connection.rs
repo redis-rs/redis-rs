@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{self, TcpStream};
 use std::path::PathBuf;
@@ -59,6 +60,15 @@ impl ConnectionAddr {
     }
 }
 
+impl fmt::Display for ConnectionAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ConnectionAddr::Tcp(ref host, port) => write!(f, "{}:{}", host, port),
+            ConnectionAddr::Unix(ref path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
@@ -87,6 +97,15 @@ impl IntoConnectionInfo for ConnectionInfo {
 impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
+            Ok(u) => u.into_connection_info(),
+            Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
+        }
+    }
+}
+
+impl IntoConnectionInfo for String {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        match parse_redis_url(&self) {
             Ok(u) => u.into_connection_info(),
             Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
         }
