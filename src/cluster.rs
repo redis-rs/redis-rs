@@ -44,7 +44,6 @@
 //! ```
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, Cursor};
 use std::iter::Iterator;
 use std::thread;
 use std::time::Duration;
@@ -55,8 +54,8 @@ use rand::{
 };
 
 use super::{
-    cmd, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind,
-    IntoConnectionInfo, RedisError, RedisResult, Value,
+    cmd, parse_redis_value, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
 };
 
 const SLOT_SIZE: usize = 16384;
@@ -391,7 +390,21 @@ impl ClusterConnection {
     {
         let mut retries = 16;
         let mut excludes = HashSet::new();
-        let slot = slot_for_packed_command(cmd);
+
+        let slot = match RoutingInfo::for_packed_command(cmd) {
+            Some(RoutingInfo::Random) => None,
+            Some(RoutingInfo::Slot(slot)) => Some(slot),
+            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
+                panic!("Not implemented yet");
+            }
+            None => {
+                return Err(((
+                    ErrorKind::ClientError,
+                    "this command cannot be safely routed in cluster mode",
+                ))
+                    .into())
+            }
+        };
 
         loop {
             // Get target address and response.
@@ -529,19 +542,6 @@ fn get_random_connection<'a>(
     (addr, con)
 }
 
-fn slot_for_packed_command(cmd: &[u8]) -> Option<u16> {
-    let args = unpack_command(cmd);
-    if args.len() > 1 {
-        let key = match get_hashtag(&args[1]) {
-            Some(tag) => tag,
-            None => &args[1],
-        };
-        Some(crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE as u16)
-    } else {
-        None
-    }
-}
-
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
     let open = key.iter().position(|v| *v == b'{');
     let open = match open {
@@ -562,18 +562,80 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
     }
 }
 
-fn unpack_command(cmd: &[u8]) -> Vec<Vec<u8>> {
-    let mut args: Vec<Vec<u8>> = Vec::new();
+#[derive(Debug, Clone, Copy)]
+enum RoutingInfo {
+    AllNodes,
+    AllMasters,
+    Random,
+    Slot(u16),
+}
 
-    let cursor = Cursor::new(cmd);
-    for line in cursor.lines() {
-        if let Ok(line) = line {
-            if !line.starts_with('*') && !line.starts_with('$') {
-                args.push(line.into_bytes());
+fn get_arg(values: &[Value], idx: usize) -> Option<&[u8]> {
+    match values.get(idx) {
+        Some(Value::Data(ref data)) => Some(&data[..]),
+        _ => None,
+    }
+}
+
+fn get_u64_arg(values: &[Value], idx: usize) -> Option<u64> {
+    get_arg(values, idx)
+        .and_then(|x| std::str::from_utf8(x).ok())
+        .and_then(|x| x.parse().ok())
+}
+
+impl RoutingInfo {
+    pub fn for_packed_command(cmd: &[u8]) -> Option<RoutingInfo> {
+        parse_redis_value(cmd).ok().and_then(RoutingInfo::for_value)
+    }
+
+    pub fn for_value(value: Value) -> Option<RoutingInfo> {
+        let args = match value {
+            Value::Bulk(args) => args,
+            _ => return None,
+        };
+
+        let cmd = match args.get(0) {
+            Some(Value::Data(ref data)) => data.to_ascii_uppercase(),
+            _ => return None,
+        };
+
+        match &cmd[..] {
+            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT LOAD" | b"SCRIPT FLUSH" | b"SCRIPT EXISTS" => {
+                Some(RoutingInfo::AllMasters)
             }
+            b"ECHO" | b"CONFIG GET" | b"CONFIG SET" | b"SLOWLOG GET" | b"CLIENT KILL" | b"INFO"
+            | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"CLIENT GETNAME"
+            | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"DBSIZE" | b"LASTSAVE" | b"PING"
+            | b"SAVE" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"TIME" | b"KEYS" | b"CLUSTER INFO"
+            | b"PUBSUB CHANNELS" | b"PUBSUB NUMSUB" | b"PUBSUB NUMPAT" | b"CLIENT ID" => {
+                Some(RoutingInfo::AllNodes)
+            }
+            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"SCRIPT KILL" | b"MOVE"
+            | b"BITOP" => None,
+            b"EVALSHA" | b"EVAL" => {
+                let key_count = get_u64_arg(&args, 2)?;
+                if key_count == 0 {
+                    Some(RoutingInfo::Random)
+                } else {
+                    get_arg(&args, 3).and_then(RoutingInfo::for_key)
+                }
+            }
+            _ => match get_arg(&args, 1) {
+                Some(key) => RoutingInfo::for_key(key),
+                None => Some(RoutingInfo::Random),
+            },
         }
     }
-    args
+
+    pub fn for_key(key: &[u8]) -> Option<RoutingInfo> {
+        let key = match get_hashtag(&key) {
+            Some(tag) => tag,
+            None => &key,
+        };
+        Some(RoutingInfo::Slot(
+            crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE as u16,
+        ))
+    }
 }
 
 #[derive(Debug)]

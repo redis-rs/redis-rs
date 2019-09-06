@@ -54,21 +54,15 @@ impl RedisCluster {
         sleep(Duration::from_millis(100));
 
         let mut cmd = process::Command::new("redis-cli");
-        cmd
-            .stdout(process::Stdio::null())
+        cmd.stdout(process::Stdio::null())
             .arg("--cluster")
             .arg("create")
             .args(&addrs);
         if replicas > 0 {
-            cmd
-            .arg("--cluster-replicas")
-            .arg(replicas.to_string());
+            cmd.arg("--cluster-replicas").arg(replicas.to_string());
         }
-        cmd
-            .arg("--cluster-yes");
-        let status = dbg!(cmd)
-            .status()
-            .unwrap();
+        cmd.arg("--cluster-yes");
+        let status = dbg!(cmd).status().unwrap();
         assert!(status.success());
 
         RedisCluster { servers, folders }

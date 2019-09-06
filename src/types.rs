@@ -44,6 +44,8 @@ pub enum ErrorKind {
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
     IoError,
+    /// An error raised that was identified on the client before execution.
+    ClientError,
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
     ExtensionError,
@@ -266,6 +268,7 @@ impl RedisError {
             ErrorKind::InvalidClientConfig => "invalid client config",
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
+            ErrorKind::ClientError => "client error",
         }
     }
 
