@@ -361,41 +361,54 @@ impl ClusterConnection {
         &self,
         connections: &'a mut HashMap<String, Connection>,
         slot: u16,
-    ) -> (String, &'a mut Connection) {
+    ) -> RedisResult<(String, &'a mut Connection)> {
         let slots = self.slots.borrow();
 
         if let Some(addr) = slots.get(&slot) {
             if connections.contains_key(addr) {
-                return (addr.clone(), connections.get_mut(addr).unwrap());
+                return Ok((addr.clone(), connections.get_mut(addr).unwrap()));
             }
 
             // Create new connection.
-            if let Ok(mut conn) = connect(addr.as_ref(), self.readonly, self.password.clone()) {
-                if check_connection(&mut conn) {
-                    return (
-                        addr.to_string(),
-                        connections.entry(addr.to_string()).or_insert(conn),
-                    );
-                }
-            }
+            // TODO: error handling
+            let conn = connect(addr.as_ref(), self.readonly, self.password.clone())?;
+            Ok((
+                addr.to_string(),
+                connections.entry(addr.to_string()).or_insert(conn),
+            ))
+        } else {
+            // try a random node next.  This is safe if slots are involved
+            // as a wrong node would reject the request.
+            Ok(get_random_connection(connections, None))
+        }
+    }
+
+    fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
+    where
+        T: MergeResults,
+        F: FnMut(&mut Connection) -> RedisResult<T>,
+    {
+        let mut connections = self.connections.borrow_mut();
+        let mut results = HashMap::new();
+
+        // TODO: reconnect and shit
+        for (addr, connection) in connections.iter_mut() {
+            results.insert(addr.as_str(), func(connection)?);
         }
 
-        // Return a random connection
-        get_random_connection(connections, None)
+        Ok(T::merge_results(results))
     }
 
     fn request<T, F>(&self, cmd: &[u8], mut func: F) -> RedisResult<T>
     where
+        T: MergeResults + std::fmt::Debug,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
-        let mut retries = 16;
-        let mut excludes = HashSet::new();
-
         let slot = match RoutingInfo::for_packed_command(cmd) {
             Some(RoutingInfo::Random) => None,
             Some(RoutingInfo::Slot(slot)) => Some(slot),
             Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
-                panic!("Not implemented yet");
+                return self.execute_on_all_nodes(func);
             }
             None => {
                 return Err(((
@@ -406,16 +419,18 @@ impl ClusterConnection {
             }
         };
 
+        let mut retries = 16;
+        let mut excludes = HashSet::new();
         loop {
             // Get target address and response.
             let (addr, res) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, mut conn) = if !excludes.is_empty() || slot.is_none() {
+                let (addr, conn) = if !excludes.is_empty() || slot.is_none() {
                     get_random_connection(&mut *connections, Some(&excludes))
                 } else {
-                    self.get_connection(&mut *connections, slot.unwrap())
+                    self.get_connection(&mut *connections, slot.unwrap())?
                 };
-                (addr, func(&mut conn))
+                (addr, func(conn))
             };
 
             match res {
@@ -457,6 +472,8 @@ impl ClusterConnection {
                         self.refresh_slots()?;
                         excludes.clear();
                         continue;
+                    } else {
+                        return Err(err);
                     }
 
                     excludes.insert(addr);
@@ -468,6 +485,31 @@ impl ClusterConnection {
                 }
             }
         }
+    }
+}
+
+trait MergeResults {
+    fn merge_results(_values: HashMap<&str, Self>) -> Self
+    where
+        Self: Sized;
+}
+
+impl MergeResults for Value {
+    fn merge_results(values: HashMap<&str, Value>) -> Value {
+        let mut items = vec![];
+        for (addr, value) in values.into_iter() {
+            items.push(Value::Bulk(vec![
+                Value::Data(addr.as_bytes().to_vec()),
+                value,
+            ]));
+        }
+        Value::Bulk(items)
+    }
+}
+
+impl MergeResults for Vec<Value> {
+    fn merge_results(values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+        unimplemented!();
     }
 }
 
@@ -577,6 +619,10 @@ fn get_arg(values: &[Value], idx: usize) -> Option<&[u8]> {
     }
 }
 
+fn get_command_arg(values: &[Value], idx: usize) -> Option<Vec<u8>> {
+    get_arg(values, idx).map(|x| x.to_ascii_uppercase())
+}
+
 fn get_u64_arg(values: &[Value], idx: usize) -> Option<u64> {
     get_arg(values, idx)
         .and_then(|x| std::str::from_utf8(x).ok())
@@ -594,24 +640,13 @@ impl RoutingInfo {
             _ => return None,
         };
 
-        let cmd = match args.get(0) {
-            Some(Value::Data(ref data)) => data.to_ascii_uppercase(),
-            _ => return None,
-        };
-
-        match &cmd[..] {
-            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT LOAD" | b"SCRIPT FLUSH" | b"SCRIPT EXISTS" => {
-                Some(RoutingInfo::AllMasters)
-            }
-            b"ECHO" | b"CONFIG GET" | b"CONFIG SET" | b"SLOWLOG GET" | b"CLIENT KILL" | b"INFO"
-            | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"CLIENT GETNAME"
-            | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"DBSIZE" | b"LASTSAVE" | b"PING"
-            | b"SAVE" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"TIME" | b"KEYS" | b"CLUSTER INFO"
-            | b"PUBSUB CHANNELS" | b"PUBSUB NUMSUB" | b"PUBSUB NUMPAT" | b"CLIENT ID" => {
-                Some(RoutingInfo::AllNodes)
-            }
-            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"SCRIPT KILL" | b"MOVE"
-            | b"BITOP" => None,
+        match &get_command_arg(&args, 0)?[..] {
+            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
+            b"ECHO" | b"CONFIG" | b"CLIENT" | b"SLOWLOG" | b"DBSIZE" | b"LASTSAVE" | b"PING"
+            | b"INFO" | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"SAVE" | b"TIME"
+            | b"KEYS" => Some(RoutingInfo::AllNodes),
+            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF"
+            | b"SCRIPT KILL" | b"MOVE" | b"BITOP" => None,
             b"EVALSHA" | b"EVAL" => {
                 let key_count = get_u64_arg(&args, 2)?;
                 if key_count == 0 {

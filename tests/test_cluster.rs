@@ -41,3 +41,20 @@ fn test_cluster_eval() {
 
     assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
 }
+
+#[test]
+fn test_cluster_script() {
+    let cluster = TestClusterContext::new(3, 0);
+    let mut con = cluster.connection();
+
+    let script = redis::Script::new(
+        r#"
+        redis.call("SET", KEYS[1], "1");
+        redis.call("SET", KEYS[2], "2");
+        return redis.call("MGET", KEYS[1], KEYS[2]);
+    "#,
+    );
+
+    let rv = script.key("{x}a").key("{x}b").invoke(&mut con);
+    assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
+}
