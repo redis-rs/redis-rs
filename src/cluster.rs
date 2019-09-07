@@ -43,7 +43,7 @@
 //! }
 //! ```
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::Iterator;
 use std::thread;
 use std::time::Duration;
@@ -59,6 +59,8 @@ use super::{
 };
 
 const SLOT_SIZE: usize = 16384;
+
+type SlotMap = BTreeMap<u16, String>;
 
 /// This is a ClusterClientBuilder of Redis cluster client.
 pub struct ClusterClientBuilder {
@@ -176,7 +178,7 @@ impl ClusterClient {
 pub struct ClusterConnection {
     initial_nodes: Vec<ConnectionInfo>,
     connections: RefCell<HashMap<String, Connection>>,
-    slots: RefCell<HashMap<u16, String>>,
+    slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
     readonly: bool,
     password: Option<String>,
@@ -193,7 +195,7 @@ impl ClusterConnection {
         let connection = ClusterConnection {
             initial_nodes,
             connections: RefCell::new(connections),
-            slots: RefCell::new(HashMap::with_capacity(SLOT_SIZE)),
+            slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             readonly,
             password,
@@ -290,17 +292,11 @@ impl ClusterConnection {
                     } else {
                         replicas.choose(&mut rng).unwrap().to_string()
                     }
-                })
+                })?
             } else {
-                self.create_new_slots(|slot_data| slot_data.master().to_string())
+                self.create_new_slots(|slot_data| slot_data.master().to_string())?
             };
 
-            if new_slots.len() != SLOT_SIZE {
-                return Err(RedisError::from((
-                    ErrorKind::ResponseError,
-                    "Slot refresh error.",
-                )));
-            }
             new_slots
         };
 
@@ -334,27 +330,59 @@ impl ClusterConnection {
         Ok(())
     }
 
-    fn create_new_slots<F>(&self, mut get_addr: F) -> HashMap<u16, String>
+    fn create_new_slots<F>(&self, mut get_addr: F) -> RedisResult<SlotMap>
     where
         F: FnMut(&Slot) -> String,
     {
         let mut connections = self.connections.borrow_mut();
-        let mut new_slots = HashMap::with_capacity(SLOT_SIZE);
+        let mut new_slots = None;
         let mut rng = thread_rng();
         let len = connections.len();
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for mut conn in samples.iter_mut() {
-            if let Ok(slots_data) = get_slots(&mut conn) {
-                for slot_data in slots_data {
-                    for slot in slot_data.start()..=slot_data.end() {
-                        new_slots.insert(slot, get_addr(&slot_data));
+            if let Ok(mut slots_data) = get_slots(&mut conn) {
+                slots_data.sort_by_key(|s| s.start());
+                let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
+                    if prev_end != slot_data.start() {
+                        return Err(RedisError::from((
+                            ErrorKind::ResponseError,
+                            "Slot refresh error.",
+                            format!(
+                                "Received overlapping slots {} and {}..{}",
+                                prev_end, slot_data.start, slot_data.end
+                            ),
+                        )));
                     }
+                    Ok(slot_data.end() + 1)
+                })?;
+
+                if usize::from(last_slot) != SLOT_SIZE {
+                    return Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "Slot refresh error.",
+                        format!("Lacks the slots >= {}", last_slot),
+                    )));
                 }
+
+                new_slots = Some(
+                    slots_data
+                        .iter()
+                        .map(|slot_data| (slot_data.end(), get_addr(slot_data)))
+                        .collect(),
+                );
                 break;
             }
         }
-        new_slots
+
+        match new_slots {
+            Some(new_slots) => Ok(new_slots),
+            None => Err(RedisError::from((
+                ErrorKind::ResponseError,
+                "Slot refresh error.",
+                "didn't get any slots from server".to_string(),
+            ))),
+        }
     }
 
     fn get_connection<'a>(
@@ -364,7 +392,7 @@ impl ClusterConnection {
     ) -> RedisResult<(String, &'a mut Connection)> {
         let slots = self.slots.borrow();
 
-        if let Some(addr) = slots.get(&slot) {
+        if let Some((_, addr)) = slots.range(&slot..).next() {
             if connections.contains_key(addr) {
                 return Ok((addr.clone(), connections.get_mut(addr).unwrap()));
             }
