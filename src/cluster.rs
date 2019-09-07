@@ -469,15 +469,15 @@ impl ClusterConnection {
                         return Err(err);
                     }
 
-                    if err.kind() == ErrorKind::ExtensionError {
-                        let error_code = err.extension_error_code().unwrap();
+                    if err.is_cluster_error() {
+                        let kind = err.kind();
 
-                        if error_code == "MOVED" || error_code == "ASK" {
+                        if kind == ErrorKind::Ask || kind == ErrorKind::Moved {
                             // Refresh slots and request again.
                             self.refresh_slots()?;
                             excludes.clear();
                             continue;
-                        } else if error_code == "TRYAGAIN" || error_code == "CLUSTERDOWN" {
+                        } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.
                             let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
                             thread::sleep(Duration::from_millis(sleep_time));

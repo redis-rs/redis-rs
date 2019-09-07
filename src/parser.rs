@@ -115,6 +115,10 @@ parser! {
                         "EXECABORT" => ErrorKind::ExecAbortError,
                         "LOADING" => ErrorKind::BusyLoadingError,
                         "NOSCRIPT" => ErrorKind::NoScriptError,
+                        "MOVED" => ErrorKind::Moved,
+                        "ASK" => ErrorKind::Ask,
+                        "TRYAGAIN" => ErrorKind::TryAgain,
+                        "CLUSTERDOWN" => ErrorKind::ClusterDown,
                         code => {
                             return make_extension_error(code, pieces.next())
                         }
