@@ -580,6 +580,12 @@ impl Pipeline {
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+        if !con.supports_pipelining() {
+            fail!((
+                ErrorKind::ResponseError,
+                "This connection does not support pipelining."
+            ));
+        }
         from_redis_value(
             &(if self.commands.is_empty() {
                 Value::Bulk(vec![])

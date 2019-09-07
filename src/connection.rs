@@ -418,6 +418,12 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+
+    /// Does this connection support pipelining?
+    #[doc(hidden)]
+    fn supports_pipelining(&self) -> bool {
+        true
+    }
 }
 
 /// A connection is an object that represents a single redis connection.  It

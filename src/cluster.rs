@@ -484,10 +484,7 @@ impl ClusterConnection {
                             excludes.clear();
                             continue;
                         }
-                    } else if *self.auto_reconnect.borrow()
-                        && err.kind() == ErrorKind::ResponseError
-                    {
-                        // Reconnect when ResponseError is occurred.
+                    } else if *self.auto_reconnect.borrow() && err.is_io_error() {
                         let new_connections = Self::create_initial_connections(
                             &self.initial_nodes,
                             self.readonly,
@@ -536,12 +533,16 @@ impl MergeResults for Value {
 }
 
 impl MergeResults for Vec<Value> {
-    fn merge_results(values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
-        unimplemented!();
+    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+        unreachable!("attempted to merge a pipeline. This should not happen");
     }
 }
 
 impl ConnectionLike for ClusterConnection {
+    fn supports_pipelining(&self) -> bool {
+        false
+    }
+
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         self.request(cmd, move |conn| conn.req_packed_command(cmd))
     }

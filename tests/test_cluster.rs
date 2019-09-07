@@ -58,3 +58,22 @@ fn test_cluster_script() {
     let rv = script.key("{x}a").key("{x}b").invoke(&mut con);
     assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
 }
+
+#[test]
+fn test_cluster_pipeline() {
+    let cluster = TestClusterContext::new(3, 0);
+    let mut con = cluster.connection();
+
+    let err = redis::pipe()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore()
+        .query::<()>(&mut con)
+        .unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "This connection does not support pipelining."
+    );
+}
