@@ -119,6 +119,8 @@ parser! {
                         "ASK" => ErrorKind::Ask,
                         "TRYAGAIN" => ErrorKind::TryAgain,
                         "CLUSTERDOWN" => ErrorKind::ClusterDown,
+                        "CROSSSLOT" => ErrorKind::CrossSlot,
+                        "MASTERDOWN" => ErrorKind::MasterDown,
                         code => {
                             return make_extension_error(code, pieces.next())
                         }

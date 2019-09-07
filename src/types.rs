@@ -48,6 +48,10 @@ pub enum ErrorKind {
     TryAgain,
     /// Raised if a redis cluster is down.
     ClusterDown,
+    /// A request spans multiple slots
+    CrossSlot,
+    /// A cluster master is unavailable.
+    MasterDown,
     /// This kind is returned if the redis error is one that is
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
@@ -264,6 +268,15 @@ impl RedisError {
         }
     }
 
+    /// Returns the error detail.
+    pub fn detail(&self) -> Option<&str> {
+        match self.repr {
+            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail) => Some(detail.as_str()),
+            ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
+            _ => None,
+        }
+    }
+
     /// Returns the raw error code if available.
     pub fn code(&self) -> Option<&str> {
         match self.kind() {
@@ -275,6 +288,8 @@ impl RedisError {
             ErrorKind::Ask => Some("ASK"),
             ErrorKind::TryAgain => Some("TRYAGAIN"),
             ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
+            ErrorKind::CrossSlot => Some("CROSSSLOT"),
+            ErrorKind::MasterDown => Some("MASTERDOWN"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(&code),
                 _ => None,
@@ -296,6 +311,8 @@ impl RedisError {
             ErrorKind::Ask => "key moved (ask)",
             ErrorKind::TryAgain => "try again",
             ErrorKind::ClusterDown => "cluster down",
+            ErrorKind::CrossSlot => "cross-slot",
+            ErrorKind::MasterDown => "master down",
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
@@ -362,6 +379,19 @@ impl RedisError {
             },
             _ => false,
         }
+    }
+
+    /// Returns the node the error refers to.
+    ///
+    /// This returns `(addr, slot_id)`.
+    pub fn redirect_node(&self) -> Option<(&str, u16)> {
+        if self.kind() != ErrorKind::Ask {
+            return None;
+        }
+        let mut iter = self.detail()?.split_ascii_whitespace();
+        let slot_id: u16 = iter.next()?.parse().ok()?;
+        let addr = iter.next()?;
+        Some((addr, slot_id))
     }
 
     /// Returns the extension error code.

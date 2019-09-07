@@ -17,9 +17,9 @@
 //!     let mut connection = client.get_connection().unwrap();
 //!
 //!     let _: () = connection.set("test", "test_data").unwrap();
-//!     let res: String = connection.get("test").unwrap();
+//!     let rv: String = connection.get("test").unwrap();
 //!
-//!     assert_eq!(res, "test_data");
+//!     assert_eq!(rv, "test_data");
 //! }
 //! ```
 //!
@@ -391,23 +391,30 @@ impl ClusterConnection {
         slot: u16,
     ) -> RedisResult<(String, &'a mut Connection)> {
         let slots = self.slots.borrow();
-
         if let Some((_, addr)) = slots.range(&slot..).next() {
-            if connections.contains_key(addr) {
-                return Ok((addr.clone(), connections.get_mut(addr).unwrap()));
-            }
-
-            // Create new connection.
-            // TODO: error handling
-            let conn = connect(addr.as_ref(), self.readonly, self.password.clone())?;
             Ok((
                 addr.to_string(),
-                connections.entry(addr.to_string()).or_insert(conn),
+                self.get_connection_by_addr(connections, addr)?,
             ))
         } else {
             // try a random node next.  This is safe if slots are involved
             // as a wrong node would reject the request.
             Ok(get_random_connection(connections, None))
+        }
+    }
+
+    fn get_connection_by_addr<'a>(
+        &self,
+        connections: &'a mut HashMap<String, Connection>,
+        addr: &str,
+    ) -> RedisResult<&'a mut Connection> {
+        if connections.contains_key(addr) {
+            Ok(connections.get_mut(addr).unwrap())
+        } else {
+            // Create new connection.
+            // TODO: error handling
+            let conn = connect(addr.as_ref(), self.readonly, self.password.clone())?;
+            Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
     }
 
@@ -449,11 +456,19 @@ impl ClusterConnection {
 
         let mut retries = 16;
         let mut excludes = HashSet::new();
+        let mut asking = None::<String>;
         loop {
             // Get target address and response.
-            let (addr, res) = {
+            let (addr, rv) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if !excludes.is_empty() || slot.is_none() {
+                let (addr, conn) = if let Some(addr) = asking.take() {
+                    let conn = self.get_connection_by_addr(&mut *connections, &addr)?;
+                    // if we are in asking mode we want to feed a single
+                    // ASKING command into the connection before what we
+                    // actually want to execute.
+                    conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                    (addr.to_string(), conn)
+                } else if !excludes.is_empty() || slot.is_none() {
                     get_random_connection(&mut *connections, Some(&excludes))
                 } else {
                     self.get_connection(&mut *connections, slot.unwrap())?
@@ -461,8 +476,8 @@ impl ClusterConnection {
                 (addr, func(conn))
             };
 
-            match res {
-                Ok(res) => return Ok(res),
+            match rv {
+                Ok(rv) => return Ok(rv),
                 Err(err) => {
                     retries -= 1;
                     if retries == 0 {
@@ -472,7 +487,9 @@ impl ClusterConnection {
                     if err.is_cluster_error() {
                         let kind = err.kind();
 
-                        if kind == ErrorKind::Ask || kind == ErrorKind::Moved {
+                        if kind == ErrorKind::Ask {
+                            asking = err.redirect_node().map(|x| x.0.to_string());
+                        } else if kind == ErrorKind::Moved {
                             // Refresh slots and request again.
                             self.refresh_slots()?;
                             excludes.clear();
