@@ -1,4 +1,6 @@
-Copyright (c) 2013 by Armin Ronacher.
+Copyright (c) 2013-2019 by Armin Ronacher, Jan-Erik Rediger.
+
+Redis cluster code in parts copyright (c) 2018 by Atsushi Koge.
 
 Some rights reserved.
 

@@ -1,7 +1,7 @@
 [package]
 name = "redis"
 version = "0.12.1-alpha.0"
-authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>", "Atsushi Koge <atuk721@gmail.com>", "hedgar2017 <hedgar2017@gmail.com>"]
+authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/mitsuhiko/redis-rs"
