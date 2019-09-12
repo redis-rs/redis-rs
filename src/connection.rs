@@ -424,6 +424,18 @@ pub trait ConnectionLike {
     fn supports_pipelining(&self) -> bool {
         true
     }
+
+    /// Check that all connections it has are available (`PING` internally).
+    fn check_connection(&mut self) -> bool;
+
+    /// Returns the connection status.
+    ///
+    /// The connection is open until any `read_response` call recieved an
+    /// invalid response from the server (most likely a closed or dropped
+    /// connection, otherwise a Redis protocol error). When using unix
+    /// sockets the connection is open until writing a command failed with a
+    /// `BrokenPipe` error.
+    fn is_open(&self) -> bool;
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -536,17 +548,6 @@ impl Connection {
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
     }
-
-    /// Returns the connection status.
-    ///
-    /// The connection is open until any `read_response` call recieved an
-    /// invalid response from the server (most likely a closed or dropped
-    /// connection, otherwise a Redis protocol error). When using unix
-    /// sockets the connection is open until writing a command failed with a
-    /// `BrokenPipe` error.
-    pub fn is_open(&self) -> bool {
-        self.con.is_open()
-    }
 }
 
 impl ConnectionLike for Connection {
@@ -583,6 +584,14 @@ impl ConnectionLike for Connection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+
+    fn is_open(&self) -> bool {
+        self.con.is_open()
+    }
+
+    fn check_connection(&mut self) -> bool {
+        cmd("PING").query::<String>(self).is_ok()
     }
 }
 

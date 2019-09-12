@@ -238,7 +238,7 @@ impl ClusterConnection {
         Ok(())
     }
 
-    /// Check that all connections it has are available.
+    /// Check that all connections it has are available (`PING` internally).
     pub fn check_connection(&mut self) -> bool {
         let mut connections = self.connections.borrow_mut();
         for conn in connections.values_mut() {
@@ -248,6 +248,14 @@ impl ClusterConnection {
         }
         true
     }
+
+    /// Returns the connection status.
+    ///
+    /// The connection is open until any `read_response` call recieved an
+    /// invalid response from the server (most likely a closed or dropped
+    /// connection, otherwise a Redis protocol error). When using unix
+    /// sockets the connection is open until writing a command failed with a
+    /// `BrokenPipe` error.
 
     fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
@@ -577,6 +585,26 @@ impl ConnectionLike for ClusterConnection {
 
     fn get_db(&self) -> i64 {
         0
+    }
+
+    fn is_open(&self) -> bool {
+        let connections = self.connections.borrow();
+        for conn in connections.values() {
+            if !conn.is_open() {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn check_connection(&mut self) -> bool {
+        let mut connections = self.connections.borrow_mut();
+        for conn in connections.values_mut() {
+            if !conn.check_connection() {
+                return false;
+            }
+        }
+        true
     }
 }
 

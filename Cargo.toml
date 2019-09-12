@@ -28,6 +28,7 @@ tokio-codec = "0.1"
 tokio-sync = "0.1"
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
+r2d2 = { version = "0.8.5", optional = true }
 
 [features]
 default = ["executor", "geospatial"]
