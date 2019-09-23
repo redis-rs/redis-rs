@@ -671,10 +671,11 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
         None => return None,
     };
 
-    if close - open > 1 {
-        Some(&key[open + 1..close])
-    } else {
+    let rv = &key[open + 1..open + close];
+    if rv.is_empty() {
         None
+    } else {
+        Some(rv)
     }
 }
 
@@ -851,6 +852,7 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
 mod tests {
     use super::{ClusterClient, ClusterClientBuilder};
     use super::{ConnectionInfo, IntoConnectionInfo};
+    use super::get_hashtag;
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
@@ -903,5 +905,12 @@ mod tests {
             .open()
             .unwrap();
         assert_eq!(client.password, Some("pass".to_string()));
+    }
+
+    #[test]
+    fn test_get_hashtag() {
+        assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
+        assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
+        assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 }
