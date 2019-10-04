@@ -1,6 +1,5 @@
 use redis;
 use redis::{transaction, Commands, PipelineCommands};
-use std::error::Error;
 
 use std::collections::HashMap;
 
@@ -136,9 +135,9 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
 }
 
 /// Runs all the examples and propagates errors up.
-fn do_redis_code() -> redis::RedisResult<()> {
+fn do_redis_code(url: &str) -> redis::RedisResult<()> {
     // general connection handling
-    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let client = redis::Client::open(url)?;
     let mut con = client.get_connection()?;
 
     // read some config and print it.
@@ -155,11 +154,16 @@ fn do_redis_code() -> redis::RedisResult<()> {
 }
 
 fn main() {
+    let url = if std::env::args().nth(1) == Some("--tls".into()) {
+        "redis+tls://127.0.0.1:6380/#insecure"
+    } else {
+        "redis://127.0.0.1:6379/"
+    };
     // at this point the errors are fatal, let's just fail hard.
-    match do_redis_code() {
+    match do_redis_code(url) {
         Err(err) => {
             println!("Could not execute example:");
-            println!("  {}: {}", err.category(), err.description());
+            println!("  {:?}", err);
         }
         Ok(()) => {}
     }

@@ -26,11 +26,17 @@ tokio-io = "0.1"
 tokio-codec = "0.1"
 tokio-sync = "0.1"
 
+## default-tls
+native-tls = { version = "0.2", optional = true }
+tokio-tls = { version = "0.2", optional = true }
+
 [features]
 default = [ "executor", "geospatial" ]
 
 geospatial = []
 executor = [ "tokio-executor" ]
+
+tls = ["native-tls", "tokio-tls"]
 
 [target.'cfg(unix)'.dependencies]
 tokio-uds = { version = "0.2" }

@@ -146,6 +146,34 @@ pub fn connect(
                     .map(|con| ActualConnection::Tcp(BufReader::new(con))),
             )
         }
+        // ConnectionAddr::TcpTls(ref host, ref port) => {
+        //     use native_tls::TlsConnector;
+        //     let connector = TlsConnector::new().unwrap();
+        //     let socket_addr = match (&host[..], port).to_socket_addrs() {
+        //         Ok(mut socket_addrs) => match socket_addrs.next() {
+        //             Some(socket_addr) => socket_addr,
+        //             None => {
+        //                 return Either::A(future::err(RedisError::from((
+        //                     ErrorKind::InvalidClientConfig,
+        //                     "No address found for host",
+        //                 ))));
+        //             }
+        //         },
+        //         Err(err) => return Either::A(future::err(err.into())),
+        //     };
+        //     use native_tls::TlsConnector;
+        //     use tokio_tls;
+        //     let tls = TlsConnector::builder().build().unwrap();
+        //     let tls = tokio_tls::TlsConnector::from(cx);
+
+        //     Either::A(
+        //         TcpStream::connect(&addr).and_then(move |socket| {
+        //             tls.connect(&host, socket)
+        //         })
+        //         .from_err()
+        //         .map(|con| ActualConnection::Tcp(BufReader::new(con))),
+        //     )
+        // }
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => Either::B(
             UnixStream::connect(path).map(|stream| ActualConnection::Unix(BufReader::new(stream))),

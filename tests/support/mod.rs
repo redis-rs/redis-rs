@@ -120,6 +120,7 @@ impl TestContext {
             addr: Box::new(server.get_client_addr().clone()),
             db: 0,
             passwd: None,
+            tls: None,
         })
         .unwrap();
         let mut con;
