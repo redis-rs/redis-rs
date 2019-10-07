@@ -1,6 +1,6 @@
 use sha1::Sha1;
 
-use crate::aio::SharedConnection;
+use crate::aio;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, ToRedisArgs};
@@ -151,10 +151,11 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Asynchronously invokes the script and returns the result.
     #[inline]
-    pub fn invoke_async<T: FromRedisValue + Send + 'static>(
-        &self,
-        con: SharedConnection,
-    ) -> impl Future<Item = (SharedConnection, T), Error = RedisError> {
+    pub fn invoke_async<C, T>(&self, con: C) -> impl Future<Item = (C, T), Error = RedisError>
+    where
+        C: aio::ConnectionLike + Clone + Send + 'static,
+        T: FromRedisValue + Send + 'static,
+    {
         let mut eval_cmd = cmd("EVALSHA");
         eval_cmd
             .arg(self.script.hash.as_bytes())
@@ -177,23 +178,24 @@ impl<'a> ScriptInvocation<'a> {
 
 /// A future that runs the given script and loads it into Redis if
 /// it has not already been loaded
-struct InvokeAsyncFuture<T> {
-    con: SharedConnection,
+struct InvokeAsyncFuture<C, T> {
+    con: C,
     eval_cmd: Cmd,
     load_cmd: Cmd,
-    future: CmdFuture<T>,
+    future: CmdFuture<C, T>,
 }
 
-enum CmdFuture<T> {
-    Load(RedisFuture<(SharedConnection, String)>),
-    Eval(RedisFuture<(SharedConnection, T)>),
+enum CmdFuture<C, T> {
+    Load(RedisFuture<(C, String)>),
+    Eval(RedisFuture<(C, T)>),
 }
 
-impl<T> Future for InvokeAsyncFuture<T>
+impl<C, T> Future for InvokeAsyncFuture<C, T>
 where
+    C: aio::ConnectionLike + Clone + Send + 'static,
     T: FromRedisValue + Send + 'static,
 {
-    type Item = (SharedConnection, T);
+    type Item = (C, T);
     type Error = RedisError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
