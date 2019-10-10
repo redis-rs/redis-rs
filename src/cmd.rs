@@ -1,9 +1,11 @@
-use std::io;
+use std::{io, pin::Pin};
 
 use crate::connection::ConnectionLike;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
+
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use futures::prelude::*;
 
@@ -142,13 +144,10 @@ where
     ::itoa::write(&mut *cmd, args.len())?;
     cmd.write_all(b"\r\n")?;
 
-    let mut cursor_bytes = [0; 20];
+    let mut cursor_bytes = itoa::Buffer::new();
     for item in args {
         let bytes = match item {
-            Arg::Cursor => {
-                let n = ::itoa::write(&mut cursor_bytes[..], cursor)?;
-                &cursor_bytes[..n]
-            }
+            Arg::Cursor => cursor_bytes.format(cursor).as_bytes(),
             Arg::Simple(val) => val,
         };
 
@@ -158,6 +157,37 @@ where
 
         cmd.write_all(bytes)?;
         cmd.write_all(b"\r\n")?;
+    }
+    Ok(())
+}
+
+async fn write_command_async<'a, I>(
+    mut cmd: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    args: I,
+    cursor: u64,
+) -> io::Result<()>
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
+{
+    cmd.write_all(b"*").await?;
+    cmd.write_all(itoa::Buffer::new().format(args.len()).as_bytes())
+        .await?;
+    cmd.write_all(b"\r\n").await?;
+
+    let mut cursor_bytes = itoa::Buffer::new();
+    for item in args {
+        let bytes = match item {
+            Arg::Cursor => cursor_bytes.format(cursor).as_bytes(),
+            Arg::Simple(val) => val,
+        };
+
+        cmd.write_all(b"$").await?;
+        cmd.write_all(itoa::Buffer::new().format(bytes.len()).as_bytes())
+            .await?;
+        cmd.write_all(b"\r\n").await?;
+
+        cmd.write_all(bytes).await?;
+        cmd.write_all(b"\r\n").await?;
     }
     Ok(())
 }
@@ -288,6 +318,13 @@ impl Cmd {
         cmd
     }
 
+    pub (crate) async fn write_command_async(
+        &self,
+        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    ) -> io::Result<()> {
+        write_command_async(out, self.args_iter(), self.cursor.unwrap_or(0)).await
+    }
+
     fn write_packed_command(&self, cmd: &mut Vec<u8>) {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
@@ -329,16 +366,15 @@ impl Cmd {
     /// Async version of `query`.
     #[inline]
     pub fn query_async<'c, C, T: FromRedisValue>(
-        &self,
+        &'c self,
         con: &'c mut C,
     ) -> impl Future<Output = RedisResult<T>> + 'c
     where
         C: crate::aio::ConnectionLike + Send + 'static,
         T: Send + 'static,
     {
-        let pcmd = self.get_packed_command();
         async move {
-            let val = con.req_packed_command(pcmd).await?;
+            let val = con.req_packed_command(self).await?;
             from_redis_value(&val)
         }
     }

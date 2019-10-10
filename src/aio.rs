@@ -9,7 +9,7 @@ use std::pin::Pin;
 use tokio::net::unix::UnixStream;
 
 use tokio::codec::Decoder;
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::tcp::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 
@@ -22,7 +22,7 @@ use futures::{
 
 use pin_project::{project, unsafe_project};
 
-use crate::cmd::cmd;
+use crate::cmd::{cmd, Cmd};
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 
 use crate::connection::{ConnectionAddr, ConnectionInfo};
@@ -31,74 +31,12 @@ use crate::parser::ValueCodec;
 
 #[unsafe_project(Unpin)]
 enum ActualConnection {
-    Tcp(#[pin] WriteWrapper<TcpStream>),
+    Tcp(#[pin] Buffered<TcpStream>),
     #[cfg(unix)]
-    Unix(#[pin] WriteWrapper<UnixStream>),
+    Unix(#[pin] Buffered<UnixStream>),
 }
 
-struct WriteWrapper<T>(BufReader<T>);
-
-impl<T> WriteWrapper<T>
-where
-    T: AsyncRead,
-{
-    fn get_inner(self: Pin<&mut Self>) -> Pin<&mut T> {
-        unsafe { Pin::new_unchecked(self.get_unchecked_mut().0.get_mut()) }
-    }
-}
-
-impl<T> WriteWrapper<T> {
-    fn get_buf_reader(self: Pin<&mut Self>) -> Pin<&mut BufReader<T>> {
-        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) }
-    }
-}
-
-impl<T> AsyncWrite for WriteWrapper<T>
-where
-    T: AsyncRead + AsyncWrite,
-{
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut task::Context,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        self.get_inner().poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        self.get_inner().poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        self.get_inner().poll_shutdown(cx)
-    }
-}
-
-impl<T> AsyncRead for WriteWrapper<T>
-where
-    T: AsyncRead,
-{
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut task::Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        self.get_buf_reader().poll_read(cx, buf)
-    }
-}
-
-impl<T> AsyncBufRead for WriteWrapper<T>
-where
-    T: AsyncRead,
-{
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
-        self.get_buf_reader().poll_fill_buf(cx)
-    }
-
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.get_buf_reader().consume(amt)
-    }
-}
+type Buffered<T> = BufReader<BufWriter<T>>;
 
 impl AsyncWrite for ActualConnection {
     #[project]
@@ -205,13 +143,13 @@ pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection>
             };
 
             TcpStream::connect(&socket_addr)
-                .map_ok(|con| ActualConnection::Tcp(WriteWrapper(BufReader::new(con))))
+                .map_ok(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))
                 .await?
         }
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => {
             UnixStream::connect(path.clone())
-                .map_ok(|stream| ActualConnection::Unix(WriteWrapper(BufReader::new(stream))))
+                .map_ok(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))
                 .await?
         }
 
@@ -268,7 +206,7 @@ pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection>
 pub trait ConnectionLike: Sized {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    fn req_packed_command(&mut self, cmd: Vec<u8>) -> RedisFuture<Value>;
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
 
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
@@ -288,9 +226,10 @@ pub trait ConnectionLike: Sized {
 }
 
 impl ConnectionLike for Connection {
-    fn req_packed_command(&mut self, cmd: Vec<u8>) -> RedisFuture<Value> {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
-            self.con.write_all(&cmd).await?;
+            cmd.write_command_async(Pin::new(&mut self.con)).await?;
+            self.con.flush().await?;
             self.con.read_response().await
         })
             .boxed()
@@ -581,12 +520,12 @@ impl SharedConnection {
     {
         let pipeline = match con.con {
             ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp.0.into_inner());
+                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
                 Pipeline::new(codec, executor)
             }
             #[cfg(unix)]
             ActualConnection::Unix(unix) => {
-                let codec = ValueCodec::default().framed(unix.0.into_inner());
+                let codec = ValueCodec::default().framed(unix.into_inner().into_inner());
                 Pipeline::new(codec, executor)
             }
         };
@@ -598,11 +537,17 @@ impl SharedConnection {
 }
 
 impl ConnectionLike for SharedConnection {
-    fn req_packed_command(&mut self, cmd: Vec<u8>) -> RedisFuture<Value> {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
-            let value = self.pipeline.send(cmd).await.map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
+            let value = self
+                .pipeline
+                .send(cmd.get_packed_command())
+                .await
+                .map_err(|err| {
+                    err.unwrap_or_else(|| {
+                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+                    })
+                })?;
             Ok(value)
         })
             .boxed()
