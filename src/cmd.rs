@@ -1,3 +1,5 @@
+use std::io;
+
 use crate::connection::ConnectionLike;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
@@ -117,11 +119,11 @@ where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     let mut cmd = Vec::new();
-    write_command(&mut cmd, args, cursor);
+    write_command_to_vec(&mut cmd, args, cursor);
     cmd
 }
 
-fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+fn write_command_to_vec<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
@@ -129,36 +131,35 @@ where
 
     cmd.reserve(totlen);
 
-    write_command_preallocated(cmd, args, cursor);
+    write_command(cmd, args, cursor).unwrap()
 }
 
-fn write_command_preallocated<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u64) -> io::Result<()>
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
-    cmd.push(b'*');
-    ::itoa::write(&mut *cmd, args.len()).unwrap();
-    cmd.extend_from_slice(b"\r\n");
+    cmd.write_all(b"*")?;
+    ::itoa::write(&mut *cmd, args.len())?;
+    cmd.write_all(b"\r\n");
 
-    {
-        let mut cursor_bytes = [0; 20];
-        for item in args {
-            let bytes = match item {
-                Arg::Cursor => {
-                    let n = ::itoa::write(&mut cursor_bytes[..], cursor).unwrap();
-                    &cursor_bytes[..n]
-                }
-                Arg::Simple(val) => val,
-            };
+    let mut cursor_bytes = [0; 20];
+    for item in args {
+        let bytes = match item {
+            Arg::Cursor => {
+                let n = ::itoa::write(&mut cursor_bytes[..], cursor)?;
+                &cursor_bytes[..n]
+            }
+            Arg::Simple(val) => val,
+        };
 
-            cmd.push(b'$');
-            ::itoa::write(&mut *cmd, bytes.len()).unwrap();
-            cmd.extend_from_slice(b"\r\n");
+        cmd.write_all(b"$")?;
+        ::itoa::write(&mut *cmd, bytes.len())?;
+        cmd.write_all(b"\r\n");
 
-            cmd.extend_from_slice(bytes);
-            cmd.extend_from_slice(b"\r\n");
-        }
+        cmd.write_all(bytes)?;
+        cmd.write_all(b"\r\n")?;
     }
+    Ok(())
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
@@ -288,11 +289,11 @@ impl Cmd {
     }
 
     fn write_packed_command(&self, cmd: &mut Vec<u8>) {
-        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
-        write_command_preallocated(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
