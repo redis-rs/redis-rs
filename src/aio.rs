@@ -211,12 +211,12 @@ pub trait ConnectionLike: Sized {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
-    fn req_packed_commands(
-        &mut self,
-        cmd: Vec<u8>,
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<Vec<Value>>;
+    ) -> RedisFuture<'a, Vec<Value>>;
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -235,14 +235,15 @@ impl ConnectionLike for Connection {
             .boxed()
     }
 
-    fn req_packed_commands(
-        &mut self,
-        cmd: Vec<u8>,
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<Vec<Value>> {
+    ) -> RedisFuture<'a, Vec<Value>> {
         (async move {
-            self.con.write_all(&cmd).await?;
+            cmd.write_pipeline_async(Pin::new(&mut self.con)).await?;
+            self.con.flush().await?;
 
             let mut rv = Vec::with_capacity(count);
             let mut idx = 0;
@@ -553,16 +554,16 @@ impl ConnectionLike for SharedConnection {
             .boxed()
     }
 
-    fn req_packed_commands(
-        &mut self,
-        cmd: Vec<u8>,
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<Vec<Value>> {
+    ) -> RedisFuture<'a, Vec<Value>> {
         (async move {
             let mut value = self
                 .pipeline
-                .send_recv_multiple(cmd, offset + count)
+                .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
                 .await
                 .map_err(|err| {
                     err.unwrap_or_else(|| {

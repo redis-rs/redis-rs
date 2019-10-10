@@ -220,7 +220,7 @@ fn bench_encode_integer(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.set(123, 45679123).ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 
@@ -231,7 +231,7 @@ fn bench_encode_pipeline(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.set("foo", "bar").ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 
@@ -246,7 +246,7 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
             )
             .ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 

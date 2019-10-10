@@ -216,6 +216,25 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     rv
 }
 
+async fn write_pipeline_async(
+    mut out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    cmds: &[Cmd],
+    atomic: bool,
+) -> io::Result<()> {
+    if atomic {
+        cmd("MULTI").write_command_async(out.as_mut()).await?;
+        for cmd in cmds {
+            cmd.write_command_async(out.as_mut()).await?;
+        }
+        cmd("EXEC").write_command_async(out.as_mut()).await?;
+    } else {
+        for cmd in cmds {
+            cmd.write_command_async(out.as_mut()).await?;
+        }
+    }
+    Ok(())
+}
+
 impl RedisWrite for Cmd {
     fn write_arg(&mut self, arg: &[u8]) {
         let prev = self.data.len();
@@ -318,7 +337,7 @@ impl Cmd {
         cmd
     }
 
-    pub (crate) async fn write_command_async(
+    pub(crate) async fn write_command_async(
         &self,
         out: Pin<&mut (impl ?Sized + AsyncWrite)>,
     ) -> io::Result<()> {
@@ -572,8 +591,15 @@ impl Pipeline {
     }
 
     /// Returns the encoded pipeline commands.
-    pub fn get_packed_pipeline(&self, atomic: bool) -> Vec<u8> {
-        encode_pipeline(&self.commands, atomic)
+    pub fn get_packed_pipeline(&self) -> Vec<u8> {
+        encode_pipeline(&self.commands, self.transaction_mode)
+    }
+
+    pub(crate) async fn write_pipeline_async(
+        &self,
+        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    ) -> io::Result<()> {
+        write_pipeline_async(out, &self.commands, self.transaction_mode).await
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
@@ -639,30 +665,22 @@ impl Pipeline {
         self.commands.clear();
     }
 
-    async fn execute_pipelined_async<C>(self, con: &mut C) -> RedisResult<Value>
+    async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
     {
         let value = con
-            .req_packed_commands(
-                encode_pipeline(&self.commands, false),
-                0,
-                self.commands.len(),
-            )
+            .req_packed_commands(self, 0, self.commands.len())
             .await?;
         Ok(self.make_pipeline_results(value))
     }
 
-    async fn execute_transaction_async<C>(self, con: &mut C) -> RedisResult<Value>
+    async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
     {
         let mut resp = con
-            .req_packed_commands(
-                encode_pipeline(&self.commands, true),
-                self.commands.len() + 1,
-                1,
-            )
+            .req_packed_commands(self, self.commands.len() + 1, 1)
             .await?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
