@@ -159,7 +159,7 @@ impl<'a> ScriptInvocation<'a> {
         con: &'c mut C,
     ) -> impl Future<Output = RedisResult<T>> + 'c
     where
-        C: aio::ConnectionLike + Clone + Send + 'static,
+        C: aio::ConnectionLike + Clone + Send + Unpin + 'static,
         T: FromRedisValue + Send + 'static,
     {
         let mut eval_cmd = cmd("EVALSHA");
@@ -204,7 +204,7 @@ enum CmdFuture<T> {
 
 impl<C, T> Future for InvokeAsyncFuture<C, T>
 where
-    C: aio::ConnectionLike + Clone + Send + 'static,
+    C: aio::ConnectionLike + Clone + Send + Unpin + 'static,
     T: FromRedisValue + Send + 'static,
 {
     type Output = RedisResult<T>;

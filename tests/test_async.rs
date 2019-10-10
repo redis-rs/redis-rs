@@ -1,4 +1,3 @@
-#![feature(async_await)]
 #![cfg(feature = "executor")]
 
 use redis;
@@ -122,7 +121,7 @@ fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<
 
         let () = redis::cmd("SET")
             .arg(&key[..])
-            .arg(foo.as_bytes())
+            .arg(foo_val.as_bytes())
             .query_async(&mut con)
             .await?;
         let () = redis::cmd("SET")
@@ -133,7 +132,7 @@ fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<
             .arg(&[&key_2, &key2_2])
             .query_async(&mut con)
             .map(|result| {
-                assert_eq!(Ok((foo, b"bar".to_vec())), result);
+                assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
                 Ok(())
             })
             .await
@@ -212,7 +211,7 @@ fn test_transaction_shared_connection() {
                         pipe.atomic()
                             .cmd("SET")
                             .arg("key")
-                            .arg(foo)
+                            .arg(foo_val)
                             .ignore()
                             .cmd("SET")
                             .arg(&["key2", &bar[..]])
@@ -222,7 +221,7 @@ fn test_transaction_shared_connection() {
 
                         pipe.query_async(&mut con)
                             .map(move |result| {
-                                assert_eq!(Ok(((foo, bar.clone().into_bytes()),)), result);
+                                assert_eq!(Ok(((foo_val, bar.clone().into_bytes()),)), result);
                                 result
                             })
                             .await
@@ -274,18 +273,14 @@ fn test_script() {
 fn test_script_returning_complex_type() {
     let ctx = TestContext::new();
     block_on_all(async {
-        ctx.shared_async_connection()
-            .and_then(|con| {
-                redis::Script::new("return {1, ARGV[1], true}")
-                    .arg("hello")
-                    .invoke_async(con)
-                    .map_ok(
-                        |(_con, (i, s, b)): (SharedConnection, (i32, String, bool))| {
-                            assert_eq!(i, 1);
-                            assert_eq!(s, "hello");
-                            assert_eq!(b, true);
-                        },
-                    )
+        let mut con = ctx.shared_async_connection().await?;
+        redis::Script::new("return {1, ARGV[1], true}")
+            .arg("hello")
+            .invoke_async(&mut con)
+            .map_ok(|(i, s, b): (i32, String, bool)| {
+                assert_eq!(i, 1);
+                assert_eq!(s, "hello");
+                assert_eq!(b, true);
             })
             .await
     })

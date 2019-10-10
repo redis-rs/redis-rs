@@ -5,14 +5,14 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test
+	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test --all-features
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types
+	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types --all-features
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test
+	@REDISRS_SERVER_TYPE=unix cargo test --all-features
 
 test-single: RUST_TEST_THREADS=1
 test-single: test

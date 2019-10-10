@@ -21,8 +21,8 @@ combine = "3.8.1"
 bytes = "0.4"
 futures = { version = "0.3.0-alpha.18", package = "futures-preview" }
 pin-project = "0.3"
-tokio = "0.2.0-alpha.2"
-tokio-net = "0.2.0-alpha.2"
+tokio = "0.2.0-alpha.6"
+tokio-net = "0.2.0-alpha.6"
 
 [features]
 default = [ "geospatial" ]
