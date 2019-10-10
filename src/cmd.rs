@@ -140,7 +140,7 @@ where
 {
     cmd.write_all(b"*")?;
     ::itoa::write(&mut *cmd, args.len())?;
-    cmd.write_all(b"\r\n");
+    cmd.write_all(b"\r\n")?;
 
     let mut cursor_bytes = [0; 20];
     for item in args {
@@ -154,7 +154,7 @@ where
 
         cmd.write_all(b"$")?;
         ::itoa::write(&mut *cmd, bytes.len())?;
-        cmd.write_all(b"\r\n");
+        cmd.write_all(b"\r\n")?;
 
         cmd.write_all(bytes)?;
         cmd.write_all(b"\r\n")?;
