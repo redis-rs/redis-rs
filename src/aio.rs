@@ -20,7 +20,7 @@ use futures::{
     Future, Poll, Sink, Stream,
 };
 
-use pin_project::{project, unsafe_project};
+use pin_project::pin_project;
 
 use crate::cmd::{cmd, Cmd};
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
@@ -29,85 +29,72 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 use crate::parser::ValueCodec;
 
-#[unsafe_project(Unpin)]
 enum ActualConnection {
-    Tcp(#[pin] Buffered<TcpStream>),
+    Tcp(Buffered<TcpStream>),
     #[cfg(unix)]
-    Unix(#[pin] Buffered<UnixStream>),
+    Unix(Buffered<UnixStream>),
 }
 
 type Buffered<T> = BufReader<BufWriter<T>>;
 
 impl AsyncWrite for ActualConnection {
-    #[project]
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut task::Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.poll_write(cx, buf),
+        match &mut *self{
+            ActualConnection::Tcp(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.poll_write(cx, buf),
+            ActualConnection::Unix(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
 
-    #[project]
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.poll_flush(cx),
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        match &mut *self {
+            ActualConnection::Tcp(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.poll_flush(cx),
+            ActualConnection::Unix(r) => Pin::new(r).poll_flush(cx),
         }
     }
 
-    #[project]
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.poll_shutdown(cx),
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        match &mut *self {
+            ActualConnection::Tcp(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.poll_shutdown(cx),
+            ActualConnection::Unix(r) => Pin::new(r).poll_shutdown(cx),
         }
     }
 }
 
 impl AsyncRead for ActualConnection {
-    #[project]
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut task::Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.poll_read(cx, buf),
+        match &mut *self {
+            ActualConnection::Tcp(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.poll_read(cx, buf),
+            ActualConnection::Unix(r) => Pin::new(r).poll_read(cx, buf),
         }
     }
 }
 
 impl AsyncBufRead for ActualConnection {
-    #[project]
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.poll_fill_buf(cx),
+        match self.get_mut() {
+            ActualConnection::Tcp(r) => Pin::new(r).poll_fill_buf(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.poll_fill_buf(cx),
+            ActualConnection::Unix(r) => Pin::new(r).poll_fill_buf(cx),
         }
     }
 
-    #[project]
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        #[project]
-        match self.project() {
-            ActualConnection::Tcp(r) => r.consume(amt),
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        match &mut *self {
+            ActualConnection::Tcp(r) => Pin::new(r).consume(amt),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => r.consume(amt),
+            ActualConnection::Unix(r) => Pin::new(r).consume(amt),
         }
     }
 }
@@ -245,16 +232,16 @@ impl ConnectionLike for Connection {
             cmd.write_pipeline_async(Pin::new(&mut self.con)).await?;
             self.con.flush().await?;
 
-            let mut rv = Vec::with_capacity(count);
-            let mut idx = 0;
-            while idx < offset + count {
-                let item = self.con.read_response().await?;
-
-                if idx >= offset {
-                    rv.push(item);
-                }
-                idx += 1;
+            for _ in 0..offset {
+                self.con.read_response().await?;
             }
+
+            let mut rv = Vec::with_capacity(count);
+            for _ in 0..count {
+                let item = self.con.read_response().await?;
+                rv.push(item);
+            }
+
             Ok(rv)
         })
             .boxed()
@@ -293,7 +280,7 @@ impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
     }
 }
 
-#[unsafe_project(Unpin)]
+#[pin_project]
 struct PipelineSink<T, I, E>
 where
     T: Stream<Item = Result<I, E>> + 'static,

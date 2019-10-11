@@ -5,7 +5,7 @@ use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
-use pin_project::unsafe_project;
+use pin_project::pin_project;
 
 use bytes::BytesMut;
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
@@ -185,7 +185,7 @@ impl Decoder for ValueCodec {
     }
 }
 
-#[unsafe_project(Unpin)]
+#[pin_project]
 pub struct ValueFuture<R> {
     #[pin]
     reader: Option<R>,
