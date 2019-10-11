@@ -18,7 +18,7 @@ test-single: RUST_TEST_THREADS=1
 test-single: test
 
 bench:
-	@RUST_TEST_THREADS=1 cargo bench
+	@RUST_TEST_THREADS=1 cargo bench --all-features
 
 docs: build
 	@cargo doc --no-deps
