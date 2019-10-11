@@ -17,7 +17,7 @@ use futures::{
     prelude::*,
     ready, task,
     task::{Spawn, SpawnExt},
-    Future, Poll, Sink, Stream,
+    Poll, Sink, Stream,
 };
 
 use pin_project::pin_project;
@@ -43,7 +43,7 @@ impl AsyncWrite for ActualConnection {
         cx: &mut task::Context,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match &mut *self{
+        match &mut *self {
             ActualConnection::Tcp(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             ActualConnection::Unix(r) => Pin::new(r).poll_write(cx, buf),
@@ -113,7 +113,7 @@ impl ActualConnection {
 }
 
 /// Opens a connection.
-pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection> {
+pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = match (&host[..], port).to_socket_addrs() {
@@ -135,7 +135,7 @@ pub async fn connect(connection_info: ConnectionInfo) -> RedisResult<Connection>
         }
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => {
-            UnixStream::connect(path.clone())
+            UnixStream::connect(path)
                 .map_ok(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))
                 .await?
         }
@@ -455,41 +455,39 @@ where
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    fn send(&self, item: SinkItem) -> impl Future<Output = Result<I, Option<E>>> + Send {
+    async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
         self.send_recv_multiple(item, 1)
             .map_ok(|mut item| item.pop().unwrap())
+            .await
     }
 
-    fn send_recv_multiple(
-        &self,
+    async fn send_recv_multiple(
+        &mut self,
         input: SinkItem,
         count: usize,
-    ) -> impl Future<Output = Result<Vec<I>, Option<E>>> + Send {
-        let mut self_ = self.0.clone();
-        async move {
-            let (sender, receiver) = oneshot::channel();
+    ) -> Result<Vec<I>, Option<E>> {
+        let (sender, receiver) = oneshot::channel();
 
-            self_
-                .send(PipelineMessage {
-                    input,
-                    response_count: count,
-                    output: sender,
-                })
-                .map_err(|_| None)
-                .and_then(|_| {
-                    receiver.then(|result| {
-                        future::ready(match result {
-                            Ok(result) => result.map_err(Some),
-                            Err(_) => {
-                                // The `sender` was dropped which likely means that the stream part
-                                // failed for one reason or another
-                                Err(None)
-                            }
-                        })
+        self.0
+            .send(PipelineMessage {
+                input,
+                response_count: count,
+                output: sender,
+            })
+            .map_err(|_| None)
+            .and_then(|_| {
+                receiver.then(|result| {
+                    future::ready(match result {
+                        Ok(result) => result.map_err(Some),
+                        Err(_) => {
+                            // The `sender` was dropped which likely means that the stream part
+                            // failed for one reason or another
+                            Err(None)
+                        }
                     })
                 })
-                .await
-        }
+            })
+            .await
     }
 }
 

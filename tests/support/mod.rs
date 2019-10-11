@@ -161,8 +161,8 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub fn async_connection(&self) -> impl Future<Output = RedisResult<redis::aio::Connection>> {
-        self.client.get_async_connection()
+    pub async fn async_connection(&self) -> RedisResult<redis::aio::Connection> {
+        self.client.get_async_connection().await
     }
 
     pub fn stop_server(&mut self) {
@@ -173,7 +173,8 @@ impl TestContext {
     pub fn shared_async_connection(
         &self,
     ) -> impl Future<Output = RedisResult<redis::aio::SharedConnection>> {
-        self.client.get_shared_async_connection()
+        let client = self.client.clone();
+        async move { client.get_shared_async_connection().await }
     }
 }
 

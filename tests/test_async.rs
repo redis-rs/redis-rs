@@ -84,28 +84,27 @@ fn dont_panic_on_closed_shared_connection() {
 #[test]
 fn test_pipeline_transaction() {
     let ctx = TestContext::new();
-    block_on_all(ctx.async_connection().and_then(|mut con| {
-        async move {
-            let mut pipe = redis::pipe();
-            pipe.atomic()
-                .cmd("SET")
-                .arg("key_1")
-                .arg(42)
-                .ignore()
-                .cmd("SET")
-                .arg("key_2")
-                .arg(43)
-                .ignore()
-                .cmd("MGET")
-                .arg(&["key_1", "key_2"]);
-            pipe.query_async(&mut con)
-                .map_ok(|((k1, k2),): ((i32, i32),)| {
-                    assert_eq!(k1, 42);
-                    assert_eq!(k2, 43);
-                })
-                .await
-        }
-    }))
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+        let mut pipe = redis::pipe();
+        pipe.atomic()
+            .cmd("SET")
+            .arg("key_1")
+            .arg(42)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(43)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"]);
+        pipe.query_async(&mut con)
+            .map_ok(|((k1, k2),): ((i32, i32),)| {
+                assert_eq!(k1, 42);
+                assert_eq!(k2, 43);
+            })
+            .await
+    })
     .unwrap();
 }
 
