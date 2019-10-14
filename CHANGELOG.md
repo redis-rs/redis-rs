@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.13.0...HEAD) - ReleaseDate
+
 ## [0.13.0](https://github.com/mitsuhiko/redis-rs/compare/0.12.0...0.13.0) - 2019-10-14
 
 **Fixes and improvements**
