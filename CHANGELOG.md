@@ -1,19 +1,42 @@
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.12.0...0.13.0) - 2019-10-14
+## [0.13.0](https://github.com/mitsuhiko/redis-rs/compare/0.12.0...0.13.0) - 2019-10-14
 
 **Fixes and improvements**
 
 * **Breaking change:** rename `parse_async` to `parse_redis_value_async` for consistency ([ce59cecb](https://github.com/mitsuhiko/redis-rs/commit/ce59cecb830d4217115a4e74e38891e76cf01474)).
 * Run clippy over the entire codebase ([#238](https://github.com/mitsuhiko/redis-rs/pull/238))
-* Make `Script#invoke_async` generic over `aio::ConnectionLike` ([#242](https://github.com/mitsuhiko/redis-rs/pull/242))
+* **Breaking change:** Make `Script#invoke_async` generic over `aio::ConnectionLike` ([#242](https://github.com/mitsuhiko/redis-rs/pull/242))
 
 ### BREAKING CHANGES
 
-#### Rename `parse_async` to `parse_redis_value_async` for consistency
+#### Rename `parse_async` to `parse_redis_value_async` for consistency ([ce59cecb](https://github.com/mitsuhiko/redis-rs/commit/ce59cecb830d4217115a4e74e38891e76cf01474)).
 
 If you used `redis::parse_async` before, you now need to change this to `redis::parse_redis_value_async`
 or import the method under the new name: `use redis::parse_redis_value_async`.
+
+#### Make `Script#invoke_async` generic over `aio::ConnectionLike` ([#242](https://github.com/mitsuhiko/redis-rs/pull/242))
+
+`Script#invoke_async` was changed to be generic over `aio::ConnectionLike` in order to support wrapping a `SharedConnection` in user code.
+This required adding a new generic parameter to the method, causing an error when the return type is defined using the turbofish syntax.
+
+Old:
+
+```rust
+redis::Script::new("return ...")
+  .key("key1")
+  .arg("an argument")
+  .invoke_async::<String>()
+```
+
+New:
+
+```rust
+redis::Script::new("return ...")
+  .key("key1")
+  .arg("an argument")
+  .invoke_async::<_, String>()
+```
 
 ## [0.12.0](https://github.com/mitsuhiko/redis-rs/compare/0.11.0...0.12.0) - 2019-08-26
 
