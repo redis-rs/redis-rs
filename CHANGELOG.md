@@ -1,8 +1,19 @@
 # Changelog
 
-## 0.13.0 (unreleased)
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.12.0...HEAD) - ReleaseDate
 
-* **Breaking change:** rename `parse_async` to `parse_redis_value_async` for consistency.
+**Fixes and improvements**
+
+* **Breaking change:** rename `parse_async` to `parse_redis_value_async` for consistency ([ce59cecb](https://github.com/mitsuhiko/redis-rs/commit/ce59cecb830d4217115a4e74e38891e76cf01474)).
+* Run clippy over the entire codebase ([#238](https://github.com/mitsuhiko/redis-rs/pull/238))
+* Make `Script#invoke_async` generic over `aio::ConnectionLike` ([#242](https://github.com/mitsuhiko/redis-rs/pull/242))
+
+### BREAKING CHANGES
+
+#### Rename `parse_async` to `parse_redis_value_async` for consistency
+
+If you used `redis::parse_async` before, you now need to change this to `redis::parse_redis_value_async`
+or import the method under the new name: `use redis::parse_redis_value_async`.
 
 ## [0.12.0](https://github.com/mitsuhiko/redis-rs/compare/0.11.0...0.12.0) - 2019-08-26
 
