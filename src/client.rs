@@ -2,6 +2,7 @@ use futures::{future::Executor, Future};
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisError, RedisResult, Value};
+use std::time::Duration;
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -41,7 +42,16 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(connect(&self.connection_info)?)
+        Ok(connect(&self.connection_info, None)?)
+    }
+
+    /// Instructs the client to actually connect to redis with specified
+    /// timeout and returns a connection object.  The connection object
+    /// can be used to send commands to the server.  This can fail with
+    /// a variety of errors (like unreachable host) so it's important
+    /// that you handle those errors.
+    pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
+        Ok(connect(&self.connection_info, Some(timeout))?)
     }
 
     /// Returns an async connection from the client.
