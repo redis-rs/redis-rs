@@ -8,8 +8,11 @@ use std::net::ToSocketAddrs;
 #[cfg(unix)]
 use tokio_uds::UnixStream;
 
+#[cfg(feature = "tls")]
+use tokio_tls::TlsStream;
+
 use tokio_codec::{Decoder, Framed};
-use tokio_io::{self, AsyncWrite};
+use tokio_io::{self, AsyncRead, AsyncWrite};
 use tokio_tcp::TcpStream;
 
 use futures::future::{Either, Executor};
@@ -23,18 +26,11 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 use crate::parser::ValueCodec;
 
-enum ActualConnection {
-    Tcp(BufReader<TcpStream>),
-    #[cfg(unix)]
-    Unix(BufReader<UnixStream>),
-}
+use std::io::BufRead;
 
-struct WriteWrapper<T>(BufReader<T>);
+struct WriteWrapper(Box<dyn ConnectionTrait>);
 
-impl<T> Write for WriteWrapper<T>
-where
-    T: Read + Write,
-{
+impl Write for WriteWrapper {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.get_mut().write(buf)
     }
@@ -50,66 +46,68 @@ where
     }
 }
 
-impl<T> AsyncWrite for WriteWrapper<T>
-where
-    T: Read + AsyncWrite,
-{
+impl AsyncWrite for WriteWrapper {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.0.get_mut().shutdown()
     }
 }
 
+trait AsyncReader: Read + AsyncRead + AsyncWrite + Send {}
+
+impl AsyncReader for TcpStream {}
+
+#[cfg(feature = "tls")]
+impl AsyncReader for TlsStream<TcpStream> {}
+
+impl AsyncReader for UnixStream {}
+
+trait ConnectionTrait: AsyncRead + BufRead + Send {
+    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader>;
+    fn get_mut(&mut self) -> &mut dyn AsyncReader;
+}
+
+impl ConnectionTrait for BufReader<TcpStream> {
+    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+        Box::new((*self).into_inner())
+    }
+
+    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+        self.get_mut()
+    }
+}
+
+#[cfg(feature = "tls")]
+impl ConnectionTrait for BufReader<TlsStream<TcpStream>> {
+    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+        Box::new((*self).into_inner())
+    }
+
+    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+        self.get_mut()
+    }
+}
+
+impl ConnectionTrait for BufReader<UnixStream> {
+    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+        Box::new((*self).into_inner())
+    }
+
+    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+        self.get_mut()
+    }
+}
+
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
-    con: ActualConnection,
+    con: Box<dyn ConnectionTrait>,
     db: i64,
-}
-
-macro_rules! with_connection {
-    ($con:expr, $f:expr) => {
-        match $con {
-            #[cfg(not(unix))]
-            ActualConnection::Tcp(con) => {
-                $f(con).map(|(con, value)| (ActualConnection::Tcp(con), value))
-            }
-
-            #[cfg(unix)]
-            ActualConnection::Tcp(con) => {
-                Either::A($f(con).map(|(con, value)| (ActualConnection::Tcp(con), value)))
-            }
-            #[cfg(unix)]
-            ActualConnection::Unix(con) => {
-                Either::B($f(con).map(|(con, value)| (ActualConnection::Unix(con), value)))
-            }
-        }
-    };
-}
-
-macro_rules! with_write_connection {
-    ($con:expr, $f:expr) => {
-        match $con {
-            #[cfg(not(unix))]
-            ActualConnection::Tcp(con) => {
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value))
-            }
-
-            #[cfg(unix)]
-            ActualConnection::Tcp(con) => Either::A(
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Tcp(con.0), value)),
-            ),
-            #[cfg(unix)]
-            ActualConnection::Unix(con) => Either::B(
-                $f(WriteWrapper(con)).map(|(con, value)| (ActualConnection::Unix(con.0), value)),
-            ),
-        }
-    };
 }
 
 impl Connection {
     /// Retrieves a single response from the connection.
     pub fn read_response(self) -> impl Future<Item = (Self, Value), Error = RedisError> {
         let db = self.db;
-        with_connection!(self.con, crate::parser::parse_redis_value_async).then(move |result| {
+        crate::parser::parse_redis_value_async(self.con).then(move |result| {
             match result {
                 Ok((con, value)) => Ok((Connection { con, db }, value)),
                 Err(err) => {
@@ -125,8 +123,10 @@ impl Connection {
 pub fn connect(
     connection_info: ConnectionInfo,
 ) -> impl Future<Item = Connection, Error = RedisError> {
-    let connection = match *connection_info.addr {
-        ConnectionAddr::Tcp(ref host, port) => {
+    let ConnectionInfo { addr, db, passwd, tls } = connection_info;
+    let connection = match *addr {
+        #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
+        ConnectionAddr::Tcp(host, port) => {
             let socket_addr = match (&host[..], port).to_socket_addrs() {
                 Ok(mut socket_addrs) => match socket_addrs.next() {
                     Some(socket_addr) => socket_addr,
@@ -140,94 +140,97 @@ pub fn connect(
                 Err(err) => return Either::A(future::err(err.into())),
             };
 
-            Either::A(
-                TcpStream::connect(&socket_addr)
-                    .from_err()
-                    .map(|con| ActualConnection::Tcp(BufReader::new(con))),
-            )
-        }
-        // ConnectionAddr::TcpTls(ref host, ref port) => {
-        //     use native_tls::TlsConnector;
-        //     let connector = TlsConnector::new().unwrap();
-        //     let socket_addr = match (&host[..], port).to_socket_addrs() {
-        //         Ok(mut socket_addrs) => match socket_addrs.next() {
-        //             Some(socket_addr) => socket_addr,
-        //             None => {
-        //                 return Either::A(future::err(RedisError::from((
-        //                     ErrorKind::InvalidClientConfig,
-        //                     "No address found for host",
-        //                 ))));
-        //             }
-        //         },
-        //         Err(err) => return Either::A(future::err(err.into())),
-        //     };
-        //     use native_tls::TlsConnector;
-        //     use tokio_tls;
-        //     let tls = TlsConnector::builder().build().unwrap();
-        //     let tls = tokio_tls::TlsConnector::from(cx);
+            if let Some(tls) = tls.as_ref() {
+                #[cfg(feature = "tls")]
+                {
+                    use std::convert::TryInto;
+                    let cx: native_tls::TlsConnector = tls.try_into().unwrap(); // TODO: fix unwrap
+                    let cx = tokio_tls::TlsConnector::from(cx);
+                    CaseFuture::A(
+                        TcpStream::connect(&socket_addr)
+                            .and_then(move |socket| {
+                                cx.connect(&host, socket)
+                                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+                            })
+                            .map(move |con| Connection {
+                                con: Box::new(BufReader::new(con)),
+                                db,
+                            })
+                            .from_err(),
+                    )
+                }
 
-        //     Either::A(
-        //         TcpStream::connect(&addr).and_then(move |socket| {
-        //             tls.connect(&host, socket)
-        //         })
-        //         .from_err()
-        //         .map(|con| ActualConnection::Tcp(BufReader::new(con))),
-        //     )
-        // }
+                #[cfg(not(feature = "tls"))]
+                CaseFuture::A(future::err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "can't connect with TLS, the feature is not enabled",
+                ))))
+            } else {
+                CaseFuture::B(
+                    TcpStream::connect(&socket_addr)
+                        .map(move |con| Connection {
+                            con: Box::new(BufReader::new(con)),
+                            db,
+                        })
+                        .from_err(),
+                )
+            }
+        }
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => Either::B(
-            UnixStream::connect(path).map(|stream| ActualConnection::Unix(BufReader::new(stream))),
+        ConnectionAddr::Unix(ref path) => CaseFuture::C(
+            UnixStream::connect(path)
+                .map(move |stream| Connection {
+                    con: Box::new(BufReader::new(stream)),
+                    db,
+                })
+                .from_err(),
         ),
         #[cfg(not(unix))]
-        ConnectionAddr::Unix(_) => Either::B(future::err(RedisError::from((
+        ConnectionAddr::Unix(_) => CaseFuture::C(future::err(RedisError::from((
             ErrorKind::InvalidClientConfig,
-            "Cannot connect to unix sockets \
-             on this platform",
+            "Cannot connect to unix sockets on this platform",
         )))),
     };
 
-    Either::B(connection.from_err().and_then(move |con| {
-        let rv = Connection {
-            con,
-            db: connection_info.db,
-        };
-
-        let login = match connection_info.passwd {
-            Some(ref passwd) => {
-                Either::A(cmd("AUTH").arg(&**passwd).query_async::<_, Value>(rv).then(
-                    |x| match x {
+    let login = connection.and_then(move|con| {
+        match passwd {
+            Some(ref passwd) => Either::A(
+                cmd("AUTH")
+                    .arg(&**passwd)
+                    .query_async::<_, Value>(con)
+                    .then(|x| match x {
                         Ok((rv, Value::Okay)) => Ok(rv),
                         _ => {
-                            fail!((
+                            Err(RedisError::from((
                                 ErrorKind::AuthenticationFailed,
                                 "Password authentication failed"
-                            ));
+                            )))
                         }
-                    },
-                ))
-            }
-            None => Either::B(future::ok(rv)),
-        };
+                    }),
+            ),
+            None => Either::B(future::ok(con)),
+        }
+    });
 
-        login.and_then(move |rv| {
-            if connection_info.db != 0 {
+    let connection = login.and_then(move |con| {
+            if db != 0 {
                 Either::A(
                     cmd("SELECT")
-                        .arg(connection_info.db)
-                        .query_async::<_, Value>(rv)
+                        .arg(db)
+                        .query_async::<_, Value>(con)
                         .then(|result| match result {
-                            Ok((rv, Value::Okay)) => Ok(rv),
-                            _ => fail!((
+                            Ok((con, Value::Okay)) => Ok(con),
+                            _ => Err(RedisError::from((
                                 ErrorKind::ResponseError,
                                 "Redis server refused to switch database"
-                            )),
+                            ))),
                         }),
                 )
             } else {
-                Either::B(future::ok(rv))
+                Either::B(future::ok(con))
             }
-        })
-    }))
+        });
+    Either::B(connection)
 }
 
 /// An async abstraction over connections.
@@ -257,7 +260,8 @@ impl ConnectionLike for Connection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
         let db = self.db;
         Box::new(
-            with_write_connection!(self.con, |con| tokio_io::io::write_all(con, cmd))
+            tokio_io::io::write_all(WriteWrapper(self.con), cmd)
+                .map(|(con, value)| (con.0, value))
                 .from_err()
                 .and_then(move |(con, _)| Connection { con, db }.read_response()),
         )
@@ -271,7 +275,8 @@ impl ConnectionLike for Connection {
     ) -> RedisFuture<(Self, Vec<Value>)> {
         let db = self.db;
         Box::new(
-            with_write_connection!(self.con, |con| tokio_io::io::write_all(con, cmd))
+            tokio_io::io::write_all(WriteWrapper(self.con), cmd)
+                .map(|(con, value)| (con.0, value))
                 .from_err()
                 .and_then(move |(con, _)| {
                     let mut con = Some(Connection { con, db });
@@ -514,17 +519,17 @@ where
     }
 }
 
-#[derive(Clone)]
-enum ActualPipeline {
-    Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
-    #[cfg(unix)]
-    Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
-}
+// #[derive(Clone)]
+// enum ActualPipeline {
+//     Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
+//     #[cfg(unix)]
+//     Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
+// }
 
 /// A connection object bound to an executor.
 #[derive(Clone)]
 pub struct SharedConnection {
-    pipeline: ActualPipeline,
+    pipeline: Pipeline<Framed<Box<dyn AsyncReader>, ValueCodec>>,
     db: i64,
 }
 
@@ -535,17 +540,8 @@ impl SharedConnection {
         E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
     {
         future::lazy(|| {
-            let pipeline = match con.con {
-                ActualConnection::Tcp(tcp) => {
-                    let codec = ValueCodec::default().framed(tcp.into_inner());
-                    ActualPipeline::Tcp(Pipeline::new(codec, executor))
-                }
-                #[cfg(unix)]
-                ActualConnection::Unix(unix) => {
-                    let codec = ValueCodec::default().framed(unix.into_inner());
-                    ActualPipeline::Unix(Pipeline::new(codec, executor))
-                }
-            };
+            let codec = ValueCodec::default().framed(con.con.into_inner());
+            let pipeline = Pipeline::new(codec, executor);
             Ok(SharedConnection {
                 pipeline,
                 db: con.db,
@@ -562,11 +558,7 @@ impl ConnectionLike for SharedConnection {
         };
 
         #[cfg(unix)]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => Either::A(pipeline.send(cmd)),
-            ActualPipeline::Unix(ref pipeline) => Either::B(pipeline.send(cmd)),
-        };
-
+        let future = self.pipeline.send(cmd);
         Box::new(future.map(|value| (self, value)).map_err(|err| {
             err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
         }))
@@ -584,15 +576,7 @@ impl ConnectionLike for SharedConnection {
         };
 
         #[cfg(unix)]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => {
-                Either::A(pipeline.send_recv_multiple(cmd, offset + count))
-            }
-            ActualPipeline::Unix(ref pipeline) => {
-                Either::B(pipeline.send_recv_multiple(cmd, offset + count))
-            }
-        };
-
+        let future = self.pipeline.send_recv_multiple(cmd, offset + count);
         Box::new(
             future
                 .map(move |mut value| {
@@ -609,5 +593,36 @@ impl ConnectionLike for SharedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+}
+
+/// Generalization of `futures::future::Either` future.
+///
+/// Use it when you need to return a future from a function based on several cases.
+#[derive(Debug)]
+pub enum CaseFuture<A, B, C> {
+    /// A value of type `A`.
+    A(A),
+    /// A value of type `B`.
+    B(B),
+    /// A value of type `C`.
+    C(C),
+}
+
+impl<A, B, C> Future for CaseFuture<A, B, C>
+where
+    A: Future,
+    B: Future<Item = A::Item, Error = A::Error>,
+    C: Future<Item = A::Item, Error = A::Error>,
+{
+    type Item = A::Item;
+    type Error = A::Error;
+
+    fn poll(&mut self) -> Poll<A::Item, A::Error> {
+        match *self {
+            CaseFuture::A(ref mut a) => a.poll(),
+            CaseFuture::B(ref mut b) => b.poll(),
+            CaseFuture::C(ref mut c) => c.poll(),
+        }
     }
 }
