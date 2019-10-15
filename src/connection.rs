@@ -102,7 +102,10 @@ impl TryInto<Box<dyn ActualConnection>> for &ConnectionInfo {
                     }
 
                     #[cfg(not(feature = "tls"))]
-                    fail!((ErrorKind::InvalidClientConfig, "can't connect with TLS, the feature is not enabled"));
+                    fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "can't connect with TLS, the feature is not enabled"
+                    ));
                 } else {
                     let tcp = TcpStream::connect((host.as_str(), *port))?;
                     let buffered = BufReader::new(tcp);
@@ -153,7 +156,14 @@ impl TryInto<TlsConnector> for &TlsConnectionInfo {
             .danger_accept_invalid_hostnames(self.danger_accept_invalid_hostnames)
             .use_sni(self.use_sni)
             .build()
-            .map_err(|e| (ErrorKind::InvalidClientConfig, "failed to build TLS connector", e.to_string()).into())
+            .map_err(|e| {
+                (
+                    ErrorKind::InvalidClientConfig,
+                    "failed to build TLS connector",
+                    e.to_string(),
+                )
+                    .into()
+            })
     }
 }
 
@@ -258,7 +268,7 @@ impl IntoConnectionInfo for url::Url {
                     Some(TlsConnectionInfo::default())
                 };
                 url_to_tcp_connection_info(self, tls_connection_info)
-            },
+            }
             "unix" | "redis+unix" => url_to_unix_connection_info(self, None),
             _ => fail!((
                 ErrorKind::InvalidClientConfig,
@@ -338,7 +348,7 @@ impl ActualConnection for TcpConnection<TcpStream> {
     }
 }
 
-#[cfg(feature="tls")]
+#[cfg(feature = "tls")]
 impl ActualConnection for TcpConnection<TlsStream<TcpStream>> {
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let res = self
@@ -362,7 +372,11 @@ impl ActualConnection for TcpConnection<TlsStream<TcpStream>> {
         // shutdown connection on protocol error
         match result {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => {
-                let _ = self.reader.get_mut().get_mut().shutdown(net::Shutdown::Both);
+                let _ = self
+                    .reader
+                    .get_mut()
+                    .get_mut()
+                    .shutdown(net::Shutdown::Both);
                 self.open = false;
             }
             _ => (),

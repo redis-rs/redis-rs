@@ -123,7 +123,12 @@ impl Connection {
 pub fn connect(
     connection_info: ConnectionInfo,
 ) -> impl Future<Item = Connection, Error = RedisError> {
-    let ConnectionInfo { addr, db, passwd, tls } = connection_info;
+    let ConnectionInfo {
+        addr,
+        db,
+        passwd,
+        tls,
+    } = connection_info;
     let connection = match *addr {
         #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
         ConnectionAddr::Tcp(host, port) => {
@@ -192,44 +197,37 @@ pub fn connect(
         )))),
     };
 
-    let login = connection.and_then(move|con| {
-        match passwd {
-            Some(ref passwd) => Either::A(
-                cmd("AUTH")
-                    .arg(&**passwd)
-                    .query_async::<_, Value>(con)
-                    .then(|x| match x {
-                        Ok((rv, Value::Okay)) => Ok(rv),
-                        _ => {
-                            Err(RedisError::from((
-                                ErrorKind::AuthenticationFailed,
-                                "Password authentication failed"
-                            )))
-                        }
-                    }),
-            ),
-            None => Either::B(future::ok(con)),
-        }
+    let login = connection.and_then(move |con| match passwd {
+        Some(ref passwd) => Either::A(
+            cmd("AUTH")
+                .arg(&**passwd)
+                .query_async::<_, Value>(con)
+                .then(|x| match x {
+                    Ok((rv, Value::Okay)) => Ok(rv),
+                    _ => Err(RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Password authentication failed",
+                    ))),
+                }),
+        ),
+        None => Either::B(future::ok(con)),
     });
 
     let connection = login.and_then(move |con| {
-            if db != 0 {
-                Either::A(
-                    cmd("SELECT")
-                        .arg(db)
-                        .query_async::<_, Value>(con)
-                        .then(|result| match result {
-                            Ok((con, Value::Okay)) => Ok(con),
-                            _ => Err(RedisError::from((
-                                ErrorKind::ResponseError,
-                                "Redis server refused to switch database"
-                            ))),
-                        }),
-                )
-            } else {
-                Either::B(future::ok(con))
-            }
-        });
+        if db != 0 {
+            Either::A(cmd("SELECT").arg(db).query_async::<_, Value>(con).then(
+                |result| match result {
+                    Ok((con, Value::Okay)) => Ok(con),
+                    _ => Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "Redis server refused to switch database",
+                    ))),
+                },
+            ))
+        } else {
+            Either::B(future::ok(con))
+        }
+    });
     Either::B(connection)
 }
 
