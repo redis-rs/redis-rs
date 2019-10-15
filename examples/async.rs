@@ -2,7 +2,7 @@ use redis;
 
 use futures;
 
-use futures::{Future};
+use futures::Future;
 
 use tokio::runtime::current_thread::block_on_all;
 
@@ -26,7 +26,8 @@ fn do_redis_async_code(url: &str) -> redis::RedisResult<()> {
                 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
                 result
             })
-    })).unwrap();
+    }))
+    .unwrap();
     Ok(())
 }
 

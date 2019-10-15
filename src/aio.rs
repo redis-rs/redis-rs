@@ -152,7 +152,7 @@ pub fn connect(
                     use std::convert::TryInto;
                     let cx: native_tls::TlsConnector = match tls.try_into() {
                         Ok(cx) => cx,
-                        Err(e) => return Either::A(future::err(e))
+                        Err(e) => return Either::A(future::err(e)),
                     };
                     let cx = tokio_tls::TlsConnector::from(cx);
                     CaseFuture::A(
