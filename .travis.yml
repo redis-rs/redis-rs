@@ -1,6 +1,10 @@
 sudo: false
 language: rust
 cache: cargo
+script:
+  - cargo build --verbose --all
+  - cargo build --verbose --all --features tls
+  - cargo test --verbose --all
 
 matrix:
   include:
