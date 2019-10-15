@@ -10,7 +10,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use futures::prelude::*;
 
 #[derive(Clone)]
-enum Arg<D> {
+pub enum Arg<D> {
     Simple(D),
     Cursor,
 }
@@ -452,7 +452,8 @@ impl Cmd {
         self.query::<()>(con).unwrap();
     }
 
-    fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+    /// Returns an iterator over the arguments in this command (including the command name itself)
+    pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
         let mut prev = 0;
         self.args.iter().map(move |arg| match *arg {
             Arg::Simple(i) => {
@@ -578,6 +579,10 @@ impl Pipeline {
     pub fn atomic(&mut self) -> &mut Pipeline {
         self.transaction_mode = true;
         self
+    }
+
+    pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
+        self.commands.iter()
     }
 
     fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
