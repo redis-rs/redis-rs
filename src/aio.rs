@@ -28,7 +28,7 @@ use crate::parser::ValueCodec;
 
 use std::io::BufRead;
 
-struct WriteWrapper(Box<dyn ConnectionTrait>);
+struct WriteWrapper(Box<dyn AsyncBufRead>);
 
 impl Write for WriteWrapper {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -52,54 +52,55 @@ impl AsyncWrite for WriteWrapper {
     }
 }
 
-trait AsyncReader: Read + AsyncRead + AsyncWrite + Send {}
+trait AsyncStream: Read + AsyncRead + AsyncWrite + Send {}
 
-impl AsyncReader for TcpStream {}
+impl AsyncStream for TcpStream {}
 
 #[cfg(feature = "tls")]
-impl AsyncReader for TlsStream<TcpStream> {}
+impl AsyncStream for TlsStream<TcpStream> {}
 
-impl AsyncReader for UnixStream {}
+impl AsyncStream for UnixStream {}
 
-trait ConnectionTrait: AsyncRead + BufRead + Send {
-    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader>;
-    fn get_mut(&mut self) -> &mut dyn AsyncReader;
+/// Type used to implement a BufRead which can be consumed returning the underlying stream.
+trait AsyncBufRead: AsyncRead + BufRead + Send {
+    fn into_stream(self: Box<Self>) -> Box<dyn AsyncStream>;
+    fn get_mut(&mut self) -> &mut dyn AsyncStream;
 }
 
-impl ConnectionTrait for BufReader<TcpStream> {
-    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+impl AsyncBufRead for BufReader<TcpStream> {
+    fn into_stream(self: Box<Self>) -> Box<dyn AsyncStream> {
         Box::new((*self).into_inner())
     }
 
-    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+    fn get_mut(&mut self) -> &mut dyn AsyncStream {
         self.get_mut()
     }
 }
 
 #[cfg(feature = "tls")]
-impl ConnectionTrait for BufReader<TlsStream<TcpStream>> {
-    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+impl AsyncBufRead for BufReader<TlsStream<TcpStream>> {
+    fn into_stream(self: Box<Self>) -> Box<dyn AsyncStream> {
         Box::new((*self).into_inner())
     }
 
-    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+    fn get_mut(&mut self) -> &mut dyn AsyncStream {
         self.get_mut()
     }
 }
 
-impl ConnectionTrait for BufReader<UnixStream> {
-    fn into_inner(self: Box<Self>) -> Box<dyn AsyncReader> {
+impl AsyncBufRead for BufReader<UnixStream> {
+    fn into_stream(self: Box<Self>) -> Box<dyn AsyncStream> {
         Box::new((*self).into_inner())
     }
 
-    fn get_mut(&mut self) -> &mut dyn AsyncReader {
+    fn get_mut(&mut self) -> &mut dyn AsyncStream {
         self.get_mut()
     }
 }
 
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
-    con: Box<dyn ConnectionTrait>,
+    con: Box<dyn AsyncBufRead>,
     db: i64,
 }
 
@@ -523,7 +524,7 @@ where
 /// A connection object bound to an executor.
 #[derive(Clone)]
 pub struct SharedConnection {
-    pipeline: Pipeline<Framed<Box<dyn AsyncReader>, ValueCodec>>,
+    pipeline: Pipeline<Framed<Box<dyn AsyncStream>, ValueCodec>>,
     db: i64,
 }
 
@@ -534,7 +535,7 @@ impl SharedConnection {
         E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
     {
         future::lazy(|| {
-            let codec = ValueCodec::default().framed(con.con.into_inner());
+            let codec = ValueCodec::default().framed(con.con.into_stream());
             let pipeline = Pipeline::new(codec, executor);
             Ok(SharedConnection {
                 pipeline,
