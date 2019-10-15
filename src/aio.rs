@@ -59,6 +59,7 @@ impl AsyncStream for TcpStream {}
 #[cfg(feature = "tls")]
 impl AsyncStream for TlsStream<TcpStream> {}
 
+#[cfg(unix)]
 impl AsyncStream for UnixStream {}
 
 /// Type used to implement a BufRead which can be consumed returning the underlying stream.
@@ -88,6 +89,7 @@ impl AsyncBufRead for BufReader<TlsStream<TcpStream>> {
     }
 }
 
+#[cfg(unix)]
 impl AsyncBufRead for BufReader<UnixStream> {
     fn into_stream(self: Box<Self>) -> Box<dyn AsyncStream> {
         Box::new((*self).into_inner())
@@ -547,12 +549,6 @@ impl SharedConnection {
 
 impl ConnectionLike for SharedConnection {
     fn req_packed_command(self, cmd: Vec<u8>) -> RedisFuture<(Self, Value)> {
-        #[cfg(not(unix))]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => pipeline.send(cmd),
-        };
-
-        #[cfg(unix)]
         let future = self.pipeline.send(cmd);
         Box::new(future.map(|value| (self, value)).map_err(|err| {
             err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
