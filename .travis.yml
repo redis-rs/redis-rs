@@ -18,7 +18,7 @@ matrix:
 
 script:
   - make $COMMAND
-  - cargo check --benches
+  - cargo check --benches --all-features
   - |
     [ "$RUST_VERSION" = "nightly" ] && exit 0 # Don't cargo-fmt on nightly
     make style-check
