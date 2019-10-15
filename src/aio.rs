@@ -149,7 +149,10 @@ pub fn connect(
                 #[cfg(feature = "tls")]
                 {
                     use std::convert::TryInto;
-                    let cx: native_tls::TlsConnector = tls.try_into().unwrap(); // TODO: fix unwrap
+                    let cx: native_tls::TlsConnector = match tls.try_into() {
+                        Ok(cx) => cx,
+                        Err(e) => return Either::A(future::err(e))
+                    };
                     let cx = tokio_tls::TlsConnector::from(cx);
                     CaseFuture::A(
                         TcpStream::connect(&socket_addr)
@@ -516,13 +519,6 @@ where
             })
     }
 }
-
-// #[derive(Clone)]
-// enum ActualPipeline {
-//     Tcp(Pipeline<Framed<TcpStream, ValueCodec>>),
-//     #[cfg(unix)]
-//     Unix(Pipeline<Framed<UnixStream, ValueCodec>>),
-// }
 
 /// A connection object bound to an executor.
 #[derive(Clone)]
