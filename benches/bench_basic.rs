@@ -125,7 +125,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         runtime
-            .block_on(async { pipe.clone().query_async(&mut con).map_ok(|()| ()).await })
+            .block_on(async { pipe.query_async(&mut con).map_ok(|()| ()).await })
             .unwrap();
     });
 }
@@ -141,7 +141,7 @@ fn bench_shared_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         let _: () = runtime
-            .block_on(async { pipe.clone().query_async(&mut con).map_ok(|()| ()).await })
+            .block_on(async { pipe.query_async(&mut con).map_ok(|()| ()).await })
             .unwrap();
     });
 }
@@ -161,7 +161,6 @@ fn bench_shared_async_implicit_pipeline(b: &mut Bencher) {
         let _: () = runtime
             .block_on(async {
                 cmds.iter()
-                    .cloned()
                     .map(|cmd| {
                         let mut con = con.clone();
                         async move { cmd.query_async(&mut con).await }

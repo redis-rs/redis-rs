@@ -700,7 +700,7 @@ impl Pipeline {
 
     /// Async version of `query`.
     #[inline]
-    pub async fn query_async<C, T: FromRedisValue>(self, con: &mut C) -> RedisResult<T>
+    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike + Send + 'static,
         T: Send + 'static,
