@@ -157,14 +157,16 @@ fn bench_shared_async_implicit_pipeline(b: &mut Bencher) {
         .map(|i| redis::cmd("SET").arg(format!("foo{}", i)).arg(i).clone())
         .collect();
 
+    let mut connections = (0..PIPELINE_QUERIES)
+        .map(|_| con.clone())
+        .collect::<Vec<_>>();
+
     b.iter(|| {
         let _: () = runtime
             .block_on(async {
                 cmds.iter()
-                    .map(|cmd| {
-                        let mut con = con.clone();
-                        async move { cmd.query_async(&mut con).await }
-                    })
+                    .zip(&mut connections)
+                    .map(|(cmd, con)| cmd.query_async(con))
                     .collect::<stream::FuturesUnordered<_>>()
                     .try_for_each(|()| async { Ok(()) })
                     .await
