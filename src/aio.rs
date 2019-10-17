@@ -561,12 +561,6 @@ impl ConnectionLike for SharedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<(Self, Vec<Value>)> {
-        #[cfg(not(unix))]
-        let future = match self.pipeline {
-            ActualPipeline::Tcp(ref pipeline) => pipeline.send_recv_multiple(cmd, offset + count),
-        };
-
-        #[cfg(unix)]
         let future = self.pipeline.send_recv_multiple(cmd, offset + count);
         Box::new(
             future
