@@ -5,7 +5,7 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio_io::{AsyncWrite, AsyncWriteExt};
 
 use futures::prelude::*;
 

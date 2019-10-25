@@ -73,8 +73,8 @@ impl Client {
                 &mut self,
                 future: future::FutureObj<'static, ()>,
             ) -> Result<(), task::SpawnError> {
-                use tokio::executor::Executor;
-                tokio::executor::DefaultExecutor::current()
+                use tokio_executor::Executor;
+                tokio_executor::DefaultExecutor::current()
                     .spawn(future.boxed())
                     .map_err(|_| task::SpawnError::shutdown())
             }

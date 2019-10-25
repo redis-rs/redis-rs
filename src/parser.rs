@@ -10,8 +10,8 @@ use pin_project::pin_project;
 use bytes::BytesMut;
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures::{prelude::*, ready, task, Poll};
-use tokio::codec::{Decoder, Encoder};
-use tokio::io::{AsyncBufRead, AsyncRead};
+use tokio_codec::{Decoder, Encoder};
+use tokio_io::{AsyncBufRead, AsyncRead};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};
