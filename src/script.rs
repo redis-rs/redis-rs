@@ -1,13 +1,9 @@
-use std::pin::Pin;
-
 use sha1::Sha1;
 
-use futures::{prelude::*, ready, task, Poll};
-
 use crate::aio;
-use crate::cmd::{cmd, Cmd};
+use crate::cmd::cmd;
 use crate::connection::ConnectionLike;
-use crate::types::{ErrorKind, FromRedisValue, RedisFuture, RedisResult, ToRedisArgs};
+use crate::types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
 pub struct Script {
@@ -154,13 +150,10 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Asynchronously invokes the script and returns the result.
     #[inline]
-    pub fn invoke_async<'c, C, T: FromRedisValue + Send + 'static>(
-        &self,
-        con: &'c mut C,
-    ) -> impl Future<Output = RedisResult<T>> + 'c
+    pub async fn invoke_async<C, T>(&self, con: &mut C) -> RedisResult<T>
     where
-        C: aio::ConnectionLike + Clone + Send + Unpin + 'static,
-        T: FromRedisValue + Send + 'static,
+        C: aio::ConnectionLike,
+        T: FromRedisValue,
     {
         let mut eval_cmd = cmd("EVALSHA");
         eval_cmd
@@ -171,75 +164,20 @@ impl<'a> ScriptInvocation<'a> {
 
         let mut load_cmd = cmd("SCRIPT");
         load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
-        async move {
-            let future = {
-                let mut con = con.clone();
-                let eval_cmd = eval_cmd.clone();
-                CmdFuture::Eval((async move { eval_cmd.query_async(&mut con).await }).boxed())
-            };
-            InvokeAsyncFuture {
-                con: con.clone(),
-                eval_cmd,
-                load_cmd,
-                future,
+        match eval_cmd.query_async(con).await {
+            Ok(val) => {
+                // Return the value from the script evaluation
+                return Ok(val).into();
             }
-            .await
-        }
-    }
-}
-
-/// A future that runs the given script and loads it into Redis if
-/// it has not already been loaded
-struct InvokeAsyncFuture<C, T> {
-    con: C,
-    eval_cmd: Cmd,
-    load_cmd: Cmd,
-    future: CmdFuture<T>,
-}
-
-enum CmdFuture<T> {
-    Load(RedisFuture<'static, String>),
-    Eval(RedisFuture<'static, T>),
-}
-
-impl<C, T> Future for InvokeAsyncFuture<C, T>
-where
-    C: aio::ConnectionLike + Clone + Send + Unpin + 'static,
-    T: FromRedisValue + Send + 'static,
-{
-    type Output = RedisResult<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        let self_ = self.get_mut();
-        loop {
-            self_.future = match self_.future {
-                CmdFuture::Load(ref mut future) => {
-                    // When we're done loading the script into Redis, try eval'ing it again
-                    let _hash = ready!(future.as_mut().poll(cx))?;
-
-                    let mut con = self_.con.clone();
-                    let eval_cmd = self_.eval_cmd.clone();
-                    CmdFuture::Eval(async move { eval_cmd.query_async(&mut con).await }.boxed())
+            Err(err) => {
+                // Load the script into Redis if the script hash wasn't there already
+                if err.kind() == ErrorKind::NoScriptError {
+                    let _hash = load_cmd.query_async(con).await?;
+                    eval_cmd.query_async(con).await
+                } else {
+                    Err(err)
                 }
-                CmdFuture::Eval(ref mut future) => match ready!(future.as_mut().poll(cx)) {
-                    Ok(val) => {
-                        // Return the value from the script evaluation
-                        return Ok(val).into();
-                    }
-                    Err(err) => {
-                        // Load the script into Redis if the script hash wasn't there already
-                        if err.kind() == ErrorKind::NoScriptError {
-                            let load_cmd = self_.load_cmd.clone();
-                            let mut con = self_.con.clone();
-                            CmdFuture::Load(
-                                async move { load_cmd.query_async(&mut con).await }.boxed(),
-                            )
-                        } else {
-                            return Err(err).into();
-                        }
-                    }
-                },
-            };
+            }
         }
     }
 }

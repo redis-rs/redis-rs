@@ -392,8 +392,7 @@ impl Cmd {
         con: &'c mut C,
     ) -> impl Future<Output = RedisResult<T>> + 'c
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
-        T: Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
         async move {
             let val = con.req_packed_command(self).await?;
@@ -676,7 +675,7 @@ impl Pipeline {
 
     async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
         let value = con
             .req_packed_commands(self, 0, self.commands.len())
@@ -686,7 +685,7 @@ impl Pipeline {
 
     async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
         let mut resp = con
             .req_packed_commands(self, self.commands.len() + 1, 1)
@@ -706,8 +705,7 @@ impl Pipeline {
     #[inline]
     pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
-        T: Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
         let v = if self.commands.is_empty() {
             return from_redis_value(&Value::Bulk(vec![]));
