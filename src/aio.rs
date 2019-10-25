@@ -116,8 +116,9 @@ impl ActualConnection {
 pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addr = match (&host[..], port).to_socket_addrs() {
-                Ok(mut socket_addrs) => match socket_addrs.next() {
+            let socket_addr = {
+                let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+                match socket_addrs.next() {
                     Some(socket_addr) => socket_addr,
                     None => {
                         return Err(RedisError::from((
@@ -125,14 +126,14 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
                             "No address found for host",
                         )));
                     }
-                },
-                Err(err) => return Err(err.into()),
+                }
             };
 
             TcpStream::connect(&socket_addr)
                 .map_ok(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))
                 .await?
         }
+
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => {
             UnixStream::connect(path)
@@ -155,38 +156,33 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
         db: connection_info.db,
     };
 
-    match connection_info.passwd {
-        Some(ref passwd) => {
-            let mut cmd = cmd("AUTH");
-            cmd.arg(&**passwd);
-            let x = cmd.query_async::<_, Value>(&mut rv).await;
-            match x {
-                Ok(Value::Okay) => (),
-                _ => {
-                    fail!((
-                        ErrorKind::AuthenticationFailed,
-                        "Password authentication failed"
-                    ));
-                }
+    if let Some(passwd) = &connection_info.passwd {
+        let mut cmd = cmd("AUTH");
+        cmd.arg(&**passwd);
+        match cmd.query_async::<_, Value>(&mut rv).await {
+            Ok(Value::Okay) => (),
+            _ => {
+                fail!((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed"
+                ));
             }
         }
-        None => (),
     }
 
     if connection_info.db != 0 {
         let mut cmd = cmd("SELECT");
         cmd.arg(connection_info.db);
-        let result = cmd.query_async::<_, Value>(&mut rv).await;
-        match result {
-            Ok(Value::Okay) => Ok(rv),
+        match cmd.query_async::<_, Value>(&mut rv).await {
+            Ok(Value::Okay) => (),
             _ => fail!((
                 ErrorKind::ResponseError,
                 "Redis server refused to switch database"
             )),
         }
-    } else {
-        Ok(rv)
     }
+
+    Ok(rv)
 }
 
 /// An async abstraction over connections.
