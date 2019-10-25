@@ -9,9 +9,12 @@ use tokio_io::{AsyncWrite, AsyncWriteExt};
 
 use futures::prelude::*;
 
+/// An argument to a redis command
 #[derive(Clone)]
 pub enum Arg<D> {
+    /// A normal argument
     Simple(D),
+    /// A cursor argument created from `cursor_arg()`
     Cursor,
 }
 
@@ -581,6 +584,7 @@ impl Pipeline {
         self
     }
 
+    /// Returns an iterator over all the commands currently in this pipeline
     pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
         self.commands.iter()
     }
