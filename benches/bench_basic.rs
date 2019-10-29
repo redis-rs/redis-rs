@@ -124,8 +124,8 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        runtime
-            .block_on(async { pipe.query_async(&mut con).map_ok(|()| ()).await })
+        let () = runtime
+            .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
 }
@@ -141,7 +141,7 @@ fn bench_shared_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         let _: () = runtime
-            .block_on(async { pipe.query_async(&mut con).map_ok(|()| ()).await })
+            .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
 }

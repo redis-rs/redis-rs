@@ -64,9 +64,9 @@ impl Client {
     ///
     /// This uses the default tokio executor.
     #[cfg(feature = "executor")]
-    pub fn get_shared_async_connection<'a>(
-        &'a self,
-    ) -> impl Future<Output = RedisResult<crate::aio::SharedConnection>> + 'a {
+    pub async fn get_shared_async_connection(&self) -> RedisResult<crate::aio::SharedConnection> {
+        // Creates a `task::Spawn` which spawns task on the default tokio executor
+        // (for some reason tokio do not include this)
         struct TokioExecutor;
         impl task::Spawn for TokioExecutor {
             fn spawn_obj(
@@ -80,21 +80,20 @@ impl Client {
             }
         }
 
-        self.get_async_connection().and_then(move |con| {
-            future::ready(crate::aio::SharedConnection::new(con, TokioExecutor))
-        })
+        let con = self.get_async_connection().await?;
+        crate::aio::SharedConnection::new(con, TokioExecutor)
     }
 
     /// Returns a async shared connection with a specific executor.
-    pub fn get_shared_async_connection_with_executor<'a, E>(
-        &'a self,
+    pub async fn get_shared_async_connection_with_executor<E>(
+        &self,
         executor: E,
-    ) -> impl Future<Output = RedisResult<crate::aio::SharedConnection>> + 'a
+    ) -> RedisResult<crate::aio::SharedConnection>
     where
-        E: task::Spawn + 'a,
+        E: task::Spawn,
     {
-        self.get_async_connection()
-            .and_then(move |con| future::ready(crate::aio::SharedConnection::new(con, executor)))
+        let con = self.get_async_connection().await?;
+        crate::aio::SharedConnection::new(con, executor)
     }
 }
 

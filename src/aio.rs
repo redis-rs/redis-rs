@@ -1,6 +1,6 @@
 //! Adds experimental async IO support to redis.
 use std::collections::VecDeque;
-use std::io::{self};
+use std::io;
 use std::mem;
 use std::net::ToSocketAddrs;
 use std::pin::Pin;
@@ -107,8 +107,7 @@ pub struct Connection {
 
 impl ActualConnection {
     pub async fn read_response(&mut self) -> RedisResult<Value> {
-        let value = crate::parser::parse_redis_value_async(self).await?;
-        Ok(value)
+        crate::parser::parse_redis_value_async(self).await
     }
 }
 
@@ -157,9 +156,11 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
     };
 
     if let Some(passwd) = &connection_info.passwd {
-        let mut cmd = cmd("AUTH");
-        cmd.arg(&**passwd);
-        match cmd.query_async::<_, Value>(&mut rv).await {
+        let result = cmd("AUTH")
+            .arg(&**passwd)
+            .query_async::<_, Value>(&mut rv)
+            .await;
+        match result {
             Ok(Value::Okay) => (),
             _ => {
                 fail!((
@@ -171,9 +172,11 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
     }
 
     if connection_info.db != 0 {
-        let mut cmd = cmd("SELECT");
-        cmd.arg(connection_info.db);
-        match cmd.query_async::<_, Value>(&mut rv).await {
+        let result = cmd("SELECT")
+            .arg(connection_info.db)
+            .query_async::<_, Value>(&mut rv)
+            .await;
+        match result {
             Ok(Value::Okay) => (),
             _ => fail!((
                 ErrorKind::ResponseError,
@@ -234,8 +237,7 @@ impl ConnectionLike for Connection {
 
             let mut rv = Vec::with_capacity(count);
             for _ in 0..count {
-                let item = self.con.read_response().await?;
-                rv.push(item);
+                rv.push(self.con.read_response().await?);
             }
 
             Ok(rv)
@@ -453,6 +455,7 @@ where
     // `None` means that the stream was out of items causing that poll loop to shut down.
     async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
         self.send_recv_multiple(item, 1)
+            // We can unwrap since we do a request for `1` item
             .map_ok(|mut item| item.pop().unwrap())
             .await
     }
@@ -472,15 +475,15 @@ where
             })
             .map_err(|_| None)
             .and_then(|_| {
-                receiver.then(|result| {
-                    future::ready(match result {
+                receiver.map(|result| {
+                    match result {
                         Ok(result) => result.map_err(Some),
                         Err(_) => {
                             // The `sender` was dropped which likely means that the stream part
                             // failed for one reason or another
                             Err(None)
                         }
-                    })
+                    }
                 })
             })
             .await
