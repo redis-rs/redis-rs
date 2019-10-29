@@ -4,9 +4,9 @@ environment:
   REDISRS_SERVER_TYPE: tcp
   RUST_BACKTRACE: 1
   matrix:
-    - channel: stable
+    - channel: beta
       target: x86_64-pc-windows-msvc
-    - channel: stable
+    - channel: beta
       target: x86_64-pc-windows-gnu
 install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
