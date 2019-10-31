@@ -22,7 +22,7 @@ bytes = "0.4"
 futures = { version = "0.3.0-alpha.18", package = "futures-preview" }
 pin-project = "0.4"
 tokio-codec = "0.2.0-alpha.5"
-tokio-executor = "0.2.0-alpha.5"
+tokio-executor = { version = "0.2.0-alpha.5", optional = true }
 tokio-io = { version = "0.2.0-alpha.6", features = ["util"] }
 tokio-net = { version = "0.2.0-alpha.6", features = ["tcp", "uds"] }
 tokio-sync = { version = "0.2.0-alpha.6", features = ["async-traits"] }
@@ -30,7 +30,6 @@ tokio-sync = { version = "0.2.0-alpha.6", features = ["async-traits"] }
 [features]
 default = [ "geospatial" ]
 
-executor = []
 geospatial = []
 
 [dev-dependencies]

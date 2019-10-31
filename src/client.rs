@@ -65,8 +65,8 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
-    /// This uses the default tokio executor.
-    #[cfg(feature = "executor")]
+    /// This requires the `tokio-executor` feature as it uses the default tokio executor.
+    #[cfg(feature = "tokio-executor")]
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
