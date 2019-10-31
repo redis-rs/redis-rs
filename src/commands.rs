@@ -133,16 +133,13 @@ macro_rules! implement_commands {
         /// Implements common redis commands for pipelines.  Unlike the regular
         /// commands trait, this returns the pipeline rather than a result
         /// directly.  Other than that it works the same however.
-        pub trait PipelineCommands {
-            #[doc(hidden)]
-            fn perform(&mut self, con: Cmd) -> &mut Self;
-
+        impl Pipeline {
             $(
                 $(#[$attr])*
                 #[inline]
-                fn $name<$($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*) -> &mut Self
-                    { self.perform(::std::mem::replace($body, Cmd::new())) }
+                    { self.add_command(::std::mem::replace($body, Cmd::new())) }
             )*
         }
     )
@@ -1066,11 +1063,5 @@ impl PubSubCommands for Connection {
                 ControlFlow::Break(value) => return Ok(value),
             }
         };
-    }
-}
-
-impl PipelineCommands for Pipeline {
-    fn perform(&mut self, cmd: Cmd) -> &mut Pipeline {
-        self.add_command(cmd)
     }
 }

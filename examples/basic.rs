@@ -1,5 +1,4 @@
-use redis;
-use redis::{transaction, Commands, PipelineCommands};
+use redis::{self, transaction, Commands};
 use std::error::Error;
 
 use std::collections::HashMap;

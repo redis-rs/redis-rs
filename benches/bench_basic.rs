@@ -13,7 +13,7 @@ use tokio::runtime::current_thread::Runtime;
 
 use criterion::{Bencher, Benchmark, Criterion, Throughput};
 
-use redis::{PipelineCommands, Value};
+use redis::Value;
 
 fn get_client() -> redis::Client {
     redis::Client::open("redis://127.0.0.1:6379").unwrap()

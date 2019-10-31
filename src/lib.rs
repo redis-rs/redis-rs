@@ -205,12 +205,10 @@
 //! # Ok(()) }
 //! ```
 //!
-//! You can also use high-level commands on pipelines through the
-//! `PipelineCommands` trait:
+//! You can also use high-level commands on pipelines:
 //!
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
-//! use redis::PipelineCommands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
@@ -230,7 +228,7 @@
 //!
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
-//! use redis::{Commands, PipelineCommands};
+//! use redis::Commands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
 //! let key = "the_key";
@@ -351,7 +349,7 @@
 // public api
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
-pub use crate::commands::{Commands, ControlFlow, PipelineCommands, PubSubCommands};
+pub use crate::commands::{Commands, ControlFlow, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
