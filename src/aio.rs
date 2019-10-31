@@ -500,7 +500,7 @@ pub struct MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
-    pub fn new<E>(con: Connection, executor: E) -> RedisResult<Self>
+    pub fn new<E>(con: Connection, executor: E) -> Self
     where
         E: Spawn,
     {
@@ -515,10 +515,10 @@ impl MultiplexedConnection {
                 Pipeline::new(codec, executor)
             }
         };
-        Ok(MultiplexedConnection {
+        MultiplexedConnection {
             pipeline,
             db: con.db,
-        })
+        }
     }
 }
 
