@@ -299,17 +299,14 @@
 //!
 //! ```rust,no_run
 //! use futures::prelude::*;
+//! use redis::AsyncCommands;
 //!
 //! # #[tokio::main]
 //! # async fn main() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! let mut con = client.get_async_connection().await?;
 //!
-//! let () = redis::cmd("SET")
-//!     .arg("key1")
-//!     .arg(b"foo")
-//!     .query_async(&mut con)
-//!     .await?;
+//! let () = con.set("key1", b"foo").await?;
 //!
 //! let () = redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
 //!
@@ -338,7 +335,7 @@
 // public api
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter, Pipeline};
-pub use crate::commands::{Commands, ControlFlow, PubSubCommands};
+pub use crate::commands::{AsyncCommands, Commands, ControlFlow, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
