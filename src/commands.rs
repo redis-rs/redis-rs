@@ -49,7 +49,7 @@ macro_rules! implement_commands {
                 #[inline]
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { ($body).query(self) }
+                    { Cmd::$name($($argname),*).query(self) }
             )*
 
             /// Incrementally iterate the keys space.
@@ -119,6 +119,15 @@ macro_rules! implement_commands {
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 c.iter(self)
             }
+        }
+
+        impl Cmd {
+            $(
+                $(#[$attr])*
+                pub fn $name<$($tyargs: $ty),*>($($argname: $argty),*) -> Self {
+                    ::std::mem::replace($body, Cmd::new())
+                }
+            )*
         }
 
         /// Implements common redis commands for pipelines.  Unlike the regular
