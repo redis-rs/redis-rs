@@ -46,3 +46,6 @@ tokio = "0.2.0-alpha.6"
 [[bench]]
 name = "bench_basic"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
