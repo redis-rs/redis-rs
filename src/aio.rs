@@ -490,15 +490,16 @@ where
     }
 }
 
-/// A connection object bound to an executor.
+/// A connection object which can be cloned, allowing requests to be be sent concurrently
+/// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
-pub struct SharedConnection {
+pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
 }
 
-impl SharedConnection {
-    /// Creates a shared connection from a connection and executor.
+impl MultiplexedConnection {
+    /// Creates a multiplexed connection from a connection and executor.
     pub fn new<E>(con: Connection, executor: E) -> RedisResult<Self>
     where
         E: Spawn,
@@ -514,14 +515,14 @@ impl SharedConnection {
                 Pipeline::new(codec, executor)
             }
         };
-        Ok(SharedConnection {
+        Ok(MultiplexedConnection {
             pipeline,
             db: con.db,
         })
     }
 }
 
-impl ConnectionLike for SharedConnection {
+impl ConnectionLike for MultiplexedConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
             let value = self

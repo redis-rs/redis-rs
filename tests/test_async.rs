@@ -8,7 +8,7 @@ use futures::{future, prelude::*};
 
 use crate::support::*;
 
-use redis::{aio::SharedConnection, RedisError, RedisResult};
+use redis::{aio::MultiplexedConnection, RedisError, RedisResult};
 
 mod support;
 
@@ -40,9 +40,9 @@ fn test_args() {
 }
 
 #[test]
-fn dont_panic_on_closed_shared_connection() {
+fn dont_panic_on_closed_multiplexed_connection() {
     let ctx = TestContext::new();
-    let connect = ctx.shared_async_connection();
+    let connect = ctx.multiplexed_async_connection();
     drop(ctx);
 
     block_on_all(async move {
@@ -108,7 +108,7 @@ fn test_pipeline_transaction() {
     .unwrap();
 }
 
-fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
+fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let mut con = con.clone();
     async move {
         let key = format!("key{}", i);
@@ -138,7 +138,7 @@ fn test_cmd(con: &SharedConnection, i: i32) -> impl Future<Output = RedisResult<
     }
 }
 
-fn test_error(con: &SharedConnection) -> impl Future<Output = RedisResult<()>> {
+fn test_error(con: &MultiplexedConnection) -> impl Future<Output = RedisResult<()>> {
     let mut con = con.clone();
     async move {
         redis::cmd("SET")
@@ -152,10 +152,10 @@ fn test_error(con: &SharedConnection) -> impl Future<Output = RedisResult<()>> {
 }
 
 #[test]
-fn test_args_shared_connection() {
+fn test_args_multiplexed_connection() {
     let ctx = TestContext::new();
     block_on_all(async move {
-        ctx.shared_async_connection()
+        ctx.multiplexed_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| test_cmd(&con, i));
                 future::try_join_all(cmds).map_ok(|results| {
@@ -169,10 +169,10 @@ fn test_args_shared_connection() {
 }
 
 #[test]
-fn test_args_with_errors_shared_connection() {
+fn test_args_with_errors_multiplexed_connection() {
     let ctx = TestContext::new();
     block_on_all(async move {
-        ctx.shared_async_connection()
+        ctx.multiplexed_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
                     let con = con.clone();
@@ -195,10 +195,10 @@ fn test_args_with_errors_shared_connection() {
 }
 
 #[test]
-fn test_transaction_shared_connection() {
+fn test_transaction_multiplexed_connection() {
     let ctx = TestContext::new();
     block_on_all(async move {
-        ctx.shared_async_connection()
+        ctx.multiplexed_async_connection()
             .and_then(|con| {
                 let cmds = (0..100).map(move |i| {
                     let mut con = con.clone();
@@ -247,7 +247,7 @@ fn test_script() {
     let ctx = TestContext::new();
 
     block_on_all(async move {
-        let mut con = ctx.shared_async_connection().await?;
+        let mut con = ctx.multiplexed_async_connection().await?;
         let () = script1
             .key("key1")
             .arg("foo")
@@ -272,7 +272,7 @@ fn test_script() {
 fn test_script_returning_complex_type() {
     let ctx = TestContext::new();
     block_on_all(async {
-        let mut con = ctx.shared_async_connection().await?;
+        let mut con = ctx.multiplexed_async_connection().await?;
         redis::Script::new("return {1, ARGV[1], true}")
             .arg("hello")
             .invoke_async(&mut con)

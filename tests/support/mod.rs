@@ -170,11 +170,11 @@ impl TestContext {
     }
 
     #[cfg(feature = "executor")]
-    pub fn shared_async_connection(
+    pub fn multiplexed_async_connection(
         &self,
-    ) -> impl Future<Output = RedisResult<redis::aio::SharedConnection>> {
+    ) -> impl Future<Output = RedisResult<redis::aio::MultiplexedConnection>> {
         let client = self.client.clone();
-        async move { client.get_shared_async_connection().await }
+        async move { client.get_multiplexed_async_connection().await }
     }
 }
 

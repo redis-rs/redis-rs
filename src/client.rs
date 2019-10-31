@@ -60,11 +60,16 @@ impl Client {
         crate::aio::connect(&self.connection_info)
     }
 
-    /// Returns a async shared connection from the client.
+    /// Returns an async multiplexed connection from the client.
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
     ///
     /// This uses the default tokio executor.
     #[cfg(feature = "executor")]
-    pub async fn get_shared_async_connection(&self) -> RedisResult<crate::aio::SharedConnection> {
+    pub async fn get_multiplexed_async_connection(
+        &self,
+    ) -> RedisResult<crate::aio::MultiplexedConnection> {
         // Creates a `task::Spawn` which spawns task on the default tokio executor
         // (for some reason tokio do not include this)
         struct TokioExecutor;
@@ -81,19 +86,24 @@ impl Client {
         }
 
         let con = self.get_async_connection().await?;
-        crate::aio::SharedConnection::new(con, TokioExecutor)
+        crate::aio::MultiplexedConnection::new(con, TokioExecutor)
     }
 
-    /// Returns a async shared connection with a specific executor.
-    pub async fn get_shared_async_connection_with_executor<E>(
+    /// Returns an async multiplexed connection from the client.
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    ///
+    /// Requires an executor to spawn a task that drives the underlying connection.
+    pub async fn get_multiplexed_async_connection_with_executor<E>(
         &self,
         executor: E,
-    ) -> RedisResult<crate::aio::SharedConnection>
+    ) -> RedisResult<crate::aio::MultiplexedConnection>
     where
         E: task::Spawn,
     {
         let con = self.get_async_connection().await?;
-        crate::aio::SharedConnection::new(con, executor)
+        crate::aio::MultiplexedConnection::new(con, executor)
     }
 }
 

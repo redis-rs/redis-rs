@@ -130,11 +130,11 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
     });
 }
 
-fn bench_shared_async_long_pipeline(b: &mut Bencher) {
+fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
     let mut runtime = Runtime::new().unwrap();
     let mut con = runtime
-        .block_on(client.get_shared_async_connection())
+        .block_on(client.get_multiplexed_async_connection())
         .unwrap();
 
     let pipe = long_pipeline();
@@ -146,11 +146,11 @@ fn bench_shared_async_long_pipeline(b: &mut Bencher) {
     });
 }
 
-fn bench_shared_async_implicit_pipeline(b: &mut Bencher) {
+fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
     let client = get_client();
     let mut runtime = Runtime::new().unwrap();
     let con = runtime
-        .block_on(client.get_shared_async_connection())
+        .block_on(client.get_multiplexed_async_connection())
         .unwrap();
 
     let cmds: Vec<_> = (0..PIPELINE_QUERIES)
@@ -189,12 +189,12 @@ fn bench_query(c: &mut Criterion) {
     c.bench(
         "query_pipeline",
         Benchmark::new(
-            "shared_async_implicit_pipeline",
-            bench_shared_async_implicit_pipeline,
+            "multiplexed_async_implicit_pipeline",
+            bench_multiplexed_async_implicit_pipeline,
         )
         .with_function(
-            "shared_async_long_pipeline",
-            bench_shared_async_long_pipeline,
+            "multiplexed_async_long_pipeline",
+            bench_multiplexed_async_long_pipeline,
         )
         .with_function("async_long_pipeline", bench_async_long_pipeline)
         .with_function("long_pipeline", bench_long_pipeline)
