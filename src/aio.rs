@@ -13,12 +13,7 @@ use tokio_io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, Bu
 use tokio_net::tcp::TcpStream;
 use tokio_sync::{mpsc, oneshot};
 
-use futures::{
-    prelude::*,
-    ready, task,
-    task::{Spawn, SpawnExt},
-    Poll, Sink, Stream,
-};
+use futures::{future::Either, prelude::*, ready, task, Poll, Sink, Stream};
 
 use pin_project::pin_project;
 
@@ -433,9 +428,8 @@ where
     I: Send + 'static,
     E: Send + 'static,
 {
-    fn new<T, F>(sink_stream: T, mut executor: F) -> Self
+    fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
     where
-        F: Spawn,
         T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
         T: Send + 'static,
         T::Item: Send,
@@ -448,8 +442,7 @@ where
             .map(Ok)
             .forward(PipelineSink::new::<SinkItem>(sink_stream))
             .map(|_| ());
-        executor.spawn(f).expect("Unable to spawn redis task");
-        Pipeline(sender)
+        (Pipeline(sender), f)
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
@@ -500,25 +493,27 @@ pub struct MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
-    pub fn new<E>(con: Connection, executor: E) -> Self
-    where
-        E: Spawn,
-    {
-        let pipeline = match con.con {
+    pub(crate) fn new(con: Connection) -> (Self, impl Future<Output = ()>) {
+        let (pipeline, driver) = match con.con {
             ActualConnection::Tcp(tcp) => {
                 let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
-                Pipeline::new(codec, executor)
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, Either::Left(driver))
             }
             #[cfg(unix)]
             ActualConnection::Unix(unix) => {
                 let codec = ValueCodec::default().framed(unix.into_inner().into_inner());
-                Pipeline::new(codec, executor)
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, Either::Right(driver))
             }
         };
-        MultiplexedConnection {
-            pipeline,
-            db: con.db,
-        }
+        (
+            MultiplexedConnection {
+                pipeline,
+                db: con.db,
+            },
+            driver,
+        )
     }
 }
 

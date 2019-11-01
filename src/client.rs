@@ -1,4 +1,4 @@
-use futures::{prelude::*, task};
+use futures::prelude::*;
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisError, RedisResult, Value};
@@ -70,40 +70,21 @@ impl Client {
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        // Creates a `task::Spawn` which spawns task on the default tokio executor
-        // (for some reason tokio do not include this)
-        struct TokioExecutor;
-        impl task::Spawn for TokioExecutor {
-            fn spawn_obj(
-                &mut self,
-                future: future::FutureObj<'static, ()>,
-            ) -> Result<(), task::SpawnError> {
-                use tokio_executor::Executor;
-                tokio_executor::DefaultExecutor::current()
-                    .spawn(future.boxed())
-                    .map_err(|_| task::SpawnError::shutdown())
-            }
-        }
-
-        self.get_multiplexed_async_connection_with_executor(TokioExecutor)
-            .await
+        let (connection, driver) = self.get_multiplexed_async_connection_with_driver().await?;
+        tokio_executor::spawn(driver);
+        Ok(connection)
     }
 
-    /// Returns an async multiplexed connection from the client.
+    /// Returns an async multiplexed connection from the client and a future which must be polled
+    /// to drive any requests submitted to it (see `get_multiplexed_async_connection`).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    ///
-    /// Requires an executor to spawn a task that drives the underlying connection.
-    pub async fn get_multiplexed_async_connection_with_executor<E>(
+    pub async fn get_multiplexed_async_connection_with_driver(
         &self,
-        executor: E,
-    ) -> RedisResult<crate::aio::MultiplexedConnection>
-    where
-        E: task::Spawn,
-    {
+    ) -> RedisResult<(crate::aio::MultiplexedConnection, impl Future<Output = ()>)> {
         let con = self.get_async_connection().await?;
-        Ok(crate::aio::MultiplexedConnection::new(con, executor))
+        Ok(crate::aio::MultiplexedConnection::new(con))
     }
 }
 
