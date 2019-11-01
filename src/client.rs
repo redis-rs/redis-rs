@@ -54,10 +54,8 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    pub fn get_async_connection<'a>(
-        &'a self,
-    ) -> impl Future<Output = RedisResult<crate::aio::Connection>> + 'a {
-        crate::aio::connect(&self.connection_info)
+    pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
+        crate::aio::connect(&self.connection_info).await
     }
 
     /// Returns an async multiplexed connection from the client.
