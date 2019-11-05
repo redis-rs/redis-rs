@@ -134,7 +134,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
     let mut runtime = Runtime::new().unwrap();
     let mut con = runtime
-        .block_on(client.get_multiplexed_async_connection())
+        .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
 
     let pipe = long_pipeline();
@@ -150,7 +150,7 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
     let client = get_client();
     let mut runtime = Runtime::new().unwrap();
     let con = runtime
-        .block_on(client.get_multiplexed_async_connection())
+        .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
 
     let cmds: Vec<_> = (0..PIPELINE_QUERIES)

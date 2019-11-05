@@ -174,7 +174,7 @@ impl TestContext {
         &self,
     ) -> impl Future<Output = RedisResult<redis::aio::MultiplexedConnection>> {
         let client = self.client.clone();
-        async move { client.get_multiplexed_async_connection().await }
+        async move { client.get_multiplexed_tokio_connection().await }
     }
 }
 

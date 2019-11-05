@@ -65,20 +65,20 @@ impl Client {
     ///
     /// This requires the `tokio-executor` feature as it uses the default tokio executor.
     #[cfg(feature = "tokio-executor")]
-    pub async fn get_multiplexed_async_connection(
+    pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let (connection, driver) = self.get_multiplexed_async_connection_with_driver().await?;
+        let (connection, driver) = self.get_multiplexed_async_connection().await?;
         tokio_executor::spawn(driver);
         Ok(connection)
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_async_connection`).
+    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    pub async fn get_multiplexed_async_connection_with_driver(
+    pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<(crate::aio::MultiplexedConnection, impl Future<Output = ()>)> {
         let con = self.get_async_connection().await?;
