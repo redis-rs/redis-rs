@@ -4,8 +4,8 @@ cache: cargo
 
 matrix:
   include:
-      # - rust: stable
-      #   env: RUST_VERSION=stable COMMAND=test
+    - rust: stable
+       env: RUST_VERSION=stable COMMAND=test
 
     - rust: beta
       env: RUST_VERSION=beta COMMAND=test
@@ -13,7 +13,7 @@ matrix:
     - rust: nightly
       env: RUST_VERSION=nightly COMMAND=test
 
-    - rust: beta
+    - rust: stable
       env: COMMAND=lint
 
 script:
