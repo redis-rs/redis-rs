@@ -213,7 +213,7 @@ impl ConnectionLike for Connection {
             self.con.flush().await?;
             self.con.read_response().await
         })
-        .boxed()
+            .boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -237,7 +237,7 @@ impl ConnectionLike for Connection {
 
             Ok(rv)
         })
-        .boxed()
+            .boxed()
     }
 
     fn get_db(&self) -> i64 {
@@ -539,7 +539,7 @@ impl ConnectionLike for MultiplexedConnection {
                 })?;
             Ok(value)
         })
-        .boxed()
+            .boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -562,7 +562,7 @@ impl ConnectionLike for MultiplexedConnection {
             value.drain(..offset);
             Ok(value)
         })
-        .boxed()
+            .boxed()
     }
 
     fn get_db(&self) -> i64 {
