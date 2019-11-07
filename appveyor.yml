@@ -4,7 +4,7 @@ environment:
   REDISRS_SERVER_TYPE: tcp
   RUST_BACKTRACE: 1
   matrix:
-    - channel: stablej
+    - channel: stable
       target: x86_64-pc-windows-msvc
     - channel: stable
       target: x86_64-pc-windows-gnu

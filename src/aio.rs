@@ -213,7 +213,7 @@ impl ConnectionLike for Connection {
             self.con.flush().await?;
             self.con.read_response().await
         })
-            .boxed()
+        .boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -237,7 +237,7 @@ impl ConnectionLike for Connection {
 
             Ok(rv)
         })
-            .boxed()
+        .boxed()
     }
 
     fn get_db(&self) -> i64 {
@@ -495,6 +495,14 @@ impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
     pub(crate) fn new(con: Connection) -> (Self, impl Future<Output = ()>) {
         let (pipeline, driver) = match con.con {
+            #[cfg(not(unix))]
+            ActualConnection::Tcp(tcp) => {
+                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, driver)
+            }
+
+            #[cfg(unix)]
             ActualConnection::Tcp(tcp) => {
                 let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
                 let (pipeline, driver) = Pipeline::new(codec);
@@ -531,7 +539,7 @@ impl ConnectionLike for MultiplexedConnection {
                 })?;
             Ok(value)
         })
-            .boxed()
+        .boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -554,7 +562,7 @@ impl ConnectionLike for MultiplexedConnection {
             value.drain(..offset);
             Ok(value)
         })
-            .boxed()
+        .boxed()
     }
 
     fn get_db(&self) -> i64 {
