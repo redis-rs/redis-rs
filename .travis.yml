@@ -5,7 +5,7 @@ cache: cargo
 matrix:
   include:
     - rust: stable
-       env: RUST_VERSION=stable COMMAND=test
+      env: RUST_VERSION=stable COMMAND=test
 
     - rust: beta
       env: RUST_VERSION=beta COMMAND=test
