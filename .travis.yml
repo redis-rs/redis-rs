@@ -20,7 +20,7 @@ script:
   - make $COMMAND
   - cargo check --benches --all-features
   - |
-    [ "$RUST_VERSION" = "nightly" ] && exit 0 # Don't cargo-fmt on nightly
+    ([ "$RUST_VERSION" = "nightly" ] || [ "$RUST_VERSION" = "beta" ]) && exit 0 # Don't cargo-fmt on nightly or beta
     make style-check
 
 notifications:
