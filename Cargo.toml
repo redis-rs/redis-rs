@@ -22,10 +22,10 @@ bytes = "0.4"
 futures = { version = "0.3.0-alpha.18", package = "futures-preview" }
 pin-project = "0.4"
 tokio-codec = "0.2.0-alpha.5"
-tokio-executor = { version = "0.2.0-alpha.5", optional = true }
+tokio-executor = { version = "0.2.0-alpha.5", optional = true}
 tokio-io = { version = "0.2.0-alpha.6", features = ["util"] }
 tokio-net = { version = "0.2.0-alpha.6", features = ["tcp", "uds"] }
-tokio-sync = { version = "0.2.0-alpha.6" }
+tokio-sync = { version = "0.2.0-alpha.6", features = ["async-traits"]  }
 
 [features]
 default = [ "geospatial" ]
@@ -41,6 +41,7 @@ criterion = "0.2"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
 tokio = "0.2.0-alpha.6"
+# End of dev-dependencies
 
 [[bench]]
 name = "bench_basic"
