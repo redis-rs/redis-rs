@@ -20,4 +20,4 @@ install:
 build: false
 
 test_script:
-  - cargo test --verbose --no-default-features --features tokio-executor %cargoflags%
+  - cargo test --verbose --no-default-features --features tokio-rt-core %cargoflags%

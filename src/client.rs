@@ -64,12 +64,12 @@ impl Client {
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// This requires the `tokio-executor` feature as it uses the default tokio executor.
-    #[cfg(feature = "tokio-executor")]
+    #[cfg(feature = "tokio-rt-core")]
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         let (connection, driver) = self.get_multiplexed_async_connection().await?;
-        tokio_executor::spawn(driver);
+        tokio::spawn(driver);
         Ok(connection)
     }
 

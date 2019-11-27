@@ -25,6 +25,7 @@ where
 {
     let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler()
+        .enable_io()
         .build()
         .unwrap();
     runtime.block_on(f)
@@ -168,7 +169,7 @@ impl TestContext {
         self.server.stop();
     }
 
-    #[cfg(feature = "executor")]
+    #[cfg(feature = "tokio-rt-core")]
     pub fn multiplexed_async_connection(
         &self,
     ) -> impl Future<Output = RedisResult<redis::aio::MultiplexedConnection>> {

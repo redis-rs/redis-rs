@@ -1,5 +1,3 @@
-#![cfg(feature = "executor")]
-
 use redis;
 
 use futures;

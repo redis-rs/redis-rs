@@ -27,6 +27,8 @@ tokio = { version = "0.2", features = ["tcp", "uds", "io-util", "sync", "stream"
 [features]
 default = [ "geospatial" ]
 
+tokio-rt-core = ["tokio/rt-core"]
+
 geospatial = []
 
 [dev-dependencies]
@@ -37,8 +39,13 @@ fnv = "1.0.5"
 criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "0.2", features = ["rt-core", "macros"] }
 # End of dev-dependencies
+
+
+[[test]]
+name = "test_async"
+required-features = ["tokio-rt-core"]
 
 [[bench]]
 name = "bench_basic"

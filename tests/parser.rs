@@ -8,7 +8,6 @@ use std::{io, pin::Pin};
 use {
     futures::task::{self, Poll},
     partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
-    rand::Rng,
     tokio::io::{AsyncRead, BufReader},
 };
 
