@@ -19,16 +19,15 @@ use self::futures::Future;
 
 use redis::{RedisResult, Value};
 
-use tokio::runtime::current_thread::Runtime;
-
 pub fn block_on_all<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    let mut runtime = Runtime::new().unwrap();
-    let output = runtime.block_on(f);
-    runtime.run().unwrap();
-    output
+    let mut runtime = tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .build()
+        .unwrap();
+    runtime.block_on(f)
 }
 
 #[derive(PartialEq)]

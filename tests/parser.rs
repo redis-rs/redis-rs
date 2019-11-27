@@ -5,15 +5,16 @@ extern crate quickcheck;
 
 use std::{io, pin::Pin};
 
-use tokio::io::{AsyncRead, BufReader};
-
-use partial_io::{GenWouldBlock, PartialOp, PartialWithErrors};
-
-use futures::{task, Poll};
-
-use crate::support::{block_on_all, encode_value};
+use {
+    futures::task::{self, Poll},
+    partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
+    rand::Rng,
+    tokio::io::{AsyncRead, BufReader},
+};
 
 use redis::Value;
+
+use crate::support::{block_on_all, encode_value};
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);

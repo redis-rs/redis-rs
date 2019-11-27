@@ -6,14 +6,22 @@ use std::net::ToSocketAddrs;
 use std::pin::Pin;
 
 #[cfg(unix)]
-use tokio_net::uds::UnixStream;
+use tokio::net::UnixStream;
 
-use tokio_codec::Decoder;
-use tokio_io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio_net::tcp::TcpStream;
-use tokio_sync::{mpsc, oneshot};
+use tokio::{
+    io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    net::TcpStream,
+    sync::{mpsc, oneshot},
+};
+use tokio_util::codec::Decoder;
 
-use futures::{future::Either, prelude::*, ready, task, Poll, Sink, Stream};
+use futures::{
+    future::Either,
+    prelude::*,
+    ready,
+    task::{self, Poll},
+    Sink, Stream,
+};
 
 use pin_project::pin_project;
 

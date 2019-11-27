@@ -18,14 +18,11 @@ percent-encoding = "2.1"
 sha1 = ">= 0.2, < 0.7"
 url = "2.1"
 combine = "3.8.1"
-bytes = "0.4"
-futures = { version = "0.3.0-alpha.18", package = "futures-preview" }
+bytes = "0.5"
+futures = "0.3.0"
 pin-project = "0.4"
-tokio-codec = "0.2.0-alpha.5"
-tokio-executor = { version = "0.2.0-alpha.5", optional = true}
-tokio-io = { version = "0.2.0-alpha.6", features = ["util"] }
-tokio-net = { version = "0.2.0-alpha.6", features = ["tcp", "uds"] }
-tokio-sync = { version = "0.2.0-alpha.6", features = ["async-traits"]  }
+tokio-util = { version = "0.2", features = ["codec"] }
+tokio = { version = "0.2", features = ["tcp", "uds", "io-util", "sync", "stream"] }
 
 [features]
 default = [ "geospatial" ]
@@ -37,10 +34,10 @@ rand = "0.4"
 net2 = "0.2"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
-criterion = "0.2"
+criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = "0.2.0-alpha.6"
+tokio = { version = "0.2", features = ["full"] }
 # End of dev-dependencies
 
 [[bench]]

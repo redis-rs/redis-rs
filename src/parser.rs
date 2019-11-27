@@ -7,9 +7,12 @@ use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Val
 
 use bytes::BytesMut;
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
-use futures::{future, task, Poll};
-use tokio_codec::{Decoder, Encoder};
-use tokio_io::{AsyncBufRead, AsyncRead};
+use futures::{
+    future,
+    task::{self, Poll},
+};
+use tokio::io::{AsyncBufRead, AsyncRead};
+use tokio_util::codec::{Decoder, Encoder};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};
