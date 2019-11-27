@@ -5,9 +5,9 @@ use redis;
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-use futures::{prelude::*, stream};
+use support::*;
 
-use tokio::runtime::current_thread::Runtime;
+use futures::{prelude::*, stream};
 
 use criterion::{Bencher, Benchmark, Criterion, Throughput};
 
@@ -31,7 +31,7 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let con = client.get_async_connection();
     let mut con = runtime.block_on(con).unwrap();
 
@@ -118,7 +118,7 @@ fn bench_long_pipeline(b: &mut Bencher) {
 
 fn bench_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let mut con = runtime.block_on(client.get_async_connection()).unwrap();
 
     let pipe = long_pipeline();
@@ -132,7 +132,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 
 fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let mut con = runtime
         .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
@@ -148,7 +148,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 
 fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let con = runtime
         .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
@@ -198,7 +198,7 @@ fn bench_query(c: &mut Criterion) {
         )
         .with_function("async_long_pipeline", bench_async_long_pipeline)
         .with_function("long_pipeline", bench_long_pipeline)
-        .throughput(Throughput::Elements(PIPELINE_QUERIES as u32)),
+        .throughput(Throughput::Elements(PIPELINE_QUERIES as u64)),
     );
 }
 
