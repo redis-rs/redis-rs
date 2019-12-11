@@ -850,9 +850,9 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
 
 #[cfg(test)]
 mod tests {
+    use super::get_hashtag;
     use super::{ClusterClient, ClusterClientBuilder};
     use super::{ConnectionInfo, IntoConnectionInfo};
-    use super::get_hashtag;
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
