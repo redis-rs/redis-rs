@@ -296,8 +296,8 @@
 //! In addition to the synchronous interface that's been explained above there also exists an
 //! asynchronous interface based on [`futures`][] and [`tokio`][].
 //!
-//! This interface exists under the `async` module and largely mirrors the synchronous with a few
-//! concessions to make it fit the constraints of `futures`.
+//! This interface exists under the `aio` (async io) module and largely mirrors the synchronous
+//! with a few concessions to make it fit the constraints of `futures`.
 //!
 //! ```rust,no_run
 //! extern crate redis;
@@ -346,7 +346,7 @@
 //! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 
 // public api
 pub use crate::client::Client;

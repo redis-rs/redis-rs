@@ -779,7 +779,7 @@ impl Msg {
 pub fn transaction<
     C: ConnectionLike,
     K: ToRedisArgs,
-    T: FromRedisValue,
+    T,
     F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
 >(
     con: &mut C,
