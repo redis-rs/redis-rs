@@ -49,7 +49,7 @@ macro_rules! implement_commands {
                 #[inline]
                 fn $name<$($tyargs: $ty,)* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { ($body).query(self) }
+                    { Cmd::$name($($argname),*).query(self) }
             )*
 
             /// Incrementally iterate the keys space.
@@ -121,19 +121,25 @@ macro_rules! implement_commands {
             }
         }
 
+        impl Cmd {
+            $(
+                $(#[$attr])*
+                pub fn $name<$($tyargs: $ty),*>($($argname: $argty),*) -> Self {
+                    ::std::mem::replace($body, Cmd::new())
+                }
+            )*
+        }
+
         /// Implements common redis commands for pipelines.  Unlike the regular
         /// commands trait, this returns the pipeline rather than a result
         /// directly.  Other than that it works the same however.
-        pub trait PipelineCommands {
-            #[doc(hidden)]
-            fn perform(&mut self, con: Cmd) -> &mut Self;
-
+        impl Pipeline {
             $(
                 $(#[$attr])*
                 #[inline]
-                fn $name<$($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*) -> &mut Self
-                    { self.perform(::std::mem::replace($body, Cmd::new())) }
+                    { self.add_command(::std::mem::replace($body, Cmd::new())) }
             )*
         }
     )
@@ -1057,11 +1063,5 @@ impl PubSubCommands for Connection {
                 ControlFlow::Break(value) => return Ok(value),
             }
         };
-    }
-}
-
-impl PipelineCommands for Pipeline {
-    fn perform(&mut self, cmd: Cmd) -> &mut Pipeline {
-        self.add_command(cmd)
     }
 }
