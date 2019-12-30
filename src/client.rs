@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use futures::prelude::*;
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
-use crate::types::{RedisError, RedisResult, Value};
+use crate::types::{RedisResult, Value};
 
 /// The client type.
 #[derive(Debug, Clone)]

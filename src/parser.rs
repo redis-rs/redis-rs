@@ -5,7 +5,7 @@ use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures::{
     future,
@@ -178,7 +178,7 @@ impl Decoder for ValueCodec {
             }
         };
 
-        bytes.split_to(removed_len);
+        bytes.advance(removed_len);
         match opt {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),
@@ -196,7 +196,7 @@ where
         Some(r) => match Pin::new(&mut *r).poll_fill_buf(cx) {
             // SAFETY We either drop `self.reader` and return a slice with the lifetime of the
             // reader or we return Pending/Err (neither which contains `'a`).
-            // In either case `poll_fill_buf` can not be called while it's contents are exposed
+            // In either case `poll_fill_buf` can not be called while its contents are exposed
             Poll::Ready(Ok(x)) => unsafe { return Ok(&*(x as *const _)).into() },
             Poll::Ready(Err(err)) => Err(err).into(),
             Poll::Pending => {

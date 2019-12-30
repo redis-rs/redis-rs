@@ -126,16 +126,14 @@ macro_rules! implement_commands {
         impl Cmd {
             $(
                 $(#[$attr])*
-                pub fn $name<$($tyargs: $ty),*>($($argname: $argty),*) -> Self {
+                pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
                     ::std::mem::replace($body, Cmd::new())
                 }
             )*
         }
 
-        /// Implements common redis commands for connection like objects.  This
-        /// allows you to send commands straight to a connection or client.  It
-        /// is also implemented for redis results of clients which makes for
-        /// very convenient access in some basic cases.
+        /// Implements common redis commands over asynchronous connections. This
+        /// allows you to send commands straight to a connection or client.
         ///
         /// This allows you to use nicer syntax for some common operations.
         /// For instance this code:
