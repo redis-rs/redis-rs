@@ -298,38 +298,24 @@
 //! with a few concessions to make it fit the constraints of `futures`.
 //!
 //! ```rust,no_run
-//! extern crate redis;
-//! extern crate futures;
-//! extern crate tokio;
+//! use futures::prelude::*;
+//! use redis::AsyncCommands;
 //!
-//! use futures::Future;
-//!
-//! # fn main() {
+//! # #[tokio::main]
+//! # async fn main() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! let connect = client.get_async_connection();
+//! let mut con = client.get_async_connection().await?;
 //!
-//! tokio::run(connect.and_then(|con| {
-//!     redis::cmd("SET")
-//!         .arg("key1")
-//!         .arg(b"foo")
-//!         // `query_async` acts in the same way as `query` but requires the connection to be
-//!         // taken by value as the method returns a `Future` instead of `Result`.
-//!         // This connection will be returned after the future has been completed allowing it to
-//!         // be used again.
-//!         .query_async(con)
-//!         .and_then(|(con, ())| {
-//!             redis::cmd("SET").arg(&["key2", "bar"]).query_async(con)
-//!         })
-//!         .and_then(|(con, ())| {
-//!             redis::cmd("MGET")
-//!                 .arg(&["key1", "key2"])
-//!                 .query_async(con)
-//!                 .map(|t| t.1)
-//!         })
-//! }).then(|result| {
-//!     assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-//!     Ok(())
-//! }));
+//! let () = con.set("key1", b"foo").await?;
+//!
+//! let () = redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+//!
+//! let result = redis::cmd("MGET")
+//!     .arg(&["key1", "key2"])
+//!     .query_async(&mut con)
+//!     .await;
+//! assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+//! Ok(())
 //! # }
 //! ```
 //!
@@ -348,8 +334,8 @@
 
 // public api
 pub use crate::client::Client;
-pub use crate::cmd::{cmd, pack_command, pipe, Cmd, Iter, Pipeline};
-pub use crate::commands::{Commands, ControlFlow, PubSubCommands};
+pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter, Pipeline};
+pub use crate::commands::{AsyncCommands, Commands, ControlFlow, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,

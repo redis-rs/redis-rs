@@ -1,6 +1,4 @@
 #![allow(clippy::let_unit_value)]
-use redis;
-
 use redis::{Commands, ControlFlow, PubSubCommands};
 
 use std::collections::{BTreeMap, BTreeSet};

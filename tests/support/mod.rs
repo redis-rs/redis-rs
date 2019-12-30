@@ -17,7 +17,22 @@ use std::path::PathBuf;
 
 use self::futures::Future;
 
-use redis::{RedisError, Value};
+use redis::{RedisResult, Value};
+
+pub fn current_thread_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_io()
+        .build()
+        .unwrap()
+}
+
+pub fn block_on_all<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    current_thread_runtime().block_on(f)
+}
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -149,20 +164,20 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub fn async_connection(
-        &self,
-    ) -> impl Future<Item = redis::aio::Connection, Error = RedisError> {
-        self.client.get_async_connection()
+    pub async fn async_connection(&self) -> RedisResult<redis::aio::Connection> {
+        self.client.get_async_connection().await
     }
 
     pub fn stop_server(&mut self) {
         self.server.stop();
     }
 
-    pub fn shared_async_connection(
+    #[cfg(feature = "tokio-rt-core")]
+    pub fn multiplexed_async_connection(
         &self,
-    ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
-        self.client.get_shared_async_connection()
+    ) -> impl Future<Output = RedisResult<redis::aio::MultiplexedConnection>> {
+        let client = self.client.clone();
+        async move { client.get_multiplexed_tokio_connection().await }
     }
 }
 

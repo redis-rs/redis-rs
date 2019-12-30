@@ -2,18 +2,16 @@
 extern crate criterion;
 use redis;
 
-use futures;
-
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-use futures::{future, stream, Future, Stream};
+use support::*;
 
-use tokio::runtime::current_thread::Runtime;
+use futures::{prelude::*, stream};
 
 use criterion::{Bencher, Benchmark, Criterion, Throughput};
 
-use redis::Value;
+use redis::{RedisError, Value};
 
 fn get_client() -> redis::Client {
     redis::Client::open("redis://127.0.0.1:6379").unwrap()
@@ -33,23 +31,25 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let con = client.get_async_connection();
-    let mut opt_con = Some(runtime.block_on(con).unwrap());
+    let mut con = runtime.block_on(con).unwrap();
 
     b.iter(|| {
-        let con = opt_con.take().expect("No connection");
-
-        let key = "test_key";
-        let future = redis::cmd("SET")
-            .arg(key)
-            .arg(42)
-            .query_async(con)
-            .and_then(|(con, ())| redis::cmd("GET").arg(key).query_async(con))
-            .and_then(|(con, _): (_, isize)| redis::cmd("DEL").arg(key).query_async(con));
-        let (con, ()) = runtime.block_on(future).unwrap();
-
-        opt_con = Some(con);
+        runtime
+            .block_on(async {
+                let key = "test_key";
+                let () = redis::cmd("SET")
+                    .arg(key)
+                    .arg(42)
+                    .query_async(&mut con)
+                    .await?;
+                let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
+                let () = redis::cmd("DEL").arg(key).query_async(&mut con).await?;
+                Ok(())
+            })
+            .map_err(|err: RedisError| err)
+            .unwrap()
     });
 }
 
@@ -118,59 +118,59 @@ fn bench_long_pipeline(b: &mut Bencher) {
 
 fn bench_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
-    let mut con = Some(runtime.block_on(client.get_async_connection()).unwrap());
+    let mut runtime = current_thread_runtime();
+    let mut con = runtime.block_on(client.get_async_connection()).unwrap();
 
     let pipe = long_pipeline();
 
     b.iter(|| {
-        con = runtime
-            .block_on(future::lazy(|| {
-                pipe.clone()
-                    .query_async(con.take().expect("Connection"))
-                    .map(|(con, ())| Some(con))
-            }))
+        let () = runtime
+            .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
 }
 
-fn bench_shared_async_long_pipeline(b: &mut Bencher) {
+fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
-    let con = runtime
-        .block_on(client.get_shared_async_connection())
+    let mut runtime = current_thread_runtime();
+    let mut con = runtime
+        .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
 
     let pipe = long_pipeline();
 
     b.iter(|| {
         let _: () = runtime
-            .block_on(future::lazy(|| {
-                pipe.clone().query_async(con.clone()).map(|(_, ())| ())
-            }))
+            .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
 }
 
-fn bench_shared_async_implicit_pipeline(b: &mut Bencher) {
+fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = current_thread_runtime();
     let con = runtime
-        .block_on(client.get_shared_async_connection())
+        .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
 
     let cmds: Vec<_> = (0..PIPELINE_QUERIES)
         .map(|i| redis::cmd("SET").arg(format!("foo{}", i)).arg(i).clone())
         .collect();
 
+    let mut connections = (0..PIPELINE_QUERIES)
+        .map(|_| con.clone())
+        .collect::<Vec<_>>();
+
     b.iter(|| {
         let _: () = runtime
-            .block_on(future::lazy(|| {
-                stream::futures_unordered(
-                    cmds.iter().cloned().map(|cmd| cmd.query_async(con.clone())),
-                )
-                .for_each(|(_, ())| Ok(()))
-            }))
+            .block_on(async {
+                cmds.iter()
+                    .zip(&mut connections)
+                    .map(|(cmd, con)| cmd.query_async(con))
+                    .collect::<stream::FuturesUnordered<_>>()
+                    .try_for_each(|()| async { Ok(()) })
+                    .await
+            })
             .unwrap();
     });
 }
@@ -189,16 +189,16 @@ fn bench_query(c: &mut Criterion) {
     c.bench(
         "query_pipeline",
         Benchmark::new(
-            "shared_async_implicit_pipeline",
-            bench_shared_async_implicit_pipeline,
+            "multiplexed_async_implicit_pipeline",
+            bench_multiplexed_async_implicit_pipeline,
         )
         .with_function(
-            "shared_async_long_pipeline",
-            bench_shared_async_long_pipeline,
+            "multiplexed_async_long_pipeline",
+            bench_multiplexed_async_long_pipeline,
         )
         .with_function("async_long_pipeline", bench_async_long_pipeline)
         .with_function("long_pipeline", bench_long_pipeline)
-        .throughput(Throughput::Elements(PIPELINE_QUERIES as u32)),
+        .throughput(Throughput::Elements(PIPELINE_QUERIES as u64)),
     );
 }
 
@@ -221,7 +221,7 @@ fn bench_encode_integer(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.set(123, 45679123).ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 
@@ -232,7 +232,7 @@ fn bench_encode_pipeline(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.set("foo", "bar").ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 
@@ -247,7 +247,7 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
             )
             .ignore();
         }
-        pipe.get_packed_pipeline(false)
+        pipe.get_packed_pipeline()
     });
 }
 

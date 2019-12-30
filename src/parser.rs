@@ -1,13 +1,18 @@
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Read};
+use std::marker::Unpin;
+use std::pin::Pin;
 use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
-use futures::{Async, Future, Poll};
-use tokio_io::codec::{Decoder, Encoder};
-use tokio_io::{try_nb, AsyncRead};
+use futures::{
+    future,
+    task::{self, Poll},
+};
+use tokio::io::{AsyncBufRead, AsyncRead};
+use tokio_util::codec::{Decoder, Encoder};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};
@@ -173,7 +178,7 @@ impl Decoder for ValueCodec {
             }
         };
 
-        bytes.split_to(removed_len);
+        bytes.advance(removed_len);
         match opt {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),
@@ -181,107 +186,132 @@ impl Decoder for ValueCodec {
     }
 }
 
-pub struct ValueFuture<R> {
-    reader: Option<R>,
-    state: AnySendPartialState,
-    // Intermediate storage for data we know that we need to parse a value but we haven't been able
-    // to parse completely yet
-    remaining: Vec<u8>,
-}
-
-impl<R> Future for ValueFuture<R>
+// https://github.com/tokio-rs/tokio/pull/1687
+async fn fill_buf<R>(reader: &mut R) -> io::Result<&[u8]>
 where
-    R: BufRead,
+    R: AsyncBufRead + Unpin,
 {
-    type Item = (R, Value);
-    type Error = RedisError;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            assert!(
-                self.reader.is_some(),
-                "ValueFuture: poll called on completed future"
-            );
-            let remaining_data = self.remaining.len();
-
-            let (opt, mut removed) = {
-                let buffer = try_nb!(self.reader.as_mut().unwrap().fill_buf());
-                if buffer.is_empty() {
-                    fail!((ErrorKind::ResponseError, "Could not read enough bytes"))
-                }
-                let buffer = if !self.remaining.is_empty() {
-                    self.remaining.extend(buffer);
-                    &self.remaining[..]
-                } else {
-                    buffer
-                };
-                let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
-                match combine::stream::decode(value(), stream, &mut self.state) {
-                    Ok(x) => x,
-                    Err(err) => {
-                        let err = err
-                            .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{:?}", range))
-                            .to_string();
-                        return Err(RedisError::from((
-                            ErrorKind::ResponseError,
-                            "parse error",
-                            err,
-                        )));
-                    }
-                }
-            };
-
-            if !self.remaining.is_empty() {
-                // Remove the data we have parsed and adjust `removed` to be the amount of data we
-                // consumed from `self.reader`
-                self.remaining.drain(..removed);
-                if removed >= remaining_data {
-                    removed -= remaining_data;
-                } else {
-                    removed = 0;
-                }
+    let mut reader = Some(reader);
+    future::poll_fn(move |cx| match reader.take() {
+        Some(r) => match Pin::new(&mut *r).poll_fill_buf(cx) {
+            // SAFETY We either drop `self.reader` and return a slice with the lifetime of the
+            // reader or we return Pending/Err (neither which contains `'a`).
+            // In either case `poll_fill_buf` can not be called while its contents are exposed
+            Poll::Ready(Ok(x)) => unsafe { return Ok(&*(x as *const _)).into() },
+            Poll::Ready(Err(err)) => Err(err).into(),
+            Poll::Pending => {
+                reader = Some(r);
+                Poll::Pending
             }
-
-            match opt {
-                Some(value) => {
-                    self.reader.as_mut().unwrap().consume(removed);
-                    let reader = self.reader.take().unwrap();
-                    return Ok(Async::Ready((reader, value?)));
-                }
-                None => {
-                    // We have not enough data to produce a Value but we know that all the data of
-                    // the current buffer are necessary. Consume all the buffered data to ensure
-                    // that the next iteration actually reads more data.
-                    let buffer_len = {
-                        let buffer = self.reader.as_mut().unwrap().fill_buf()?;
-                        if remaining_data == 0 {
-                            self.remaining.extend(&buffer[removed..]);
-                        }
-                        buffer.len()
-                    };
-                    self.reader.as_mut().unwrap().consume(buffer_len);
-                }
-            }
-        }
-    }
+        },
+        None => panic!("fill_buf polled after completion"),
+    })
+    .await
 }
 
 /// Parses a redis value asynchronously.
-pub fn parse_redis_value_async<R>(reader: R) -> impl Future<Item = (R, Value), Error = RedisError>
+pub async fn parse_redis_value_async<R>(mut reader: R) -> RedisResult<Value>
 where
-    R: AsyncRead + BufRead,
+    R: AsyncBufRead + Unpin,
 {
-    ValueFuture {
-        reader: Some(reader),
-        state: Default::default(),
-        remaining: Vec::new(),
+    let mut state = Default::default();
+    let mut remaining = Vec::new();
+    loop {
+        let remaining_data = remaining.len();
+
+        let (opt, mut removed) = {
+            let buffer = fill_buf(&mut reader).await?;
+            if buffer.len() == 0 {
+                return Err((ErrorKind::ResponseError, "Could not read enough bytes").into());
+            }
+            let buffer = if !remaining.is_empty() {
+                remaining.extend(buffer);
+                &remaining[..]
+            } else {
+                buffer
+            };
+
+            let stream = combine::easy::Stream(combine::stream::PartialStream(&buffer[..]));
+            match combine::stream::decode(value(), stream, &mut state) {
+                Ok(x) => x,
+                Err(err) => {
+                    let err = err
+                        .map_position(|pos| pos.translate_position(&buffer[..]))
+                        .map_range(|range| format!("{:?}", range))
+                        .to_string();
+                    return Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "parse error",
+                        err,
+                    )));
+                }
+            }
+        };
+
+        if !remaining.is_empty() {
+            // Remove the data we have parsed and adjust `removed` to be the amount of data we
+            // consumed from `self.reader`
+            remaining.drain(..removed);
+            if removed >= remaining_data {
+                removed -= remaining_data;
+            } else {
+                removed = 0;
+            }
+        }
+
+        match opt {
+            Some(value) => {
+                Pin::new(&mut reader).consume(removed);
+                return Ok(value?);
+            }
+            None => {
+                // We have not enough data to produce a Value but we know that all the data of
+                // the current buffer are necessary. Consume all the buffered data to ensure
+                // that the next iteration actually reads more data.
+                let buffer_len = {
+                    let buffer = fill_buf(&mut reader).await?;
+                    if remaining_data == 0 {
+                        remaining.extend(&buffer[removed..]);
+                    }
+                    buffer.len()
+                };
+                Pin::new(&mut reader).consume(buffer_len);
+            }
+        }
     }
 }
 
 /// The internal redis response parser.
 pub struct Parser<T> {
     reader: T,
+}
+
+struct BlockingWrapper<R>(R);
+
+impl<T> AsyncRead for BlockingWrapper<T>
+where
+    T: Read + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut task::Context,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.0.read(buf).into()
+    }
+}
+
+impl<T> AsyncBufRead for BlockingWrapper<T>
+where
+    T: BufRead + Unpin,
+{
+    fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
+        self.get_mut().0.fill_buf().into()
+    }
+
+    fn consume(mut self: Pin<&mut Self>, amt: usize) {
+        self.0.consume(amt)
+    }
 }
 
 /// The parser can be used to parse redis responses into values.  Generally
@@ -301,15 +331,8 @@ impl<'a, T: BufRead> Parser<T> {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
-        let mut parser = ValueFuture {
-            reader: Some(&mut self.reader),
-            state: Default::default(),
-            remaining: Vec::new(),
-        };
-        match parser.poll()? {
-            Async::NotReady => Err(io::Error::from(io::ErrorKind::WouldBlock).into()),
-            Async::Ready((_, value)) => Ok(value),
-        }
+        let parser = parse_redis_value_async(BlockingWrapper(&mut self.reader));
+        futures::executor::block_on(parser)
     }
 }
 
