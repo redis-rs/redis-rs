@@ -669,7 +669,7 @@ implement_commands! {
     }
 
     /// Remove all members in a sorted set within the given indexes.
-    fn zrembyrank<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
+    fn zremrangebyrank<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZREMRANGEBYRANK").arg(key).arg(start).arg(stop)
     }
 
