@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::{self, TcpStream};
+use std::net::{self, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::from_utf8;
 use std::time::Duration;
@@ -205,11 +205,40 @@ pub struct Msg {
 }
 
 impl ActualConnection {
-    pub fn new(addr: &ConnectionAddr) -> RedisResult<ActualConnection> {
+    pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let host: &str = &*host;
-                let tcp = TcpStream::connect((host, *port))?;
+                let tcp = match timeout {
+                    None => TcpStream::connect((host, *port))?,
+                    Some(timeout) => {
+                        let mut tcp = None;
+                        let mut last_error = None;
+                        for addr in ((host, *port)).to_socket_addrs()? {
+                            match TcpStream::connect_timeout(&addr, timeout) {
+                                Ok(l) => {
+                                    tcp = Some(l);
+                                    break;
+                                }
+                                Err(e) => {
+                                    last_error = Some(e);
+                                }
+                            };
+                        }
+                        match (tcp, last_error) {
+                            (Some(tcp), _) => tcp,
+                            (None, Some(e)) => {
+                                fail!(e);
+                            }
+                            (None, None) => {
+                                fail!((
+                                    ErrorKind::InvalidClientConfig,
+                                    "could not resolve to any addresses"
+                                ));
+                            }
+                        }
+                    }
+                };
                 let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(TcpConnection {
                     reader: buffered,
@@ -333,8 +362,11 @@ impl ActualConnection {
     }
 }
 
-pub fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = ActualConnection::new(&connection_info.addr)?;
+pub fn connect(
+    connection_info: &ConnectionInfo,
+    timeout: Option<Duration>,
+) -> RedisResult<Connection> {
+    let con = ActualConnection::new(&connection_info.addr, timeout)?;
     let mut rv = Connection {
         con,
         db: connection_info.db,
