@@ -219,6 +219,11 @@ implement_commands! {
         cmd("SETEX").arg(key).arg(seconds).arg(value)
     }
 
+    /// Set the value and expiration in milliseconds of a key.
+    fn pset_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, milliseconds: usize) {
+        cmd("PSETEX").arg(key).arg(milliseconds).arg(value)
+    }
+
     /// Set the value of a key, only if the key does not exist
     fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("SETNX").arg(key).arg(value)
@@ -279,9 +284,14 @@ implement_commands! {
         cmd("PERSIST").arg(key)
     }
 
-    /// Check the expiration time of a key.
+    /// Get the expiration time of a key.
     fn ttl<K: ToRedisArgs>(key: K) {
         cmd("TTL").arg(key)
+    }
+
+    /// Get the expiration time of a key in milliseconds.
+    fn pttl<K: ToRedisArgs>(key: K) {
+        cmd("PTTL").arg(key)
     }
 
     /// Rename a key.
