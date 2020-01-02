@@ -33,7 +33,7 @@ tokio-rt-core = ["tokio/rt-core"]
 geospatial = []
 
 [dev-dependencies]
-rand = "0.4"
+rand = "0.7"
 net2 = "0.2"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
