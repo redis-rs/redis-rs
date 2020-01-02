@@ -4,6 +4,7 @@ use std::io;
 use std::mem;
 use std::net::ToSocketAddrs;
 use std::pin::Pin;
+use std::task::{self, Poll};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -15,15 +16,14 @@ use tokio::{
 };
 use tokio_util::codec::Decoder;
 
-use futures::{
-    future::Either,
-    prelude::*,
+use futures_util::{
+    future::{Either, Future, FutureExt, TryFutureExt},
     ready,
-    task::{self, Poll},
-    Sink, Stream,
+    sink::Sink,
+    stream::{Stream, StreamExt},
 };
 
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
@@ -281,15 +281,13 @@ impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
     }
 }
 
-#[pin_project]
-struct PipelineSink<T, I, E>
-where
-    T: Stream<Item = Result<I, E>> + 'static,
-{
-    #[pin]
-    sink_stream: T,
-    in_flight: VecDeque<InFlight<I, E>>,
-    error: Option<E>,
+pin_project! {
+    struct PipelineSink<T, I, E> {
+        #[pin]
+        sink_stream: T,
+        in_flight: VecDeque<InFlight<I, E>>,
+        error: Option<E>,
+    }
 }
 
 impl<T, I, E> PipelineSink<T, I, E>

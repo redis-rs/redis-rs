@@ -7,8 +7,6 @@ use crate::types::{
 
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-use futures::prelude::*;
-
 /// An argument to a redis command
 #[derive(Clone)]
 pub enum Arg<D> {
@@ -387,17 +385,12 @@ impl Cmd {
 
     /// Async version of `query`.
     #[inline]
-    pub fn query_async<'c, C, T: FromRedisValue>(
-        &'c self,
-        con: &'c mut C,
-    ) -> impl Future<Output = RedisResult<T>> + 'c
+    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike,
     {
-        async move {
-            let val = con.req_packed_command(self).await?;
-            from_redis_value(&val)
-        }
+        let val = con.req_packed_command(self).await?;
+        from_redis_value(&val)
     }
 
     /// Similar to `query()` but returns an iterator over the items of the

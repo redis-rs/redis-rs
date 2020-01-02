@@ -1,6 +1,5 @@
+use std::future::Future;
 use std::time::Duration;
-
-use futures::prelude::*;
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisResult, Value};

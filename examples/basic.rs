@@ -1,5 +1,4 @@
 use redis::{self, transaction, Commands};
-use std::error::Error;
 
 use std::collections::HashMap;
 
@@ -158,7 +157,7 @@ fn main() {
     match do_redis_code() {
         Err(err) => {
             println!("Could not execute example:");
-            println!("  {}: {}", err.category(), err.description());
+            println!("  {}: {}", err.category(), err);
         }
         Ok(()) => {}
     }

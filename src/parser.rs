@@ -7,7 +7,7 @@ use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Val
 
 use bytes::{Buf, BytesMut};
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
-use futures::{
+use futures_util::{
     future,
     task::{self, Poll},
 };
@@ -332,7 +332,7 @@ impl<'a, T: BufRead> Parser<T> {
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value(&mut self) -> RedisResult<Value> {
         let parser = parse_redis_value_async(BlockingWrapper(&mut self.reader));
-        futures::executor::block_on(parser)
+        futures_executor::block_on(parser)
     }
 }
 

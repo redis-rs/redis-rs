@@ -8,8 +8,6 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 
-use futures::prelude::*;
-
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -200,6 +198,7 @@ impl From<(ErrorKind, &'static str, String)> for RedisError {
 }
 
 impl error::Error for RedisError {
+    #[allow(deprecated)]
     fn description(&self) -> &str {
         match self.repr {
             ErrorRepr::WithDescription(_, desc) => desc,
@@ -346,7 +345,7 @@ pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
 pub type RedisResult<T> = Result<T, RedisError>;
 
 /// Library generic future type.
-pub type RedisFuture<'a, T> = future::BoxFuture<'a, RedisResult<T>>;
+pub type RedisFuture<'a, T> = futures_util::future::BoxFuture<'a, RedisResult<T>>;
 
 /// An info dictionary type.
 #[derive(Debug)]
