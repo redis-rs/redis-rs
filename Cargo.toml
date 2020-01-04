@@ -19,8 +19,9 @@ sha1 = ">= 0.2, < 0.7"
 url = "2.1"
 combine = "3.8.1"
 bytes = "0.5"
-futures = "0.3.0"
-pin-project = "0.4"
+futures-util = { version = "0.3.0", features = ["sink"], default-features = false }
+futures-executor = "0.3.0"
+pin-project-lite = "0.1"
 tokio-util = { version = "0.2", features = ["codec"] }
 tokio = { version = "0.2", features = ["tcp", "uds", "io-util", "sync", "stream"] }
 
@@ -32,10 +33,11 @@ tokio-rt-core = ["tokio/rt-core"]
 geospatial = []
 
 [dev-dependencies]
-rand = "0.4"
+rand = "0.7"
 net2 = "0.2"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
+futures = "0.3"
 criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
