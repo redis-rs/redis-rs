@@ -1,6 +1,5 @@
 extern crate futures;
 extern crate redis;
-extern crate tokio;
 use futures::{future, prelude::*};
 use redis::{aio::MultiplexedConnection, RedisResult};
 
@@ -34,22 +33,18 @@ fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisRe
     }
 }
 
-async fn run_multiplexed() {
-    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    let (con, driver) = client.get_multiplexed_async_connection().await.unwrap();
-
-    tokio::spawn(driver);
-    let cmds = (0..100).map(move |i| test_cmd(&con, i));
-    future::try_join_all(cmds).await.unwrap();
-}
-
 #[tokio::main]
 async fn main() {
     println!("Main starting...");
-    tokio::spawn(async move {
-        run_multiplexed().await;
-    })
-    .await
-    .unwrap();
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+
+    // features = ["tokio-rt-core"] must be specified on redis crate
+    let con = client.get_multiplexed_tokio_connection().await.unwrap();
+
+    let cmds = (0..100).map(move |i| test_cmd(&con, i));
+    let result = future::try_join_all(cmds).await.unwrap();
+    assert_eq!(100, result.len());
+
     println!("Main done.");
 }
