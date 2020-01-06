@@ -862,6 +862,7 @@ implement_commands! {
     /// }
     /// ```
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOADD").arg(key).arg(members)
     }
@@ -898,6 +899,7 @@ implement_commands! {
     /// }
     /// ```
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_dist<K: ToRedisArgs, M1: ToRedisArgs, M2: ToRedisArgs>(
         key: K,
         member1: M1,
@@ -931,6 +933,7 @@ implement_commands! {
     /// }
     /// ```
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOHASH").arg(key).arg(members)
     }
@@ -959,6 +962,7 @@ implement_commands! {
     /// }
     /// ```
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
         cmd("GEOPOS").arg(key).arg(members)
     }
@@ -983,6 +987,7 @@ implement_commands! {
     /// }
     /// ```
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_radius<K: ToRedisArgs>(
         key: K,
         longitude: f64,
@@ -1003,6 +1008,7 @@ implement_commands! {
     /// Retrieve members selected by distance with the center of `member`. The
     /// member itself is always contained in the results.
     #[cfg(feature = "geospatial")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
         key: K,
         member: M,

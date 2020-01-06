@@ -66,6 +66,7 @@ impl Client {
     ///
     /// This requires the `tokio-executor` feature as it uses the default tokio executor.
     #[cfg(feature = "tokio-rt-core")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {

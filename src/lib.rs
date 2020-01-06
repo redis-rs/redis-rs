@@ -373,6 +373,7 @@ mod macros;
 pub mod aio;
 
 #[cfg(feature = "geospatial")]
+#[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
 
 mod client;
