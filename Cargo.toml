@@ -55,3 +55,7 @@ harness = false
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[example]]
+name = "async-multiplexed"
+required-features = ["tokio-rt-core"]
