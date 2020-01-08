@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.13.1-alpha.0"
+version = "0.14.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
@@ -10,6 +10,9 @@ documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 readme = "README.md"
 edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 dtoa = "0.4"
@@ -52,9 +55,6 @@ required-features = ["tokio-rt-core"]
 [[bench]]
 name = "bench_basic"
 harness = false
-
-[package.metadata.docs.rs]
-all-features = true
 
 [[example]]
 name = "async-multiplexed"
