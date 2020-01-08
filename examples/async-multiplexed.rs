@@ -40,7 +40,7 @@ async fn main() {
     // features = ["tokio-rt-core"] must be specified on redis crate
     let con = client.get_multiplexed_tokio_connection().await.unwrap();
 
-    let cmds = (0..100).map(move |i| test_cmd(&con, i));
+    let cmds = (0..100).map(|i| test_cmd(&con, i));
     let result = future::try_join_all(cmds).await.unwrap();
     assert_eq!(100, result.len());
 
