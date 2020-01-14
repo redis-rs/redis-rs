@@ -1,6 +1,35 @@
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.13.0...HEAD) - ReleaseDate
+## [0.14.0](https://github.com/mitsuhiko/redis-rs/compare/0.13.0...0.14.0) - 2020-01-08
+
+**Fixes and improvements**
+
+* Fix the command verb being sent to redis for `zremrangebyrank` ([#240](https://github.com/mitsuhiko/redis-rs/pull/240))
+* Add `get_connection_with_timeout` to Client ([#243](https://github.com/mitsuhiko/redis-rs/pull/243))
+* **Breaking change:**  Add Cmd::get, Cmd::set and remove PipelineCommands ([#253](https://github.com/mitsuhiko/redis-rs/pull/253))
+* Async-ify the API ([#232](https://github.com/mitsuhiko/redis-rs/pull/232))
+* Bump minimal required Rust version to 1.39 (required for the async/await API)
+* Add async/await examples ([#261](https://github.com/mitsuhiko/redis-rs/pull/261), [#263](https://github.com/mitsuhiko/redis-rs/pull/263))
+* Added support for PSETEX and PTTL commands. ([#259](https://github.com/mitsuhiko/redis-rs/pull/259))
+
+### Breaking changes
+
+#### Add Cmd::get, Cmd::set and remove PipelineCommands ([#253](https://github.com/mitsuhiko/redis-rs/pull/253))
+
+If you are using pipelines and were importing the `PipelineCommands` trait you can now remove that import
+and only use the `Commands` trait.
+
+Old:
+
+```rust
+use redis::{Commands, PipelineCommands};
+```
+
+New:
+
+```rust
+use redis::Commands;
+```
 
 ## [0.13.0](https://github.com/mitsuhiko/redis-rs/compare/0.12.0...0.13.0) - 2019-10-14
 

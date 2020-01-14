@@ -1,7 +1,8 @@
-use futures::{future::Executor, Future};
+use std::future::Future;
+use std::time::Duration;
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
-use crate::types::{RedisError, RedisResult, Value};
+use crate::types::{RedisResult, Value};
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -41,38 +42,49 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(connect(&self.connection_info)?)
+        Ok(connect(&self.connection_info, None)?)
+    }
+
+    /// Instructs the client to actually connect to redis with specified
+    /// timeout and returns a connection object.  The connection object
+    /// can be used to send commands to the server.  This can fail with
+    /// a variety of errors (like unreachable host) so it's important
+    /// that you handle those errors.
+    pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
+        Ok(connect(&self.connection_info, Some(timeout))?)
     }
 
     /// Returns an async connection from the client.
-    pub fn get_async_connection(
-        &self,
-    ) -> impl Future<Item = crate::aio::Connection, Error = RedisError> {
-        crate::aio::connect(self.connection_info.clone())
+    pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
+        crate::aio::connect(&self.connection_info).await
     }
 
-    /// Returns a async shared connection from the client.
+    /// Returns an async multiplexed connection from the client.
     ///
-    /// This uses the default tokio executor.
-    #[cfg(feature = "executor")]
-    pub fn get_shared_async_connection(
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    ///
+    /// This requires the `tokio-executor` feature as it uses the default tokio executor.
+    #[cfg(feature = "tokio-rt-core")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
+    pub async fn get_multiplexed_tokio_connection(
         &self,
-    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError> {
-        let executor = tokio_executor::DefaultExecutor::current();
-        self.get_async_connection()
-            .and_then(move |con| crate::aio::SharedConnection::new(con, executor))
+    ) -> RedisResult<crate::aio::MultiplexedConnection> {
+        let (connection, driver) = self.get_multiplexed_async_connection().await?;
+        tokio::spawn(driver);
+        Ok(connection)
     }
 
-    /// Returns a async shared connection with a specific executor.
-    pub fn get_shared_async_connection_with_executor<E>(
+    /// Returns an async multiplexed connection from the client and a future which must be polled
+    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    pub async fn get_multiplexed_async_connection(
         &self,
-        executor: E,
-    ) -> impl Future<Item = crate::aio::SharedConnection, Error = RedisError>
-    where
-        E: Executor<Box<dyn Future<Item = (), Error = ()> + Send>>,
-    {
-        self.get_async_connection()
-            .and_then(move |con| crate::aio::SharedConnection::new(con, executor))
+    ) -> RedisResult<(crate::aio::MultiplexedConnection, impl Future<Output = ()>)> {
+        let con = self.get_async_connection().await?;
+        Ok(crate::aio::MultiplexedConnection::new(con))
     }
 }
 

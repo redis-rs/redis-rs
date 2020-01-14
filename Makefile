@@ -5,8 +5,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test --all-features
-	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test --all-features -- --nocapture
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
 	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types --all-features
@@ -19,7 +18,7 @@ test-single: RUST_TEST_THREADS=1
 test-single: test
 
 bench:
-	@RUST_TEST_THREADS=1 cargo bench
+	@RUST_TEST_THREADS=1 cargo bench --all-features
 
 docs: build
 	@cargo doc --no-deps

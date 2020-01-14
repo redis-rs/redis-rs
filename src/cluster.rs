@@ -25,7 +25,7 @@
 //!
 //! # Pipelining
 //! ```rust,no_run
-//! use redis::{PipelineCommands, pipe};
+//! use redis::{Commands, pipe};
 //! use redis::cluster::ClusterClient;
 //!
 //! fn main() {

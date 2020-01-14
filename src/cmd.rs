@@ -1,14 +1,18 @@
+use std::{io, pin::Pin};
+
 use crate::connection::ConnectionLike;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, RedisFuture, RedisResult, RedisWrite, ToRedisArgs,
-    Value,
+    from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-use futures::Future;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+/// An argument to a redis command
 #[derive(Clone)]
-enum Arg<D> {
+pub enum Arg<D> {
+    /// A normal argument
     Simple(D),
+    /// A cursor argument created from `cursor_arg()`
     Cursor,
 }
 
@@ -118,11 +122,11 @@ where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     let mut cmd = Vec::new();
-    write_command(&mut cmd, args, cursor);
+    write_command_to_vec(&mut cmd, args, cursor);
     cmd
 }
 
-fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+fn write_command_to_vec<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
@@ -130,36 +134,63 @@ where
 
     cmd.reserve(totlen);
 
-    write_command_preallocated(cmd, args, cursor);
+    write_command(cmd, args, cursor).unwrap()
 }
 
-fn write_command_preallocated<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
+fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u64) -> io::Result<()>
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
-    cmd.push(b'*');
-    ::itoa::write(&mut *cmd, args.len()).unwrap();
-    cmd.extend_from_slice(b"\r\n");
+    cmd.write_all(b"*")?;
+    ::itoa::write(&mut *cmd, args.len())?;
+    cmd.write_all(b"\r\n")?;
 
-    {
-        let mut cursor_bytes = [0; 20];
-        for item in args {
-            let bytes = match item {
-                Arg::Cursor => {
-                    let n = ::itoa::write(&mut cursor_bytes[..], cursor).unwrap();
-                    &cursor_bytes[..n]
-                }
-                Arg::Simple(val) => val,
-            };
+    let mut cursor_bytes = itoa::Buffer::new();
+    for item in args {
+        let bytes = match item {
+            Arg::Cursor => cursor_bytes.format(cursor).as_bytes(),
+            Arg::Simple(val) => val,
+        };
 
-            cmd.push(b'$');
-            ::itoa::write(&mut *cmd, bytes.len()).unwrap();
-            cmd.extend_from_slice(b"\r\n");
+        cmd.write_all(b"$")?;
+        ::itoa::write(&mut *cmd, bytes.len())?;
+        cmd.write_all(b"\r\n")?;
 
-            cmd.extend_from_slice(bytes);
-            cmd.extend_from_slice(b"\r\n");
-        }
+        cmd.write_all(bytes)?;
+        cmd.write_all(b"\r\n")?;
     }
+    Ok(())
+}
+
+async fn write_command_async<'a, I>(
+    mut cmd: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    args: I,
+    cursor: u64,
+) -> io::Result<()>
+where
+    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
+{
+    cmd.write_all(b"*").await?;
+    cmd.write_all(itoa::Buffer::new().format(args.len()).as_bytes())
+        .await?;
+    cmd.write_all(b"\r\n").await?;
+
+    let mut cursor_bytes = itoa::Buffer::new();
+    for item in args {
+        let bytes = match item {
+            Arg::Cursor => cursor_bytes.format(cursor).as_bytes(),
+            Arg::Simple(val) => val,
+        };
+
+        cmd.write_all(b"$").await?;
+        cmd.write_all(itoa::Buffer::new().format(bytes.len()).as_bytes())
+            .await?;
+        cmd.write_all(b"\r\n").await?;
+
+        cmd.write_all(bytes).await?;
+        cmd.write_all(b"\r\n").await?;
+    }
+    Ok(())
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
@@ -184,6 +215,25 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
         }
     }
     rv
+}
+
+async fn write_pipeline_async(
+    mut out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    cmds: &[Cmd],
+    atomic: bool,
+) -> io::Result<()> {
+    if atomic {
+        cmd("MULTI").write_command_async(out.as_mut()).await?;
+        for cmd in cmds {
+            cmd.write_command_async(out.as_mut()).await?;
+        }
+        cmd("EXEC").write_command_async(out.as_mut()).await?;
+    } else {
+        for cmd in cmds {
+            cmd.write_command_async(out.as_mut()).await?;
+        }
+    }
+    Ok(())
 }
 
 impl RedisWrite for Cmd {
@@ -288,12 +338,19 @@ impl Cmd {
         cmd
     }
 
+    pub(crate) async fn write_command_async(
+        &self,
+        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    ) -> io::Result<()> {
+        write_command_async(out, self.args_iter(), self.cursor.unwrap_or(0)).await
+    }
+
     fn write_packed_command(&self, cmd: &mut Vec<u8>) {
-        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
-        write_command_preallocated(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
@@ -328,16 +385,12 @@ impl Cmd {
 
     /// Async version of `query`.
     #[inline]
-    pub fn query_async<C, T: FromRedisValue>(&self, con: C) -> RedisFuture<(C, T)>
+    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
-        T: Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
-        let pcmd = self.get_packed_command();
-        Box::new(
-            con.req_packed_command(pcmd)
-                .and_then(|(con, val)| from_redis_value(&val).map(|t| (con, t))),
-        )
+        let val = con.req_packed_command(self).await?;
+        from_redis_value(&val)
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
@@ -394,7 +447,8 @@ impl Cmd {
         self.query::<()>(con).unwrap();
     }
 
-    fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+    /// Returns an iterator over the arguments in this command (including the command name itself)
+    pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
         let mut prev = 0;
         self.args.iter().map(move |arg| match *arg {
             Arg::Simple(i) => {
@@ -522,6 +576,11 @@ impl Pipeline {
         self
     }
 
+    /// Returns an iterator over all the commands currently in this pipeline
+    pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
+        self.commands.iter()
+    }
+
     fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
         let mut rv = vec![];
         for (idx, result) in resp.into_iter().enumerate() {
@@ -533,8 +592,15 @@ impl Pipeline {
     }
 
     /// Returns the encoded pipeline commands.
-    pub fn get_packed_pipeline(&self, atomic: bool) -> Vec<u8> {
-        encode_pipeline(&self.commands, atomic)
+    pub fn get_packed_pipeline(&self) -> Vec<u8> {
+        encode_pipeline(&self.commands, self.transaction_mode)
+    }
+
+    pub(crate) async fn write_pipeline_async(
+        &self,
+        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
+    ) -> io::Result<()> {
+        write_pipeline_async(out, &self.commands, self.transaction_mode).await
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
@@ -606,60 +672,48 @@ impl Pipeline {
         self.commands.clear();
     }
 
-    fn execute_pipelined_async<C>(self, con: C) -> RedisFuture<(C, Value)>
+    async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
-        Box::new(
-            con.req_packed_commands(
-                encode_pipeline(&self.commands, false),
-                0,
-                self.commands.len(),
-            )
-            .map(move |(con, value)| (con, self.make_pipeline_results(value))),
-        )
+        let value = con
+            .req_packed_commands(self, 0, self.commands.len())
+            .await?;
+        Ok(self.make_pipeline_results(value))
     }
 
-    fn execute_transaction_async<C>(self, con: C) -> RedisFuture<(C, Value)>
+    async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
-        Box::new(
-            con.req_packed_commands(
-                encode_pipeline(&self.commands, true),
-                self.commands.len() + 1,
-                1,
+        let mut resp = con
+            .req_packed_commands(self, self.commands.len() + 1, 1)
+            .await?;
+        match resp.pop() {
+            Some(Value::Nil) => Ok(Value::Nil),
+            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            _ => Err((
+                ErrorKind::ResponseError,
+                "Invalid response when parsing multi response",
             )
-            .and_then(move |(con, mut resp)| match resp.pop() {
-                Some(Value::Nil) => Ok((con, Value::Nil)),
-                Some(Value::Bulk(items)) => Ok((con, self.make_pipeline_results(items))),
-                _ => fail!((
-                    ErrorKind::ResponseError,
-                    "Invalid response when parsing multi response"
-                )),
-            }),
-        )
+                .into()),
+        }
     }
 
     /// Async version of `query`.
     #[inline]
-    pub fn query_async<C, T: FromRedisValue>(self, con: C) -> RedisFuture<(C, T)>
+    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
-        C: crate::aio::ConnectionLike + Send + 'static,
-        T: Send + 'static,
+        C: crate::aio::ConnectionLike,
     {
-        use futures::future;
-
-        let future = if self.commands.is_empty() {
-            return Box::new(future::result(
-                from_redis_value(&Value::Bulk(vec![])).map(|v| (con, v)),
-            ));
+        let v = if self.commands.is_empty() {
+            return from_redis_value(&Value::Bulk(vec![]));
         } else if self.transaction_mode {
-            self.execute_transaction_async(con)
+            self.execute_transaction_async(con).await?
         } else {
-            self.execute_pipelined_async(con)
+            self.execute_pipelined_async(con).await?
         };
-        Box::new(future.and_then(|(con, v)| Ok((con, from_redis_value(&v)?))))
+        from_redis_value(&v)
     }
 
     /// This is a shortcut to `query()` that does not return a value and

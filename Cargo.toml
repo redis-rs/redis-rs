@@ -1,16 +1,18 @@
 [package]
 name = "redis"
-version = "0.13.1-alpha.0"
+version = "0.14.1-alpha.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/mitsuhiko/redis-rs"
 repository = "https://github.com/mitsuhiko/redis-rs"
 documentation = "https://docs.rs/redis"
-# XXX: some code here is MIT licensed (cluster). Resolve before releasing
 license = "BSD-3-Clause"
 readme = "README.md"
 edition = "2018"
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 dtoa = "0.4"
@@ -19,37 +21,40 @@ percent-encoding = "2.1"
 sha1 = ">= 0.2, < 0.7"
 url = "2.1"
 combine = "3.8.1"
-bytes = "0.4"
-futures = "0.1"
-tokio-executor = { version = "0.1", optional = true }
-tokio-tcp = "0.1"
-tokio-io = "0.1"
-tokio-codec = "0.1"
-tokio-sync = "0.1"
+bytes = "0.5"
+futures-util = { version = "0.3.0", features = ["sink"], default-features = false }
+futures-executor = "0.3.0"
+pin-project-lite = "0.1"
+tokio-util = { version = "0.2", features = ["codec"] }
+tokio = { version = "0.2", features = ["tcp", "uds", "io-util", "sync", "stream"] }
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
-r2d2 = { version = "0.8.5", optional = true }
 
 [features]
-default = ["executor", "geospatial"]
-
+default = ["geospatial"]
+tokio-rt-core = ["tokio/rt-core"]
 geospatial = []
-executor = ["tokio-executor"]
 cluster = ["crc16", "rand"]
 
-[target.'cfg(unix)'.dependencies]
-tokio-uds = { version = "0.2" }
-
 [dev-dependencies]
-rand = "0.7.0"
+rand = "0.7"
 net2 = "0.2"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
-criterion = "0.2"
+futures = "0.3"
+criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = "0.1"
+tokio = { version = "0.2", features = ["rt-core", "macros"] }
+
+[[test]]
+name = "test_async"
+required-features = ["tokio-rt-core"]
 
 [[bench]]
 name = "bench_basic"
 harness = false
+
+[[example]]
+name = "async-multiplexed"
+required-features = ["tokio-rt-core"]
