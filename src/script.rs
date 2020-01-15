@@ -1,6 +1,5 @@
 use sha1::Sha1;
 
-use crate::aio;
 use crate::cmd::cmd;
 use crate::connection::ConnectionLike;
 use crate::types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
@@ -150,9 +149,10 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Asynchronously invokes the script and returns the result.
     #[inline]
+    #[cfg(feature = "aio")]
     pub async fn invoke_async<C, T>(&self, con: &mut C) -> RedisResult<T>
     where
-        C: aio::ConnectionLike,
+        C: crate::aio::ConnectionLike,
         T: FromRedisValue,
     {
         let mut eval_cmd = cmd("EVALSHA");

@@ -24,16 +24,17 @@ combine = "3.8.1"
 bytes = "0.5"
 futures-util = { version = "0.3.0", features = ["sink"], default-features = false }
 futures-executor = "0.3.0"
-pin-project-lite = "0.1"
+pin-project-lite = { version = "0.1", optional = true }
 tokio-util = { version = "0.2", features = ["codec"] }
-tokio = { version = "0.2", features = ["tcp", "uds", "io-util", "sync", "stream"] }
+tokio = "0.2"
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
 r2d2 = { version = "0.8.8", optional = true }
 
 [features]
-default = ["geospatial"]
-tokio-rt-core = ["tokio/rt-core"]
+default = ["geospatial", "aio"]
+aio = ["pin-project-lite", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util"]
+tokio-rt-core = ["aio", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
 
@@ -59,3 +60,7 @@ harness = false
 [[example]]
 name = "async-multiplexed"
 required-features = ["tokio-rt-core"]
+
+[[example]]
+name = "async-await"
+required-features = ["aio"]

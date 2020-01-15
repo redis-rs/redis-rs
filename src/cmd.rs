@@ -1,11 +1,15 @@
-use std::{io, pin::Pin};
+use std::io;
 
 use crate::connection::ConnectionLike;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+#[cfg(feature = "aio")]
+use {
+    std::pin::Pin,
+    tokio::io::{AsyncWrite, AsyncWriteExt},
+};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -162,6 +166,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "aio")]
 async fn write_command_async<'a, I>(
     mut cmd: Pin<&mut (impl ?Sized + AsyncWrite)>,
     args: I,
@@ -217,6 +222,7 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     rv
 }
 
+#[cfg(feature = "aio")]
 async fn write_pipeline_async(
     mut out: Pin<&mut (impl ?Sized + AsyncWrite)>,
     cmds: &[Cmd],
@@ -338,6 +344,7 @@ impl Cmd {
         cmd
     }
 
+    #[cfg(feature = "aio")]
     pub(crate) async fn write_command_async(
         &self,
         out: Pin<&mut (impl ?Sized + AsyncWrite)>,
@@ -385,6 +392,7 @@ impl Cmd {
 
     /// Async version of `query`.
     #[inline]
+    #[cfg(feature = "aio")]
     pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike,
@@ -596,6 +604,7 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
+    #[cfg(feature = "aio")]
     pub(crate) async fn write_pipeline_async(
         &self,
         out: Pin<&mut (impl ?Sized + AsyncWrite)>,
@@ -672,6 +681,7 @@ impl Pipeline {
         self.commands.clear();
     }
 
+    #[cfg(feature = "aio")]
     async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike,
@@ -682,6 +692,7 @@ impl Pipeline {
         Ok(self.make_pipeline_results(value))
     }
 
+    #[cfg(feature = "aio")]
     async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
         C: crate::aio::ConnectionLike,
@@ -702,6 +713,7 @@ impl Pipeline {
 
     /// Async version of `query`.
     #[inline]
+    #[cfg(feature = "aio")]
     pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
     where
         C: crate::aio::ConnectionLike,
