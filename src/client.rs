@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::time::Duration;
 
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
@@ -55,6 +54,7 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
+    #[cfg(feature = "aio")]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
         crate::aio::connect(&self.connection_info).await
     }
@@ -80,9 +80,13 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
+    #[cfg(feature = "aio")]
     pub async fn get_multiplexed_async_connection(
         &self,
-    ) -> RedisResult<(crate::aio::MultiplexedConnection, impl Future<Output = ()>)> {
+    ) -> RedisResult<(
+        crate::aio::MultiplexedConnection,
+        impl std::future::Future<Output = ()>,
+    )> {
         let con = self.get_async_connection().await?;
         Ok(crate::aio::MultiplexedConnection::new(con))
     }

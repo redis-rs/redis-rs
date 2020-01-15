@@ -1,6 +1,6 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::types::{FromRedisValue, ToRedisArgs, RedisResult, RedisFuture, NumericBehavior};
+use crate::types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
 use crate::connection::{ConnectionLike, Msg, Connection};
 use crate::cmd::{cmd, Cmd, Pipeline, Iter};
 
@@ -160,6 +160,7 @@ macro_rules! implement_commands {
         /// assert_eq!(con.get("my_key").await, Ok(42i32));
         /// # Ok(()) }
         /// ```
+        #[cfg(feature = "aio")]
         pub trait AsyncCommands : crate::aio::ConnectionLike + Send + Sized {
             $(
                 $(#[$attr])*
@@ -167,7 +168,7 @@ macro_rules! implement_commands {
                 fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
                     & $lifetime mut self
                     $(, $argname: $argty)*
-                    ) -> RedisFuture<'a, RV>
+                    ) -> crate::types::RedisFuture<'a, RV>
                 where RV: FromRedisValue,
                 {
                     Box::pin(async move { ($body).query_async(self).await })
@@ -1094,6 +1095,7 @@ pub trait PubSubCommands: Sized {
 
 impl<T> Commands for T where T: ConnectionLike {}
 
+#[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + ?Sized {}
 
 impl PubSubCommands for Connection {

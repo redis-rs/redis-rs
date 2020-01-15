@@ -17,14 +17,15 @@ use std::path::PathBuf;
 
 use self::futures::Future;
 
-use redis::{RedisResult, Value};
+use redis::Value;
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new()
-        .basic_scheduler()
-        .enable_io()
-        .build()
-        .unwrap()
+    let mut builder = tokio::runtime::Builder::new();
+
+    #[cfg(feature = "aio")]
+    builder.enable_io();
+
+    builder.basic_scheduler().build().unwrap()
 }
 
 pub fn block_on_all<F>(f: F) -> F::Output
@@ -185,7 +186,8 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub async fn async_connection(&self) -> RedisResult<redis::aio::Connection> {
+    #[cfg(feature = "aio")]
+    pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::Connection> {
         self.client.get_async_connection().await
     }
 
@@ -196,7 +198,7 @@ impl TestContext {
     #[cfg(feature = "tokio-rt-core")]
     pub fn multiplexed_async_connection(
         &self,
-    ) -> impl Future<Output = RedisResult<redis::aio::MultiplexedConnection>> {
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
         let client = self.client.clone();
         async move { client.get_multiplexed_tokio_connection().await }
     }
