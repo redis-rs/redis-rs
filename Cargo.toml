@@ -53,6 +53,10 @@ tokio = { version = "0.2", features = ["rt-core", "macros"] }
 name = "test_async"
 required-features = ["tokio-rt-core"]
 
+[[test]]
+name = "parser"
+required-features = ["aio"]
+
 [[bench]]
 name = "bench_basic"
 harness = false
