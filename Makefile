@@ -5,7 +5,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test --no-default-features -- --nocapture
+	@REDISRS_SERVER_TYPE=tcp RUST_TEST_THREADS=1 cargo test --no-default-features --tests -- --nocapture
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features"
