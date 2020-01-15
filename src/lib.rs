@@ -45,7 +45,6 @@
 //!
 //!     Ok(())
 //! }
-//! # fn main() {}
 //! ```
 //!
 //! ## Optional Features
@@ -106,7 +105,6 @@
 //!     let _ : () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
-//! # fn main() {}
 //! ```
 //!
 //! Note that high-level commands are work in progress and many are still

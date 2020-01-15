@@ -167,12 +167,12 @@ impl<'a> ScriptInvocation<'a> {
         match eval_cmd.query_async(con).await {
             Ok(val) => {
                 // Return the value from the script evaluation
-                return Ok(val).into();
+                Ok(val)
             }
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
                 if err.kind() == ErrorKind::NoScriptError {
-                    let _hash = load_cmd.query_async(con).await?;
+                    load_cmd.query_async(con).await?;
                     eval_cmd.query_async(con).await
                 } else {
                     Err(err)

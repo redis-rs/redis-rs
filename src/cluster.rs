@@ -11,16 +11,14 @@
 //! use redis::Commands;
 //! use redis::cluster::ClusterClient;
 //!
-//! fn main() {
-//!     let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//!     let client = ClusterClient::open(nodes).unwrap();
-//!     let mut connection = client.get_connection().unwrap();
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let client = ClusterClient::open(nodes).unwrap();
+//! let mut connection = client.get_connection().unwrap();
 //!
-//!     let _: () = connection.set("test", "test_data").unwrap();
-//!     let rv: String = connection.get("test").unwrap();
+//! let _: () = connection.set("test", "test_data").unwrap();
+//! let rv: String = connection.get("test").unwrap();
 //!
-//!     assert_eq!(rv, "test_data");
-//! }
+//! assert_eq!(rv, "test_data");
 //! ```
 //!
 //! # Pipelining
@@ -28,19 +26,17 @@
 //! use redis::{Commands, pipe};
 //! use redis::cluster::ClusterClient;
 //!
-//! fn main() {
-//!     let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//!     let client = ClusterClient::open(nodes).unwrap();
-//!     let mut connection = client.get_connection().unwrap();
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let client = ClusterClient::open(nodes).unwrap();
+//! let mut connection = client.get_connection().unwrap();
 //!
-//!     let key = "test";
+//! let key = "test";
 //!
-//!     let _: () = pipe()
-//!         .rpush(key, "123").ignore()
-//!         .ltrim(key, -10, -1).ignore()
-//!         .expire(key, 60).ignore()
-//!         .query(&mut connection).unwrap();
-//! }
+//! let _: () = pipe()
+//!     .rpush(key, "123").ignore()
+//!     .ltrim(key, -10, -1).ignore()
+//!     .expire(key, 60).ignore()
+//!     .query(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -290,22 +286,18 @@ impl ClusterConnection {
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&self) -> RedisResult<()> {
         let mut slots = self.slots.borrow_mut();
-        *slots = {
-            let new_slots = if self.readonly {
-                let mut rng = thread_rng();
-                self.create_new_slots(|slot_data| {
-                    let replicas = slot_data.replicas();
-                    if replicas.is_empty() {
-                        slot_data.master().to_string()
-                    } else {
-                        replicas.choose(&mut rng).unwrap().to_string()
-                    }
-                })?
-            } else {
-                self.create_new_slots(|slot_data| slot_data.master().to_string())?
-            };
-
-            new_slots
+        *slots = if self.readonly {
+            let mut rng = thread_rng();
+            self.create_new_slots(|slot_data| {
+                let replicas = slot_data.replicas();
+                if replicas.is_empty() {
+                    slot_data.master().to_string()
+                } else {
+                    replicas.choose(&mut rng).unwrap().to_string()
+                }
+            })?
+        } else {
+            self.create_new_slots(|slot_data| slot_data.master().to_string())?
         };
 
         let mut connections = self.connections.borrow_mut();
@@ -421,7 +413,7 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = connect(addr.as_ref(), self.readonly, self.password.clone())?;
+            let conn = connect(addr, self.readonly, self.password.clone())?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
     }
@@ -442,6 +434,7 @@ impl ClusterConnection {
         Ok(T::merge_results(results))
     }
 
+    #[allow(clippy::unnecessary_unwrap)]
     fn request<T, F>(&self, cmd: &[u8], mut func: F) -> RedisResult<T>
     where
         T: MergeResults + std::fmt::Debug,
@@ -454,10 +447,10 @@ impl ClusterConnection {
                 return self.execute_on_all_nodes(func);
             }
             None => {
-                return Err(((
+                return Err((
                     ErrorKind::ClientError,
                     "this command cannot be safely routed in cluster mode",
-                ))
+                )
                     .into())
             }
         };
