@@ -106,4 +106,20 @@ impl ConnectionLike for Client {
     fn get_db(&self) -> i64 {
         self.connection_info.db
     }
+
+    fn check_connection(&mut self) -> bool {
+        if let Ok(mut conn) = self.get_connection() {
+            conn.check_connection()
+        } else {
+            false
+        }
+    }
+
+    fn is_open(&self) -> bool {
+        if let Ok(conn) = self.get_connection() {
+            conn.is_open()
+        } else {
+            false
+        }
+    }
 }

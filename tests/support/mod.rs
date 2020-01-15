@@ -34,6 +34,12 @@ where
     current_thread_runtime().block_on(f)
 }
 
+#[cfg(feature = "cluster")]
+mod cluster;
+
+#[cfg(feature = "cluster")]
+pub use self::cluster::*;
+
 #[derive(PartialEq)]
 enum ServerType {
     Tcp,
@@ -64,10 +70,6 @@ impl ServerType {
 impl RedisServer {
     pub fn new() -> RedisServer {
         let server_type = ServerType::get_intended();
-        let mut cmd = process::Command::new("redis-server");
-        cmd.stdout(process::Stdio::null())
-            .stderr(process::Stdio::null());
-
         let addr = match server_type {
             ServerType::Tcp => {
                 // this is technically a race but we can't do better with
@@ -81,22 +83,41 @@ impl RedisServer {
                     .listen(1)
                     .unwrap();
                 let server_port = listener.local_addr().unwrap().port();
-                cmd.arg("--port")
-                    .arg(server_port.to_string())
-                    .arg("--bind")
-                    .arg("127.0.0.1");
                 redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), server_port)
             }
             ServerType::Unix => {
                 let (a, b) = rand::random::<(u64, u64)>();
                 let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
-                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
+        RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
+    }
 
-        let process = cmd.spawn().unwrap();
-        RedisServer { process, addr }
+    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
+        addr: redis::ConnectionAddr,
+        spawner: F,
+    ) -> RedisServer {
+        let mut cmd = process::Command::new("redis-server");
+        cmd.stdout(process::Stdio::null())
+            .stderr(process::Stdio::null());
+
+        match addr {
+            redis::ConnectionAddr::Tcp(ref bind, server_port) => {
+                cmd.arg("--port")
+                    .arg(server_port.to_string())
+                    .arg("--bind")
+                    .arg(bind);
+            }
+            redis::ConnectionAddr::Unix(ref path) => {
+                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
+            }
+        };
+
+        RedisServer {
+            process: spawner(&mut cmd),
+            addr,
+        }
     }
 
     pub fn wait(&mut self) {

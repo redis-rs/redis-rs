@@ -376,6 +376,12 @@ pub mod aio;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
 
+#[cfg(feature = "cluster")]
+pub mod cluster;
+
+#[cfg(feature = "r2d2")]
+mod r2d2;
+
 mod client;
 mod cmd;
 mod commands;

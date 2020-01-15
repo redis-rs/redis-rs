@@ -120,6 +120,12 @@ parser! {
                         "EXECABORT" => ErrorKind::ExecAbortError,
                         "LOADING" => ErrorKind::BusyLoadingError,
                         "NOSCRIPT" => ErrorKind::NoScriptError,
+                        "MOVED" => ErrorKind::Moved,
+                        "ASK" => ErrorKind::Ask,
+                        "TRYAGAIN" => ErrorKind::TryAgain,
+                        "CLUSTERDOWN" => ErrorKind::ClusterDown,
+                        "CROSSSLOT" => ErrorKind::CrossSlot,
+                        "MASTERDOWN" => ErrorKind::MasterDown,
                         code => {
                             return make_extension_error(code, pieces.next())
                         }

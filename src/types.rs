@@ -38,10 +38,24 @@ pub enum ErrorKind {
     /// An error that was caused because the parameter to the
     /// client were wrong.
     InvalidClientConfig,
+    /// Raised if a key moved to a different node.
+    Moved,
+    /// Raised if a key moved to a different node but we need to ask.
+    Ask,
+    /// Raised if a request needs to be retried.
+    TryAgain,
+    /// Raised if a redis cluster is down.
+    ClusterDown,
+    /// A request spans multiple slots
+    CrossSlot,
+    /// A cluster master is unavailable.
+    MasterDown,
     /// This kind is returned if the redis error is one that is
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
     IoError,
+    /// An error raised that was identified on the client before execution.
+    ClientError,
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
     ExtensionError,
@@ -253,6 +267,35 @@ impl RedisError {
         }
     }
 
+    /// Returns the error detail.
+    pub fn detail(&self) -> Option<&str> {
+        match self.repr {
+            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail) => Some(detail.as_str()),
+            ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Returns the raw error code if available.
+    pub fn code(&self) -> Option<&str> {
+        match self.kind() {
+            ErrorKind::ResponseError => Some("ERR"),
+            ErrorKind::ExecAbortError => Some("EXECABORT"),
+            ErrorKind::BusyLoadingError => Some("LOADING"),
+            ErrorKind::NoScriptError => Some("NOSCRIPT"),
+            ErrorKind::Moved => Some("MOVED"),
+            ErrorKind::Ask => Some("ASK"),
+            ErrorKind::TryAgain => Some("TRYAGAIN"),
+            ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
+            ErrorKind::CrossSlot => Some("CROSSSLOT"),
+            ErrorKind::MasterDown => Some("MASTERDOWN"),
+            _ => match self.repr {
+                ErrorRepr::ExtensionError(ref code, _) => Some(&code),
+                _ => None,
+            },
+        }
+    }
+
     /// Returns the name of the error category for display purposes.
     pub fn category(&self) -> &str {
         match self.kind() {
@@ -263,8 +306,15 @@ impl RedisError {
             ErrorKind::BusyLoadingError => "busy loading",
             ErrorKind::NoScriptError => "no script",
             ErrorKind::InvalidClientConfig => "invalid client config",
+            ErrorKind::Moved => "key moved",
+            ErrorKind::Ask => "key moved (ask)",
+            ErrorKind::TryAgain => "try again",
+            ErrorKind::ClusterDown => "cluster down",
+            ErrorKind::CrossSlot => "cross-slot",
+            ErrorKind::MasterDown => "master down",
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
+            ErrorKind::ClientError => "client error",
         }
     }
 
@@ -272,6 +322,16 @@ impl RedisError {
     pub fn is_io_error(&self) -> bool {
         match self.kind() {
             ErrorKind::IoError => true,
+            _ => false,
+        }
+    }
+
+    /// Indicates that this is a cluster error.
+    pub fn is_cluster_error(&self) -> bool {
+        match self.kind() {
+            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown => {
+                true
+            }
             _ => false,
         }
     }
@@ -320,7 +380,25 @@ impl RedisError {
         }
     }
 
-    /// Returns the extension error code
+    /// Returns the node the error refers to.
+    ///
+    /// This returns `(addr, slot_id)`.
+    pub fn redirect_node(&self) -> Option<(&str, u16)> {
+        if self.kind() != ErrorKind::Ask {
+            return None;
+        }
+        let mut iter = self.detail()?.split_ascii_whitespace();
+        let slot_id: u16 = iter.next()?.parse().ok()?;
+        let addr = iter.next()?;
+        Some((addr, slot_id))
+    }
+
+    /// Returns the extension error code.
+    ///
+    /// This method should not be used because every time the redis library
+    /// adds support for a new error code it would disappear form this method.
+    /// `code()` always returns the code.
+    #[deprecated(note = "use code() instead")]
     pub fn extension_error_code(&self) -> Option<&str> {
         match self.repr {
             ErrorRepr::ExtensionError(ref code, _) => Some(&code),
