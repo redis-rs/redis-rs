@@ -740,12 +740,20 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
-impl <T: ToRedisArgs> ToRedisArgs for &T {
+impl<T: ToRedisArgs> ToRedisArgs for &T {
+    fn to_redis_args(&self) -> Vec<Vec<u8>> {
+        ToRedisArgs::to_redis_args(*self)
+    }
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
         ToRedisArgs::write_redis_args(*self, out)
+    }
+
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        ToRedisArgs::describe_numeric_behavior(*self)
     }
 
     fn is_single_arg(&self) -> bool {
