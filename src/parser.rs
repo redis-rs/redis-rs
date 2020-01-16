@@ -5,21 +5,25 @@ use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
-use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
+use bytes::{Buf, BytesMut};
 use futures_util::{
     future,
     task::{self, Poll},
 };
 use tokio::io::{AsyncBufRead, AsyncRead};
 
-use combine;
-use combine::byte::{byte, crlf, take_until_bytes};
-use combine::combinator::{any_send_partial_state, AnySendPartialState};
-#[allow(unused_imports)] // See https://github.com/rust-lang/rust/issues/43970
-use combine::error::StreamError;
-use combine::parser::choice::choice;
-use combine::range::{recognize, take};
-use combine::stream::{FullRangeStream, StreamErrorFor};
+use combine::{
+    error::StreamError,
+    opaque,
+    parser::{
+        byte::{byte, crlf, take_until_bytes},
+        choice::choice,
+        combinator::{any_send_partial_state, AnySendPartialState},
+        range::{recognize, take},
+    },
+    stream::{RangeStream, StreamErrorFor},
+    Parser as _,
+};
 
 struct ResultExtend<T, E>(Result<T, E>);
 
@@ -56,42 +60,52 @@ where
     }
 }
 
-parser! {
-    type PartialState = AnySendPartialState;
-    fn value['a, I]()(I) -> RedisResult<Value>
-        where [I: FullRangeStream<Item = u8, Range = &'a [u8]> ]
-    {
-        let line = || recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ())))
-            .and_then(|line: &[u8]| {
-                str::from_utf8(&line[..line.len() - 2])
-                    .map_err(StreamErrorFor::<I>::other)
-            });
+fn value<'a, I>(
+) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendPartialState>
+where
+    I: RangeStream<Token = u8, Range = &'a [u8]>,
+    I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
+{
+    opaque!({
+        let line = || {
+            recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
+                |line: &[u8]| {
+                    str::from_utf8(&line[..line.len() - 2]).map_err(StreamErrorFor::<I>::other)
+                },
+            )
+        };
 
-        let status = || line().map(|line| {
-            if line == "OK" {
-                Value::Okay
-            } else {
-                Value::Status(line.into())
-            }
-        });
+        let status = || {
+            line().map(|line| {
+                if line == "OK" {
+                    Value::Okay
+                } else {
+                    Value::Status(line.into())
+                }
+            })
+        };
 
-        let int = || line().and_then(|line| {
-            match line.trim().parse::<i64>() {
-                Err(_) => Err(StreamErrorFor::<I>::message_static_message("Expected integer, got garbage")),
+        let int = || {
+            line().and_then(|line| match line.trim().parse::<i64>() {
+                Err(_) => Err(StreamErrorFor::<I>::message_static_message(
+                    "Expected integer, got garbage",
+                )),
                 Ok(value) => Ok(value),
-            }
-        });
+            })
+        };
 
-        let data = || int().then_partial(move |size| {
-            if *size < 0 {
-                combine::value(Value::Nil).left()
-            } else {
-                take(*size as usize)
-                    .map(|bs: &[u8]| Value::Data(bs.to_vec()))
-                    .skip(crlf())
-                    .right()
-            }
-        });
+        let data = || {
+            int().then_partial(move |size| {
+                if *size < 0 {
+                    combine::value(Value::Nil).left()
+                } else {
+                    take(*size as usize)
+                        .map(|bs: &[u8]| Value::Data(bs.to_vec()))
+                        .skip(crlf())
+                        .right()
+                }
+            })
+        };
 
         let bulk = || {
             int().then_partial(|&mut length| {
@@ -100,49 +114,44 @@ parser! {
                 } else {
                     let length = length as usize;
                     combine::count_min_max(length, length, value())
-                        .map(|result: ResultExtend<_, _>| {
-                            result.0.map(Value::Bulk)
-                        })
+                        .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
                         .right()
                 }
             })
         };
 
         let error = || {
-            line()
-                .map(|line: &str| {
-                    let desc = "An error was signalled by the server";
-                    let mut pieces = line.splitn(2, ' ');
-                    let kind = match pieces.next().unwrap() {
-                        "ERR" => ErrorKind::ResponseError,
-                        "EXECABORT" => ErrorKind::ExecAbortError,
-                        "LOADING" => ErrorKind::BusyLoadingError,
-                        "NOSCRIPT" => ErrorKind::NoScriptError,
-                        "MOVED" => ErrorKind::Moved,
-                        "ASK" => ErrorKind::Ask,
-                        "TRYAGAIN" => ErrorKind::TryAgain,
-                        "CLUSTERDOWN" => ErrorKind::ClusterDown,
-                        "CROSSSLOT" => ErrorKind::CrossSlot,
-                        "MASTERDOWN" => ErrorKind::MasterDown,
-                        code => {
-                            return make_extension_error(code, pieces.next())
-                        }
-                    };
-                    match pieces.next() {
-                        Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                        None => RedisError::from((kind, desc)),
-                    }
-                })
+            line().map(|line: &str| {
+                let desc = "An error was signalled by the server";
+                let mut pieces = line.splitn(2, ' ');
+                let kind = match pieces.next().unwrap() {
+                    "ERR" => ErrorKind::ResponseError,
+                    "EXECABORT" => ErrorKind::ExecAbortError,
+                    "LOADING" => ErrorKind::BusyLoadingError,
+                    "NOSCRIPT" => ErrorKind::NoScriptError,
+                    "MOVED" => ErrorKind::Moved,
+                    "ASK" => ErrorKind::Ask,
+                    "TRYAGAIN" => ErrorKind::TryAgain,
+                    "CLUSTERDOWN" => ErrorKind::ClusterDown,
+                    "CROSSSLOT" => ErrorKind::CrossSlot,
+                    "MASTERDOWN" => ErrorKind::MasterDown,
+                    code => return make_extension_error(code, pieces.next()),
+                };
+                match pieces.next() {
+                    Some(detail) => RedisError::from((kind, desc, detail.to_string())),
+                    None => RedisError::from((kind, desc)),
+                }
+            })
         };
 
         any_send_partial_state(choice((
-           byte(b'+').with(status().map(Ok)),
-           byte(b':').with(int().map(Value::Int).map(Ok)),
-           byte(b'$').with(data().map(Ok)),
-           byte(b'*').with(bulk()),
-           byte(b'-').with(error().map(Err))
+            byte(b'+').with(status().map(Ok)),
+            byte(b':').with(int().map(Value::Int).map(Ok)),
+            byte(b'$').with(data().map(Ok)),
+            byte(b'*').with(bulk()),
+            byte(b'-').with(error().map(Err)),
         )))
-    }
+    })
 }
 
 #[cfg(feature = "aio")]
@@ -156,35 +165,25 @@ mod aio_support {
         state: AnySendPartialState,
     }
 
-    impl Encoder for ValueCodec {
-        type Item = Vec<u8>;
-        type Error = RedisError;
-        fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-            dst.extend_from_slice(item.as_ref());
-            Ok(())
-        }
-    }
-
-    impl Decoder for ValueCodec {
-        type Item = Value;
-        type Error = RedisError;
-        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            let (opt, removed_len) = {
-                let buffer = &bytes[..];
-                let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
-                match combine::stream::decode(value(), stream, &mut self.state) {
-                    Ok(x) => x,
-                    Err(err) => {
-                        let err = err
-                            .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{:?}", range))
-                            .to_string();
-                        return Err(RedisError::from((
-                            ErrorKind::ResponseError,
-                            "parse error",
-                            err,
-                        )));
-                    }
+impl Decoder for ValueCodec {
+    type Item = Value;
+    type Error = RedisError;
+    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let (opt, removed_len) = {
+            let buffer = &bytes[..];
+            let mut stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
+            match combine::stream::decode(value(), &mut stream, &mut self.state) {
+                Ok(x) => x,
+                Err(err) => {
+                    let err = err
+                        .map_position(|pos| pos.translate_position(buffer))
+                        .map_range(|range| format!("{:?}", range))
+                        .to_string();
+                    return Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "parse error",
+                        err,
+                    )));
                 }
             };
 
@@ -245,8 +244,8 @@ where
                 buffer
             };
 
-            let stream = combine::easy::Stream(combine::stream::PartialStream(&buffer[..]));
-            match combine::stream::decode(value(), stream, &mut state) {
+            let mut stream = combine::easy::Stream(combine::stream::PartialStream(&buffer[..]));
+            match combine::stream::decode(value(), &mut stream, &mut state) {
                 Ok(x) => x,
                 Err(err) => {
                     let err = err
