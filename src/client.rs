@@ -64,7 +64,7 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
-    /// This requires the `tokio-executor` feature as it uses the default tokio executor.
+    /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
     #[cfg(feature = "tokio-rt-core")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
     pub async fn get_multiplexed_tokio_connection(
