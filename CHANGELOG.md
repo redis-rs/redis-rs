@@ -10,7 +10,7 @@
 
 **Fixes and improvements**
 
-* Added support for cargo cluster ([#239](https://github.com/mitsuhiko/redis-rs/pull/239))
+* Added support for redis cluster ([#239](https://github.com/mitsuhiko/redis-rs/pull/239))
 
 ## [0.14.0](https://github.com/mitsuhiko/redis-rs/compare/0.13.0...0.14.0) - 2020-01-08
 
