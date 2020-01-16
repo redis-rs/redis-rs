@@ -39,13 +39,13 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
         runtime
             .block_on(async {
                 let key = "test_key";
-                let () = redis::cmd("SET")
+                redis::cmd("SET")
                     .arg(key)
                     .arg(42)
                     .query_async(&mut con)
                     .await?;
                 let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
-                let () = redis::cmd("DEL").arg(key).query_async(&mut con).await?;
+                redis::cmd("DEL").arg(key).query_async(&mut con).await?;
                 Ok(())
             })
             .map_err(|err: RedisError| err)
@@ -124,7 +124,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        let () = runtime
+        runtime
             .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });

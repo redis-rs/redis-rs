@@ -17,12 +17,12 @@ fn test_args() {
 
     block_on_all(connect.and_then(|mut con| {
         async move {
-            let () = redis::cmd("SET")
+            redis::cmd("SET")
                 .arg("key1")
                 .arg(b"foo")
                 .query_async(&mut con)
                 .await?;
-            let () = redis::cmd("SET")
+            redis::cmd("SET")
                 .arg(&["key2", "bar"])
                 .query_async(&mut con)
                 .await?;
@@ -116,12 +116,12 @@ fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisRe
 
         let foo_val = format!("foo{}", i);
 
-        let () = redis::cmd("SET")
+        redis::cmd("SET")
             .arg(&key[..])
             .arg(foo_val.as_bytes())
             .query_async(&mut con)
             .await?;
-        let () = redis::cmd("SET")
+        redis::cmd("SET")
             .arg(&[&key2, "bar"])
             .query_async(&mut con)
             .await?;
@@ -202,7 +202,7 @@ fn test_transaction_multiplexed_connection() {
                     let mut con = con.clone();
                     async move {
                         let foo_val = i;
-                        let bar = format!("bar{}", i);
+                        let bar_val = format!("bar{}", i);
 
                         let mut pipe = redis::pipe();
                         pipe.atomic()
@@ -211,14 +211,14 @@ fn test_transaction_multiplexed_connection() {
                             .arg(foo_val)
                             .ignore()
                             .cmd("SET")
-                            .arg(&["key2", &bar[..]])
+                            .arg(&["key2", &bar_val[..]])
                             .ignore()
                             .cmd("MGET")
                             .arg(&["key", "key2"]);
 
                         pipe.query_async(&mut con)
                             .map(move |result| {
-                                assert_eq!(Ok(((foo_val, bar.clone().into_bytes()),)), result);
+                                assert_eq!(Ok(((foo_val, bar_val.into_bytes()),)), result);
                                 result
                             })
                             .await
@@ -246,14 +246,14 @@ fn test_script() {
 
     block_on_all(async move {
         let mut con = ctx.multiplexed_async_connection().await?;
-        let () = script1
+        script1
             .key("key1")
             .arg("foo")
             .invoke_async(&mut con)
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "foo");
-        let () = script1
+        script1
             .key("key1")
             .arg("bar")
             .invoke_async(&mut con)
