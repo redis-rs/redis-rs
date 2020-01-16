@@ -680,15 +680,6 @@ impl ToRedisArgs for String {
     }
 }
 
-impl<'a> ToRedisArgs for &'a String {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        out.write_arg(self.as_bytes())
-    }
-}
-
 impl<'a> ToRedisArgs for &'a str {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -746,6 +737,19 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+impl <T: ToRedisArgs> ToRedisArgs for &T {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        ToRedisArgs::write_redis_args(*self, out)
+    }
+
+    fn is_single_arg(&self) -> bool {
+        ToRedisArgs::is_single_arg(*self)
     }
 }
 
