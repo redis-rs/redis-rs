@@ -60,6 +60,7 @@ required-features = ["aio"]
 [[bench]]
 name = "bench_basic"
 harness = false
+required-features = ["tokio-rt-core"]
 
 [[example]]
 name = "async-multiplexed"
