@@ -112,7 +112,7 @@ fn bench_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        let _: () = pipe.query(&mut con).unwrap();
+        let () = pipe.query(&mut con).unwrap();
     });
 }
 
@@ -124,7 +124,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        runtime
+        let () = runtime
             .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
@@ -140,7 +140,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        let _: () = runtime
+        let () = runtime
             .block_on(async { pipe.query_async(&mut con).await })
             .unwrap();
     });
@@ -162,7 +162,7 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
         .collect::<Vec<_>>();
 
     b.iter(|| {
-        let _: () = runtime
+        let () = runtime
             .block_on(async {
                 cmds.iter()
                     .zip(&mut connections)
