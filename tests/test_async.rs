@@ -236,6 +236,7 @@ fn test_transaction_multiplexed_connection() {
 }
 
 #[test]
+#[cfg(feature = "script")]
 fn test_script() {
     // Note this test runs both scripts twice to test when they have already been loaded
     // into Redis and when they need to be loaded in

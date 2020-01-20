@@ -49,8 +49,15 @@
 //!
 //! ## Optional Features
 //!
-//! There are currently two features defined that can enable additional
-//! functionality if so desired.
+//! There are a few features defined that can enable additional functionality
+//! if so desired.  Some of them are turned on by default.
+//!
+//! * `aio`: enables async IO support (enabled by default)
+//! * `geospatial`: enables geospatial support (enabled by default)
+//! * `script`: enables script support (enabled by default)
+//! * `r2d2`: enables r2d2 connection pool support (optional)
+//! * `cluster`: enables redis cluster support (optional)
+//! * `tokio-rt-core`: enables support for tokio-rt (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -339,6 +346,8 @@ pub use crate::connection::{
     IntoConnectionInfo, Msg, PubSub,
 };
 pub use crate::parser::{parse_redis_value, parse_redis_value_async, Parser};
+
+#[cfg(feature = "script")]
 pub use crate::script::{Script, ScriptInvocation};
 
 pub use crate::types::{
