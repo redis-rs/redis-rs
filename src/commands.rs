@@ -41,7 +41,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_connection()?;
-        /// let () = con.set("my_key", 42)?;
+        /// con.set("my_key", 42)?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```
@@ -49,6 +49,7 @@ macro_rules! implement_commands {
             $(
                 $(#[$attr])*
                 #[inline]
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
                     { Cmd::$name($($argname),*).query(self) }
@@ -126,6 +127,7 @@ macro_rules! implement_commands {
         impl Cmd {
             $(
                 $(#[$attr])*
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
                     ::std::mem::replace($body, Cmd::new())
                 }
@@ -143,7 +145,7 @@ macro_rules! implement_commands {
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_async_connection().await?;
-        /// let () = redis::cmd("SET").arg("my_key").arg(42i32).query_async(&mut con).await?;
+        /// redis::cmd("SET").arg("my_key").arg(42i32).query_async(&mut con).await?;
         /// assert_eq!(redis::cmd("GET").arg("my_key").query_async(&mut con).await, Ok(42i32));
         /// # Ok(()) }
         /// ```
@@ -156,7 +158,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_async_connection().await?;
-        /// let () = con.set("my_key", 42i32).await?;
+        /// con.set("my_key", 42i32).await?;
         /// assert_eq!(con.get("my_key").await, Ok(42i32));
         /// # Ok(()) }
         /// ```
@@ -165,11 +167,13 @@ macro_rules! implement_commands {
             $(
                 $(#[$attr])*
                 #[inline]
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
                     & $lifetime mut self
                     $(, $argname: $argty)*
-                    ) -> crate::types::RedisFuture<'a, RV>
-                where RV: FromRedisValue,
+                ) -> crate::types::RedisFuture<'a, RV>
+                where
+                    RV: FromRedisValue,
                 {
                     Box::pin(async move { ($body).query_async(self).await })
                 }
@@ -183,9 +187,12 @@ macro_rules! implement_commands {
             $(
                 $(#[$attr])*
                 #[inline]
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
-                    &mut self $(, $argname: $argty)*) -> &mut Self
-                    { self.add_command(::std::mem::replace($body, Cmd::new())) }
+                    &mut self $(, $argname: $argty)*
+                ) -> &mut Self {
+                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                }
             )*
         }
     )

@@ -45,7 +45,6 @@
 //!
 //!     Ok(())
 //! }
-//! # fn main() {}
 //! ```
 //!
 //! ## Optional Features
@@ -106,7 +105,6 @@
 //!     let _ : () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
-//! # fn main() {}
 //! ```
 //!
 //! Note that high-level commands are work in progress and many are still
@@ -306,9 +304,9 @@
 //! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! let mut con = client.get_async_connection().await?;
 //!
-//! let () = con.set("key1", b"foo").await?;
+//! con.set("key1", b"foo").await?;
 //!
-//! let () = redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+//! redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
 //!
 //! let result = redis::cmd("MGET")
 //!     .arg(&["key1", "key2"])

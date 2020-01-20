@@ -40,6 +40,6 @@ style-check:
 
 lint:
 	@rustup component add clippy 2> /dev/null
-	cargo clippy --all-features
+	cargo clippy --all-features --all --tests --examples -- -D clippy::all
 
 .PHONY: build test bench docs upload-docs style-check lint

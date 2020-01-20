@@ -155,7 +155,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             ),
             None => 0,
         },
-        passwd: url.password().and_then(|pw| Some(pw.to_string())),
+        passwd: url.password().map(|pw| pw.to_string()),
     })
 }
 
@@ -233,7 +233,7 @@ impl ActualConnection {
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in ((host, *port)).to_socket_addrs()? {
+                        for addr in (host, *port).to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);

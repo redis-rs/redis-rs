@@ -203,7 +203,7 @@ where
             // SAFETY We either drop `self.reader` and return a slice with the lifetime of the
             // reader or we return Pending/Err (neither which contains `'a`).
             // In either case `poll_fill_buf` can not be called while its contents are exposed
-            Poll::Ready(Ok(x)) => unsafe { return Ok(&*(x as *const _)).into() },
+            Poll::Ready(Ok(x)) => Ok(unsafe { &*(x as *const _) }).into(),
             Poll::Ready(Err(err)) => Err(err).into(),
             Poll::Pending => {
                 reader = Some(r);
@@ -227,7 +227,7 @@ where
 
         let (opt, mut removed) = {
             let buffer = fill_buf(&mut reader).await?;
-            if buffer.len() == 0 {
+            if buffer.is_empty() {
                 return Err((ErrorKind::ResponseError, "Could not read enough bytes").into());
             }
             let buffer = if !remaining.is_empty() {
