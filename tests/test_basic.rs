@@ -568,6 +568,7 @@ fn scoped_pubsub() {
 }
 
 #[test]
+#[cfg(feature = "script")]
 fn test_script() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();

@@ -1,3 +1,4 @@
+#![cfg(feature = "script")]
 use sha1::Sha1;
 
 use crate::cmd::cmd;

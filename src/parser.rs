@@ -5,14 +5,12 @@ use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
-use bytes::{Buf, BytesMut};
 use combine::{combine_parse_partial, combine_parser_impl, parse_mode, parser};
 use futures_util::{
     future,
     task::{self, Poll},
 };
 use tokio::io::{AsyncBufRead, AsyncRead};
-use tokio_util::codec::{Decoder, Encoder};
 
 use combine;
 use combine::byte::{byte, crlf, take_until_bytes};
@@ -147,50 +145,60 @@ parser! {
     }
 }
 
-#[derive(Default)]
-pub struct ValueCodec {
-    state: AnySendPartialState,
-}
+#[cfg(feature = "aio")]
+mod aio_support {
+    use super::*;
+    use bytes::{Buf, BytesMut};
+    use tokio_util::codec::{Decoder, Encoder};
 
-impl Encoder for ValueCodec {
-    type Item = Vec<u8>;
-    type Error = RedisError;
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(item.as_ref());
-        Ok(())
+    #[derive(Default)]
+    pub struct ValueCodec {
+        state: AnySendPartialState,
     }
-}
 
-impl Decoder for ValueCodec {
-    type Item = Value;
-    type Error = RedisError;
-    fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let (opt, removed_len) = {
-            let buffer = &bytes[..];
-            let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
-            match combine::stream::decode(value(), stream, &mut self.state) {
-                Ok(x) => x,
-                Err(err) => {
-                    let err = err
-                        .map_position(|pos| pos.translate_position(buffer))
-                        .map_range(|range| format!("{:?}", range))
-                        .to_string();
-                    return Err(RedisError::from((
-                        ErrorKind::ResponseError,
-                        "parse error",
-                        err,
-                    )));
+    impl Encoder for ValueCodec {
+        type Item = Vec<u8>;
+        type Error = RedisError;
+        fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            dst.extend_from_slice(item.as_ref());
+            Ok(())
+        }
+    }
+
+    impl Decoder for ValueCodec {
+        type Item = Value;
+        type Error = RedisError;
+        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            let (opt, removed_len) = {
+                let buffer = &bytes[..];
+                let stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
+                match combine::stream::decode(value(), stream, &mut self.state) {
+                    Ok(x) => x,
+                    Err(err) => {
+                        let err = err
+                            .map_position(|pos| pos.translate_position(buffer))
+                            .map_range(|range| format!("{:?}", range))
+                            .to_string();
+                        return Err(RedisError::from((
+                            ErrorKind::ResponseError,
+                            "parse error",
+                            err,
+                        )));
+                    }
                 }
-            }
-        };
+            };
 
-        bytes.advance(removed_len);
-        match opt {
-            Some(result) => Ok(Some(result?)),
-            None => Ok(None),
+            bytes.advance(removed_len);
+            match opt {
+                Some(result) => Ok(Some(result?)),
+                None => Ok(None),
+            }
         }
     }
 }
+
+#[cfg(feature = "aio")]
+pub use self::aio_support::*;
 
 // https://github.com/tokio-rs/tokio/pull/1687
 async fn fill_buf<R>(reader: &mut R) -> io::Result<&[u8]>

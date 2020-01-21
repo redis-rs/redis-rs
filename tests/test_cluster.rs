@@ -43,6 +43,7 @@ fn test_cluster_eval() {
 }
 
 #[test]
+#[cfg(feature = "script")]
 fn test_cluster_script() {
     let cluster = TestClusterContext::new(3, 0);
     let mut con = cluster.connection();

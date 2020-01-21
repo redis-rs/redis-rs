@@ -270,7 +270,7 @@ impl ActualConnection {
                 open: true,
             }),
             #[cfg(not(unix))]
-            ConnectionAddr::Unix(ref path) => {
+            ConnectionAddr::Unix(ref _path) => {
                 fail!((
                     ErrorKind::InvalidClientConfig,
                     "Cannot connect to unix sockets \
