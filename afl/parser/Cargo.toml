@@ -1,0 +1,17 @@
+[package]
+name = "fuzz-target-parser"
+version = "0.1.0"
+authors = ["redis-rs developers"]
+edition = "2018"
+
+[[bin]]
+name = "fuzz-target"
+path = "src/main.rs"
+
+[[bin]]
+name = "reproduce"
+path = "src/reproduce.rs"
+
+[dependencies]
+afl = "0.4"
+redis = { path = "../../" }
