@@ -37,7 +37,7 @@ bytes = "0.5"
 # These are needed for parsing at the moment 
 combine = "3.8.1"
 futures-util = { version = "0.3.0", features = ["sink"], default-features = false }
-futures-executor = { version = "0.3.0", default-features = false }
+futures-executor = "0.3.0"
 
 # Only needed for AIO
 pin-project-lite = { version = "0.1", optional = true }
