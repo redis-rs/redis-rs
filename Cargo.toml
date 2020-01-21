@@ -31,7 +31,7 @@ url = "2.1"
 sha1 = { version = ">= 0.2, < 0.7", optional = true }
 
 # Dependency that is shared with tokio.  If we manage to make tokio optional we
-# could also kll this.
+# could also remove this.
 bytes = "0.5"
 
 # These are needed for parsing at the moment 
