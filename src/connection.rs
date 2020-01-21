@@ -1,5 +1,5 @@
 use std::fmt;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::net::{self, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::from_utf8;
@@ -183,13 +183,13 @@ impl IntoConnectionInfo for url::Url {
 }
 
 struct TcpConnection {
-    reader: BufReader<TcpStream>,
+    reader: TcpStream,
     open: bool,
 }
 
 #[cfg(unix)]
 struct UnixConnection {
-    sock: BufReader<UnixStream>,
+    sock: UnixStream,
     open: bool,
 }
 
@@ -202,6 +202,7 @@ enum ActualConnection {
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
+    parser: Parser,
     db: i64,
 
     /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
@@ -258,15 +259,14 @@ impl ActualConnection {
                         }
                     }
                 };
-                let buffered = BufReader::new(tcp);
                 ActualConnection::Tcp(TcpConnection {
-                    reader: buffered,
+                    reader: tcp,
                     open: true,
                 })
             }
             #[cfg(unix)]
             ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
-                sock: BufReader::new(UnixStream::connect(path)?),
+                sock: UnixStream::connect(path)?,
                 open: true,
             }),
             #[cfg(not(unix))]
@@ -283,11 +283,7 @@ impl ActualConnection {
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
             ActualConnection::Tcp(ref mut connection) => {
-                let res = connection
-                    .reader
-                    .get_mut()
-                    .write_all(bytes)
-                    .map_err(RedisError::from);
+                let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
                         if e.is_connection_dropped() {
@@ -300,11 +296,7 @@ impl ActualConnection {
             }
             #[cfg(unix)]
             ActualConnection::Unix(ref mut connection) => {
-                let result = connection
-                    .sock
-                    .get_mut()
-                    .write_all(bytes)
-                    .map_err(RedisError::from);
+                let result = connection.sock.write_all(bytes).map_err(RedisError::from);
                 match result {
                     Err(e) => {
                         if e.is_connection_dropped() {
@@ -318,42 +310,14 @@ impl ActualConnection {
         }
     }
 
-    /// Fetches a single response from the connection.
-    pub fn read_response(&mut self) -> RedisResult<Value> {
-        let result = Parser::new(match *self {
-            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                reader as &mut dyn BufRead
-            }
-            #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => sock as &mut dyn BufRead,
-        })
-        .parse_value();
-        // shutdown connection on protocol error
-        match result {
-            Err(ref e) if e.kind() == ErrorKind::ResponseError => match *self {
-                ActualConnection::Tcp(ref mut connection) => {
-                    let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
-                    connection.open = false;
-                }
-                #[cfg(unix)]
-                ActualConnection::Unix(ref mut connection) => {
-                    let _ = connection.sock.get_mut().shutdown(net::Shutdown::Both);
-                    connection.open = false;
-                }
-            },
-            _ => (),
-        }
-        result
-    }
-
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
-                reader.get_ref().set_write_timeout(dur)?;
+                reader.set_write_timeout(dur)?;
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                sock.get_ref().set_write_timeout(dur)?;
+                sock.set_write_timeout(dur)?;
             }
         }
         Ok(())
@@ -362,11 +326,11 @@ impl ActualConnection {
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
-                reader.get_ref().set_read_timeout(dur)?;
+                reader.set_read_timeout(dur)?;
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
-                sock.get_ref().set_read_timeout(dur)?;
+                sock.set_read_timeout(dur)?;
             }
         }
         Ok(())
@@ -388,6 +352,7 @@ pub fn connect(
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
     let mut rv = Connection {
         con,
+        parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
     };
@@ -490,7 +455,7 @@ impl Connection {
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
     pub fn recv_response(&mut self) -> RedisResult<Value> {
-        self.con.read_response()
+        self.read_response()
     }
 
     /// Sets the write timeout for the connection.
@@ -580,6 +545,35 @@ impl Connection {
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
     }
+
+    /// Fetches a single response from the connection.
+    fn read_response(&mut self) -> RedisResult<Value> {
+        let result = match self.con {
+            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
+                self.parser.parse_value(reader)
+            }
+            #[cfg(unix)]
+            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
+                self.parser.parse_value(sock)
+            }
+        };
+        // shutdown connection on protocol error
+        match result {
+            Err(ref e) if e.kind() == ErrorKind::ResponseError => match self.con {
+                ActualConnection::Tcp(ref mut connection) => {
+                    let _ = connection.reader.shutdown(net::Shutdown::Both);
+                    connection.open = false;
+                }
+                #[cfg(unix)]
+                ActualConnection::Unix(ref mut connection) => {
+                    let _ = connection.sock.shutdown(net::Shutdown::Both);
+                    connection.open = false;
+                }
+            },
+            _ => (),
+        }
+        result
+    }
 }
 
 impl ConnectionLike for Connection {
@@ -588,9 +582,8 @@ impl ConnectionLike for Connection {
             self.exit_pubsub()?;
         }
 
-        let con = &mut self.con;
-        con.send_bytes(cmd)?;
-        con.read_response()
+        self.con.send_bytes(cmd)?;
+        self.read_response()
     }
 
     fn req_packed_commands(
@@ -602,11 +595,10 @@ impl ConnectionLike for Connection {
         if self.pubsub {
             self.exit_pubsub()?;
         }
-        let con = &mut self.con;
-        con.send_bytes(cmd)?;
+        self.con.send_bytes(cmd)?;
         let mut rv = vec![];
         for idx in 0..(offset + count) {
-            let item = con.read_response()?;
+            let item = self.read_response()?;
             if idx >= offset {
                 rv.push(item);
             }

@@ -87,8 +87,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        let con = self.get_async_connection().await?;
-        Ok(crate::aio::MultiplexedConnection::new(con))
+        crate::aio::MultiplexedConnection::new(&self.connection_info).await
     }
 }
 

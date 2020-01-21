@@ -1,16 +1,14 @@
-use std::io::{self, BufRead, Read};
-use std::marker::Unpin;
-use std::pin::Pin;
+use std::io::Read;
 use std::str;
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
+#[cfg(feature = "tokio-util")]
 use bytes::{Buf, BytesMut};
-use futures_util::{
-    future,
-    task::{self, Poll},
-};
-use tokio::io::{AsyncBufRead, AsyncRead};
+#[cfg(feature = "tokio")]
+use tokio::io::AsyncRead;
+#[cfg(feature = "tokio-util")]
+use tokio_util::codec::{Decoder, Encoder};
 
 use combine::{
     error::StreamError,
@@ -21,7 +19,7 @@ use combine::{
         combinator::{any_send_partial_state, AnySendPartialState},
         range::{recognize, take},
     },
-    stream::{RangeStream, StreamErrorFor},
+    stream::{PointerOffset, RangeStream, StreamErrorFor},
     Parser as _,
 };
 
@@ -154,17 +152,22 @@ where
     })
 }
 
-#[cfg(feature = "aio")]
-mod aio_support {
-    use super::*;
-    use bytes::{Buf, BytesMut};
-    use tokio_util::codec::{Decoder, Encoder};
+#[cfg(feature = "tokio-util")]
+#[derive(Default)]
+pub struct ValueCodec {
+    state: AnySendPartialState,
+}
 
-    #[derive(Default)]
-    pub struct ValueCodec {
-        state: AnySendPartialState,
+#[cfg(feature = "tokio-util")]
+impl Encoder for ValueCodec {
+    type Item = Vec<u8>;
+    type Error = RedisError;
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(item.as_ref());
+        Ok(())
     }
 
+#[cfg(feature = "tokio-util")]
 impl Decoder for ValueCodec {
     type Item = Value;
     type Error = RedisError;
@@ -195,157 +198,74 @@ impl Decoder for ValueCodec {
         }
     }
 }
-
-#[cfg(feature = "aio")]
-pub use self::aio_support::*;
-
-// https://github.com/tokio-rs/tokio/pull/1687
-async fn fill_buf<R>(reader: &mut R) -> io::Result<&[u8]>
-where
-    R: AsyncBufRead + Unpin,
-{
-    let mut reader = Some(reader);
-    future::poll_fn(move |cx| match reader.take() {
-        Some(r) => match Pin::new(&mut *r).poll_fill_buf(cx) {
-            // SAFETY We either drop `self.reader` and return a slice with the lifetime of the
-            // reader or we return Pending/Err (neither which contains `'a`).
-            // In either case `poll_fill_buf` can not be called while its contents are exposed
-            Poll::Ready(Ok(x)) => Ok(unsafe { &*(x as *const _) }).into(),
-            Poll::Ready(Err(err)) => Err(err).into(),
-            Poll::Pending => {
-                reader = Some(r);
-                Poll::Pending
-            }
-        },
-        None => panic!("fill_buf polled after completion"),
-    })
-    .await
-}
-
 /// Parses a redis value asynchronously.
-pub async fn parse_redis_value_async<R>(mut reader: R) -> RedisResult<Value>
+#[cfg(feature = "tokio")]
+pub async fn parse_redis_value_async<R>(
+    decoder: &mut combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
+    read: &mut R,
+) -> RedisResult<Value>
 where
-    R: AsyncBufRead + Unpin,
+    R: AsyncRead + std::marker::Unpin,
 {
-    let mut state = Default::default();
-    let mut remaining = Vec::new();
-    loop {
-        let remaining_data = remaining.len();
-
-        let (opt, mut removed) = {
-            let buffer = fill_buf(&mut reader).await?;
-            if buffer.is_empty() {
-                return Err((ErrorKind::ResponseError, "Could not read enough bytes").into());
+    let result = combine::decode_tokio_02!(*decoder, *read, value(), |input, _| {
+        combine::stream::easy::Stream::from(input)
+    });
+    match result {
+        Err(err) => Err(match err {
+            combine::stream::decoder::Error::Io { error, .. } => error.into(),
+            combine::stream::decoder::Error::Parse(err) => {
+                let err = err
+                    .map_range(|range| format!("{:?}", range))
+                    .map_position(|pos| pos.translate_position(decoder.buffer()))
+                    .to_string();
+                RedisError::from((ErrorKind::ResponseError, "parse error", err))
             }
-            let buffer = if !remaining.is_empty() {
-                remaining.extend(buffer);
-                &remaining[..]
-            } else {
-                buffer
-            };
-
-            let mut stream = combine::easy::Stream(combine::stream::PartialStream(&buffer[..]));
-            match combine::stream::decode(value(), &mut stream, &mut state) {
-                Ok(x) => x,
-                Err(err) => {
-                    let err = err
-                        .map_position(|pos| pos.translate_position(&buffer[..]))
-                        .map_range(|range| format!("{:?}", range))
-                        .to_string();
-                    return Err(RedisError::from((
-                        ErrorKind::ResponseError,
-                        "parse error",
-                        err,
-                    )));
-                }
-            }
-        };
-
-        if !remaining.is_empty() {
-            // Remove the data we have parsed and adjust `removed` to be the amount of data we
-            // consumed from `self.reader`
-            remaining.drain(..removed);
-            if removed >= remaining_data {
-                removed -= remaining_data;
-            } else {
-                removed = 0;
-            }
-        }
-
-        match opt {
-            Some(value) => {
-                Pin::new(&mut reader).consume(removed);
-                return Ok(value?);
-            }
-            None => {
-                // We have not enough data to produce a Value but we know that all the data of
-                // the current buffer are necessary. Consume all the buffered data to ensure
-                // that the next iteration actually reads more data.
-                let buffer_len = {
-                    let buffer = fill_buf(&mut reader).await?;
-                    if remaining_data == 0 {
-                        remaining.extend(&buffer[removed..]);
-                    }
-                    buffer.len()
-                };
-                Pin::new(&mut reader).consume(buffer_len);
-            }
-        }
+        }),
+        Ok(result) => result,
     }
 }
 
 /// The internal redis response parser.
-pub struct Parser<T> {
-    reader: T,
-}
-
-struct BlockingWrapper<R>(R);
-
-impl<T> AsyncRead for BlockingWrapper<T>
-where
-    T: Read + Unpin,
-{
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        _cx: &mut task::Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        self.0.read(buf).into()
-    }
-}
-
-impl<T> AsyncBufRead for BlockingWrapper<T>
-where
-    T: BufRead + Unpin,
-{
-    fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
-        self.get_mut().0.fill_buf().into()
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        self.0.consume(amt)
-    }
+pub struct Parser {
+    decoder: combine::stream::decoder::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
 }
 
 /// The parser can be used to parse redis responses into values.  Generally
 /// you normally do not use this directly as it's already done for you by
 /// the client but in some more complex situations it might be useful to be
 /// able to parse the redis responses.
-impl<'a, T: BufRead> Parser<T> {
+impl Parser {
     /// Creates a new parser that parses the data behind the reader.  More
     /// than one value can be behind the reader in which case the parser can
     /// be invoked multiple times.  In other words: the stream does not have
     /// to be terminated.
-    pub fn new(reader: T) -> Parser<T> {
-        Parser { reader }
+    pub fn new() -> Parser {
+        Parser {
+            decoder: combine::stream::decoder::Decoder::new(),
+        }
     }
 
     // public api
 
     /// Parses synchronously into a single value from the reader.
-    pub fn parse_value(&mut self) -> RedisResult<Value> {
-        let parser = parse_redis_value_async(BlockingWrapper(&mut self.reader));
-        futures_executor::block_on(parser)
+    pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        let mut decoder = &mut self.decoder;
+        let result = combine::decode!(decoder, reader, value(), |input, _| {
+            combine::stream::easy::Stream::from(input)
+        });
+        match result {
+            Err(err) => Err(match err {
+                combine::stream::decoder::Error::Io { error, .. } => error.into(),
+                combine::stream::decoder::Error::Parse(err) => {
+                    let err = err
+                        .map_range(|range| format!("{:?}", range))
+                        .map_position(|pos| pos.translate_position(decoder.buffer()))
+                        .to_string();
+                    RedisError::from((ErrorKind::ResponseError, "parse error", err))
+                }
+            }),
+            Ok(result) => result,
+        }
     }
 }
 
@@ -354,6 +274,6 @@ impl<'a, T: BufRead> Parser<T> {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
-    let mut parser = Parser::new(bytes);
-    parser.parse_value()
+    let mut parser = Parser::new();
+    parser.parse_value(bytes)
 }

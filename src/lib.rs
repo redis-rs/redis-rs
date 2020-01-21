@@ -306,28 +306,31 @@ assert_eq!(result, 3);
 //!
 //! This interface exists under the `aio` (async io) module and largely mirrors the synchronous
 //! with a few concessions to make it fit the constraints of `futures`.
-//!
-//! ```rust,no_run
-//! use futures::prelude::*;
-//! use redis::AsyncCommands;
-//!
-//! # #[tokio::main]
-//! # async fn main() -> redis::RedisResult<()> {
-//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! let mut con = client.get_async_connection().await?;
-//!
-//! con.set("key1", b"foo").await?;
-//!
-//! redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
-//!
-//! let result = redis::cmd("MGET")
-//!     .arg(&["key1", "key2"])
-//!     .query_async(&mut con)
-//!     .await;
-//! assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-//! Ok(())
-//! # }
-//! ```
+#![cfg_attr(
+    feature = "aio",
+    doc = r##"
+ #![cfg(feature = "aio")]
+ use futures::prelude::*;
+ use redis::AsyncCommands;
+
+ # #[tokio::main]
+ # async fn main() -> redis::RedisResult<()> {
+ let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+ let mut con = client.get_async_connection().await?;
+
+ con.set("key1", b"foo").await?;
+
+ redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+
+ let result = redis::cmd("MGET")
+     .arg(&["key1", "key2"])
+     .query_async(&mut con)
+     .await;
+ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+ Ok(())
+ # }
+"##
+)]
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
@@ -350,11 +353,14 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use crate::parser::{parse_redis_value, parse_redis_value_async, Parser};
-
+#[cfg(feature = "aio")]
+pub use crate::parser::parse_redis_value_async;
 #[cfg(feature = "script")]
+pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::script::{Script, ScriptInvocation};
 
+#[cfg(feature = "aio")]
+pub use crate::types::RedisFuture;
 pub use crate::types::{
     // utility functions
     from_redis_value,
@@ -371,7 +377,6 @@ pub use crate::types::{
 
     // error and result types
     RedisError,
-    RedisFuture,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
