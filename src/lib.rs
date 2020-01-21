@@ -274,7 +274,9 @@
 //! # }
 //! ```
 //!
-#![cfg_attr(feature = "script", doc = r##"
+#![cfg_attr(
+    feature = "script",
+    doc = r##"
 # Scripts
 
 Lua scripts are supported through the `Script` type in a convenient
@@ -294,7 +296,8 @@ let result : isize = script.arg(1).arg(2).invoke(&mut con)?;
 assert_eq!(result, 3);
 # Ok(()) }
 ```
-"##)]
+"##
+)]
 //!
 //! # Async
 //!
