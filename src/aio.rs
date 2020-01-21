@@ -16,8 +16,10 @@ use tokio::{
 };
 use tokio_util::codec::Decoder;
 
+#[cfg(unix)]
+use futures_util::future::Either;
 use futures_util::{
-    future::{Either, Future, FutureExt, TryFutureExt},
+    future::{Future, FutureExt, TryFutureExt},
     ready,
     sink::Sink,
     stream::{Stream, StreamExt},

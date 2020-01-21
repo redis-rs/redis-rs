@@ -6,7 +6,7 @@ use futures::{future, prelude::*};
 
 use crate::support::*;
 
-use redis::{aio::MultiplexedConnection, RedisError, RedisResult};
+use redis::{aio::MultiplexedConnection, RedisResult};
 
 mod support;
 
@@ -238,6 +238,8 @@ fn test_transaction_multiplexed_connection() {
 #[test]
 #[cfg(feature = "script")]
 fn test_script() {
+    use redis::RedisError;
+
     // Note this test runs both scripts twice to test when they have already been loaded
     // into Redis and when they need to be loaded in
     let script1 = redis::Script::new("return redis.call('SET', KEYS[1], ARGV[1])");
@@ -268,6 +270,7 @@ fn test_script() {
 }
 
 #[test]
+#[cfg(feature = "script")]
 fn test_script_returning_complex_type() {
     let ctx = TestContext::new();
     block_on_all(async {
