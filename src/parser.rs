@@ -11,11 +11,11 @@ use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, Encoder};
 
 use combine::{
+    any,
     error::StreamError,
     opaque,
     parser::{
-        byte::{byte, crlf, take_until_bytes},
-        choice::choice,
+        byte::{crlf, take_until_bytes},
         combinator::{any_send_partial_state, AnySendPartialState},
         range::{recognize, take},
     },
@@ -65,90 +65,93 @@ where
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
     opaque!({
-        let line = || {
-            recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
-                |line: &[u8]| {
-                    str::from_utf8(&line[..line.len() - 2]).map_err(StreamErrorFor::<I>::other)
-                },
+        any_send_partial_state(any().then_partial(move |&mut b| {
+            let line = || {
+                recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
+                    |line: &[u8]| {
+                        str::from_utf8(&line[..line.len() - 2]).map_err(StreamErrorFor::<I>::other)
+                    },
+                )
+            };
+
+            let status = || {
+                line().map(|line| {
+                    if line == "OK" {
+                        Value::Okay
+                    } else {
+                        Value::Status(line.into())
+                    }
+                })
+            };
+
+            let int = || {
+                line().and_then(|line| match line.trim().parse::<i64>() {
+                    Err(_) => Err(StreamErrorFor::<I>::message_static_message(
+                        "Expected integer, got garbage",
+                    )),
+                    Ok(value) => Ok(value),
+                })
+            };
+
+            let data = || {
+                int().then_partial(move |size| {
+                    if *size < 0 {
+                        combine::value(Value::Nil).left()
+                    } else {
+                        take(*size as usize)
+                            .map(|bs: &[u8]| Value::Data(bs.to_vec()))
+                            .skip(crlf())
+                            .right()
+                    }
+                })
+            };
+
+            let bulk = || {
+                int().then_partial(|&mut length| {
+                    if length < 0 {
+                        combine::value(Value::Nil).map(Ok).left()
+                    } else {
+                        let length = length as usize;
+                        combine::count_min_max(length, length, value())
+                            .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
+                            .right()
+                    }
+                })
+            };
+
+            let error = || {
+                line().map(|line: &str| {
+                    let desc = "An error was signalled by the server";
+                    let mut pieces = line.splitn(2, ' ');
+                    let kind = match pieces.next().unwrap() {
+                        "ERR" => ErrorKind::ResponseError,
+                        "EXECABORT" => ErrorKind::ExecAbortError,
+                        "LOADING" => ErrorKind::BusyLoadingError,
+                        "NOSCRIPT" => ErrorKind::NoScriptError,
+                        "MOVED" => ErrorKind::Moved,
+                        "ASK" => ErrorKind::Ask,
+                        "TRYAGAIN" => ErrorKind::TryAgain,
+                        "CLUSTERDOWN" => ErrorKind::ClusterDown,
+                        "CROSSSLOT" => ErrorKind::CrossSlot,
+                        "MASTERDOWN" => ErrorKind::MasterDown,
+                        code => return make_extension_error(code, pieces.next()),
+                    };
+                    match pieces.next() {
+                        Some(detail) => RedisError::from((kind, desc, detail.to_string())),
+                        None => RedisError::from((kind, desc)),
+                    }
+                })
+            };
+
+            combine::dispatch!(b;
+                b'+' => status().map(Ok),
+                b':' => int().map(|i| Ok(Value::Int(i))),
+                b'$' => data().map(Ok),
+                b'*' => bulk(),
+                b'-' => error().map(Err),
+                b => combine::unexpected_any(combine::error::Token(b))
             )
-        };
-
-        let status = || {
-            line().map(|line| {
-                if line == "OK" {
-                    Value::Okay
-                } else {
-                    Value::Status(line.into())
-                }
-            })
-        };
-
-        let int = || {
-            line().and_then(|line| match line.trim().parse::<i64>() {
-                Err(_) => Err(StreamErrorFor::<I>::message_static_message(
-                    "Expected integer, got garbage",
-                )),
-                Ok(value) => Ok(value),
-            })
-        };
-
-        let data = || {
-            int().then_partial(move |size| {
-                if *size < 0 {
-                    combine::value(Value::Nil).left()
-                } else {
-                    take(*size as usize)
-                        .map(|bs: &[u8]| Value::Data(bs.to_vec()))
-                        .skip(crlf())
-                        .right()
-                }
-            })
-        };
-
-        let bulk = || {
-            int().then_partial(|&mut length| {
-                if length < 0 {
-                    combine::value(Value::Nil).map(Ok).left()
-                } else {
-                    let length = length as usize;
-                    combine::count_min_max(length, length, value())
-                        .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
-                        .right()
-                }
-            })
-        };
-
-        let error = || {
-            line().map(|line: &str| {
-                let desc = "An error was signalled by the server";
-                let mut pieces = line.splitn(2, ' ');
-                let kind = match pieces.next().unwrap() {
-                    "ERR" => ErrorKind::ResponseError,
-                    "EXECABORT" => ErrorKind::ExecAbortError,
-                    "LOADING" => ErrorKind::BusyLoadingError,
-                    "NOSCRIPT" => ErrorKind::NoScriptError,
-                    "MOVED" => ErrorKind::Moved,
-                    "ASK" => ErrorKind::Ask,
-                    "TRYAGAIN" => ErrorKind::TryAgain,
-                    "CLUSTERDOWN" => ErrorKind::ClusterDown,
-                    "CROSSSLOT" => ErrorKind::CrossSlot,
-                    "MASTERDOWN" => ErrorKind::MasterDown,
-                    code => return make_extension_error(code, pieces.next()),
-                };
-                match pieces.next() {
-                    Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                    None => RedisError::from((kind, desc)),
-                }
-            })
-        };
-
-        any_send_partial_state(choice((
-            byte(b'+').with(status().map(Ok)),
-            byte(b':').with(int().map(Value::Int).map(Ok)),
-            byte(b'$').with(data().map(Ok)),
-            byte(b'*').with(bulk()),
-            byte(b'-').with(error().map(Err)),
-        )))
+        }))
     })
 }
 
