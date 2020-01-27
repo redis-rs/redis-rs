@@ -229,6 +229,7 @@ mod aio_support {
 }
 
 #[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use self::aio_support::*;
 
 /// The internal redis response parser.

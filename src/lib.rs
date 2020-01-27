@@ -353,14 +353,11 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-#[cfg(feature = "aio")]
-pub use crate::parser::parse_redis_value_async;
 pub use crate::parser::{parse_redis_value, Parser};
 #[cfg(feature = "script")]
+#[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
 
-#[cfg(feature = "aio")]
-pub use crate::types::RedisFuture;
 pub use crate::types::{
     // utility functions
     from_redis_value,
@@ -386,11 +383,13 @@ pub use crate::types::{
 };
 
 #[cfg(feature = "aio")]
-pub use crate::commands::AsyncCommands;
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+pub use crate::{commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture};
 
 mod macros;
 
 #[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
 
 #[cfg(feature = "geospatial")]
@@ -398,9 +397,11 @@ pub mod aio;
 pub mod geo;
 
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster;
 
 #[cfg(feature = "r2d2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
 
 mod client;
