@@ -355,8 +355,8 @@ pub use crate::connection::{
 };
 #[cfg(feature = "aio")]
 pub use crate::parser::parse_redis_value_async;
-#[cfg(feature = "script")]
 pub use crate::parser::{parse_redis_value, Parser};
+#[cfg(feature = "script")]
 pub use crate::script::{Script, ScriptInvocation};
 
 #[cfg(feature = "aio")]

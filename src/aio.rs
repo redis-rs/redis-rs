@@ -180,16 +180,14 @@ async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualC
             };
 
             TcpStream::connect(&socket_addr)
-                .map_ok(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))
-                .await?
+                .await
+                .map(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))?
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => {
-            UnixStream::connect(path)
-                .map_ok(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))
-                .await?
-        }
+        ConnectionAddr::Unix(ref path) => UnixStream::connect(path)
+            .await
+            .map(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
