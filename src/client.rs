@@ -89,6 +89,13 @@ impl Client {
     )> {
         crate::aio::MultiplexedConnection::new(&self.connection_info).await
     }
+
+    #[cfg(feature = "tokio-rt-core")]
+    pub async fn get_tokio_connection_manager(
+        &self,
+    ) -> RedisResult<crate::aio::ConnectionManager> {
+        Ok(crate::aio::ConnectionManager::new(self.connection_info.clone()).await?)
+    }
 }
 
 impl ConnectionLike for Client {

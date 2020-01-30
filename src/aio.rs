@@ -570,3 +570,91 @@ impl ConnectionLike for MultiplexedConnection {
         self.db
     }
 }
+
+#[cfg(feature = "tokio-rt-core")]
+mod connection_manager {
+    use super::*;
+
+    /// A `ConnectionManager` is a proxy that wraps a multiplexed connection and
+    /// automatically reconnects to the server when necessary.
+    pub struct ConnectionManager {
+        connection_info: ConnectionInfo,
+        connection: MultiplexedConnection,
+    }
+
+    #[cfg(feature = "tokio-rt-core")]
+    impl ConnectionManager {
+        /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+        ///
+        /// TODO: Add `new_tokio`?
+        pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
+            let (connection, driver) = MultiplexedConnection::new(connect(&connection_info).await?);
+            tokio::spawn(driver);
+            Ok(Self {
+                connection_info,
+                connection,
+            })
+        }
+
+        async fn reconnect(&mut self) -> RedisResult<&mut Self> {
+            let (new_connection, driver) = MultiplexedConnection::new(connect(&self.connection_info).await?);
+            tokio::spawn(driver);
+            let _old_connection = std::mem::replace(&mut self.connection, new_connection);
+            Ok(self)
+        }
+    }
+
+    #[cfg(feature = "tokio-rt-core")]
+    impl ConnectionLike for ConnectionManager {
+        fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+            (async move {
+                let result = self.connection.req_packed_command(cmd).await;
+                if let Err(ref e) = result {
+                    if e.is_connection_dropped() {
+                        // TODO: This could lead to multiple reconnection
+                        // attempts being done in parallel... We should
+                        // probably avoid that.
+                        println!("Connection lost, reconnecting");
+                        if let Err(reconnect_failed) = self.reconnect().await {
+                            println!("Reconnecting failed: {}", reconnect_failed);
+                        };
+                    }
+                }
+                result
+            })
+            .boxed()
+        }
+
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            cmd: &'a crate::Pipeline,
+            offset: usize,
+            count: usize,
+        ) -> RedisFuture<'a, Vec<Value>> {
+            (async move {
+                let result = self.connection.req_packed_commands(cmd, offset, count).await;
+                if let Err(ref e) = result {
+                    if e.is_connection_dropped() {
+                        // TODO: This could lead to multiple reconnection
+                        // attempts being done in parallel... We should
+                        // probably avoid that.
+                        println!("Connection lost, reconnecting");
+                        self.reconnect().await;
+                        if let Err(reconnect_failed) = self.reconnect().await {
+                            println!("Reconnecting failed: {}", reconnect_failed);
+                        };
+                    }
+                }
+                result
+            })
+            .boxed()
+        }
+
+        fn get_db(&self) -> i64 {
+            self.connection.db
+        }
+    }
+}
+
+#[cfg(feature = "tokio-rt-core")]
+pub use connection_manager::ConnectionManager;

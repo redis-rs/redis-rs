@@ -63,8 +63,7 @@ futures = "0.3"
 criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = { version = "0.2", features = ["rt-core", "macros"] }
-# End of dev-dependencies
+tokio = { version = "0.2", features = ["rt-core", "macros", "time"] }
 
 [[test]]
 name = "test_async"
@@ -86,3 +85,7 @@ required-features = ["tokio-rt-core"]
 [[example]]
 name = "async-await"
 required-features = ["aio"]
+
+[[example]]
+name = "async-connection-loss"
+required-features = ["tokio-rt-core"]
