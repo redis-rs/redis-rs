@@ -31,7 +31,7 @@ async fn run<C: ConnectionLike>(mut con: C) -> redis::RedisResult<()> {
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    let mode = match env::args().skip(1).next().as_ref().map(String::as_str) {
+    let mode = match env::args().nth(1).as_ref().map(String::as_str) {
         Some("default") => {
             println!("Using default connection mode\n");
             Mode::Default
