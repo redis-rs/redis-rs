@@ -308,14 +308,14 @@ where
     }
 
     // Read messages from the stream and send them back to the caller
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<()> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(Ok(item)) => Ok(item),
                 Some(Err(err)) => Err(err),
                 // The redis response stream is not going to produce any more items so we `Err`
                 // to break out of the `forward` combinator and stop handling requests
-                None => return Poll::Ready(()),
+                None => return Poll::Ready(Err(())),
             };
             self.as_mut().send_result(item);
         }
@@ -411,7 +411,7 @@ where
             .map_err(|err| {
                 self.as_mut().send_result(Err(err));
             }))?;
-        self.poll_read(cx).map(Ok)
+        self.poll_read(cx)
     }
 
     fn poll_close(
