@@ -582,14 +582,20 @@ mod connection_manager {
         connection: MultiplexedConnection,
     }
 
-    #[cfg(feature = "tokio-rt-core")]
     impl ConnectionManager {
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
         ///
-        /// TODO: Add `new_tokio`?
+        /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
-            let (connection, driver) = MultiplexedConnection::new(connect(&connection_info).await?);
+            // Wait for the initial connection to be established
+            let inner_connection = connect(&connection_info).await?;
+
+            // Wrap the connection in a MultiplexedConnection
+            let (connection, driver) = MultiplexedConnection::new(inner_connection);
+
+            // Launch the driver that drives the connection future
             tokio::spawn(driver);
+
             Ok(Self {
                 connection_info,
                 connection,
@@ -599,12 +605,11 @@ mod connection_manager {
         async fn reconnect(&mut self) -> RedisResult<&mut Self> {
             let (new_connection, driver) = MultiplexedConnection::new(connect(&self.connection_info).await?);
             tokio::spawn(driver);
-            let _old_connection = std::mem::replace(&mut self.connection, new_connection);
+            self.connection = new_connection;
             Ok(self)
         }
     }
 
-    #[cfg(feature = "tokio-rt-core")]
     impl ConnectionLike for ConnectionManager {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
             (async move {
