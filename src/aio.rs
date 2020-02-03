@@ -571,7 +571,7 @@ impl ConnectionLike for MultiplexedConnection {
     }
 }
 
-#[cfg(feature = "tokio-rt-core")]
+#[cfg(feature = "connection-manager")]
 mod connection_manager {
     use super::*;
 
@@ -590,7 +590,8 @@ mod connection_manager {
     impl ConnectionManager {
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
         ///
-        /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
+        /// This requires the `connection-manager` feature, which will also pull in
+        /// the Tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
             // Wait for the initial connection to be established
             let inner_connection = connect(&connection_info).await?;
@@ -675,5 +676,5 @@ mod connection_manager {
     }
 }
 
-#[cfg(feature = "tokio-rt-core")]
+#[cfg(feature = "connection-manager")]
 pub use connection_manager::ConnectionManager;
