@@ -237,6 +237,12 @@ pub struct Parser {
     decoder: combine::stream::decoder::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
 }
 
+impl Default for Parser {
+    fn default() -> Self {
+        Parser::new()
+    }
+}
+
 /// The parser can be used to parse redis responses into values.  Generally
 /// you normally do not use this directly as it's already done for you by
 /// the client but in some more complex situations it might be useful to be
