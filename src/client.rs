@@ -90,6 +90,27 @@ impl Client {
         crate::aio::MultiplexedConnection::new(&self.connection_info).await
     }
 
+    /// Returns an async [`ConnectionManager`][connectionmanager] from the client.
+    ///
+    /// The connection manager wraps a
+    /// [`MultiplexedConnection`][multiplexed-connection]. If a command to that
+    /// connection fails with a connection error, then a new connection is
+    /// established in the background and the error is returned to the caller.
+    ///
+    /// This means that on connection loss at least one command will fail, but
+    /// the connection will be re-established automatically if possible. (TODO
+    /// dbrgn: Document what happens if reconnection attempts fail, and what happens
+    /// to commands that are invoked while a reconnection attempt is in
+    /// progress.)
+    ///
+    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    ///
+    /// This requires the `connection-manager` feature, which in turn pulls in
+    /// the Tokio executor.
+    ///
+    /// [connection-manager]: aio/struct.ConnectionManager.html
+    /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     pub async fn get_tokio_connection_manager(
         &self,
