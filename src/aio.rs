@@ -575,11 +575,16 @@ impl ConnectionLike for MultiplexedConnection {
 mod connection_manager {
     use super::*;
 
+    use std::sync::Arc;
+
+    use arc_swap::ArcSwap;
+
     /// A `ConnectionManager` is a proxy that wraps a multiplexed connection and
     /// automatically reconnects to the server when necessary.
+    #[derive(Clone)]
     pub struct ConnectionManager {
         connection_info: ConnectionInfo,
-        connection: MultiplexedConnection,
+        connection: ArcSwap<MultiplexedConnection>,
     }
 
     impl ConnectionManager {
@@ -593,41 +598,60 @@ mod connection_manager {
             // Wrap the connection in a MultiplexedConnection
             let (connection, driver) = MultiplexedConnection::new(inner_connection);
 
-            // Launch the driver that drives the connection future
+            // Spawn the driver that drives the connection future
             tokio::spawn(driver);
 
+            // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
                 connection_info,
-                connection,
+                connection: ArcSwap::from(Arc::new(connection)),
             })
         }
 
         async fn reconnect(&mut self) -> RedisResult<&mut Self> {
-            let (new_connection, driver) = MultiplexedConnection::new(connect(&self.connection_info).await?);
+            // TODO: While this code uses compare-and-swap to prevent active
+            // connections from being overwritten in the ConnectionManager
+            // struct, it can still lead to multiple connections being
+            // established in parallel.
+            let guard = self.connection.load();
+
+            // Establish a new connection
+            println!("Connect");
+            let (new_connection, driver) = MultiplexedConnection::new(
+                connect(&self.connection_info).await?
+            );
+
+            // Spawn the driver that drives the connection future
             tokio::spawn(driver);
-            self.connection = new_connection;
+
+            // Update the connection in the connection manager
+            self.connection.compare_and_swap(guard, Arc::new(new_connection));
+
             Ok(self)
+        }
+
+        /// Handle a command result. If the connection was dropped, reconnect.
+        async fn maybe_reconnect<T>(&mut self, result: &RedisResult<T>) {
+            if let Err(ref e) = result {
+                if e.is_connection_dropped() {
+                    println!("Connection lost, reconnecting");
+                    if let Err(reconnect_failed) = self.reconnect().await {
+                        println!("Reconnecting failed: {}", reconnect_failed);
+                    };
+                }
+            }
         }
     }
 
     impl ConnectionLike for ConnectionManager {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+            // Clone connection to avoid having to lock the ArcSwap in write mode
+            let mut connection = (**self.connection.load()).clone();
             (async move {
-                let result = self.connection.req_packed_command(cmd).await;
-                if let Err(ref e) = result {
-                    if e.is_connection_dropped() {
-                        // TODO: This could lead to multiple reconnection
-                        // attempts being done in parallel... We should
-                        // probably avoid that.
-                        println!("Connection lost, reconnecting");
-                        if let Err(reconnect_failed) = self.reconnect().await {
-                            println!("Reconnecting failed: {}", reconnect_failed);
-                        };
-                    }
-                }
+                let result = connection.req_packed_command(cmd).await;
+                self.maybe_reconnect(&result).await;
                 result
-            })
-            .boxed()
+            }).boxed()
         }
 
         fn req_packed_commands<'a>(
@@ -636,27 +660,17 @@ mod connection_manager {
             offset: usize,
             count: usize,
         ) -> RedisFuture<'a, Vec<Value>> {
+            // Clone connection to avoid having to lock the ArcSwap in write mode
+            let mut connection = (**self.connection.load()).clone();
             (async move {
-                let result = self.connection.req_packed_commands(cmd, offset, count).await;
-                if let Err(ref e) = result {
-                    if e.is_connection_dropped() {
-                        // TODO: This could lead to multiple reconnection
-                        // attempts being done in parallel... We should
-                        // probably avoid that.
-                        println!("Connection lost, reconnecting");
-                        self.reconnect().await;
-                        if let Err(reconnect_failed) = self.reconnect().await {
-                            println!("Reconnecting failed: {}", reconnect_failed);
-                        };
-                    }
-                }
+                let result = connection.req_packed_commands(cmd, offset, count).await;
+                self.maybe_reconnect(&result).await;
                 result
-            })
-            .boxed()
+            }).boxed()
         }
 
         fn get_db(&self) -> i64 {
-            self.connection.db
+            self.connection.load().db
         }
     }
 }

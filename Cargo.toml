@@ -39,6 +39,10 @@ pin-project-lite = { version = "0.1", optional = true }
 tokio-util = { version = "0.2", optional = true }
 tokio = { version = "0.2", optional = true }
 
+# Only needed for the connection manager
+# TODO: Add separate feature for this
+arc-swap = { version = "0.4.4", optional = true }
+
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.8", optional = true }
 
@@ -49,7 +53,7 @@ rand = { version = "0.7.0", optional = true }
 [features]
 default = ["geospatial", "aio", "script"]
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio-02"]
-tokio-rt-core = ["aio", "tokio/rt-core"]
+tokio-rt-core = ["aio", "tokio/rt-core", "arc-swap"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]

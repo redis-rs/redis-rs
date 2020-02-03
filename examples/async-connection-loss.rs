@@ -4,7 +4,7 @@
 //! - Async multiplexed connection
 //! - Async connection manager
 //!
-//! It will then send a PING every second and print the result.
+//! It will then send a PING every 100 ms and print the result.
 
 use std::env;
 use std::process;
@@ -20,12 +20,12 @@ enum Mode {
 }
 
 async fn run<C: ConnectionLike>(mut con: C) -> redis::RedisResult<()> {
-    let mut interval = interval(Duration::from_secs(1));
+    let mut interval = interval(Duration::from_millis(100));
     loop {
         interval.tick().await;
-        println!("PING");
+        println!("> PING");
         let result: redis::RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        println!("Query result: {:?}", result);
+        println!("< {:?}", result);
     }
 }
 
