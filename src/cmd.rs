@@ -5,12 +5,6 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-#[cfg(feature = "aio")]
-use {
-    std::pin::Pin,
-    tokio::io::{AsyncWrite, AsyncWriteExt},
-};
-
 /// An argument to a redis command
 #[derive(Clone)]
 pub enum Arg<D> {
@@ -167,39 +161,13 @@ where
 }
 
 #[cfg(feature = "aio")]
-async fn write_command_async<'a, I>(
-    mut cmd: Pin<&mut (impl ?Sized + AsyncWrite)>,
-    args: I,
-    cursor: u64,
-) -> io::Result<()>
-where
-    I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
-{
-    cmd.write_all(b"*").await?;
-    cmd.write_all(itoa::Buffer::new().format(args.len()).as_bytes())
-        .await?;
-    cmd.write_all(b"\r\n").await?;
-
-    let mut cursor_bytes = itoa::Buffer::new();
-    for item in args {
-        let bytes = match item {
-            Arg::Cursor => cursor_bytes.format(cursor).as_bytes(),
-            Arg::Simple(val) => val,
-        };
-
-        cmd.write_all(b"$").await?;
-        cmd.write_all(itoa::Buffer::new().format(bytes.len()).as_bytes())
-            .await?;
-        cmd.write_all(b"\r\n").await?;
-
-        cmd.write_all(bytes).await?;
-        cmd.write_all(b"\r\n").await?;
-    }
-    Ok(())
-}
-
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
+    write_pipeline(&mut rv, cmds, atomic);
+    rv
+}
+
+fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
     let cmds_len = cmds.iter().map(cmd_len).sum();
 
     if atomic {
@@ -207,39 +175,18 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
         let exec = cmd("EXEC");
         rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
 
-        multi.write_packed_command_preallocated(&mut rv);
+        multi.write_packed_command_preallocated(rv);
         for cmd in cmds {
-            cmd.write_packed_command_preallocated(&mut rv);
+            cmd.write_packed_command_preallocated(rv);
         }
-        exec.write_packed_command_preallocated(&mut rv);
+        exec.write_packed_command_preallocated(rv);
     } else {
         rv.reserve(cmds_len);
 
         for cmd in cmds {
-            cmd.write_packed_command_preallocated(&mut rv);
+            cmd.write_packed_command_preallocated(rv);
         }
     }
-    rv
-}
-
-#[cfg(feature = "aio")]
-async fn write_pipeline_async(
-    mut out: Pin<&mut (impl ?Sized + AsyncWrite)>,
-    cmds: &[Cmd],
-    atomic: bool,
-) -> io::Result<()> {
-    if atomic {
-        cmd("MULTI").write_command_async(out.as_mut()).await?;
-        for cmd in cmds {
-            cmd.write_command_async(out.as_mut()).await?;
-        }
-        cmd("EXEC").write_command_async(out.as_mut()).await?;
-    } else {
-        for cmd in cmds {
-            cmd.write_command_async(out.as_mut()).await?;
-        }
-    }
-    Ok(())
 }
 
 impl RedisWrite for Cmd {
@@ -344,15 +291,7 @@ impl Cmd {
         cmd
     }
 
-    #[cfg(feature = "aio")]
-    pub(crate) async fn write_command_async(
-        &self,
-        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
-    ) -> io::Result<()> {
-        write_command_async(out, self.args_iter(), self.cursor.unwrap_or(0)).await
-    }
-
-    fn write_packed_command(&self, cmd: &mut Vec<u8>) {
+    pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
@@ -604,12 +543,8 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
-    #[cfg(feature = "aio")]
-    pub(crate) async fn write_pipeline_async(
-        &self,
-        out: Pin<&mut (impl ?Sized + AsyncWrite)>,
-    ) -> io::Result<()> {
-        write_pipeline_async(out, &self.commands, self.transaction_mode).await
+    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
+        write_pipeline(out, &self.commands, self.transaction_mode)
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {

@@ -12,7 +12,7 @@ use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
 use tokio::net::UnixStream;
 
 use tokio::{
-    io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
     sync::{mpsc, oneshot},
 };
@@ -37,12 +37,10 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 use crate::parser::ValueCodec;
 
 enum ActualConnection {
-    Tcp(Buffered<TcpStream>),
+    Tcp(TcpStream),
     #[cfg(unix)]
-    Unix(Buffered<UnixStream>),
+    Unix(UnixStream),
 }
-
-type Buffered<T> = BufReader<BufWriter<T>>;
 
 impl AsyncWrite for ActualConnection {
     fn poll_write(
@@ -88,27 +86,10 @@ impl AsyncRead for ActualConnection {
     }
 }
 
-impl AsyncBufRead for ActualConnection {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
-        match self.get_mut() {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_fill_buf(cx),
-            #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_fill_buf(cx),
-        }
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).consume(amt),
-            #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).consume(amt),
-        }
-    }
-}
-
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
+    buf: Vec<u8>,
     decoder: combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
     db: i64,
 }
@@ -125,6 +106,7 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
 
     let mut rv = Connection {
         con,
+        buf: Vec::new(),
         decoder: combine::stream::Decoder::new(),
         db: connection_info.db,
     };
@@ -181,13 +163,13 @@ async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualC
 
             TcpStream::connect(&socket_addr)
                 .await
-                .map(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))?
+                .map(ActualConnection::Tcp)?
         }
 
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => UnixStream::connect(path)
             .await
-            .map(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))?,
+            .map(ActualConnection::Unix)?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
@@ -226,8 +208,9 @@ pub trait ConnectionLike: Sized {
 impl ConnectionLike for Connection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
-            cmd.write_command_async(Pin::new(&mut self.con)).await?;
-            self.con.flush().await?;
+            self.buf.clear();
+            cmd.write_packed_command(&mut self.buf);
+            self.con.write_all(&self.buf).await?;
             self.read_response().await
         })
         .boxed()
@@ -240,8 +223,9 @@ impl ConnectionLike for Connection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         (async move {
-            cmd.write_pipeline_async(Pin::new(&mut self.con)).await?;
-            self.con.flush().await?;
+            self.buf.clear();
+            cmd.write_packed_pipeline(&mut self.buf);
+            self.con.write_all(&self.buf).await?;
 
             for _ in 0..offset {
                 self.read_response().await?;
@@ -515,20 +499,20 @@ impl MultiplexedConnection {
         let (pipeline, driver) = match con {
             #[cfg(not(unix))]
             ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, driver)
             }
 
             #[cfg(unix)]
             ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(driver))
             }
             #[cfg(unix)]
             ActualConnection::Unix(unix) => {
-                let codec = ValueCodec::default().framed(unix.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(driver))
             }
