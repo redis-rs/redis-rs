@@ -13,7 +13,7 @@ use tokio::net::UnixStream;
 
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
+    net::TcpStream as TcpStreamTokio,
     sync::{mpsc, oneshot},
 };
 use tokio_util::codec::Decoder;
@@ -49,25 +49,25 @@ impl AsyncWrite for ActualConnection {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_write(cx, buf),
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_write(cx, buf),
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_flush(cx),
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_flush(cx),
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_shutdown(cx),
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_shutdown(cx),
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
         }
     }
 }
@@ -79,9 +79,9 @@ impl AsyncRead for ActualConnection {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_read(cx, buf),
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_read(cx, buf),
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
         }
     }
 }
@@ -101,8 +101,8 @@ impl Connection {
 }
 
 /// Opens a connection.
-pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = connect_simple(connection_info).await?;
+pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
+    let con = connect_simple_tokio(connection_info).await?;
 
     let mut rv = Connection {
         con,
@@ -145,7 +145,7 @@ where
     Ok(())
 }
 
-async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualConnection> {
+async fn connect_simple_tokio(connection_info: &ConnectionInfo) -> RedisResult<ActualConnection> {
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = {
@@ -161,15 +161,15 @@ async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualC
                 }
             };
 
-            TcpStream::connect(&socket_addr)
+            TcpStreamTokio::connect(&socket_addr)
                 .await
-                .map(ActualConnection::Tcp)?
+                .map(ActualConnection::TcpTokio)?
         }
 
         #[cfg(unix)]
         ConnectionAddr::Unix(ref path) => UnixStream::connect(path)
             .await
-            .map(ActualConnection::Unix)?,
+            .map(ActualConnection::UnixTokio)?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
@@ -495,23 +495,23 @@ impl MultiplexedConnection {
     pub(crate) async fn new(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple(connection_info).await?;
+        let con = connect_simple_tokio(connection_info).await?;
         let (pipeline, driver) = match con {
             #[cfg(not(unix))]
-            ActualConnection::Tcp(tcp) => {
+            ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, driver)
             }
 
             #[cfg(unix)]
-            ActualConnection::Tcp(tcp) => {
+            ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(driver))
             }
             #[cfg(unix)]
-            ActualConnection::Unix(unix) => {
+            ActualConnection::UnixTokio(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(driver))

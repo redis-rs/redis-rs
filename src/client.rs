@@ -56,7 +56,7 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "aio")]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        crate::aio::connect(&self.connection_info).await
+        crate::aio::connect_tokio(&self.connection_info).await
     }
 
     /// Returns an async multiplexed connection from the client.
