@@ -160,7 +160,6 @@ where
     Ok(())
 }
 
-#[cfg(feature = "aio")]
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
     write_pipeline(&mut rv, cmds, atomic);
@@ -543,6 +542,7 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
+    #[cfg(feature = "aio")]
     pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
