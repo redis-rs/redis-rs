@@ -35,6 +35,13 @@ where
     current_thread_runtime().block_on(f)
 }
 
+pub fn block_on_all_using_async_std<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    async_std::task::block_on(f)
+}
+
 #[cfg(feature = "cluster")]
 mod cluster;
 
@@ -191,6 +198,11 @@ impl TestContext {
         self.client.get_async_connection().await
     }
 
+    #[cfg(feature = "aio")]
+    pub async fn async_connection_async_std(&self) -> redis::RedisResult<redis::aio::Connection> {
+        self.client.get_async_connection_async_std().await
+    }
+
     pub fn stop_server(&mut self) {
         self.server.stop();
     }
@@ -199,8 +211,22 @@ impl TestContext {
     pub fn multiplexed_async_connection(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        self.multiplexed_async_connection_tokio()
+    }
+
+    #[cfg(feature = "tokio-rt-core")]
+    pub fn multiplexed_async_connection_tokio(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
         let client = self.client.clone();
         async move { client.get_multiplexed_tokio_connection().await }
+    }
+
+    pub fn multiplexed_async_connection_async_std(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        let client = self.client.clone();
+        async move { client.get_multiplexed_async_std_connection().await }
     }
 }
 

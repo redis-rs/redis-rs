@@ -636,10 +636,24 @@ pub struct MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
-    pub(crate) async fn new(
+    pub(crate) async fn new_tokio(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
         let con = connect_simple_tokio(connection_info).await?;
+        Ok(MultiplexedConnection::create_connection(connection_info, con).await?)
+    }
+    /// Creates a multiplexed connection from a connection and executor.
+    pub(crate) async fn new_async_std(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
+        let con = connect_simple_async_std(connection_info).await?;
+        MultiplexedConnection::create_connection(connection_info, con).await
+    }
+
+    async fn create_connection(
+        connection_info: &ConnectionInfo,
+        con: ActualConnection,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
         let (pipeline, driver) = match con {
             #[cfg(not(unix))]
             ActualConnection::TcpTokio(tcp) => {
