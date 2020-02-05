@@ -221,7 +221,7 @@ impl TestContext {
         let client = self.client.clone();
         async move { client.get_multiplexed_tokio_connection().await }
     }
-
+    #[cfg(feature = "aio")]
     pub fn multiplexed_async_connection_async_std(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {

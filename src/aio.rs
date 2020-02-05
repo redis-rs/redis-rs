@@ -11,6 +11,7 @@ use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
 #[cfg(unix)]
 use tokio::net::UnixStream as UnixStreamTokio;
 
+#[cfg(feature = "async-std-aio")]
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream as UnixStreamAsyncStd;
 
@@ -21,6 +22,7 @@ use tokio::{
 };
 use tokio_util::codec::Decoder;
 
+#[cfg(feature = "async-std-aio")]
 use async_std::net::TcpStream as TcpStreamAsyncStd;
 
 #[cfg(unix)]
@@ -45,14 +47,19 @@ enum ActualConnection {
     TcpTokio(TcpStreamTokio),
     #[cfg(unix)]
     UnixTokio(UnixStreamTokio),
+    #[cfg(feature = "async-std-aio")]
     TcpAsyncStd(TcpStreamAsyncStdWrapped),
+    #[cfg(feature = "async-std-aio")]
     #[cfg(unix)]
     UnixAsyncStd(UnixStreamAsyncStdWrapped),
 }
 
+#[cfg(feature = "async-std-aio")]
 struct TcpStreamAsyncStdWrapped(TcpStreamAsyncStd);
+#[cfg(feature = "async-std-aio")]
 struct UnixStreamAsyncStdWrapped(UnixStreamAsyncStd);
 
+#[cfg(feature = "async-std-aio")]
 impl AsyncWrite for TcpStreamAsyncStdWrapped {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -76,6 +83,7 @@ impl AsyncWrite for TcpStreamAsyncStdWrapped {
     }
 }
 
+#[cfg(feature = "async-std-aio")]
 impl AsyncRead for TcpStreamAsyncStdWrapped {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -86,6 +94,7 @@ impl AsyncRead for TcpStreamAsyncStdWrapped {
     }
 }
 
+#[cfg(feature = "async-std-aio")]
 impl AsyncWrite for UnixStreamAsyncStdWrapped {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -109,6 +118,7 @@ impl AsyncWrite for UnixStreamAsyncStdWrapped {
     }
 }
 
+#[cfg(feature = "async-std-aio")]
 impl AsyncRead for UnixStreamAsyncStdWrapped {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -129,7 +139,9 @@ impl AsyncWrite for ActualConnection {
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "async-std-aio")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
         }
@@ -140,7 +152,9 @@ impl AsyncWrite for ActualConnection {
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "async-std-aio")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_flush(cx),
         }
@@ -151,7 +165,9 @@ impl AsyncWrite for ActualConnection {
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "async-std-aio")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
         }
@@ -168,7 +184,9 @@ impl AsyncRead for ActualConnection {
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "async-std-aio")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
         }
@@ -206,6 +224,7 @@ pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Conn
 }
 
 /// Opens a connection.
+#[cfg(feature = "async-std-aio")]
 pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     let con = connect_simple_async_std(connection_info).await?;
 
@@ -287,6 +306,7 @@ async fn connect_simple_tokio(connection_info: &ConnectionInfo) -> RedisResult<A
     })
 }
 
+#[cfg(feature = "async-std-aio")]
 async fn connect_simple_async_std(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<ActualConnection> {
@@ -643,6 +663,7 @@ impl MultiplexedConnection {
         Ok(MultiplexedConnection::create_connection(connection_info, con).await?)
     }
     /// Creates a multiplexed connection from a connection and executor.
+    #[cfg(feature = "async-std-aio")]
     pub(crate) async fn new_async_std(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
@@ -659,38 +680,60 @@ impl MultiplexedConnection {
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, driver)
-            }
+                (pipeline, Either::Left(driver))
+            },
             #[cfg(not(unix))]
             ActualConnection::TcpAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, driver)
-            }
+                (pipeline, Either::Right(driver))
+            },
+            #[cfg(not(feature = "async-std-aio"))]
             #[cfg(unix)]
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(Either::Left(driver)))
-            }
+                
+                (pipeline, Either::Left(driver))
+            },
+            #[cfg(not(feature = "async-std-aio"))]
             #[cfg(unix)]
             ActualConnection::UnixTokio(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
+
+                (pipeline, Either::Right(driver))
+            },
+            #[cfg(feature = "async-std-aio")]
+            #[cfg(unix)]
+            ActualConnection::TcpTokio(tcp) => {
+                let codec = ValueCodec::default().framed(tcp);
+                let (pipeline, driver) = Pipeline::new(codec);
+                
+                (pipeline, Either::Left(Either::Left(driver)))
+            },
+            #[cfg(feature = "async-std-aio")]
+            #[cfg(unix)]
+            ActualConnection::UnixTokio(unix) => {
+                let codec = ValueCodec::default().framed(unix);
+                let (pipeline, driver) = Pipeline::new(codec);
+
                 (pipeline, Either::Right(Either::Left(driver)))
-            }
+            },
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::TcpAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(Either::Right(driver)))
-            }
+            },
+            #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(Either::Right(driver)))
-            }
+            },
         };
         let mut con = MultiplexedConnection {
             pipeline,

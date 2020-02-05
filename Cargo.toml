@@ -45,8 +45,7 @@ r2d2 = { version = "0.8.8", optional = true }
 # Only needed for cluster
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
-async-std = "1.4.0"
-futures = "0.3.2"
+async-std = { version = "1.4.0", optional = true }
 
 [features]
 default = ["geospatial", "aio", "script"]
@@ -55,6 +54,7 @@ tokio-rt-core = ["aio", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]
+async-std-aio = ["aio"]
 
 [dev-dependencies]
 rand = "0.7"
@@ -71,6 +71,10 @@ tokio = { version = "0.2", features = ["rt-core", "macros"] }
 [[test]]
 name = "test_async"
 required-features = ["tokio-rt-core"]
+
+[[test]]
+name = "test_async_async_std"
+required-features = ["async-std-aio"]
 
 [[test]]
 name = "parser"
