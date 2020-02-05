@@ -53,14 +53,14 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "async-std-aio", feature = "aio"))]
+    #[cfg(feature = "aio")]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        #[cfg(all(feature = "aio", not(feature = "async-std")))]
+        #[cfg(not(feature = "async-std"))]
         {
             self.get_tokio_connection_tokio().await
         }
 
-        #[cfg(all(feature = "tokio", feature = "async-std"))]
+        #[cfg(feature = "async-std")]
         {
             if tokio::runtime::Handle::try_current().is_ok() {
                 self.get_tokio_connection_tokio().await
