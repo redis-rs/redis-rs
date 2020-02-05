@@ -1,5 +1,4 @@
 use std::time::Duration;
-
 use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
 use crate::types::{RedisResult, Value};
 
@@ -56,18 +55,18 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "aio")]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        self.get_async_connection_tokio().await
+        self.get_tokio_connection_tokio().await
     }
 
     /// Returns an async connection from the client.
     #[cfg(feature = "aio")]
-    pub async fn get_async_connection_tokio(&self) -> RedisResult<crate::aio::Connection> {
+    pub async fn get_tokio_connection_tokio(&self) -> RedisResult<crate::aio::Connection> {
         crate::aio::connect_tokio(&self.connection_info).await
     }
 
     /// Returns an async connection from the client.
     #[cfg(feature = "async-std-aio")]
-    pub async fn get_async_connection_async_std(&self) -> RedisResult<crate::aio::Connection> {
+    pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
         crate::aio::connect_async_std(&self.connection_info).await
     }
 
@@ -82,7 +81,7 @@ impl Client {
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let (connection, driver) = self.get_multiplexed_async_connection_tokio().await?;
+        let (connection, driver) = self.create_multiplexed_tokio_connection().await?;
         tokio::spawn(driver);
         Ok(connection)
     }
@@ -98,7 +97,7 @@ impl Client {
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let (connection, driver) = self.get_multiplexed_async_connection_async_std().await?;
+        let (connection, driver) = self.create_multiplexed_async_std_connection().await?;
         async_std::task::spawn(driver);
         Ok(connection)
     }
@@ -109,7 +108,7 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "aio")]
-    pub async fn get_multiplexed_async_connection_tokio(
+    pub async fn create_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
@@ -124,7 +123,7 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-aio")]
-    pub async fn get_multiplexed_async_connection_async_std(
+    pub async fn create_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
