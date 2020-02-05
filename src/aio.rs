@@ -43,6 +43,119 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 use crate::parser::ValueCodec;
 
+#[cfg(feature = "async-std-aio")]
+mod async_std_aio {
+    
+    pub struct TcpStreamAsyncStdWrapped(TcpStreamAsyncStd);
+    pub struct UnixStreamAsyncStdWrapped(UnixStreamAsyncStd);
+
+    pub impl AsyncWrite for TcpStreamAsyncStdWrapped {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+            buf: &[u8],
+        ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
+            async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
+        }
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+        ) -> core::task::Poll<Result<(), tokio::io::Error>> {
+            async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+        ) -> core::task::Poll<Result<(), tokio::io::Error>> {
+            async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
+        }
+    }
+
+    pub impl AsyncRead for TcpStreamAsyncStdWrapped {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+            buf: &mut [u8],
+        ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
+            async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
+        }
+    }
+
+    pub impl AsyncWrite for UnixStreamAsyncStdWrapped {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+            buf: &[u8],
+        ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
+            async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
+        }
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+        ) -> core::task::Poll<Result<(), tokio::io::Error>> {
+            async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+        ) -> core::task::Poll<Result<(), tokio::io::Error>> {
+            async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
+        }
+    }
+
+    pub impl AsyncRead for UnixStreamAsyncStdWrapped {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut core::task::Context,
+            buf: &mut [u8],
+        ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
+            async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
+        }
+    }
+
+    async fn connect_simple_async_std(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<ActualConnection> {
+        Ok(match *connection_info.addr {
+            ConnectionAddr::Tcp(ref host, port) => {
+                let socket_addr = {
+                    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+                    match socket_addrs.next() {
+                        Some(socket_addr) => socket_addr,
+                        None => {
+                            return Err(RedisError::from((
+                                ErrorKind::InvalidClientConfig,
+                                "No address found for host",
+                            )));
+                        }
+                    }
+                };
+
+                TcpStreamAsyncStd::connect(&socket_addr)
+                    .await
+                    .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?
+            }
+
+            #[cfg(unix)]
+            ConnectionAddr::Unix(ref path) => UnixStreamAsyncStd::connect(path)
+                .await
+                .map(|con| ActualConnection::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?,
+
+            #[cfg(not(unix))]
+            ConnectionAddr::Unix(_) => {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to unix sockets \
+                     on this platform",
+                )))
+            }
+        })
+    }
+
+}
+
 enum ActualConnection {
     TcpTokio(TcpStreamTokio),
     #[cfg(unix)]
@@ -52,81 +165,6 @@ enum ActualConnection {
     #[cfg(feature = "async-std-aio")]
     #[cfg(unix)]
     UnixAsyncStd(UnixStreamAsyncStdWrapped),
-}
-
-#[cfg(feature = "async-std-aio")]
-struct TcpStreamAsyncStdWrapped(TcpStreamAsyncStd);
-#[cfg(feature = "async-std-aio")]
-struct UnixStreamAsyncStdWrapped(UnixStreamAsyncStd);
-
-#[cfg(feature = "async-std-aio")]
-impl AsyncWrite for TcpStreamAsyncStdWrapped {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &[u8],
-    ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> core::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> core::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
-    }
-}
-
-#[cfg(feature = "async-std-aio")]
-impl AsyncRead for TcpStreamAsyncStdWrapped {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &mut [u8],
-    ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
-    }
-}
-
-#[cfg(feature = "async-std-aio")]
-impl AsyncWrite for UnixStreamAsyncStdWrapped {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &[u8],
-    ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> core::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> core::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
-    }
-}
-
-#[cfg(feature = "async-std-aio")]
-impl AsyncRead for UnixStreamAsyncStdWrapped {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &mut [u8],
-    ) -> core::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
-    }
 }
 
 impl AsyncWrite for ActualConnection {
@@ -294,46 +332,6 @@ async fn connect_simple_tokio(connection_info: &ConnectionInfo) -> RedisResult<A
         ConnectionAddr::Unix(ref path) => UnixStreamTokio::connect(path)
             .await
             .map(ActualConnection::UnixTokio)?,
-
-        #[cfg(not(unix))]
-        ConnectionAddr::Unix(_) => {
-            return Err(RedisError::from((
-                ErrorKind::InvalidClientConfig,
-                "Cannot connect to unix sockets \
-                 on this platform",
-            )))
-        }
-    })
-}
-
-#[cfg(feature = "async-std-aio")]
-async fn connect_simple_async_std(
-    connection_info: &ConnectionInfo,
-) -> RedisResult<ActualConnection> {
-    Ok(match *connection_info.addr {
-        ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addr = {
-                let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
-                match socket_addrs.next() {
-                    Some(socket_addr) => socket_addr,
-                    None => {
-                        return Err(RedisError::from((
-                            ErrorKind::InvalidClientConfig,
-                            "No address found for host",
-                        )));
-                    }
-                }
-            };
-
-            TcpStreamAsyncStd::connect(&socket_addr)
-                .await
-                .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?
-        }
-
-        #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => UnixStreamAsyncStd::connect(path)
-            .await
-            .map(|con| ActualConnection::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
