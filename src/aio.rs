@@ -1,8 +1,11 @@
 //! Adds experimental async IO support to redis.
+use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io;
 use std::mem;
+use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::pin::Pin;
 use std::task::{self, Poll};
 
@@ -11,19 +14,12 @@ use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
 #[cfg(unix)]
 use tokio::net::UnixStream as UnixStreamTokio;
 
-#[cfg(feature = "async-std-aio")]
-#[cfg(unix)]
-use async_std::os::unix::net::UnixStream as UnixStreamAsyncStd;
-
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream as TcpStreamTokio,
     sync::{mpsc, oneshot},
 };
 use tokio_util::codec::Decoder;
-
-#[cfg(feature = "async-std-aio")]
-use async_std::net::TcpStream as TcpStreamAsyncStd;
 
 #[cfg(unix)]
 use futures_util::future::Either;
@@ -45,11 +41,17 @@ use crate::parser::ValueCodec;
 
 #[cfg(feature = "async-std-aio")]
 mod async_std_aio {
-    
+    use super::{
+        async_trait, ActualConnection, AsyncRead, AsyncWrite, Connect, Pin, RedisResult, SocketAddr, Path
+    };
+    use async_std::net::TcpStream as TcpStreamAsyncStd;
+    #[cfg(unix)]
+    use async_std::os::unix::net::UnixStream as UnixStreamAsyncStd;
+
     pub struct TcpStreamAsyncStdWrapped(TcpStreamAsyncStd);
     pub struct UnixStreamAsyncStdWrapped(UnixStreamAsyncStd);
 
-    pub impl AsyncWrite for TcpStreamAsyncStdWrapped {
+    impl AsyncWrite for TcpStreamAsyncStdWrapped {
         fn poll_write(
             mut self: Pin<&mut Self>,
             cx: &mut core::task::Context,
@@ -72,7 +74,7 @@ mod async_std_aio {
         }
     }
 
-    pub impl AsyncRead for TcpStreamAsyncStdWrapped {
+    impl AsyncRead for TcpStreamAsyncStdWrapped {
         fn poll_read(
             mut self: Pin<&mut Self>,
             cx: &mut core::task::Context,
@@ -82,7 +84,7 @@ mod async_std_aio {
         }
     }
 
-    pub impl AsyncWrite for UnixStreamAsyncStdWrapped {
+    impl AsyncWrite for UnixStreamAsyncStdWrapped {
         fn poll_write(
             mut self: Pin<&mut Self>,
             cx: &mut core::task::Context,
@@ -105,7 +107,7 @@ mod async_std_aio {
         }
     }
 
-    pub impl AsyncRead for UnixStreamAsyncStdWrapped {
+    impl AsyncRead for UnixStreamAsyncStdWrapped {
         fn poll_read(
             mut self: Pin<&mut Self>,
             cx: &mut core::task::Context,
@@ -115,56 +117,37 @@ mod async_std_aio {
         }
     }
 
-    async fn connect_simple_async_std(
-        connection_info: &ConnectionInfo,
-    ) -> RedisResult<ActualConnection> {
-        Ok(match *connection_info.addr {
-            ConnectionAddr::Tcp(ref host, port) => {
-                let socket_addr = {
-                    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
-                    match socket_addrs.next() {
-                        Some(socket_addr) => socket_addr,
-                        None => {
-                            return Err(RedisError::from((
-                                ErrorKind::InvalidClientConfig,
-                                "No address found for host",
-                            )));
-                        }
-                    }
-                };
+    pub struct AsyncStd;
 
-                TcpStreamAsyncStd::connect(&socket_addr)
-                    .await
-                    .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?
-            }
-
-            #[cfg(unix)]
-            ConnectionAddr::Unix(ref path) => UnixStreamAsyncStd::connect(path)
+    #[async_trait]
+    impl Connect for AsyncStd {
+        async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection> {
+            Ok(TcpStreamAsyncStd::connect(&socket_addr)
                 .await
-                .map(|con| ActualConnection::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?,
-
-            #[cfg(not(unix))]
-            ConnectionAddr::Unix(_) => {
-                return Err(RedisError::from((
-                    ErrorKind::InvalidClientConfig,
-                    "Cannot connect to unix sockets \
-                     on this platform",
-                )))
-            }
-        })
+                .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?)
+        }
+        async fn connect_unix(path: &Path) -> RedisResult<ActualConnection> {
+            Ok(UnixStreamAsyncStd::connect(path)
+                .await
+                .map(|con| ActualConnection::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?)
+        }
     }
-
 }
 
-enum ActualConnection {
+/// Represents an async Connection (TCP or Unix. Tokio or Async Std)
+pub enum ActualConnection {
+    /// Represents a Tokio TCP connection.
     TcpTokio(TcpStreamTokio),
     #[cfg(unix)]
+    /// Represents a Tokio Unix connection.
     UnixTokio(UnixStreamTokio),
+    /// Represents an Async_std TCP connection.
     #[cfg(feature = "async-std-aio")]
-    TcpAsyncStd(TcpStreamAsyncStdWrapped),
+    TcpAsyncStd(async_std_aio::TcpStreamAsyncStdWrapped),
+    /// Represents an Async_std Unix connection.
     #[cfg(feature = "async-std-aio")]
     #[cfg(unix)]
-    UnixAsyncStd(UnixStreamAsyncStdWrapped),
+    UnixAsyncStd(async_std_aio::UnixStreamAsyncStdWrapped),
 }
 
 impl AsyncWrite for ActualConnection {
@@ -247,25 +230,23 @@ impl Connection {
 
 /// Opens a connection.
 pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = connect_simple_tokio(connection_info).await?;
+    let con = connect_simple::<Tokio>(connection_info).await?;
 
-    let mut rv = Connection {
-        con,
-        buf: Vec::new(),
-        decoder: combine::stream::Decoder::new(),
-        db: connection_info.db,
-    };
-
-    authenticate(connection_info, &mut rv).await?;
-
-    Ok(rv)
+    prepare_connection(con, connection_info).await
 }
 
 /// Opens a connection.
 #[cfg(feature = "async-std-aio")]
 pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = connect_simple_async_std(connection_info).await?;
+    let con = connect_simple::<async_std_aio::AsyncStd>(connection_info).await?;
 
+    prepare_connection(con, connection_info).await
+}
+
+async fn prepare_connection(
+    con: ActualConnection,
+    connection_info: &ConnectionInfo,
+) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
         buf: Vec::new(),
@@ -307,7 +288,31 @@ where
     Ok(())
 }
 
-async fn connect_simple_tokio(connection_info: &ConnectionInfo) -> RedisResult<ActualConnection> {
+#[async_trait]
+trait Connect {
+    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection>;
+    async fn connect_unix(path: &Path) -> RedisResult<ActualConnection>;
+}
+
+struct Tokio;
+
+#[async_trait]
+impl Connect for Tokio {
+    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection> {
+        Ok(TcpStreamTokio::connect(&socket_addr)
+            .await
+            .map(ActualConnection::TcpTokio)?)
+    }
+    async fn connect_unix(path: &Path) -> RedisResult<ActualConnection> {
+        Ok(UnixStreamTokio::connect(path)
+            .await
+            .map(ActualConnection::UnixTokio)?)
+    }
+}
+
+async fn connect_simple<T: Connect>(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<ActualConnection> {
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = {
@@ -323,15 +328,11 @@ async fn connect_simple_tokio(connection_info: &ConnectionInfo) -> RedisResult<A
                 }
             };
 
-            TcpStreamTokio::connect(&socket_addr)
-                .await
-                .map(ActualConnection::TcpTokio)?
+            <T>::connect_tcp(socket_addr).await?
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => UnixStreamTokio::connect(path)
-            .await
-            .map(ActualConnection::UnixTokio)?,
+        ConnectionAddr::Unix(ref path) => <T>::connect_unix(path).await?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
@@ -657,7 +658,7 @@ impl MultiplexedConnection {
     pub(crate) async fn new_tokio(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple_tokio(connection_info).await?;
+        let con = connect_simple::<Tokio>(connection_info).await?;
         Ok(MultiplexedConnection::create_connection(connection_info, con).await?)
     }
     /// Creates a multiplexed connection from a connection and executor.
@@ -665,7 +666,7 @@ impl MultiplexedConnection {
     pub(crate) async fn new_async_std(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple_async_std(connection_info).await?;
+        let con = connect_simple::<async_std_aio::AsyncStd>(connection_info).await?;
         MultiplexedConnection::create_connection(connection_info, con).await
     }
 
@@ -679,21 +680,20 @@ impl MultiplexedConnection {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(driver))
-            },
+            }
             #[cfg(not(unix))]
             ActualConnection::TcpAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(driver))
-            },
+            }
             #[cfg(not(feature = "async-std-aio"))]
             #[cfg(unix)]
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                
                 (pipeline, Either::Left(driver))
-            },
+            }
             #[cfg(not(feature = "async-std-aio"))]
             #[cfg(unix)]
             ActualConnection::UnixTokio(unix) => {
@@ -701,15 +701,14 @@ impl MultiplexedConnection {
                 let (pipeline, driver) = Pipeline::new(codec);
 
                 (pipeline, Either::Right(driver))
-            },
+            }
             #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                
                 (pipeline, Either::Left(Either::Left(driver)))
-            },
+            }
             #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixTokio(unix) => {
@@ -717,21 +716,21 @@ impl MultiplexedConnection {
                 let (pipeline, driver) = Pipeline::new(codec);
 
                 (pipeline, Either::Right(Either::Left(driver)))
-            },
+            }
             #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::TcpAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(Either::Right(driver)))
-            },
+            }
             #[cfg(feature = "async-std-aio")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(Either::Right(driver)))
-            },
+            }
         };
         let mut con = MultiplexedConnection {
             pipeline,
