@@ -112,9 +112,7 @@ impl Client {
     /// [connection-manager]: aio/struct.ConnectionManager.html
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
-    pub async fn get_tokio_connection_manager(
-        &self,
-    ) -> RedisResult<crate::aio::ConnectionManager> {
+    pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
         Ok(crate::aio::ConnectionManager::new(self.connection_info.clone()).await?)
     }
 }

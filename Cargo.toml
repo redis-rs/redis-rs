@@ -41,6 +41,7 @@ tokio = { version = "0.2", optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "0.4.4", optional = true }
+futures = { version = "0.3.3", optional = true }
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.8", optional = true }
@@ -56,7 +57,7 @@ tokio-rt-core = ["aio", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]
-connection-manager = ["tokio-rt-core", "arc-swap"]
+connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
 
 [dev-dependencies]
 rand = "0.7"

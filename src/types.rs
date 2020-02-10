@@ -405,6 +405,33 @@ impl RedisError {
             _ => None,
         }
     }
+
+    /// Clone the `RedisError`, turning wrapped `io::Error`s into a string
+    /// representation.
+    ///
+    /// Deriving `Clone` is not possible because the wrapped `io::Error` is not
+    /// cloneable.
+    ///
+    /// The `ioerror_description` parameter will be used as the static error
+    /// description in case an `IoError` is found.
+    #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
+    pub(crate) fn clone_mostly(&self, ioerror_description: Option<&'static str>) -> Self {
+        let repr = match self.repr {
+            ErrorRepr::WithDescription(kind, desc) => ErrorRepr::WithDescription(kind, desc),
+            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
+                ErrorRepr::WithDescriptionAndDetail(kind, desc, detail.clone())
+            }
+            ErrorRepr::ExtensionError(ref code, ref detail) => {
+                ErrorRepr::ExtensionError(code.clone(), detail.clone())
+            }
+            ErrorRepr::IoError(ref e) => ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                ioerror_description.unwrap_or("I/O error"),
+                e.to_string(),
+            ),
+        };
+        Self { repr }
+    }
 }
 
 pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {

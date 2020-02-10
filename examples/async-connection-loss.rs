@@ -10,7 +10,9 @@ use std::env;
 use std::process;
 use std::time::Duration;
 
+use futures::future;
 use redis::aio::ConnectionLike;
+use redis::RedisResult;
 use tokio::time::interval;
 
 enum Mode {
@@ -19,18 +21,43 @@ enum Mode {
     Reconnect,
 }
 
-async fn run<C: ConnectionLike>(mut con: C) -> redis::RedisResult<()> {
-    let mut interval = interval(Duration::from_millis(100));
+async fn run_single<C: ConnectionLike>(mut con: C) -> RedisResult<()> {
+    let mut interval = interval(Duration::from_millis(1000));
     loop {
         interval.tick().await;
+        println!("");
         println!("> PING");
-        let result: redis::RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
+        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
         println!("< {:?}", result);
     }
 }
 
+async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
+    let mut interval = interval(Duration::from_millis(100));
+    loop {
+        interval.tick().await;
+        println!("");
+        println!("> PING");
+        println!("> PING");
+        println!("> PING");
+        let results: (
+            RedisResult<String>,
+            RedisResult<String>,
+            RedisResult<String>,
+        ) = future::join3(
+            redis::cmd("PING").query_async(&mut con.clone()),
+            redis::cmd("PING").query_async(&mut con.clone()),
+            redis::cmd("PING").query_async(&mut con),
+        )
+        .await;
+        println!("< {:?}", results.0);
+        println!("< {:?}", results.1);
+        println!("< {:?}", results.2);
+    }
+}
+
 #[tokio::main]
-async fn main() -> redis::RedisResult<()> {
+async fn main() -> RedisResult<()> {
     let mode = match env::args().nth(1).as_ref().map(String::as_str) {
         Some("default") => {
             println!("Using default connection mode\n");
@@ -52,9 +79,9 @@ async fn main() -> redis::RedisResult<()> {
 
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     match mode {
-        Mode::Default => run(client.get_async_connection().await?).await?,
-        Mode::Multiplexed => run(client.get_multiplexed_tokio_connection().await?).await?,
-        Mode::Reconnect => run(client.get_tokio_connection_manager().await?).await?,
+        Mode::Default => run_single(client.get_async_connection().await?).await?,
+        Mode::Multiplexed => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
+        Mode::Reconnect => run_multi(client.get_tokio_connection_manager().await?).await?,
     };
     Ok(())
 }

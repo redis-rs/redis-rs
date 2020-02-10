@@ -577,15 +577,44 @@ mod connection_manager {
 
     use std::sync::Arc;
 
-    use arc_swap::ArcSwap;
+    use arc_swap::{self, ArcSwap};
+    use futures::future::{self, Shared};
+    use futures_util::future::BoxFuture;
 
     /// A `ConnectionManager` is a proxy that wraps a multiplexed connection and
     /// automatically reconnects to the server when necessary.
+    ///
+    /// ## Behavior
+    ///
+    /// - When creating an instance of the `ConnectionManager`, an initial
+    ///   connection will be established and awaited. Connection errors will be
+    ///   returned directly.
+    /// - When a command sent to the server fails with an error that represents
+    ///   a "connection dropped" condition, that error will be passed on to the
+    ///   user, but it will trigger a reconnection in the background.
+    /// - The reconnect code will atomically swap the current (dead) connection
+    ///   with a future that will eventually resolve to a `MultiplexedConnection`
+    ///   or to a `RedisError`
+    /// - All commands that are issued after the reconnect process has been
+    ///   initiated, will have to await the connection future.
+    /// - If reconnecting fails, all pending commands will be failed as well. A
+    ///   new reconnection attempt will be triggered if the error is an I/O error.
     #[derive(Clone)]
     pub struct ConnectionManager {
+        /// Information used for the connection. This is needed to be able to reconnect.
         connection_info: ConnectionInfo,
-        connection: ArcSwap<MultiplexedConnection>,
+        /// The connection future.
+        ///
+        /// The `ArcSwap` is required to be able to replace the connection
+        /// without making the `ConnectionManager` mutable.
+        connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
     }
+
+    /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
+    type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
+
+    /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
+    type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
 
     impl ConnectionManager {
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -605,54 +634,91 @@ mod connection_manager {
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
                 connection_info,
-                connection: ArcSwap::from(Arc::new(connection)),
+                connection: Arc::new(ArcSwap::from_pointee(
+                    future::ok(connection).boxed().shared(),
+                )),
             })
         }
 
-        async fn reconnect(&mut self) -> RedisResult<&mut Self> {
-            // TODO: While this code uses compare-and-swap to prevent active
-            // connections from being overwritten in the ConnectionManager
-            // struct, it can still lead to multiple connections being
-            // established in parallel.
-            let guard = self.connection.load();
+        /// Reconnect and overwrite the old connection.
+        ///
+        /// The `current` guard points to the shared future that was active
+        /// when the connection loss was detected.
+        fn reconnect(
+            &self,
+            current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
+        ) {
+            println!("Prepare reconnect");
 
-            // Establish a new connection
-            println!("Connect");
-            let (new_connection, driver) = MultiplexedConnection::new(
-                connect(&self.connection_info).await?
-            );
-
-            // Spawn the driver that drives the connection future
-            tokio::spawn(driver);
+            let connection_info = self.connection_info.clone();
+            let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+                let (new_connection, driver) =
+                    MultiplexedConnection::new(connect(&connection_info).await?);
+                tokio::spawn(driver);
+                println!("Reconnecting");
+                Ok(new_connection)
+            }
+            .boxed()
+            .shared();
 
             // Update the connection in the connection manager
-            self.connection.compare_and_swap(guard, Arc::new(new_connection));
+            let new_connection_arc = Arc::new(new_connection.clone());
+            let prev = self
+                .connection
+                .compare_and_swap(&current, new_connection_arc);
 
-            Ok(self)
-        }
-
-        /// Handle a command result. If the connection was dropped, reconnect.
-        async fn maybe_reconnect<T>(&mut self, result: &RedisResult<T>) {
-            if let Err(ref e) = result {
-                if e.is_connection_dropped() {
-                    println!("Connection lost, reconnecting");
-                    if let Err(reconnect_failed) = self.reconnect().await {
-                        println!("Reconnecting failed: {}", reconnect_failed);
-                    };
-                }
+            // If the swap happened...
+            if Arc::ptr_eq(&prev, &current) {
+                println!("Swap happened");
+                // ...start the connection attempt immediately but do not wait on it.
+                tokio::spawn(new_connection);
+            } else {
+                println!("Swap did not happen");
             }
         }
     }
 
+    /// Handle a command result. If the connection was dropped, reconnect.
+    macro_rules! reconnect_if_dropped {
+        ($self:expr, $result:expr, $current:expr) => {
+            if let Err(ref e) = $result {
+                if e.is_connection_dropped() {
+                    println!("Connection lost, reconnecting");
+                    $self.reconnect($current);
+                }
+            }
+        };
+    }
+
+    /// Handle a connection result. If there's an I/O error, reconnect.
+    /// Propagate any error.
+    macro_rules! reconnect_if_io_error {
+        ($self:expr, $result:expr, $current:expr) => {
+            if let Err(e) = $result {
+                if e.is_io_error() {
+                    println!("Reconnect failed, reconnecting");
+                    $self.reconnect($current);
+                }
+                return Err(e);
+            }
+        };
+    }
+
     impl ConnectionLike for ConnectionManager {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-            // Clone connection to avoid having to lock the ArcSwap in write mode
-            let mut connection = (**self.connection.load()).clone();
             (async move {
-                let result = connection.req_packed_command(cmd).await;
-                self.maybe_reconnect(&result).await;
+                // Clone connection to avoid having to lock the ArcSwap in write mode
+                let guard = self.connection.load();
+                let connection_result = (**guard)
+                    .clone()
+                    .await
+                    .map_err(|e| e.clone_mostly(Some("Reconnecting failed")));
+                reconnect_if_io_error!(self, connection_result, guard);
+                let result = connection_result?.req_packed_command(cmd).await;
+                reconnect_if_dropped!(self, &result, guard);
                 result
-            }).boxed()
+            })
+            .boxed()
         }
 
         fn req_packed_commands<'a>(
@@ -661,17 +727,25 @@ mod connection_manager {
             offset: usize,
             count: usize,
         ) -> RedisFuture<'a, Vec<Value>> {
-            // Clone connection to avoid having to lock the ArcSwap in write mode
-            let mut connection = (**self.connection.load()).clone();
             (async move {
-                let result = connection.req_packed_commands(cmd, offset, count).await;
-                self.maybe_reconnect(&result).await;
+                // Clone shared connection future to avoid having to lock the ArcSwap in write mode
+                let guard = self.connection.load();
+                let connection_result = (**guard)
+                    .clone()
+                    .await
+                    .map_err(|e| e.clone_mostly(Some("Reconnecting failed")));
+                reconnect_if_io_error!(self, connection_result, guard);
+                let result = connection_result?
+                    .req_packed_commands(cmd, offset, count)
+                    .await;
+                reconnect_if_dropped!(self, &result, guard);
                 result
-            }).boxed()
+            })
+            .boxed()
         }
 
         fn get_db(&self) -> i64 {
-            self.connection.load().db
+            self.connection_info.db
         }
     }
 }
