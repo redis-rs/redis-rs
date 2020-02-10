@@ -22,9 +22,6 @@ use tokio::{
 };
 use tokio_util::codec::Decoder;
 
-#[cfg(any(unix, feature = "async-std"))]
-use futures_util::future::Either;
-
 use futures_util::{
     future::{Future, FutureExt, TryFutureExt},
     ready,
@@ -44,7 +41,8 @@ use crate::parser::ValueCodec;
 #[cfg(feature = "async-std")]
 mod async_std_aio {
     use super::{
-        async_trait, ActualConnection, AsyncRead, AsyncWrite, Connect, Pin, RedisResult, SocketAddr, Path
+        async_trait, ActualConnection, AsyncRead, AsyncWrite, Connect, Path, Pin, RedisResult,
+        SocketAddr,
     };
     use async_std_dep::net::TcpStream as TcpStreamAsyncStd;
     #[cfg(unix)]
@@ -679,71 +677,37 @@ impl MultiplexedConnection {
         connection_info: &ConnectionInfo,
         con: ActualConnection,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
+        fn boxed(
+            f: impl Future<Output = ()> + Send + 'static,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(f)
+        }
+
         let (pipeline, driver) = match con {
-            #[cfg(not(unix))]
-            #[cfg(not(feature = "async-std"))]
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, driver)
+                (pipeline, boxed(driver))
             }
-            #[cfg(not(unix))]
-            #[cfg(feature = "async-std")]
-            ActualConnection::TcpTokio(tcp) => {
-                let codec = ValueCodec::default().framed(tcp);
-                let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(driver))
-            }
-            #[cfg(not(unix))]
             #[cfg(feature = "async-std")]
             ActualConnection::TcpAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Right(driver))
+                (pipeline, boxed(driver))
             }
             #[cfg(unix)]
-            #[cfg(not(feature = "async-std"))]
-            ActualConnection::TcpTokio(tcp) => {
-                let codec = ValueCodec::default().framed(tcp);
-                let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(driver))
-            }
-            #[cfg(unix)]
-            #[cfg(not(feature = "async-std"))]
             ActualConnection::UnixTokio(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
 
-                (pipeline, Either::Right(driver))
-            }
-            #[cfg(unix)]
-            #[cfg(feature = "async-std")]
-            ActualConnection::TcpTokio(tcp) => {
-                let codec = ValueCodec::default().framed(tcp);
-                let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(Either::Left(driver)))
-            }
-            #[cfg(unix)]
-            #[cfg(feature = "async-std")]
-            ActualConnection::UnixTokio(unix) => {
-                let codec = ValueCodec::default().framed(unix);
-                let (pipeline, driver) = Pipeline::new(codec);
-
-                (pipeline, Either::Right(Either::Left(driver)))
-            }
-            #[cfg(unix)]
-            #[cfg(feature = "async-std")]
-            ActualConnection::TcpAsyncStd(tcp) => {
-                let codec = ValueCodec::default().framed(tcp);
-                let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(Either::Right(driver)))
+                (pipeline, boxed(driver))
             }
             #[cfg(unix)]
             #[cfg(feature = "async-std")]
             ActualConnection::UnixAsyncStd(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Right(Either::Right(driver)))
+                (pipeline, boxed(driver))
             }
         };
         let mut con = MultiplexedConnection {
