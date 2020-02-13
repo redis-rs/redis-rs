@@ -39,7 +39,7 @@ pub fn block_on_all_using_async_std<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    async_std_dep::task::block_on(f)
+    async_std::task::block_on(f)
 }
 
 #[cfg(feature = "cluster")]
