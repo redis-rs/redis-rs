@@ -24,7 +24,7 @@ use tokio::{
 use tokio::net::TcpStream as TcpStreamTokio;
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
-use tokio_util::{codec::Decoder};
+use tokio_util::codec::Decoder;
 
 use futures_util::{
     future::{Future, FutureExt, TryFutureExt},
@@ -52,15 +52,14 @@ trait Connect {
 
 #[cfg(feature = "async-std-comp")]
 mod async_std_aio {
+    #[cfg(unix)]
+    use super::Path;
     use super::{
-        async_trait, ActualConnection, AsyncRead, AsyncWrite, Connect, Pin, RedisResult,
-        SocketAddr,
+        async_trait, ActualConnection, AsyncRead, AsyncWrite, Connect, Pin, RedisResult, SocketAddr,
     };
     use async_std::net::TcpStream as TcpStreamAsyncStd;
     #[cfg(unix)]
     use async_std::os::unix::net::UnixStream as UnixStreamAsyncStd;
-    #[cfg(unix)]
-    use super::Path;
 
     pub struct TcpStreamAsyncStdWrapped(TcpStreamAsyncStd);
     #[cfg(unix)]
@@ -154,15 +153,10 @@ mod async_std_aio {
 
 #[cfg(feature = "tokio-comp")]
 mod tokio_aio {
-    use super::{
-        async_trait, ActualConnection, Connect, RedisResult,
-        SocketAddr, TcpStreamTokio
-    };
+    use super::{async_trait, ActualConnection, Connect, RedisResult, SocketAddr, TcpStreamTokio};
 
     #[cfg(unix)]
-    use super::{
-        UnixStreamTokio, Path
-    };
+    use super::{Path, UnixStreamTokio};
 
     pub struct Tokio;
 
