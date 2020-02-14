@@ -511,7 +511,7 @@ impl Connection {
         self.con.set_read_timeout(dur)
     }
 
-    /// Creats a pubsub instance.for this connection.
+    /// Creates a [`PubSub`] instance for this connection.
     pub fn as_pubsub(&mut self) -> PubSub<'_> {
         // NOTE: The pubsub flag is intentionally not raised at this time since
         // running commands within the pubsub state should not try and exit from

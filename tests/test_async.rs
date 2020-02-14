@@ -15,24 +15,22 @@ fn test_args() {
     let ctx = TestContext::new();
     let connect = ctx.async_connection();
 
-    block_on_all(connect.and_then(|mut con| {
-        async move {
-            redis::cmd("SET")
-                .arg("key1")
-                .arg(b"foo")
-                .query_async(&mut con)
-                .await?;
-            redis::cmd("SET")
-                .arg(&["key2", "bar"])
-                .query_async(&mut con)
-                .await?;
-            let result = redis::cmd("MGET")
-                .arg(&["key1", "key2"])
-                .query_async(&mut con)
-                .await;
-            assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-            result
-        }
+    block_on_all(connect.and_then(|mut con| async move {
+        redis::cmd("SET")
+            .arg("key1")
+            .arg(b"foo")
+            .query_async(&mut con)
+            .await?;
+        redis::cmd("SET")
+            .arg(&["key2", "bar"])
+            .query_async(&mut con)
+            .await?;
+        let result = redis::cmd("MGET")
+            .arg(&["key1", "key2"])
+            .query_async(&mut con)
+            .await;
+        assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+        result
     }))
     .unwrap();
 }
@@ -45,27 +43,25 @@ fn dont_panic_on_closed_multiplexed_connection() {
 
     block_on_all(async move {
         connect
-            .and_then(|con| {
-                async move {
-                    let cmd = move || {
-                        let mut con = con.clone();
-                        async move {
-                            redis::cmd("SET")
-                                .arg("key1")
-                                .arg(b"foo")
-                                .query_async(&mut con)
-                                .await
-                        }
-                    };
-                    let result: RedisResult<()> = cmd().await;
-                    assert_eq!(
-                        result.as_ref().unwrap_err().kind(),
-                        redis::ErrorKind::IoError,
-                        "{}",
-                        result.as_ref().unwrap_err()
-                    );
-                    cmd().await
-                }
+            .and_then(|con| async move {
+                let cmd = move || {
+                    let mut con = con.clone();
+                    async move {
+                        redis::cmd("SET")
+                            .arg("key1")
+                            .arg(b"foo")
+                            .query_async(&mut con)
+                            .await
+                    }
+                };
+                let result: RedisResult<()> = cmd().await;
+                assert_eq!(
+                    result.as_ref().unwrap_err().kind(),
+                    redis::ErrorKind::IoError,
+                    "{}",
+                    result.as_ref().unwrap_err()
+                );
+                cmd().await
             })
             .map(|result| {
                 assert_eq!(
