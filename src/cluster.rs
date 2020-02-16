@@ -20,7 +20,7 @@
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
-//!
+//!features = ["default", "cluster"]
 //! # Pipelining
 //! ```rust,no_run
 //! use redis::{Commands, pipe};
@@ -316,7 +316,7 @@ impl ClusterConnection {
                     }
 
                     if let Ok(mut conn) =
-                        connect(addr.as_ref(), self.readonly, self.password.clone())
+                    connect(addr.as_ref(), self.readonly, self.password.clone())
                     {
                         if check_connection(&mut conn) {
                             new_connections.insert(addr.to_string(), conn);
@@ -331,8 +331,8 @@ impl ClusterConnection {
     }
 
     fn create_new_slots<F>(&self, mut get_addr: F) -> RedisResult<SlotMap>
-    where
-        F: FnMut(&Slot) -> String,
+        where
+            F: FnMut(&Slot) -> String,
     {
         let mut connections = self.connections.borrow_mut();
         let mut new_slots = None;
@@ -419,9 +419,9 @@ impl ClusterConnection {
     }
 
     fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
-    where
-        T: MergeResults,
-        F: FnMut(&mut Connection) -> RedisResult<T>,
+        where
+            T: MergeResults,
+            F: FnMut(&mut Connection) -> RedisResult<T>,
     {
         let mut connections = self.connections.borrow_mut();
         let mut results = HashMap::new();
@@ -436,9 +436,9 @@ impl ClusterConnection {
 
     #[allow(clippy::unnecessary_unwrap)]
     fn request<T, F>(&self, cmd: &[u8], mut func: F) -> RedisResult<T>
-    where
-        T: MergeResults + std::fmt::Debug,
-        F: FnMut(&mut Connection) -> RedisResult<T>,
+        where
+            T: MergeResults + std::fmt::Debug,
+            F: FnMut(&mut Connection) -> RedisResult<T>,
     {
         let slot = match RoutingInfo::for_packed_command(cmd) {
             Some(RoutingInfo::Random) => None,
@@ -458,6 +458,8 @@ impl ClusterConnection {
         let mut retries = 16;
         let mut excludes = HashSet::new();
         let mut asking = None::<String>;
+        let mut moved = None::<String>;
+
         loop {
             // Get target address and response.
             let (addr, rv) = {
@@ -468,6 +470,9 @@ impl ClusterConnection {
                     // ASKING command into the connection before what we
                     // actually want to execute.
                     conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                    (addr.to_string(), conn)
+                } else if let Some(addr) = moved.take() {
+                    let conn = self.get_connection_by_addr(&mut *connections, &addr)?;
                     (addr.to_string(), conn)
                 } else if !excludes.is_empty() || slot.is_none() {
                     get_random_connection(&mut *connections, Some(&excludes))
@@ -491,10 +496,11 @@ impl ClusterConnection {
                         if kind == ErrorKind::Ask {
                             asking = err.redirect_node().map(|x| x.0.to_string());
                         } else if kind == ErrorKind::Moved {
+                            moved = err.redirect_node().map(|x| x.0.to_string());
                             // Refresh slots and request again.
-                            self.refresh_slots()?;
-                            excludes.clear();
-                            continue;
+                            // self.refresh_slots()?;
+                            // excludes.clear();
+                            // continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.
                             let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
@@ -533,8 +539,8 @@ impl ClusterConnection {
 
 trait MergeResults {
     fn merge_results(_values: HashMap<&str, Self>) -> Self
-    where
-        Self: Sized;
+        where
+            Self: Sized;
 }
 
 impl MergeResults for Value {
@@ -612,8 +618,8 @@ fn connect<T: IntoConnectionInfo>(
     readonly: bool,
     password: Option<String>,
 ) -> RedisResult<Connection>
-where
-    T: std::fmt::Debug,
+    where
+        T: std::fmt::Debug,
 {
     let mut connection_info = info.into_connection_info()?;
     connection_info.passwd = password;
@@ -907,3 +913,4 @@ mod tests {
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 }
+
