@@ -6,6 +6,7 @@ use std::error;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
+use std::mem;
 use std::str::{from_utf8, Utf8Error};
 
 /// Helper enum that is used in some situations to describe
@@ -116,6 +117,11 @@ impl Value {
             }
             _ => false,
         }
+    }
+
+    /// Takes the value and leaves `Nil` in its place.
+    pub fn take(&mut self) -> Self {
+        mem::replace(self, Self::Nil)
     }
 }
 
