@@ -145,7 +145,10 @@ impl PubSub {
             .await?)
     }
 
-    /// Returns [`Stream`] into which will be sent all [`Msg`]s to which this [`PubSub`] subscribed.
+    /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
+    ///
+    /// The message itself is still generic and can be converted into an appropriate type through
+    /// the helper methods on it.
     pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
         FramedRead::new(&mut self.0.con, ValueCodec::default())
             .into_stream()
@@ -164,12 +167,21 @@ impl PubSub {
 pub struct Connection {
     con: ActualConnection,
     db: i64,
+
+    /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
+    ///
+    /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
+    /// exit the pubsub state before executing the new request.
     pubsub: bool,
 }
 
 impl Connection {
-    /// Fetches a single response from the connection.  This is useful
-    /// if used in combination with `send_packed_command`.
+    /// Converts this [`Connection`] into [`PubSub`].
+    pub fn into_pubsub(self) -> PubSub {
+        PubSub::new(self)
+    }
+
+    /// Fetches a single response from the connection.
     async fn recv_response(&mut self) -> RedisResult<Value> {
         self.con.read_response().await
     }
@@ -236,11 +248,6 @@ impl Connection {
         // Finally, the connection is back in its normal state since all subscriptions were
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
-    }
-
-    /// Converts this [`Connection`] into [`PubSub`].
-    pub fn into_pubsub(self) -> PubSub {
-        PubSub::new(self)
     }
 }
 
