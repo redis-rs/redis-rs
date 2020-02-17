@@ -285,6 +285,9 @@ fn test_script_returning_complex_type() {
 }
 
 mod pub_sub {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -312,19 +315,22 @@ mod pub_sub {
     fn pub_sub_unsubscription() {
         use redis::RedisError;
 
+        const SUBSCRIPTION_KEY: &str = "phonewave-pub-sub-unsubscription";
+
         let ctx = TestContext::new();
         block_on_all(async move {
             let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
-            pubsub_conn.subscribe("phonewave").await?;
-            pubsub_conn.unsubscribe("phonewave").await?;
+            pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
+            pubsub_conn.unsubscribe(SUBSCRIPTION_KEY).await?;
 
             let mut conn = ctx.async_connection().await?;
-            let subscribers_count: u32 = redis::cmd("PUBSUB")
+            let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
                 .arg("NUMSUB")
+                .arg(SUBSCRIPTION_KEY)
                 .query_async(&mut conn)
                 .await?;
-
-            assert_eq!(subscribers_count, 0);
+            let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+            assert_eq!(subscription_count, 0);
 
             Ok(())
         })
@@ -336,18 +342,23 @@ mod pub_sub {
     fn automatic_unsubscription() {
         use redis::RedisError;
 
+        const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription";
+
         let ctx = TestContext::new();
         block_on_all(async move {
             let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
-            pubsub_conn.subscribe("phonewave").await?;
+            pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             drop(pubsub_conn);
 
+            std::thread::sleep(Duration::from_millis(50));
+
             let mut conn = ctx.async_connection().await?;
-            let subscription_count: u32 = redis::cmd("PUBSUB")
+            let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
                 .arg("NUMSUB")
+                .arg(SUBSCRIPTION_KEY)
                 .query_async(&mut conn)
                 .await?;
-
+            let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
             assert_eq!(subscription_count, 0);
 
             Ok(())

@@ -207,13 +207,9 @@ impl Connection {
             let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
             let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
 
-            // Grab a reference to the underlying connection so that we may send
-            // the commands without immediately blocking for a response.
-            let con = &mut self.con;
-
             // Execute commands
-            con.send_bytes(&unsubscribe).await?;
-            con.send_bytes(&punsubscribe).await?;
+            self.con.send_bytes(&unsubscribe).await?;
+            self.con.send_bytes(&punsubscribe).await?;
         }
 
         // Receive responses
@@ -255,23 +251,10 @@ impl ActualConnection {
     }
 
     async fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        match *self {
-            ActualConnection::Tcp(ref mut connection) => {
-                let res = connection.write_all(bytes).await.map_err(RedisError::from);
-                match res {
-                    Err(e) => Err(e),
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
-            #[cfg(unix)]
-            ActualConnection::Unix(ref mut connection) => {
-                let result = connection.write_all(bytes).await.map_err(RedisError::from);
-                match result {
-                    Err(e) => Err(e),
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
-        }
+        self.write_all(bytes).await.map_err(RedisError::from)?;
+        self.flush().await?;
+
+        Ok(Value::Okay)
     }
 }
 
