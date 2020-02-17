@@ -12,7 +12,6 @@ use futures_util::{
 };
 use tokio::io::{AsyncBufRead, AsyncRead};
 
-use combine;
 use combine::byte::{byte, crlf, take_until_bytes};
 use combine::combinator::{any_send_partial_state, AnySendPartialState};
 #[allow(unused_imports)] // See https://github.com/rust-lang/rust/issues/43970

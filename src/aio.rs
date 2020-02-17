@@ -30,7 +30,7 @@ use pin_project_lite::pin_project;
 use tokio_util::codec::FramedRead;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::{ConnectionAddr, ConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo, Msg};
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
@@ -105,27 +105,27 @@ impl AsyncBufRead for ActualConnection {
     }
 }
 
-/// Represents a pubsub connection.
-pub struct PubSub<'a> {
-    con: &'a mut Connection,
-    closed: bool,
-}
+/// Represents a `PubSub` connection.
+pub struct PubSub(Connection);
 
-impl<'a> PubSub<'a> {
-    fn new(con: &'a mut Connection) -> Self {
-        Self { con, closed: false }
+impl PubSub {
+    fn new(con: Connection) -> Self {
+        Self(con)
     }
 
     /// Subscribes to a new channel.
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("SUBSCRIBE").arg(channel).query_async(self.con).await?)
+        Ok(cmd("SUBSCRIBE")
+            .arg(channel)
+            .query_async(&mut self.0)
+            .await?)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         Ok(cmd("PSUBSCRIBE")
             .arg(pchannel)
-            .query_async(self.con)
+            .query_async(&mut self.0)
             .await?)
     }
 
@@ -133,7 +133,7 @@ impl<'a> PubSub<'a> {
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         Ok(cmd("UNSUBSCRIBE")
             .arg(channel)
-            .query_async(self.con)
+            .query_async(&mut self.0)
             .await?)
     }
 
@@ -141,71 +141,23 @@ impl<'a> PubSub<'a> {
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         Ok(cmd("PUNSUBSCRIBE")
             .arg(pchannel)
-            .query_async(self.con)
+            .query_async(&mut self.0)
             .await?)
     }
 
     /// Returns [`Stream`] into which will be sent all [`Msg`]s to which this [`PubSub`] subscribed.
-    pub fn get_messages<'b>(&'b mut self) -> impl Stream<Item = Msg> + 'b {
-        FramedRead::new(&mut self.con.con, ValueCodec::default())
+    pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
+        FramedRead::new(&mut self.0.con, ValueCodec::default())
             .into_stream()
-            .filter_map(|msg| {
-                Box::pin(async move {
-                    let msg = msg.ok()?;
-                    let raw_msg: Vec<Value> = from_redis_value(&msg).ok()?;
-                    let mut iter = raw_msg.into_iter();
-                    let msg_type: String =
-                        from_redis_value(&unwrap_or!(iter.next(), return None)).ok()?;
-                    let mut pattern = None;
-                    let payload;
-                    let channel;
-
-                    if msg_type == "message" {
-                        channel = iter.next()?;
-                        payload = iter.next()?;
-                    } else if msg_type == "pmessage" {
-                        pattern = Some(iter.next()?);
-                        channel = iter.next()?;
-                        payload = iter.next()?;
-                    } else {
-                        return None;
-                    }
-
-                    return Some(Msg {
-                        payload,
-                        channel,
-                        pattern,
-                    });
-                })
-            })
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
     }
 
-    /// Closes this [`PubSub`].
-    pub async fn close(mut self) {
-        let res = self.con.clear_active_subscriptions().await;
-        if res.is_ok() {
-            self.closed = true;
-        } else {
-            // Raise the pubsub flag to indicate the connection is "stuck" in that state.
-            self.closed = false;
-        }
-    }
-}
+    /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
+    pub async fn into_connection(mut self) -> Connection {
+        self.0.exit_pubsub().await.ok();
 
-impl<'a> Drop for PubSub<'a> {
-    fn drop(&mut self) {
-        if !self.closed {
-            self.con.pubsub = true;
-        }
+        self.0
     }
-}
-
-/// Represents a pubsub message.
-#[derive(Debug)]
-pub struct Msg {
-    payload: Value,
-    channel: Value,
-    pattern: Option<Value>,
 }
 
 /// Represents a stateful redis TCP connection.
@@ -218,10 +170,16 @@ pub struct Connection {
 impl Connection {
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
-    pub async fn recv_response(&mut self) -> RedisResult<Value> {
+    async fn recv_response(&mut self) -> RedisResult<Value> {
         self.con.read_response().await
     }
 
+    /// Brings [`Connection`] out of `PubSub` mode.
+    ///
+    /// This will unsubscribe this [`Connection`] from all subscriptions.
+    ///
+    /// If this function returns error then on all command send tries will be performed attempt
+    /// to exit from `PubSub` mode until it will be successful.
     async fn exit_pubsub(&mut self) -> RedisResult<()> {
         let res = self.clear_active_subscriptions().await;
         if res.is_ok() {
@@ -284,16 +242,15 @@ impl Connection {
         Ok(())
     }
 
-    /// Creates a [`PubSub`] instance for this connection.
-    pub fn as_pubsub(&mut self) -> PubSub {
-        self.pubsub = true;
+    /// Converts this [`Connection`] into [`PubSub`].
+    pub fn into_pubsub(self) -> PubSub {
         PubSub::new(self)
     }
 }
 
 impl ActualConnection {
     /// Fetches a single response from the connection.
-    pub async fn read_response(&mut self) -> RedisResult<Value> {
+    async fn read_response(&mut self) -> RedisResult<Value> {
         crate::parser::parse_redis_value_async(self).await
     }
 
