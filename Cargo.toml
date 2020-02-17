@@ -92,3 +92,7 @@ required-features = ["tokio-rt-core"]
 [[example]]
 name = "async-await"
 required-features = ["aio"]
+
+[[example]]
+name = "async-pub-sub"
+required-features = ["aio"]
