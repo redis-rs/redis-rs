@@ -261,22 +261,25 @@ fn bench_encode(c: &mut Criterion) {
     );
 }
 
-fn bench_decode_simple(b: &mut Bencher) {
+fn bench_decode_simple(b: &mut Bencher, input: &[u8]) {
+    b.iter(|| redis::parse_redis_value(input).unwrap());
+}
+fn bench_decode(c: &mut Criterion) {
     let value = Value::Bulk(vec![
         Value::Okay,
         Value::Status("testing".to_string()),
         Value::Bulk(vec![]),
         Value::Nil,
-        Value::Data(vec![b'a'; 1000]),
+        Value::Data(vec![b'a'; 10]),
         Value::Int(7512182390),
     ]);
 
-    let mut input = Vec::new();
-    support::encode_value(&value, &mut input).unwrap();
-    b.iter(|| redis::parse_redis_value(&input).unwrap());
-}
-fn bench_decode(c: &mut Criterion) {
-    c.bench("decode", Benchmark::new("decode", bench_decode_simple));
+    c.bench("decode", {
+        let mut input = Vec::new();
+        support::encode_value(&value, &mut input).unwrap();
+        assert_eq!(redis::parse_redis_value(&input).unwrap(), value);
+        Benchmark::new("decode", move |b| bench_decode_simple(b, &input))
+    });
 }
 
 criterion_group!(bench, bench_query, bench_encode, bench_decode);

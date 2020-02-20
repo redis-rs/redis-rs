@@ -759,10 +759,10 @@ fn test_invalid_protocol() {
     let child = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut stream = BufReader::new(listener.incoming().next().unwrap()?);
         // read the request and respond with garbage
-        let _: redis::Value = Parser::new(&mut stream).parse_value()?;
+        let _: redis::Value = Parser::new().parse_value(&mut stream)?;
         stream.get_mut().write_all(b"garbage ---!#!#\r\n\r\n\n\r")?;
         // block until the stream is shutdown by the client
-        let _: RedisResult<redis::Value> = Parser::new(&mut stream).parse_value();
+        let _: RedisResult<redis::Value> = Parser::new().parse_value(&mut stream);
         Ok(())
     });
     sleep(Duration::from_millis(100));
