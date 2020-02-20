@@ -316,7 +316,7 @@ impl ClusterConnection {
                     }
 
                     if let Ok(mut conn) =
-                    connect(addr.as_ref(), self.readonly, self.password.clone())
+                        connect(addr.as_ref(), self.readonly, self.password.clone())
                     {
                         if check_connection(&mut conn) {
                             new_connections.insert(addr.to_string(), conn);
@@ -331,8 +331,8 @@ impl ClusterConnection {
     }
 
     fn create_new_slots<F>(&self, mut get_addr: F) -> RedisResult<SlotMap>
-        where
-            F: FnMut(&Slot) -> String,
+    where
+        F: FnMut(&Slot) -> String,
     {
         let mut connections = self.connections.borrow_mut();
         let mut new_slots = None;
@@ -419,9 +419,9 @@ impl ClusterConnection {
     }
 
     fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
-        where
-            T: MergeResults,
-            F: FnMut(&mut Connection) -> RedisResult<T>,
+    where
+        T: MergeResults,
+        F: FnMut(&mut Connection) -> RedisResult<T>,
     {
         let mut connections = self.connections.borrow_mut();
         let mut results = HashMap::new();
@@ -436,9 +436,9 @@ impl ClusterConnection {
 
     #[allow(clippy::unnecessary_unwrap)]
     fn request<T, F>(&self, cmd: &[u8], mut func: F) -> RedisResult<T>
-        where
-            T: MergeResults + std::fmt::Debug,
-            F: FnMut(&mut Connection) -> RedisResult<T>,
+    where
+        T: MergeResults + std::fmt::Debug,
+        F: FnMut(&mut Connection) -> RedisResult<T>,
     {
         let slot = match RoutingInfo::for_packed_command(cmd) {
             Some(RoutingInfo::Random) => None,
@@ -535,8 +535,8 @@ impl ClusterConnection {
 
 trait MergeResults {
     fn merge_results(_values: HashMap<&str, Self>) -> Self
-        where
-            Self: Sized;
+    where
+        Self: Sized;
 }
 
 impl MergeResults for Value {
@@ -614,8 +614,8 @@ fn connect<T: IntoConnectionInfo>(
     readonly: bool,
     password: Option<String>,
 ) -> RedisResult<Connection>
-    where
-        T: std::fmt::Debug,
+where
+    T: std::fmt::Debug,
 {
     let mut connection_info = info.into_connection_info()?;
     connection_info.passwd = password;
