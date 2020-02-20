@@ -725,9 +725,8 @@ impl RoutingInfo {
             }
             b"XGROUP" | b"XINFO" => get_arg(&args, 2).and_then(RoutingInfo::for_key),
             b"XREAD" | b"XREADGROUP" => {
-                let streams_position = args
-                    .iter()
-                    .position(|a| *a == Value::Data(b"STREAMS".to_vec()))?;
+                let streams_command = Value::Data("STREAMS".into());
+                let streams_position = args.iter().position(|a| *a == streams_command)?;
                 get_arg(&args, streams_position + 1).and_then(RoutingInfo::for_key)
             }
             _ => match get_arg(&args, 1) {
