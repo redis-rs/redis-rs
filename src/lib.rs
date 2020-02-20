@@ -335,13 +335,6 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
-//!
-//! ## Breaking Changes
-//!
-//! In Rust 0.5.0 the semi-internal `ConnectionInfo` struct had to be
-//! changed because of the unix socket support.  You are generally
-//! heavily encouraged to use the URL based configuration format which
-//! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
