@@ -20,7 +20,7 @@
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
-//!features = ["default", "cluster"]
+//!
 //! # Pipelining
 //! ```rust,no_run
 //! use redis::{Commands, pipe};
@@ -459,7 +459,6 @@ impl ClusterConnection {
         let mut excludes = HashSet::new();
         let mut asking = None::<String>;
         let mut moved = None::<String>;
-
         loop {
             // Get target address and response.
             let (addr, rv) = {
@@ -496,11 +495,8 @@ impl ClusterConnection {
                         if kind == ErrorKind::Ask {
                             asking = err.redirect_node().map(|x| x.0.to_string());
                         } else if kind == ErrorKind::Moved {
+                            // follow the Moved hint from Redis
                             moved = err.redirect_node().map(|x| x.0.to_string());
-                            // Refresh slots and request again.
-                            // self.refresh_slots()?;
-                            // excludes.clear();
-                            // continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.
                             let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
@@ -913,4 +909,3 @@ mod tests {
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 }
-
