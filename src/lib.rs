@@ -299,36 +299,37 @@ assert_eq!(result, 3);
 "##
 )]
 //!
-//! # Async
-//!
-//! In addition to the synchronous interface that's been explained above there also exists an
-//! asynchronous interface based on [`futures`][] and [`tokio`][].
-//!
-//! This interface exists under the `aio` (async io) module and largely mirrors the synchronous
-//! with a few concessions to make it fit the constraints of `futures`.
 #![cfg_attr(
     feature = "aio",
     doc = r##"
- #![cfg(feature = "aio")]
- use futures::prelude::*;
- use redis::AsyncCommands;
+# Async
 
- # #[tokio::main]
- # async fn main() -> redis::RedisResult<()> {
- let client = redis::Client::open("redis://127.0.0.1/").unwrap();
- let mut con = client.get_async_connection().await?;
+In addition to the synchronous interface that's been explained above there also exists an
+asynchronous interface based on [`futures`][] and [`tokio`][].
 
- con.set("key1", b"foo").await?;
+This interface exists under the `aio` (async io) module and largely mirrors the synchronous
+with a few concessions to make it fit the constraints of `futures`.
 
- redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+```rust,no_run
+use futures::prelude::*;
+use redis::AsyncCommands;
 
- let result = redis::cmd("MGET")
-     .arg(&["key1", "key2"])
-     .query_async(&mut con)
-     .await;
- assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
- Ok(())
- # }
+# #[tokio::main]
+# async fn main() -> redis::RedisResult<()> {
+let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+let mut con = client.get_async_connection().await?;
+
+con.set("key1", b"foo").await?;
+
+redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+
+let result = redis::cmd("MGET")
+ .arg(&["key1", "key2"])
+ .query_async(&mut con)
+ .await;
+assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+# Ok(()) }
+```
 "##
 )]
 //!
