@@ -4,7 +4,7 @@
 
 **Fixes and improvements**
 
-* Fixed the `r2d2` feature (re-added it) ([#265])(https://github.com/mitsuhiko/redis-rs/pull/265)
+* Fixed the `r2d2` feature (re-added it) ([#265](https://github.com/mitsuhiko/redis-rs/pull/265))
 
 ## [0.15.0](https://github.com/mitsuhiko/redis-rs/compare/0.14.0...0.15.0) - 2020-01-15
 
