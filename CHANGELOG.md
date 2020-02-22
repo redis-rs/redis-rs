@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.15.1...HEAD) - ReleaseDate
+
+**Fixes and improvements**
+
+* Reduce dependencies without async IO ([#266](https://github.com/mitsuhiko/redis-rs/pull/266))
+* Add an afl fuzz target ([#274](https://github.com/mitsuhiko/redis-rs/pull/274))
+* Updated to combine 4 and avoid async dependencies for sync-only ([#272](https://github.com/mitsuhiko/redis-rs/pull/272))
+    * **BREAKING CHANGE**: The parser type now only persists the buffer and takes the Read instance in `parse_value`
+* Fix key extraction for some stream commands ([#283](https://github.com/mitsuhiko/redis-rs/pull/283))
+
+### Breaking changes
+
+#### Changes to the `Parser` type ([#272](https://github.com/mitsuhiko/redis-rs/pull/272))
+
+The parser type now only persists the buffer and takes the Read instance in `parse_value`.
+`redis::parse_redis_value` is unchanged and continues to work.
+
+
+Old:
+
+```rust
+let mut parser = Parser::new(bytes);
+let result = parser.parse_value();
+```
+
+New:
+
+```rust
+let mut parser = Parser::new();
+let result = parser.pase_value(bytes);
+```
+
 ## [0.15.1](https://github.com/mitsuhiko/redis-rs/compare/0.15.0...0.15.1) - 2020-01-15
 
 **Fixes and improvements**
