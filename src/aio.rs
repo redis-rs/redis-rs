@@ -48,7 +48,7 @@ use crate::aio_async_std;
 
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
-pub trait Connect {
+pub(crate) trait Connect {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection>;
     /// Performans an UNIX connection
@@ -82,7 +82,7 @@ mod tokio_aio {
 }
 
 /// Represents an async Connection (TCP or Unix. Tokio or Async Std)
-pub enum ActualConnection {
+pub(crate) enum ActualConnection {
     /// Represents a Tokio TCP connection.
     #[cfg(feature = "tokio-comp")]
     TcpTokio(TcpStreamTokio),
