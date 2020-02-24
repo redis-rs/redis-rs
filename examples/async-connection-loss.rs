@@ -25,7 +25,7 @@ async fn run_single<C: ConnectionLike>(mut con: C) -> RedisResult<()> {
     let mut interval = interval(Duration::from_millis(1000));
     loop {
         interval.tick().await;
-        println!("");
+        println!();
         println!("> PING");
         let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
         println!("< {:?}", result);
@@ -36,7 +36,7 @@ async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
     let mut interval = interval(Duration::from_millis(100));
     loop {
         interval.tick().await;
-        println!("");
+        println!();
         println!("> PING");
         println!("> PING");
         println!("> PING");
