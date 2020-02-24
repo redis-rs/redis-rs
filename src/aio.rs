@@ -648,14 +648,11 @@ mod connection_manager {
             &self,
             current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
-            println!("Prepare reconnect");
-
             let connection_info = self.connection_info.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
                 let (new_connection, driver) =
                     MultiplexedConnection::new(connect(&connection_info).await?);
                 tokio::spawn(driver);
-                println!("Reconnecting");
                 Ok(new_connection)
             }
             .boxed()
@@ -669,11 +666,8 @@ mod connection_manager {
 
             // If the swap happened...
             if Arc::ptr_eq(&prev, &current) {
-                println!("Swap happened");
                 // ...start the connection attempt immediately but do not wait on it.
                 tokio::spawn(new_connection);
-            } else {
-                println!("Swap did not happen");
             }
         }
     }
@@ -683,7 +677,6 @@ mod connection_manager {
         ($self:expr, $result:expr, $current:expr) => {
             if let Err(ref e) = $result {
                 if e.is_connection_dropped() {
-                    println!("Connection lost, reconnecting");
                     $self.reconnect($current);
                 }
             }
@@ -696,7 +689,6 @@ mod connection_manager {
         ($self:expr, $result:expr, $current:expr) => {
             if let Err(e) = $result {
                 if e.is_io_error() {
-                    println!("Reconnect failed, reconnecting");
                     $self.reconnect($current);
                 }
                 return Err(e);
