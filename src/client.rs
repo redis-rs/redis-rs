@@ -90,7 +90,7 @@ impl Client {
         crate::aio::MultiplexedConnection::new(&self.connection_info).await
     }
 
-    /// Returns an async [`ConnectionManager`][connectionmanager] from the client.
+    /// Returns an async [`ConnectionManager`][connection-manager] from the client.
     ///
     /// The connection manager wraps a
     /// [`MultiplexedConnection`][multiplexed-connection]. If a command to that
@@ -98,10 +98,9 @@ impl Client {
     /// established in the background and the error is returned to the caller.
     ///
     /// This means that on connection loss at least one command will fail, but
-    /// the connection will be re-established automatically if possible. (TODO
-    /// dbrgn: Document what happens if reconnection attempts fail, and what happens
-    /// to commands that are invoked while a reconnection attempt is in
-    /// progress.)
+    /// the connection will be re-established automatically if possible. Please
+    /// refer to the [`ConnectionManager`][connection-manager] docs for
+    /// detailed reconnecting behavior.
     ///
     /// A connection manager can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).

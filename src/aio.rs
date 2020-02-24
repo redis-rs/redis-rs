@@ -581,8 +581,13 @@ mod connection_manager {
     use futures::future::{self, Shared};
     use futures_util::future::BoxFuture;
 
-    /// A `ConnectionManager` is a proxy that wraps a multiplexed connection and
-    /// automatically reconnects to the server when necessary.
+    /// A `ConnectionManager` is a proxy that wraps a [multiplexed
+    /// connection][multiplexed-connection] and automatically reconnects to the
+    /// server when necessary.
+    ///
+    /// Like the [`MultiplexedConnection`][multiplexed-connection], this
+    /// manager can be cloned, allowing requests to be be sent concurrently on
+    /// the same underlying connection (tcp/unix socket).
     ///
     /// ## Behavior
     ///
@@ -599,6 +604,8 @@ mod connection_manager {
     ///   initiated, will have to await the connection future.
     /// - If reconnecting fails, all pending commands will be failed as well. A
     ///   new reconnection attempt will be triggered if the error is an I/O error.
+    ///
+    /// [multiplexed-connection]: struct.MultiplexedConnection.html
     #[derive(Clone)]
     pub struct ConnectionManager {
         /// Information used for the connection. This is needed to be able to reconnect.
