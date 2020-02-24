@@ -700,7 +700,7 @@ mod connection_manager {
                 let connection_result = (**guard)
                     .clone()
                     .await
-                    .map_err(|e| e.clone_mostly(Some("Reconnecting failed")));
+                    .map_err(|e| e.clone_mostly("Reconnecting failed"));
                 reconnect_if_io_error!(self, connection_result, guard);
                 let result = connection_result?.req_packed_command(cmd).await;
                 reconnect_if_dropped!(self, &result, guard);
@@ -721,7 +721,7 @@ mod connection_manager {
                 let connection_result = (**guard)
                     .clone()
                     .await
-                    .map_err(|e| e.clone_mostly(Some("Reconnecting failed")));
+                    .map_err(|e| e.clone_mostly("Reconnecting failed"));
                 reconnect_if_io_error!(self, connection_result, guard);
                 let result = connection_result?
                     .req_packed_commands(cmd, offset, count)
