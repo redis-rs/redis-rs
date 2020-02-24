@@ -622,11 +622,8 @@ mod connection_manager {
         /// This requires the `connection-manager` feature, which will also pull in
         /// the Tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
-            // Wait for the initial connection to be established
-            let inner_connection = connect(&connection_info).await?;
-
-            // Wrap the connection in a MultiplexedConnection
-            let (connection, driver) = MultiplexedConnection::new(inner_connection);
+            // Create a MultiplexedConnection and wait for it to be established
+            let (connection, driver) = MultiplexedConnection::new(&connection_info).await?;
 
             // Spawn the driver that drives the connection future
             tokio::spawn(driver);
@@ -650,8 +647,7 @@ mod connection_manager {
         ) {
             let connection_info = self.connection_info.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                let (new_connection, driver) =
-                    MultiplexedConnection::new(connect(&connection_info).await?);
+                let (new_connection, driver) = MultiplexedConnection::new(&connection_info).await?;
                 tokio::spawn(driver);
                 Ok(new_connection)
             }
