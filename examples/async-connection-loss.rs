@@ -22,7 +22,7 @@ enum Mode {
 }
 
 async fn run_single<C: ConnectionLike>(mut con: C) -> RedisResult<()> {
-    let mut interval = interval(Duration::from_millis(1000));
+    let mut interval = interval(Duration::from_millis(100));
     loop {
         interval.tick().await;
         println!();
