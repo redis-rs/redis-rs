@@ -375,6 +375,7 @@ mod pub_sub {
         block_on_all(async move {
             let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
             pubsub_conn.subscribe("phonewave").await?;
+            pubsub_conn.psubscribe("*").await?;
 
             let mut conn = pubsub_conn.into_connection().await;
             redis::cmd("SET")

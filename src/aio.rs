@@ -170,13 +170,6 @@ impl Connection {
         crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
     }
 
-    async fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        self.con.write_all(bytes).await.map_err(RedisError::from)?;
-        self.con.flush().await?;
-
-        Ok(Value::Okay)
-    }
-
     /// Brings [`Connection`] out of `PubSub` mode.
     ///
     /// This will unsubscribe this [`Connection`] from all subscriptions.
@@ -207,12 +200,13 @@ impl Connection {
         // server, both commands need to be executed at once.
         {
             // Prepare both unsubscribe commands
-            let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
-            let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
+            let unsubscribe = crate::Pipeline::new()
+                .add_command(cmd("UNSUBSCRIBE"))
+                .add_command(cmd("PUNSUBSCRIBE"))
+                .get_packed_pipeline();
 
             // Execute commands
-            self.send_bytes(&unsubscribe).await?;
-            self.send_bytes(&punsubscribe).await?;
+            self.con.write_all(&unsubscribe).await?;
         }
 
         // Receive responses
