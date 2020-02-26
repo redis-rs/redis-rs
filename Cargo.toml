@@ -30,18 +30,14 @@ url = "2.1"
 # We need this for script support
 sha1 = { version = ">= 0.2, < 0.7", optional = true }
 
-# Dependency that is shared with tokio.  If we manage to make tokio optional we
-# could also remove this.
-bytes = "0.5"
-
-# These are needed for parsing at the moment 
-combine = "3.8.1"
-futures-util = { version = "0.3.0", features = ["sink"], default-features = false }
-futures-executor = "0.3.0"
+combine = { version = "4.0.1", default-features = false, features = ["std"] }
 
 # Only needed for AIO
+bytes = { version = "0.5", optional = true }
+futures-util = { version = "0.3.0", default-features = false, optional = true }
 pin-project-lite = { version = "0.1", optional = true }
-tokio-util = { version = "0.2", features = ["codec"], optional = true }
+tokio-util = { version = "0.2", optional = true }
+tokio = { version = "0.2", optional = true }
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.8", optional = true }
@@ -50,12 +46,9 @@ r2d2 = { version = "0.8.8", optional = true }
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
 
-# Unfortunately currently a necessary dependency
-tokio = "0.2"
-
 [features]
 default = ["geospatial", "aio", "script"]
-aio = ["pin-project-lite", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util", "tokio-util"]
+aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio-02"]
 tokio-rt-core = ["aio", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
@@ -71,6 +64,7 @@ criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
 tokio = { version = "0.2", features = ["rt-core", "macros"] }
+# End of dev-dependencies
 
 [[test]]
 name = "test_async"

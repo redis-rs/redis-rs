@@ -6,11 +6,13 @@ use std::net::ToSocketAddrs;
 use std::pin::Pin;
 use std::task::{self, Poll};
 
+use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
+
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
 use tokio::{
-    io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
     sync::{mpsc, oneshot},
 };
@@ -36,12 +38,10 @@ use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
 enum ActualConnection {
-    Tcp(Buffered<TcpStream>),
+    Tcp(TcpStream),
     #[cfg(unix)]
-    Unix(Buffered<UnixStream>),
+    Unix(UnixStream),
 }
-
-type Buffered<T> = BufReader<BufWriter<T>>;
 
 impl AsyncWrite for ActualConnection {
     fn poll_write(
@@ -83,24 +83,6 @@ impl AsyncRead for ActualConnection {
             ActualConnection::Tcp(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             ActualConnection::Unix(r) => Pin::new(r).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncBufRead for ActualConnection {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<&[u8]>> {
-        match self.get_mut() {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_fill_buf(cx),
-            #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_fill_buf(cx),
-        }
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).consume(amt),
-            #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).consume(amt),
         }
     }
 }
@@ -166,6 +148,8 @@ impl PubSub {
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
+    buf: Vec<u8>,
+    decoder: combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
     db: i64,
 
     /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
@@ -183,7 +167,7 @@ impl Connection {
 
     /// Fetches a single response from the connection.
     async fn recv_response(&mut self) -> RedisResult<Value> {
-        self.con.read_response().await
+        self.read_response().await
     }
 
     /// Brings [`Connection`] out of `PubSub` mode.
@@ -220,8 +204,8 @@ impl Connection {
             let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
 
             // Execute commands
-            self.con.send_bytes(&unsubscribe).await?;
-            self.con.send_bytes(&punsubscribe).await?;
+            self.send_bytes(&unsubscribe).await?;
+            self.send_bytes(&punsubscribe).await?;
         }
 
         // Receive responses
@@ -251,15 +235,14 @@ impl Connection {
     }
 }
 
-impl ActualConnection {
-    /// Fetches a single response from the connection.
+impl Connection {
     async fn read_response(&mut self) -> RedisResult<Value> {
-        crate::parser::parse_redis_value_async(self).await
+        crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
     }
 
     async fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        self.write_all(bytes).await.map_err(RedisError::from)?;
-        self.flush().await?;
+        self.con.write_all(bytes).await.map_err(RedisError::from)?;
+        self.con.flush().await?;
 
         Ok(Value::Okay)
     }
@@ -267,7 +250,52 @@ impl ActualConnection {
 
 /// Opens a connection.
 pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = match *connection_info.addr {
+    let con = connect_simple(connection_info).await?;
+
+    let mut rv = Connection {
+        con,
+        buf: Vec::new(),
+        decoder: combine::stream::Decoder::new(),
+        db: connection_info.db,
+        pubsub: false,
+    };
+
+    authenticate(connection_info, &mut rv).await?;
+
+    Ok(rv)
+}
+
+async fn authenticate<C>(connection_info: &ConnectionInfo, con: &mut C) -> RedisResult<()>
+where
+    C: ConnectionLike,
+{
+    if let Some(passwd) = &connection_info.passwd {
+        match cmd("AUTH").arg(&**passwd).query_async(con).await {
+            Ok(Value::Okay) => (),
+            _ => {
+                fail!((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed"
+                ));
+            }
+        }
+    }
+
+    if connection_info.db != 0 {
+        match cmd("SELECT").arg(connection_info.db).query_async(con).await {
+            Ok(Value::Okay) => (),
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to switch database"
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualConnection> {
+    Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = {
                 let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
@@ -283,16 +311,14 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
             };
 
             TcpStream::connect(&socket_addr)
-                .map_ok(|con| ActualConnection::Tcp(BufReader::new(BufWriter::new(con))))
-                .await?
+                .await
+                .map(ActualConnection::Tcp)?
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => {
-            UnixStream::connect(path)
-                .map_ok(|stream| ActualConnection::Unix(BufReader::new(BufWriter::new(stream))))
-                .await?
-        }
+        ConnectionAddr::Unix(ref path) => UnixStream::connect(path)
+            .await
+            .map(ActualConnection::Unix)?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
@@ -302,45 +328,7 @@ pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection
                  on this platform",
             )))
         }
-    };
-
-    let mut rv = Connection {
-        con,
-        db: connection_info.db,
-        pubsub: false,
-    };
-
-    if let Some(passwd) = &connection_info.passwd {
-        let result = cmd("AUTH")
-            .arg(&**passwd)
-            .query_async::<_, Value>(&mut rv)
-            .await;
-        match result {
-            Ok(Value::Okay) => (),
-            _ => {
-                fail!((
-                    ErrorKind::AuthenticationFailed,
-                    "Password authentication failed"
-                ));
-            }
-        }
-    }
-
-    if connection_info.db != 0 {
-        let result = cmd("SELECT")
-            .arg(connection_info.db)
-            .query_async::<_, Value>(&mut rv)
-            .await;
-        match result {
-            Ok(Value::Okay) => (),
-            _ => fail!((
-                ErrorKind::ResponseError,
-                "Redis server refused to switch database"
-            )),
-        }
-    }
-
-    Ok(rv)
+    })
 }
 
 /// An async abstraction over connections.
@@ -372,10 +360,10 @@ impl ConnectionLike for Connection {
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
-
-            cmd.write_command_async(Pin::new(&mut self.con)).await?;
-            self.con.flush().await?;
-            self.con.read_response().await
+            self.buf.clear();
+            cmd.write_packed_command(&mut self.buf);
+            self.con.write_all(&self.buf).await?;
+            self.read_response().await
         })
         .boxed()
     }
@@ -391,16 +379,17 @@ impl ConnectionLike for Connection {
                 self.exit_pubsub().await?;
             }
 
-            cmd.write_pipeline_async(Pin::new(&mut self.con)).await?;
-            self.con.flush().await?;
+            self.buf.clear();
+            cmd.write_packed_pipeline(&mut self.buf);
+            self.con.write_all(&self.buf).await?;
 
             for _ in 0..offset {
-                self.con.read_response().await?;
+                self.read_response().await?;
             }
 
             let mut rv = Vec::with_capacity(count);
             for _ in 0..count {
-                rv.push(self.con.read_response().await?);
+                rv.push(self.read_response().await?);
             }
 
             Ok(rv)
@@ -659,35 +648,37 @@ pub struct MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
-    pub(crate) fn new(con: Connection) -> (Self, impl Future<Output = ()>) {
-        let (pipeline, driver) = match con.con {
+    pub(crate) async fn new(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
+        let con = connect_simple(connection_info).await?;
+        let (pipeline, driver) = match con {
             #[cfg(not(unix))]
             ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, driver)
             }
 
             #[cfg(unix)]
             ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Left(driver))
             }
             #[cfg(unix)]
             ActualConnection::Unix(unix) => {
-                let codec = ValueCodec::default().framed(unix.into_inner().into_inner());
+                let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, Either::Right(driver))
             }
         };
-        (
-            MultiplexedConnection {
-                pipeline,
-                db: con.db,
-            },
-            driver,
-        )
+        let mut con = MultiplexedConnection {
+            pipeline,
+            db: connection_info.db,
+        };
+        authenticate(connection_info, &mut con).await?;
+        Ok((con, driver))
     }
 }
 

@@ -40,6 +40,11 @@ style-check:
 
 lint:
 	@rustup component add clippy 2> /dev/null
-	cargo clippy --all-features --all --tests --examples -- -D clippy::all
+	cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
 
-.PHONY: build test bench docs upload-docs style-check lint
+fuzz:
+	cd afl/parser/ && \
+	cargo afl build --bin fuzz-target && \
+	cargo afl fuzz -i in -o out target/debug/fuzz-target
+
+.PHONY: build test bench docs upload-docs style-check lint fuzz

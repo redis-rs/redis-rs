@@ -299,45 +299,42 @@ assert_eq!(result, 3);
 "##
 )]
 //!
-//! # Async
-//!
-//! In addition to the synchronous interface that's been explained above there also exists an
-//! asynchronous interface based on [`futures`][] and [`tokio`][].
-//!
-//! This interface exists under the `aio` (async io) module and largely mirrors the synchronous
-//! with a few concessions to make it fit the constraints of `futures`.
-//!
-//! ```rust,no_run
-//! use futures::prelude::*;
-//! use redis::AsyncCommands;
-//!
-//! # #[tokio::main]
-//! # async fn main() -> redis::RedisResult<()> {
-//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! let mut con = client.get_async_connection().await?;
-//!
-//! con.set("key1", b"foo").await?;
-//!
-//! redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
-//!
-//! let result = redis::cmd("MGET")
-//!     .arg(&["key1", "key2"])
-//!     .query_async(&mut con)
-//!     .await;
-//! assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-//! Ok(())
-//! # }
-//! ```
+#![cfg_attr(
+    feature = "aio",
+    doc = r##"
+# Async
+
+In addition to the synchronous interface that's been explained above there also exists an
+asynchronous interface based on [`futures`][] and [`tokio`][].
+
+This interface exists under the `aio` (async io) module and largely mirrors the synchronous
+with a few concessions to make it fit the constraints of `futures`.
+
+```rust,no_run
+use futures::prelude::*;
+use redis::AsyncCommands;
+
+# #[tokio::main]
+# async fn main() -> redis::RedisResult<()> {
+let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+let mut con = client.get_async_connection().await?;
+
+con.set("key1", b"foo").await?;
+
+redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+
+let result = redis::cmd("MGET")
+ .arg(&["key1", "key2"])
+ .query_async(&mut con)
+ .await;
+assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+# Ok(()) }
+```
+"##
+)]
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
-//!
-//! ## Breaking Changes
-//!
-//! In Rust 0.5.0 the semi-internal `ConnectionInfo` struct had to be
-//! changed because of the unix socket support.  You are generally
-//! heavily encouraged to use the URL based configuration format which
-//! is a lot more stable than the structs.
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
@@ -350,9 +347,9 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
 };
-pub use crate::parser::{parse_redis_value, parse_redis_value_async, Parser};
-
+pub use crate::parser::{parse_redis_value, Parser};
 #[cfg(feature = "script")]
+#[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
 
 pub use crate::types::{
@@ -371,7 +368,6 @@ pub use crate::types::{
 
     // error and result types
     RedisError,
-    RedisFuture,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
@@ -381,11 +377,13 @@ pub use crate::types::{
 };
 
 #[cfg(feature = "aio")]
-pub use crate::commands::AsyncCommands;
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+pub use crate::{commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture};
 
 mod macros;
 
 #[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
 
 #[cfg(feature = "geospatial")]
@@ -393,9 +391,11 @@ pub mod aio;
 pub mod geo;
 
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster;
 
 #[cfg(feature = "r2d2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
 
 mod client;

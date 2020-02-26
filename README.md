@@ -67,3 +67,13 @@ To run benchmarks:
 To build the docs:
 
     $ make docs
+
+To run fuzz tests with afl, first install cargo-afl (`cargo install -f afl`),
+then run:
+
+    $ make fuzz
+
+If the fuzzer finds a crash, in order to reproduce it, run:
+
+    $ cd afl/<target>/
+    $ cargo run --bin reproduce -- out/crashes/<crashfile>

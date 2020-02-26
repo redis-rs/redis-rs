@@ -8,7 +8,7 @@ use std::{io, pin::Pin};
 use {
     futures::task::{self, Poll},
     partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
-    tokio::io::{AsyncRead, BufReader},
+    tokio::io::AsyncRead,
 };
 
 use redis::Value;
@@ -127,9 +127,10 @@ quickcheck! {
         encode_value(&input.0, &mut encoded_input).unwrap();
 
         let mut reader = &encoded_input[..];
-        let partial_reader = PartialAsyncRead { inner: &mut reader, ops: Box::new(seq.into_iter()) };
+        let mut partial_reader = PartialAsyncRead { inner: &mut reader, ops: Box::new(seq.into_iter()) };
+        let mut decoder = combine::stream::Decoder::new();
 
-        let result = block_on_all(redis::parse_redis_value_async(BufReader::new(partial_reader)));
+        let result = block_on_all(redis::parse_redis_value_async(&mut decoder, &mut partial_reader));
         assert!(result.as_ref().is_ok(), "{}", result.unwrap_err());
         assert_eq!(
             result.unwrap(),
