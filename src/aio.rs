@@ -166,8 +166,15 @@ impl Connection {
     }
 
     /// Fetches a single response from the connection.
-    async fn recv_response(&mut self) -> RedisResult<Value> {
-        self.read_response().await
+    async fn read_response(&mut self) -> RedisResult<Value> {
+        crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
+    }
+
+    async fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+        self.con.write_all(bytes).await.map_err(RedisError::from)?;
+        self.con.flush().await?;
+
+        Ok(Value::Okay)
     }
 
     /// Brings [`Connection`] out of `PubSub` mode.
@@ -216,7 +223,7 @@ impl Connection {
         let mut received_unsub = false;
         let mut received_punsub = false;
         loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response().await?)?;
+            let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
 
             match res.0.first() {
                 Some(&b'u') => received_unsub = true,
@@ -232,19 +239,6 @@ impl Connection {
         // Finally, the connection is back in its normal state since all subscriptions were
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
-    }
-}
-
-impl Connection {
-    async fn read_response(&mut self) -> RedisResult<Value> {
-        crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
-    }
-
-    async fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        self.con.write_all(bytes).await.map_err(RedisError::from)?;
-        self.con.flush().await?;
-
-        Ok(Value::Okay)
     }
 }
 
