@@ -58,6 +58,7 @@
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `tokio-rt-core`: enables support for tokio-rt (optional)
+//! * `connection-manager`: enables support for automatic reconnection (optional)
 //!
 //! ## Connection Parameters
 //!
