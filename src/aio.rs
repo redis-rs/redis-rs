@@ -762,13 +762,25 @@ mod connection_manager {
         /// the Tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
-            let (connection, driver) = if tokio::runtime::Handle::try_current().is_ok() {
-                let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
-                MultiplexedConnection::create_connection(&connection_info, con).await?
+
+            #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+            let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+
+            #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+            let con = if tokio::runtime::Handle::try_current().is_ok() {
+                connect_simple::<tokio_aio::Tokio>(&connection_info).await?
             } else {
-                let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
-                MultiplexedConnection::create_connection(&connection_info, con).await?
+                connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
             };
+
+            #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+            compile_error!("tokio-comp or async-std-comp features required for aio feature");
+
+            let (connection, driver) =
+                MultiplexedConnection::create_connection(&connection_info, con).await?;
 
             // Spawn the driver that drives the connection future
             tokio::spawn(driver);
@@ -792,13 +804,25 @@ mod connection_manager {
         ) {
             let connection_info = self.connection_info.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                let (new_connection, driver) = if tokio::runtime::Handle::try_current().is_ok() {
-                    let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
-                    MultiplexedConnection::create_connection(&connection_info, con).await?
+                #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+                let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+
+                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+
+                #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+                let con = if tokio::runtime::Handle::try_current().is_ok() {
+                    connect_simple::<tokio_aio::Tokio>(&connection_info).await?
                 } else {
-                    let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
-                    MultiplexedConnection::create_connection(&connection_info, con).await?
+                    connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
                 };
+
+                #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+                compile_error!("tokio-comp or async-std-comp features required for aio feature");
+
+                let (new_connection, driver) =
+                    MultiplexedConnection::create_connection(&connection_info, con).await?;
+
                 tokio::spawn(driver);
                 Ok(new_connection)
             }
