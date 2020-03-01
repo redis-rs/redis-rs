@@ -762,7 +762,13 @@ mod connection_manager {
         /// the Tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
-            let (connection, driver) = MultiplexedConnection::new(&connection_info).await?;
+            let (connection, driver) = if tokio::runtime::Handle::try_current().is_ok() {
+                let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+                MultiplexedConnection::create_connection(&connection_info, con).await?
+            } else {
+                let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+                MultiplexedConnection::create_connection(&connection_info, con).await?
+            };
 
             // Spawn the driver that drives the connection future
             tokio::spawn(driver);
@@ -786,7 +792,13 @@ mod connection_manager {
         ) {
             let connection_info = self.connection_info.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                let (new_connection, driver) = MultiplexedConnection::new(&connection_info).await?;
+                let (new_connection, driver) = if tokio::runtime::Handle::try_current().is_ok() {
+                    let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+                    MultiplexedConnection::create_connection(&connection_info, con).await?
+                } else {
+                    let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+                    MultiplexedConnection::create_connection(&connection_info, con).await?
+                };
                 tokio::spawn(driver);
                 Ok(new_connection)
             }
