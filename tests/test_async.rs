@@ -6,7 +6,7 @@ use futures::{future, prelude::*};
 
 use crate::support::*;
 
-use redis::{aio::MultiplexedConnection, RedisResult};
+use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 
 mod support;
 
@@ -282,4 +282,114 @@ fn test_script_returning_complex_type() {
             .await
     })
     .unwrap();
+}
+
+mod pub_sub {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn pub_sub_subscription() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            pubsub_conn.subscribe("phonewave").await?;
+            let mut pubsub_stream = pubsub_conn.on_message();
+            let mut publish_conn = ctx.async_connection().await?;
+            publish_conn.publish("phonewave", "banana").await?;
+
+            let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+            assert_eq!("banana".to_string(), msg_payload);
+
+            Ok(())
+        })
+        .map_err(|err: RedisError| err)
+        .unwrap();
+    }
+
+    #[test]
+    fn pub_sub_unsubscription() {
+        use redis::RedisError;
+
+        const SUBSCRIPTION_KEY: &str = "phonewave-pub-sub-unsubscription";
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
+            pubsub_conn.unsubscribe(SUBSCRIPTION_KEY).await?;
+
+            let mut conn = ctx.async_connection().await?;
+            let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                .arg("NUMSUB")
+                .arg(SUBSCRIPTION_KEY)
+                .query_async(&mut conn)
+                .await?;
+            let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+            assert_eq!(subscription_count, 0);
+
+            Ok(())
+        })
+        .map_err(|err: RedisError| err)
+        .unwrap();
+    }
+
+    #[test]
+    fn automatic_unsubscription() {
+        use redis::RedisError;
+
+        const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription";
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
+            drop(pubsub_conn);
+
+            std::thread::sleep(Duration::from_millis(50));
+
+            let mut conn = ctx.async_connection().await?;
+            let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                .arg("NUMSUB")
+                .arg(SUBSCRIPTION_KEY)
+                .query_async(&mut conn)
+                .await?;
+            let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+            assert_eq!(subscription_count, 0);
+
+            Ok(())
+        })
+        .map_err(|err: RedisError| err)
+        .unwrap();
+    }
+
+    #[test]
+    fn pub_sub_conn_reuse() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            pubsub_conn.subscribe("phonewave").await?;
+            pubsub_conn.psubscribe("*").await?;
+
+            let mut conn = pubsub_conn.into_connection().await;
+            redis::cmd("SET")
+                .arg("foo")
+                .arg("bar")
+                .query_async(&mut conn)
+                .await?;
+
+            let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;
+            assert_eq!(&res, "bar");
+
+            Ok(())
+        })
+        .map_err(|err: RedisError| err)
+        .unwrap();
+    }
 }

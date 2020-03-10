@@ -30,18 +30,19 @@ use futures_util::{
     future::{Future, FutureExt, TryFutureExt},
     ready,
     sink::Sink,
-    stream::{Stream, StreamExt},
+    stream::{Stream, StreamExt, TryStreamExt as _},
 };
 
 use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
-use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
-
+use crate::connection::Msg;
 use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
+use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
+use crate::{from_redis_value, ToRedisArgs};
 
 #[cfg(feature = "async-std-comp")]
 use crate::aio_async_std;
@@ -171,17 +172,153 @@ impl AsyncRead for ActualConnection {
     }
 }
 
+/// Represents a `PubSub` connection.
+pub struct PubSub(Connection);
+
+impl PubSub {
+    fn new(con: Connection) -> Self {
+        Self(con)
+    }
+
+    /// Subscribes to a new channel.
+    pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        Ok(cmd("SUBSCRIBE")
+            .arg(channel)
+            .query_async(&mut self.0)
+            .await?)
+    }
+
+    /// Subscribes to a new channel with a pattern.
+    pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        Ok(cmd("PSUBSCRIBE")
+            .arg(pchannel)
+            .query_async(&mut self.0)
+            .await?)
+    }
+
+    /// Unsubscribes from a channel.
+    pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        Ok(cmd("UNSUBSCRIBE")
+            .arg(channel)
+            .query_async(&mut self.0)
+            .await?)
+    }
+
+    /// Unsubscribes from a channel with a pattern.
+    pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        Ok(cmd("PUNSUBSCRIBE")
+            .arg(pchannel)
+            .query_async(&mut self.0)
+            .await?)
+    }
+
+    /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
+    ///
+    /// The message itself is still generic and can be converted into an appropriate type through
+    /// the helper methods on it.
+    pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
+        ValueCodec::default()
+            .framed(&mut self.0.con)
+            .into_stream()
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
+    }
+
+    /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
+    pub async fn into_connection(mut self) -> Connection {
+        self.0.exit_pubsub().await.ok();
+
+        self.0
+    }
+}
+
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
     buf: Vec<u8>,
     decoder: combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
     db: i64,
+
+    /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
+    ///
+    /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
+    /// exit the pubsub state before executing the new request.
+    pubsub: bool,
 }
 
 impl Connection {
+    /// Converts this [`Connection`] into [`PubSub`].
+    pub fn into_pubsub(self) -> PubSub {
+        PubSub::new(self)
+    }
+
+    /// Fetches a single response from the connection.
     async fn read_response(&mut self) -> RedisResult<Value> {
         crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
+    }
+
+    /// Brings [`Connection`] out of `PubSub` mode.
+    ///
+    /// This will unsubscribe this [`Connection`] from all subscriptions.
+    ///
+    /// If this function returns error then on all command send tries will be performed attempt
+    /// to exit from `PubSub` mode until it will be successful.
+    async fn exit_pubsub(&mut self) -> RedisResult<()> {
+        let res = self.clear_active_subscriptions().await;
+        if res.is_ok() {
+            self.pubsub = false;
+        } else {
+            // Raise the pubsub flag to indicate the connection is "stuck" in that state.
+            self.pubsub = true;
+        }
+
+        res
+    }
+
+    /// Get the inner connection out of a PubSub
+    ///
+    /// Any active subscriptions are unsubscribed. In the event of an error, the connection is
+    /// dropped.
+    async fn clear_active_subscriptions(&mut self) -> RedisResult<()> {
+        // Responses to unsubscribe commands return in a 3-tuple with values
+        // ("unsubscribe" or "punsubscribe", name of subscription removed, count of remaining subs).
+        // The "count of remaining subs" includes both pattern subscriptions and non pattern
+        // subscriptions. Thus, to accurately drain all unsubscribe messages received from the
+        // server, both commands need to be executed at once.
+        {
+            // Prepare both unsubscribe commands
+            let unsubscribe = crate::Pipeline::new()
+                .add_command(cmd("UNSUBSCRIBE"))
+                .add_command(cmd("PUNSUBSCRIBE"))
+                .get_packed_pipeline();
+
+            // Execute commands
+            self.con.write_all(&unsubscribe).await?;
+        }
+
+        // Receive responses
+        //
+        // There will be at minimum two responses - 1 for each of punsubscribe and unsubscribe
+        // commands. There may be more responses if there are active subscriptions. In this case,
+        // messages are received until the _subscription count_ in the responses reach zero.
+        let mut received_unsub = false;
+        let mut received_punsub = false;
+        loop {
+            let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
+
+            match res.0.first() {
+                Some(&b'u') => received_unsub = true,
+                Some(&b'p') => received_punsub = true,
+                _ => (),
+            }
+
+            if received_unsub && received_punsub && res.2 == 0 {
+                break;
+            }
+        }
+
+        // Finally, the connection is back in its normal state since all subscriptions were
+        // cancelled *and* all unsubscribe messages were received.
+        Ok(())
     }
 }
 
@@ -210,6 +347,7 @@ async fn prepare_connection(
         buf: Vec::new(),
         decoder: combine::stream::Decoder::new(),
         db: connection_info.db,
+        pubsub: false,
     };
 
     authenticate(connection_info, &mut rv).await?;
@@ -307,6 +445,9 @@ pub trait ConnectionLike: Sized {
 impl ConnectionLike for Connection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
+            if self.pubsub {
+                self.exit_pubsub().await?;
+            }
             self.buf.clear();
             cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
@@ -322,6 +463,10 @@ impl ConnectionLike for Connection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         (async move {
+            if self.pubsub {
+                self.exit_pubsub().await?;
+            }
+
             self.buf.clear();
             cmd.write_packed_pipeline(&mut self.buf);
             self.con.write_all(&self.buf).await?;

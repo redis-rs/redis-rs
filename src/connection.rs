@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::str::from_utf8;
 use std::time::Duration;
 
-use url;
-
 use crate::cmd::{cmd, pipe, Pipeline};
 use crate::parser::Parser;
 use crate::types::{
@@ -218,6 +216,7 @@ pub struct PubSub<'a> {
 }
 
 /// Represents a pubsub message.
+#[derive(Debug)]
 pub struct Msg {
     payload: Value,
     channel: Value,
@@ -476,7 +475,7 @@ impl Connection {
         self.con.set_read_timeout(dur)
     }
 
-    /// Creats a pubsub instance.for this connection.
+    /// Creates a [`PubSub`] instance for this connection.
     pub fn as_pubsub(&mut self) -> PubSub<'_> {
         // NOTE: The pubsub flag is intentionally not raised at this time since
         // running commands within the pubsub state should not try and exit from
@@ -673,29 +672,11 @@ impl<'a> PubSub<'a> {
     /// appropriate type through the helper methods on it.
     pub fn get_message(&mut self) -> RedisResult<Msg> {
         loop {
-            let raw_msg: Vec<Value> = from_redis_value(&self.con.recv_response()?)?;
-            let mut iter = raw_msg.into_iter();
-            let msg_type: String = from_redis_value(&unwrap_or!(iter.next(), continue))?;
-            let mut pattern = None;
-            let payload;
-            let channel;
-
-            if msg_type == "message" {
-                channel = unwrap_or!(iter.next(), continue);
-                payload = unwrap_or!(iter.next(), continue);
-            } else if msg_type == "pmessage" {
-                pattern = Some(unwrap_or!(iter.next(), continue));
-                channel = unwrap_or!(iter.next(), continue);
-                payload = unwrap_or!(iter.next(), continue);
+            if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
+                return Ok(msg);
             } else {
                 continue;
             }
-
-            return Ok(Msg {
-                payload,
-                channel,
-                pattern,
-            });
         }
     }
 
@@ -718,6 +699,33 @@ impl<'a> Drop for PubSub<'a> {
 /// This holds the data that comes from listening to a pubsub
 /// connection.  It only contains actual message data.
 impl Msg {
+    /// Tries to convert provided [`Value`] into [`Msg`].
+    pub fn from_value(value: &Value) -> Option<Self> {
+        let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
+        let mut iter = raw_msg.into_iter();
+        let msg_type: String = from_redis_value(&iter.next()?).ok()?;
+        let mut pattern = None;
+        let payload;
+        let channel;
+
+        if msg_type == "message" {
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else if msg_type == "pmessage" {
+            pattern = Some(iter.next()?);
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else {
+            return None;
+        }
+
+        Some(Msg {
+            payload,
+            channel,
+            pattern,
+        })
+    }
+
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
         from_redis_value(&self.channel)
