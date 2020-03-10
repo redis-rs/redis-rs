@@ -217,7 +217,8 @@ impl PubSub {
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
     pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
-        ValueCodec::default().framed(&mut self.0.con)
+        ValueCodec::default()
+            .framed(&mut self.0.con)
             .into_stream()
             .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
     }
