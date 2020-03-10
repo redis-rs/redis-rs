@@ -1,46 +1,103 @@
 //! Adds experimental async IO support to redis.
+use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io;
 use std::mem;
+use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
+#[cfg(unix)]
+use std::path::Path;
 use std::pin::Pin;
 use std::task::{self, Poll};
 
 use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
 
-#[cfg(unix)]
-use tokio::net::UnixStream;
+#[cfg(all(unix, feature = "tokio-comp"))]
+use tokio::net::UnixStream as UnixStreamTokio;
 
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
     sync::{mpsc, oneshot},
 };
+
+#[cfg(feature = "tokio-comp")]
+use tokio::net::TcpStream as TcpStreamTokio;
+
+#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
-#[cfg(unix)]
-use futures_util::future::Either;
-use futures_util::TryStreamExt;
 use futures_util::{
     future::{Future, FutureExt, TryFutureExt},
     ready,
     sink::Sink,
-    stream::{Stream, StreamExt},
+    stream::{Stream, StreamExt, TryStreamExt as _},
 };
 
 use pin_project_lite::pin_project;
-use tokio_util::codec::FramedRead;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::{ConnectionAddr, ConnectionInfo, Msg};
+use crate::connection::Msg;
+use crate::connection::{ConnectionAddr, ConnectionInfo};
+
+#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
-enum ActualConnection {
-    Tcp(TcpStream),
+#[cfg(feature = "async-std-comp")]
+use crate::aio_async_std;
+
+/// Represents the ability of connecting via TCP or via Unix socket
+#[async_trait]
+pub(crate) trait Connect {
+    /// Performs a TCP connection
+    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection>;
+    /// Performans an UNIX connection
     #[cfg(unix)]
-    Unix(UnixStream),
+    async fn connect_unix(path: &Path) -> RedisResult<ActualConnection>;
+}
+
+#[cfg(feature = "tokio-comp")]
+mod tokio_aio {
+    use super::{async_trait, ActualConnection, Connect, RedisResult, SocketAddr, TcpStreamTokio};
+
+    #[cfg(unix)]
+    use super::{Path, UnixStreamTokio};
+
+    pub struct Tokio;
+
+    #[async_trait]
+    impl Connect for Tokio {
+        async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection> {
+            Ok(TcpStreamTokio::connect(&socket_addr)
+                .await
+                .map(ActualConnection::TcpTokio)?)
+        }
+        #[cfg(unix)]
+        async fn connect_unix(path: &Path) -> RedisResult<ActualConnection> {
+            Ok(UnixStreamTokio::connect(path)
+                .await
+                .map(ActualConnection::UnixTokio)?)
+        }
+    }
+}
+
+/// Represents an async Connection (TCP or Unix. Tokio or Async Std)
+pub(crate) enum ActualConnection {
+    /// Represents a Tokio TCP connection.
+    #[cfg(feature = "tokio-comp")]
+    TcpTokio(TcpStreamTokio),
+    /// Represents a Tokio Unix connection.
+    #[cfg(unix)]
+    #[cfg(feature = "tokio-comp")]
+    UnixTokio(UnixStreamTokio),
+    /// Represents an Async_std TCP connection.
+    #[cfg(feature = "async-std-comp")]
+    TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
+    /// Represents an Async_std Unix connection.
+    #[cfg(feature = "async-std-comp")]
+    #[cfg(unix)]
+    UnixAsyncStd(aio_async_std::UnixStreamAsyncStdWrapped),
 }
 
 impl AsyncWrite for ActualConnection {
@@ -50,25 +107,46 @@ impl AsyncWrite for ActualConnection {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(unix)]
+            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(unix)]
+            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(unix)]
+            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
         }
     }
 }
@@ -80,9 +158,16 @@ impl AsyncRead for ActualConnection {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
-            ActualConnection::Tcp(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
-            ActualConnection::Unix(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(unix)]
+            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
         }
     }
 }
@@ -132,7 +217,7 @@ impl PubSub {
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
     pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
-        FramedRead::new(&mut self.0.con, ValueCodec::default())
+        ValueCodec::default().framed(&mut self.0.con)
             .into_stream()
             .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
     }
@@ -237,9 +322,25 @@ impl Connection {
 }
 
 /// Opens a connection.
-pub async fn connect(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    let con = connect_simple(connection_info).await?;
+#[cfg(feature = "tokio-comp")]
+pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
+    let con = connect_simple::<tokio_aio::Tokio>(connection_info).await?;
 
+    prepare_connection(con, connection_info).await
+}
+
+/// Opens a connection.
+#[cfg(feature = "async-std-comp")]
+pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
+    let con = connect_simple::<aio_async_std::AsyncStd>(connection_info).await?;
+
+    prepare_connection(con, connection_info).await
+}
+
+async fn prepare_connection(
+    con: ActualConnection,
+    connection_info: &ConnectionInfo,
+) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
         buf: Vec::new(),
@@ -258,7 +359,7 @@ where
     C: ConnectionLike,
 {
     if let Some(passwd) = &connection_info.passwd {
-        match cmd("AUTH").arg(&**passwd).query_async(con).await {
+        match cmd("AUTH").arg(passwd).query_async(con).await {
             Ok(Value::Okay) => (),
             _ => {
                 fail!((
@@ -282,31 +383,18 @@ where
     Ok(())
 }
 
-async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualConnection> {
+async fn connect_simple<T: Connect>(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<ActualConnection> {
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addr = {
-                let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
-                match socket_addrs.next() {
-                    Some(socket_addr) => socket_addr,
-                    None => {
-                        return Err(RedisError::from((
-                            ErrorKind::InvalidClientConfig,
-                            "No address found for host",
-                        )));
-                    }
-                }
-            };
+            let socket_addr = get_socket_addrs(host, port)?;
 
-            TcpStream::connect(&socket_addr)
-                .await
-                .map(ActualConnection::Tcp)?
+            <T>::connect_tcp(socket_addr).await?
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => UnixStream::connect(path)
-            .await
-            .map(ActualConnection::Unix)?,
+        ConnectionAddr::Unix(ref path) => <T>::connect_unix(path).await?,
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
@@ -317,6 +405,17 @@ async fn connect_simple(connection_info: &ConnectionInfo) -> RedisResult<ActualC
             )))
         }
     })
+}
+
+fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
+    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+    match socket_addrs.next() {
+        Some(socket_addr) => Ok(socket_addr),
+        None => Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "No address found for host",
+        ))),
+    }
 }
 
 /// An async abstraction over connections.
@@ -636,29 +735,62 @@ pub struct MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Creates a multiplexed connection from a connection and executor.
-    pub(crate) async fn new(
+    #[cfg(feature = "tokio-comp")]
+    pub(crate) async fn new_tokio(
         connection_info: &ConnectionInfo,
     ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple(connection_info).await?;
-        let (pipeline, driver) = match con {
-            #[cfg(not(unix))]
-            ActualConnection::Tcp(tcp) => {
-                let codec = ValueCodec::default().framed(tcp);
-                let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, driver)
-            }
+        let con = connect_simple::<tokio_aio::Tokio>(connection_info).await?;
+        Ok(MultiplexedConnection::create_connection(connection_info, con).await?)
+    }
+    /// Creates a multiplexed connection from a connection and executor.
+    #[cfg(feature = "async-std-comp")]
+    pub(crate) async fn new_async_std(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
+        let con = connect_simple::<aio_async_std::AsyncStd>(connection_info).await?;
+        MultiplexedConnection::create_connection(connection_info, con).await
+    }
 
-            #[cfg(unix)]
-            ActualConnection::Tcp(tcp) => {
+    async fn create_connection(
+        connection_info: &ConnectionInfo,
+        con: ActualConnection,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
+        fn boxed(
+            f: impl Future<Output = ()> + Send + 'static,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(f)
+        }
+
+        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+        compile_error!("tokio-comp or async-std-comp features required for aio feature");
+
+        let (pipeline, driver) = match con {
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Left(driver))
+                (pipeline, boxed(driver))
+            }
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::TcpAsyncStd(tcp) => {
+                let codec = ValueCodec::default().framed(tcp);
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, boxed(driver))
             }
             #[cfg(unix)]
-            ActualConnection::Unix(unix) => {
+            #[cfg(feature = "tokio-comp")]
+            ActualConnection::UnixTokio(unix) => {
                 let codec = ValueCodec::default().framed(unix);
                 let (pipeline, driver) = Pipeline::new(codec);
-                (pipeline, Either::Right(driver))
+
+                (pipeline, boxed(driver))
+            }
+            #[cfg(unix)]
+            #[cfg(feature = "async-std-comp")]
+            ActualConnection::UnixAsyncStd(unix) => {
+                let codec = ValueCodec::default().framed(unix);
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, boxed(driver))
             }
         };
         let mut con = MultiplexedConnection {
@@ -774,7 +906,25 @@ mod connection_manager {
         /// the Tokio executor.
         pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
-            let (connection, driver) = MultiplexedConnection::new(&connection_info).await?;
+
+            #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+            let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+
+            #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+            let con = if tokio::runtime::Handle::try_current().is_ok() {
+                connect_simple::<tokio_aio::Tokio>(&connection_info).await?
+            } else {
+                connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
+            };
+
+            #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+            compile_error!("tokio-comp or async-std-comp features required for aio feature");
+
+            let (connection, driver) =
+                MultiplexedConnection::create_connection(&connection_info, con).await?;
 
             // Spawn the driver that drives the connection future
             tokio::spawn(driver);
@@ -798,7 +948,25 @@ mod connection_manager {
         ) {
             let connection_info = self.connection_info.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                let (new_connection, driver) = MultiplexedConnection::new(&connection_info).await?;
+                #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+                let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
+
+                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
+
+                #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+                let con = if tokio::runtime::Handle::try_current().is_ok() {
+                    connect_simple::<tokio_aio::Tokio>(&connection_info).await?
+                } else {
+                    connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
+                };
+
+                #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+                compile_error!("tokio-comp or async-std-comp features required for aio feature");
+
+                let (new_connection, driver) =
+                    MultiplexedConnection::create_connection(&connection_info, con).await?;
+
                 tokio::spawn(driver);
                 Ok(new_connection)
             }

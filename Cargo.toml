@@ -37,7 +37,7 @@ bytes = { version = "0.5", optional = true }
 futures-util = { version = "0.3.0", default-features = false, optional = true }
 pin-project-lite = { version = "0.1", optional = true }
 tokio-util = { version = "0.2", optional = true }
-tokio = { version = "0.2", optional = true }
+tokio = { version = "0.2.10", optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "0.4.4", optional = true }
@@ -49,15 +49,21 @@ r2d2 = { version = "0.8.8", optional = true }
 # Only needed for cluster
 crc16 = { version = "0.4.0", optional = true }
 rand = { version = "0.7.0", optional = true }
+# Only needed for async_std support
+async-std = { version = "1.5.0", optional = true}
+async-trait = "0.1.24"
 
 [features]
-default = ["geospatial", "aio", "script"]
+default = ["geospatial", "tokio-comp", "async-std-comp", "script"]
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio-02"]
-tokio-rt-core = ["aio", "tokio/rt-core"]
+tokio-rt-core = ["tokio-comp", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]
+async-std-comp = ["aio", "async-std"]
+tokio-comp = ["aio", "tokio"]
 connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
+
 
 [dev-dependencies]
 rand = "0.7"
@@ -73,6 +79,10 @@ tokio = { version = "0.2", features = ["rt-core", "macros", "time"] }
 [[test]]
 name = "test_async"
 required-features = ["tokio-rt-core"]
+
+[[test]]
+name = "test_async_async_std"
+required-features = ["async-std-comp"]
 
 [[test]]
 name = "parser"
