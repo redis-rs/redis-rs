@@ -132,6 +132,20 @@ impl<'a> IntoConnectionInfo for &'a str {
     }
 }
 
+impl<T> IntoConnectionInfo for (T, u16)
+where
+    T: Into<String>,
+{
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        Ok(ConnectionInfo {
+            addr: Box::new(ConnectionAddr::Tcp(self.0.into(), self.1)),
+            db: 0,
+            username: None,
+            passwd: None,
+        })
+    }
+}
+
 impl IntoConnectionInfo for String {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(&self) {
