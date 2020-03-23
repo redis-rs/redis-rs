@@ -223,6 +223,13 @@ impl PubSub {
             .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
     }
 
+    pub fn into_on_message(self) -> impl Stream<Item = Msg> {
+        ValueCodec::default()
+            .framed(self.0.con)
+            .into_stream()
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
+    }
+
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
     pub async fn into_connection(mut self) -> Connection {
         self.0.exit_pubsub().await.ok();
