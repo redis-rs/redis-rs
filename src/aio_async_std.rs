@@ -10,6 +10,9 @@ use std::path::Path;
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+#[cfg(feature = "tls")]
+use native_tls::TlsConnector;
+
 /// Wraps the async_std TcpStream in order to implemented the required Traits for it
 pub struct TcpStreamAsyncStdWrapped(TcpStream);
 #[cfg(unix)]
@@ -95,6 +98,15 @@ impl Connect for AsyncStd {
         Ok(TcpStream::connect(&socket_addr)
             .await
             .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?)
+    }
+
+    #[cfg(feature = "tls")]
+    async fn connect_tcp_tls(
+        _hostname: &str,
+        _socket_addr: SocketAddr,
+        _tls_connector: TlsConnector,
+    ) -> RedisResult<ActualConnection> {
+        todo!("unsupported for now");
     }
 
     #[cfg(unix)]

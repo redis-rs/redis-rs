@@ -23,6 +23,13 @@ use tokio::{
 #[cfg(feature = "tokio-comp")]
 use tokio::net::TcpStream as TcpStreamTokio;
 
+#[cfg(feature = "tokio-comp")]
+#[cfg(feature = "tls")]
+use tokio_tls::TlsStream as TlsStreamTokio;
+
+#[cfg(feature = "tls")]
+use native_tls::TlsConnector;
+
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
@@ -52,7 +59,14 @@ use crate::aio_async_std;
 pub(crate) trait Connect {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection>;
-    /// Performans an UNIX connection
+    // Performs a TCP TLS connection
+    #[cfg(feature = "tls")]
+    async fn connect_tcp_tls(
+        hostname: &str,
+        socket_addr: SocketAddr,
+        tls_connector: TlsConnector,
+    ) -> RedisResult<ActualConnection>;
+    /// Performs a UNIX connection
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<ActualConnection>;
 }
@@ -60,6 +74,9 @@ pub(crate) trait Connect {
 #[cfg(feature = "tokio-comp")]
 mod tokio_aio {
     use super::{async_trait, ActualConnection, Connect, RedisResult, SocketAddr, TcpStreamTokio};
+
+    #[cfg(feature = "tls")]
+    use super::TlsConnector;
 
     #[cfg(unix)]
     use super::{Path, UnixStreamTokio};
@@ -72,6 +89,18 @@ mod tokio_aio {
             Ok(TcpStreamTokio::connect(&socket_addr)
                 .await
                 .map(ActualConnection::TcpTokio)?)
+        }
+        #[cfg(feature = "tls")]
+        async fn connect_tcp_tls(
+            hostname: &str,
+            socket_addr: SocketAddr,
+            tls_connector: TlsConnector,
+        ) -> RedisResult<ActualConnection> {
+            let cx = tokio_tls::TlsConnector::from(tls_connector);
+            Ok(cx
+                .connect(hostname, TcpStreamTokio::connect(&socket_addr).await?)
+                .await
+                .map(ActualConnection::TcpTlsTokio)?)
         }
         #[cfg(unix)]
         async fn connect_unix(path: &Path) -> RedisResult<ActualConnection> {
@@ -87,6 +116,10 @@ pub(crate) enum ActualConnection {
     /// Represents a Tokio TCP connection.
     #[cfg(feature = "tokio-comp")]
     TcpTokio(TcpStreamTokio),
+    /// Represents a Tokio TLS encrypted TCP connection
+    #[cfg(feature = "tokio-comp")]
+    #[cfg(feature = "tls")]
+    TcpTlsTokio(TlsStreamTokio<TcpStreamTokio>),
     /// Represents a Tokio Unix connection.
     #[cfg(unix)]
     #[cfg(feature = "tokio-comp")]
@@ -109,6 +142,9 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
@@ -124,6 +160,9 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "tokio-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
@@ -139,6 +178,9 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "tokio-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
@@ -160,6 +202,9 @@ impl AsyncRead for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "tokio-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
@@ -390,8 +435,35 @@ async fn connect_simple<T: Connect>(
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;
-
             <T>::connect_tcp(socket_addr).await?
+        }
+
+        #[cfg(feature = "tls")]
+        ConnectionAddr::TcpTls {
+            ref host,
+            port,
+            insecure,
+        } => {
+            let socket_addr = get_socket_addrs(host, port)?;
+            let tls_connector = if insecure {
+                TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .danger_accept_invalid_hostnames(true)
+                    .use_sni(false)
+                    .build()
+                    .unwrap()
+            } else {
+                TlsConnector::new().unwrap()
+            };
+            <T>::connect_tcp_tls(host, socket_addr, tls_connector).await?
+        }
+
+        #[cfg(not(feature = "tls"))]
+        ConnectionAddr::TcpTls { .. } => {
+            fail!((
+                ErrorKind::InvalidClientConfig,
+                "Cannot connect to TCP with TLS without the tls feature"
+            ));
         }
 
         #[cfg(unix)]
@@ -769,6 +841,13 @@ impl MultiplexedConnection {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, boxed(driver))
+            }
+            #[cfg(feature = "tokio-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsTokio(tls) => {
+                let codec = ValueCodec::default().framed(tls);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, boxed(driver))
             }

@@ -14,6 +14,9 @@ use crate::types::{
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
+#[cfg(feature = "tls")]
+use native_tls::{TlsConnector, TlsStream};
+
 static DEFAULT_PORT: u16 = 6379;
 
 /// This function takes a redis URL string and parses it into a URL
@@ -22,7 +25,7 @@ static DEFAULT_PORT: u16 = 6379;
 pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "redis+unix" | "unix" => Ok(result),
+            "redis" | "redis+tls" | "redis+unix" | "unix" => Ok(result),
             _ => Err(()),
         },
         Err(_) => Err(()),
@@ -38,6 +41,22 @@ pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
+    /// Format for this is `(host, port)`.
+    TcpTls {
+        /// Hostname
+        host: String,
+        /// Port
+        port: u16,
+        /// Disable hostname verification when connecting.
+        ///
+        /// # Warning
+        ///
+        /// You should think very carefully before you use this method. If hostname
+        /// verification is not used, any valid certificate for any site will be
+        /// trusted for use from any other. This introduces a significant
+        /// vulnerability to man-in-the-middle attacks.
+        insecure: bool,
+    },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),
 }
@@ -53,6 +72,7 @@ impl ConnectionAddr {
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
+            ConnectionAddr::TcpTls { .. } => cfg!(feature = "tls"),
             ConnectionAddr::Unix(_) => cfg!(unix),
         }
     }
@@ -62,6 +82,7 @@ impl fmt::Display for ConnectionAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ConnectionAddr::Tcp(ref host, port) => write!(f, "{}:{}", host, port),
+            ConnectionAddr::TcpTls { ref host, port, .. } => write!(f, "{}:{}", host, port),
             ConnectionAddr::Unix(ref path) => write!(f, "{}", path.display()),
         }
     }
@@ -111,14 +132,39 @@ impl IntoConnectionInfo for String {
 }
 
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    let host = match url.host() {
+        Some(host) => host.to_string(),
+        None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
+    };
+    let port = url.port().unwrap_or(DEFAULT_PORT);
+    let addr = if url.scheme() == "redis+tls" {
+        #[cfg(feature = "tls")]
+        {
+            if url.fragment() == Some("insecure") {
+                ConnectionAddr::TcpTls {
+                    host,
+                    port,
+                    insecure: true,
+                }
+            } else {
+                ConnectionAddr::TcpTls {
+                    host,
+                    port,
+                    insecure: false,
+                }
+            }
+        }
+
+        #[cfg(not(feature = "tls"))]
+        fail!((
+            ErrorKind::InvalidClientConfig,
+            "can't connect with TLS, the feature is not enabled"
+        ));
+    } else {
+        ConnectionAddr::Tcp(host, port)
+    };
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Tcp(
-            match url.host() {
-                Some(host) => host.to_string(),
-                None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
-            },
-            url.port().unwrap_or(DEFAULT_PORT),
-        )),
+        addr: Box::new(addr),
         db: match url.path().trim_matches('/') {
             "" => 0,
             path => unwrap_or!(
@@ -167,21 +213,25 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
 
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        if self.scheme() == "redis" {
-            url_to_tcp_connection_info(self)
-        } else if self.scheme() == "unix" || self.scheme() == "redis+unix" {
-            url_to_unix_connection_info(self)
-        } else {
-            fail!((
+        match self.scheme() {
+            "redis" | "redis+tls" => url_to_tcp_connection_info(self),
+            "unix" | "redis+unix" => url_to_unix_connection_info(self),
+            _ => fail!((
                 ErrorKind::InvalidClientConfig,
                 "URL provided is not a redis URL"
-            ));
+            )),
         }
     }
 }
 
 struct TcpConnection {
     reader: TcpStream,
+    open: bool,
+}
+
+#[cfg(feature = "tls")]
+struct TcpTlsConnection {
+    reader: TlsStream<TcpStream>,
     open: bool,
 }
 
@@ -193,6 +243,8 @@ struct UnixConnection {
 
 enum ActualConnection {
     Tcp(TcpConnection),
+    #[cfg(feature = "tls")]
+    TcpTls(TcpTlsConnection),
     #[cfg(unix)]
     Unix(UnixConnection),
 }
@@ -263,6 +315,68 @@ impl ActualConnection {
                     open: true,
                 })
             }
+            #[cfg(feature = "tls")]
+            ConnectionAddr::TcpTls {
+                ref host,
+                port,
+                insecure,
+            } => {
+                let tls_connector = if insecure {
+                    TlsConnector::builder()
+                        .danger_accept_invalid_certs(true)
+                        .danger_accept_invalid_hostnames(true)
+                        .use_sni(false)
+                        .build()
+                        .unwrap()
+                } else {
+                    TlsConnector::new().unwrap()
+                };
+                let host: &str = &*host;
+                let tls = match timeout {
+                    None => {
+                        let tcp = TcpStream::connect((host, port))?;
+                        tls_connector.connect(host, tcp).unwrap()
+                    }
+                    Some(timeout) => {
+                        let mut tcp = None;
+                        let mut last_error = None;
+                        for addr in (host, port).to_socket_addrs()? {
+                            match TcpStream::connect_timeout(&addr, timeout) {
+                                Ok(l) => {
+                                    tcp = Some(l);
+                                    break;
+                                }
+                                Err(e) => {
+                                    last_error = Some(e);
+                                }
+                            };
+                        }
+                        match (tcp, last_error) {
+                            (Some(tcp), _) => tls_connector.connect(host, tcp).unwrap(),
+                            (None, Some(e)) => {
+                                fail!(e);
+                            }
+                            (None, None) => {
+                                fail!((
+                                    ErrorKind::InvalidClientConfig,
+                                    "could not resolve to any addresses"
+                                ));
+                            }
+                        }
+                    }
+                };
+                ActualConnection::TcpTls(TcpTlsConnection {
+                    reader: tls,
+                    open: true,
+                })
+            }
+            #[cfg(not(feature = "tls"))]
+            ConnectionAddr::TcpTls { .. } => {
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to TCP with TLS without the tls feature"
+                ));
+            }
             #[cfg(unix)]
             ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
                 sock: UnixStream::connect(path)?,
@@ -282,6 +396,19 @@ impl ActualConnection {
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
             ActualConnection::Tcp(ref mut connection) => {
+                let res = connection.reader.write_all(bytes).map_err(RedisError::from);
+                match res {
+                    Err(e) => {
+                        if e.is_connection_dropped() {
+                            connection.open = false;
+                        }
+                        Err(e)
+                    }
+                    Ok(_) => Ok(Value::Okay),
+                }
+            }
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
@@ -314,6 +441,10 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_write_timeout(dur)?;
             }
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+                reader.get_ref().set_write_timeout(dur)?;
+            }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 sock.set_write_timeout(dur)?;
@@ -327,6 +458,10 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_read_timeout(dur)?;
             }
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+                reader.get_ref().set_read_timeout(dur)?;
+            }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
                 sock.set_read_timeout(dur)?;
@@ -338,6 +473,8 @@ impl ActualConnection {
     pub fn is_open(&self) -> bool {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(TcpTlsConnection { open, .. }) => open,
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
@@ -551,6 +688,10 @@ impl Connection {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                 self.parser.parse_value(reader)
             }
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(TcpTlsConnection { ref mut reader, .. }) => {
+                self.parser.parse_value(reader)
+            }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
                 self.parser.parse_value(sock)
@@ -561,6 +702,11 @@ impl Connection {
             Err(ref e) if e.kind() == ErrorKind::ResponseError => match self.con {
                 ActualConnection::Tcp(ref mut connection) => {
                     let _ = connection.reader.shutdown(net::Shutdown::Both);
+                    connection.open = false;
+                }
+                #[cfg(feature = "tls")]
+                ActualConnection::TcpTls(ref mut connection) => {
+                    let _ = connection.reader.shutdown();
                     connection.open = false;
                 }
                 #[cfg(unix)]

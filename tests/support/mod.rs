@@ -117,6 +117,9 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(bind);
             }
+            redis::ConnectionAddr::TcpTls { .. } => {
+                unimplemented!("running test with tls is unsupported for now.")
+            }
             redis::ConnectionAddr::Unix(ref path) => {
                 cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
             }
