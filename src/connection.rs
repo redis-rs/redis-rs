@@ -326,10 +326,9 @@ impl ActualConnection {
                         .danger_accept_invalid_certs(true)
                         .danger_accept_invalid_hostnames(true)
                         .use_sni(false)
-                        .build()
-                        .unwrap()
+                        .build()?
                 } else {
-                    TlsConnector::new().unwrap()
+                    TlsConnector::new()?
                 };
                 let host: &str = &*host;
                 let tls = match timeout {

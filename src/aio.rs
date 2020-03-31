@@ -450,10 +450,9 @@ async fn connect_simple<T: Connect>(
                     .danger_accept_invalid_certs(true)
                     .danger_accept_invalid_hostnames(true)
                     .use_sni(false)
-                    .build()
-                    .unwrap()
+                    .build()?
             } else {
-                TlsConnector::new().unwrap()
+                TlsConnector::new()?
             };
             <T>::connect_tcp_tls(host, socket_addr, tls_connector).await?
         }
