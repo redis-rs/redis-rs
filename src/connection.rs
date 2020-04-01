@@ -140,18 +140,21 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let addr = if url.scheme() == "redis+tls" {
         #[cfg(feature = "tls")]
         {
-            if url.fragment() == Some("insecure") {
-                ConnectionAddr::TcpTls {
+            match url.fragment() {
+                Some("insecure") => ConnectionAddr::TcpTls {
                     host,
                     port,
                     insecure: true,
-                }
-            } else {
-                ConnectionAddr::TcpTls {
+                },
+                Some(_) => fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "only #insecure is supported as URL fragment"
+                )),
+                _ => ConnectionAddr::TcpTls {
                     host,
                     port,
                     insecure: false,
-                }
+                },
             }
         }
 
