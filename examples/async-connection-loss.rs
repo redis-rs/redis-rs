@@ -58,7 +58,7 @@ async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
 
 #[tokio::main]
 async fn main() -> RedisResult<()> {
-    let mode = match env::args().nth(1).as_ref().map(String::as_str) {
+    let mode = match env::args().nth(1).as_deref() {
         Some("default") => {
             println!("Using default connection mode\n");
             Mode::Default
