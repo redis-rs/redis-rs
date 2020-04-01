@@ -56,6 +56,7 @@ async-trait = "0.1.24"
 # Only needed for TLS
 native-tls = { version = "0.2", optional = true }
 tokio-tls = { version = "0.3", optional = true }
+async-native-tls = { version = "0.3", optional = true }
 
 [features]
 default = ["geospatial", "tokio-comp", "async-std-comp", "script"]
@@ -64,10 +65,12 @@ tokio-rt-core = ["tokio-comp", "tokio/rt-core"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]
+tls = ["native-tls"]
 async-std-comp = ["aio", "async-std"]
+async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
 tokio-comp = ["aio", "tokio"]
+tokio-tls-comp = ["tls", "tokio-tls"]
 connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
-tls = ["native-tls", "tokio-tls"]
 
 
 [dev-dependencies]

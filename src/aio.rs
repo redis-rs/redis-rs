@@ -64,7 +64,7 @@ pub(crate) trait Connect {
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
-        tls_connector: TlsConnector,
+        insecure: bool,
     ) -> RedisResult<ActualConnection>;
     /// Performs a UNIX connection
     #[cfg(unix)]
@@ -94,10 +94,19 @@ mod tokio_aio {
         async fn connect_tcp_tls(
             hostname: &str,
             socket_addr: SocketAddr,
-            tls_connector: TlsConnector,
+            insecure: bool,
         ) -> RedisResult<ActualConnection> {
-            let cx = tokio_tls::TlsConnector::from(tls_connector);
-            Ok(cx
+            let tls_connector: tokio_tls::TlsConnector = if insecure {
+                TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .danger_accept_invalid_hostnames(true)
+                    .use_sni(false)
+                    .build()?
+            } else {
+                TlsConnector::new()?
+            }
+            .into();
+            Ok(tls_connector
                 .connect(hostname, TcpStreamTokio::connect(&socket_addr).await?)
                 .await
                 .map(ActualConnection::TcpTlsTokio)?)
@@ -127,6 +136,10 @@ pub(crate) enum ActualConnection {
     /// Represents an Async_std TCP connection.
     #[cfg(feature = "async-std-comp")]
     TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
+    /// Represents an Async_std TLS encrypted TCP connection.
+    #[cfg(feature = "async-std-comp")]
+    #[cfg(feature = "tls")]
+    TcpTlsAsyncStd(aio_async_std::TlsStreamAsyncStdWrapped),
     /// Represents an Async_std Unix connection.
     #[cfg(feature = "async-std-comp")]
     #[cfg(unix)]
@@ -151,6 +164,9 @@ impl AsyncWrite for ActualConnection {
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(feature = "async-std-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
         }
@@ -169,6 +185,9 @@ impl AsyncWrite for ActualConnection {
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_flush(cx),
             #[cfg(feature = "async-std-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_flush(cx),
         }
@@ -186,6 +205,9 @@ impl AsyncWrite for ActualConnection {
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
@@ -210,6 +232,9 @@ impl AsyncRead for ActualConnection {
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
             ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
@@ -445,16 +470,7 @@ async fn connect_simple<T: Connect>(
             insecure,
         } => {
             let socket_addr = get_socket_addrs(host, port)?;
-            let tls_connector = if insecure {
-                TlsConnector::builder()
-                    .danger_accept_invalid_certs(true)
-                    .danger_accept_invalid_hostnames(true)
-                    .use_sni(false)
-                    .build()?
-            } else {
-                TlsConnector::new()?
-            };
-            <T>::connect_tcp_tls(host, socket_addr, tls_connector).await?
+            <T>::connect_tcp_tls(host, socket_addr, insecure).await?
         }
 
         #[cfg(not(feature = "tls"))]
@@ -852,6 +868,13 @@ impl MultiplexedConnection {
             }
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(tcp) => {
+                let codec = ValueCodec::default().framed(tcp);
+                let (pipeline, driver) = Pipeline::new(codec);
+                (pipeline, boxed(driver))
+            }
+            #[cfg(feature = "async-std-comp")]
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTlsAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, boxed(driver))
