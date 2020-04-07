@@ -133,6 +133,7 @@ impl RedisServer {
                                 cert = /tmp/redis-rs-test-{redis_port}.crt
                                 key = /tmp/redis-rs-test-{redis_port}.pem
                                 verify = 0
+                                foreground = yes
                                 [redis]
                                 accept = 127.0.0.1:{stunnel_port}
                                 connect = 127.0.0.1:{redis_port}
@@ -149,6 +150,8 @@ impl RedisServer {
                     let mut server = RedisServer::new_with_addr(addr, |cmd| {
                         let stunnel = process::Command::new("stunnel")
                             .arg(&stunnel_config_path)
+                            .stdout(process::Stdio::null())
+                            .stderr(process::Stdio::null())
                             .spawn()
                             .expect("could not start stunnel");
                         vec![stunnel, cmd.spawn().unwrap()]
