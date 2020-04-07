@@ -12,6 +12,10 @@ cache:
 before_cache:
   - rm -rf /home/travis/.cargo/registry
 
+before_install:
+  - sudo apt-get update
+  - sudo apt-get -y install stunnel  # used to test TLS support
+
 matrix:
   include:
     - rust: stable
