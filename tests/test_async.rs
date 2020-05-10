@@ -1,12 +1,7 @@
-use redis;
-
-use futures;
-
 use futures::{future, prelude::*};
+use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 
 use crate::support::*;
-
-use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 
 mod support;
 
