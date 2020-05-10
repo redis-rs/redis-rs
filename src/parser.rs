@@ -161,10 +161,9 @@ mod aio_support {
         state: AnySendPartialState,
     }
 
-    impl Encoder for ValueCodec {
-        type Item = Vec<u8>;
+    impl Encoder<Vec<u8>> for ValueCodec {
         type Error = RedisError;
-        fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
             dst.extend_from_slice(item.as_ref());
             Ok(())
         }
