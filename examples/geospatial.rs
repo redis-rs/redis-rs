@@ -1,7 +1,6 @@
-use redis;
+use std::process::exit;
 
 use redis::RedisResult;
-use std::process::exit;
 
 #[cfg(feature = "geospatial")]
 fn run() -> RedisResult<()> {
