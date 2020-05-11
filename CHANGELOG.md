@@ -9,7 +9,7 @@
 * Updated to combine 4 and avoid async dependencies for sync-only ([#272](https://github.com/mitsuhiko/redis-rs/pull/272))
     * **BREAKING CHANGE**: The parser type now only persists the buffer and takes the Read instance in `parse_value`
 * Implement a connection manager for automatic reconnection ([#278](https://github.com/mitsuhiko/redis-rs/pull/278))
-* Add async-std support ([#281]([https://github.com/mitsuhiko/redis-rs/pull/281))
+* Add async-std support ([#281](https://github.com/mitsuhiko/redis-rs/pull/281))
 * Fix key extraction for some stream commands ([#283](https://github.com/mitsuhiko/redis-rs/pull/283))
 * Add asynchronous PubSub support ([#287](https://github.com/mitsuhiko/redis-rs/pull/287))
 
