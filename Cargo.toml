@@ -63,6 +63,7 @@ script = ["sha1"]
 async-std-comp = ["aio", "async-std"]
 tokio-comp = ["aio", "tokio"]
 connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
+streams = []
 
 
 [dev-dependencies]

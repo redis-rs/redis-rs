@@ -1032,6 +1032,9 @@ implement_commands! {
             .arg(options)
     }
 
+
+    // streams commands
+
 }
 
 /// Allows pubsub callbacks to stop receiving messages.

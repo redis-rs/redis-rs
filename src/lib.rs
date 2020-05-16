@@ -404,6 +404,10 @@ pub mod cluster;
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
 
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+pub mod streams;
+
 mod client;
 mod cmd;
 mod commands;
