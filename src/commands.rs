@@ -1170,9 +1170,9 @@ implement_commands! {
     /// currently checked out by another consumer.
     ///
     /// ```no_run
-    /// use crate::{client_open,Connection,Commands,RedisResult};
-    /// use crate::streams::{StreamClaimOptions,StreamClaimReply};
-    /// let client = client_open("redis://127.0.0.1/0").unwrap();
+    /// use redis::{Connection,Commands,RedisResult};
+    /// use redis::streams::{StreamClaimOptions,StreamClaimReply};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
     /// let mut con = client.get_connection().unwrap();
     ///
     /// // Claim all pending messages for key "k1",
@@ -1584,9 +1584,9 @@ implement_commands! {
     /// This method handles setting optional arguments for
     /// `XREAD` or `XREADGROUP` Redis commands.
     /// ```no_run
-    /// use crate::{client_open,Connection,RedisResult};
-    /// use crate::streams::{StreamReadOptions,StreamReadReply};
-    /// let client = client_open("redis://127.0.0.1/0").unwrap();
+    /// use redis::{Connection,RedisResult,Commands};
+    /// use redis::streams::{StreamReadOptions,StreamReadReply};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
     /// let mut con = client.get_connection().unwrap();
     ///
     /// // Read 10 messages from the start of the stream,
