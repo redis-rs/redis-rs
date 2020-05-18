@@ -12,6 +12,7 @@
 * Add async-std support ([#281](https://github.com/mitsuhiko/redis-rs/pull/281))
 * Fix key extraction for some stream commands ([#283](https://github.com/mitsuhiko/redis-rs/pull/283))
 * Add asynchronous PubSub support ([#287](https://github.com/mitsuhiko/redis-rs/pull/287))
+* Add Redis Streams commands ([#162](https://github.com/mitsuhiko/redis-rs/pull/319))
 
 ### Breaking changes
 
