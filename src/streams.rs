@@ -27,7 +27,7 @@ impl ToRedisArgs for StreamMaxlen {
             StreamMaxlen::Equals(v) => ("=", v),
             StreamMaxlen::Aprrox(v) => ("~", v),
         };
-        out.write_arg("MAXLEN".as_bytes());
+        out.write_arg(b"MAXLEN");
         out.write_arg(ch.as_bytes());
         val.write_redis_args(out);
     }
@@ -91,26 +91,30 @@ impl ToRedisArgs for StreamClaimOptions {
         W: ?Sized + RedisWrite,
     {
         if let Some(ref ms) = self.idle {
-            out.write_arg("IDLE".as_bytes());
+            out.write_arg(b"IDLE");
             out.write_arg(format!("{}", ms).as_bytes());
         }
         if let Some(ref ms_time) = self.time {
-            out.write_arg("TIME".as_bytes());
+            out.write_arg(b"TIME");
             out.write_arg(format!("{}", ms_time).as_bytes());
         }
         if let Some(ref count) = self.retry {
-            out.write_arg("RETRYCOUNT".as_bytes());
+            out.write_arg(b"RETRYCOUNT");
             out.write_arg(format!("{}", count).as_bytes());
         }
         if self.force {
-            out.write_arg("FORCE".as_bytes());
+            out.write_arg(b"FORCE");
         }
         if self.justid {
-            out.write_arg("JUSTID".as_bytes());
+            out.write_arg(b"JUSTID");
         }
     }
 }
 
+/// Argument to `StreamReadOptions`
+/// Represents the Redis GROUP <groupname> <consumername> cmd arg.
+/// This option will toggle the cmd from XREAD to XREADGROUP
+type SRGroup = Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>;
 /// Builder options for [`xread_options`] command.
 ///
 /// [`xread_options`]: ./trait.StreamCommands.html#method.xread_options
@@ -125,7 +129,7 @@ pub struct StreamReadOptions {
     noack: Option<bool>,
     /// Set the GROUP <groupname> <consumername> cmd arg.
     /// This option will toggle the cmd from XREAD to XREADGROUP.
-    group: Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>,
+    group: SRGroup,
 }
 
 impl StreamReadOptions {
@@ -175,22 +179,22 @@ impl ToRedisArgs for StreamReadOptions {
         W: ?Sized + RedisWrite,
     {
         if let Some(ref ms) = self.block {
-            out.write_arg("BLOCK".as_bytes());
+            out.write_arg(b"BLOCK");
             out.write_arg(format!("{}", ms).as_bytes());
         }
 
         if let Some(ref n) = self.count {
-            out.write_arg("COUNT".as_bytes());
+            out.write_arg(b"COUNT");
             out.write_arg(format!("{}", n).as_bytes());
         }
 
         if let Some(ref group) = self.group {
             // noack is only available w/ xreadgroup
             if let Some(true) = self.noack {
-                out.write_arg("NOACK".as_bytes());
+                out.write_arg(b"NOACK");
             }
 
-            out.write_arg("GROUP".as_bytes());
+            out.write_arg(b"GROUP");
             for i in &group.0 {
                 out.write_arg(i);
             }
@@ -429,16 +433,13 @@ impl StreamId {
     /// Converts a `Value::Bulk` into a `StreamId`.
     pub fn from_bulk_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
-        match *v {
-            Value::Bulk(ref values) => {
-                if let Some(v) = values.get(0) {
-                    stream_id.id = from_redis_value(&v)?;
-                }
-                if let Some(v) = values.get(1) {
-                    stream_id.map = from_redis_value(&v)?;
-                }
+        if let Value::Bulk(ref values) = *v {
+            if let Some(v) = values.get(0) {
+                stream_id.id = from_redis_value(&v)?;
             }
-            _ => {}
+            if let Some(v) = values.get(1) {
+                stream_id.map = from_redis_value(&v)?;
+            }
         }
 
         Ok(stream_id)
@@ -468,12 +469,17 @@ impl StreamId {
     pub fn len(&self) -> usize {
         self.map.len()
     }
+
+    /// Returns true if there are no field/value pairs in this message.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
+type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
 impl FromRedisValue for StreamReadReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let rows: Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>> =
-            from_redis_value(v)?;
+        let rows: SRRows = from_redis_value(v)?;
         let mut reply = StreamReadReply::default();
         for row in &rows {
             for (key, entry) in row.iter() {
