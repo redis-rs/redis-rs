@@ -167,19 +167,12 @@ fn test_assorted_1() {
 }
 
 #[test]
-fn test_assorted_2() {
+fn test_xgroup_create() {
     // Tests the following commands....
     // xadd
     // xinfo_stream
-    // xinfo_groups
-    // xinfo_consumer
     // xgroup_create
-    // xgroup_create_mkstream
-    // xread_options
-    // xack
-    // xpending
-    // xpending_count
-    // xpending_consumer_count
+    // xinfo_groups
 
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -209,6 +202,26 @@ fn test_assorted_2() {
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g1");
+}
+
+#[test]
+fn test_assorted_2() {
+    // Tests the following commands....
+    // xadd
+    // xinfo_stream
+    // xinfo_groups
+    // xinfo_consumer
+    // xgroup_create_mkstream
+    // xread_options
+    // xack
+    // xpending
+    // xpending_count
+    // xpending_consumer_count
+
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    xadd(&mut con);
 
     // test xgroup create w/ mkstream @ 0
     let result: RedisResult<String> = con.xgroup_create_mkstream("k99", "g99", "0");
