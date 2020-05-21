@@ -35,7 +35,7 @@ impl ToRedisArgs for StreamMaxlen {
 
 /// Builder options for [`xclaim_options`] command.
 ///
-/// [`xclaim_options`]: ./trait.StreamCommands.html#method.xclaim_options
+/// [`xclaim_options`]: ../trait.Commands.html#method.xclaim_options
 ///
 #[derive(Default, Debug)]
 pub struct StreamClaimOptions {
@@ -117,7 +117,7 @@ impl ToRedisArgs for StreamClaimOptions {
 type SRGroup = Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>;
 /// Builder options for [`xread_options`] command.
 ///
-/// [`xread_options`]: ./trait.StreamCommands.html#method.xread_options
+/// [`xread_options`]: ../trait.Commands.html#method.xread_options
 ///
 #[derive(Default, Debug)]
 pub struct StreamReadOptions {
@@ -207,8 +207,8 @@ impl ToRedisArgs for StreamReadOptions {
 
 /// Reply type used with [`xread`] or [`xread_options`] commands.
 ///
-/// [`xread`]: ./trait.StreamCommands.html#method.xread
-/// [`xread_options`]: ./trait.StreamCommands.html#method.xread_options
+/// [`xread`]: ../trait.Commands.html#method.xread
+/// [`xread_options`]: ../trait.Commands.html#method.xread_options
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamReadReply {
@@ -220,12 +220,12 @@ pub struct StreamReadReply {
 ///
 /// Represents stream entries matching a given range of `id`'s.
 ///
-/// [`xrange`]: ./trait.StreamCommands.html#method.xrange
-/// [`xrange_count`]: ./trait.StreamCommands.html#method.xrange_count
-/// [`xrange_all`]: ./trait.StreamCommands.html#method.xrange_all
-/// [`xrevrange`]: ./trait.StreamCommands.html#method.xrevrange
-/// [`xrevrange_count`]: ./trait.StreamCommands.html#method.xrevrange_count
-/// [`xrevrange_all`]: ./trait.StreamCommands.html#method.xrevrange_all
+/// [`xrange`]: ../trait.Commands.html#method.xrange
+/// [`xrange_count`]: ../trait.Commands.html#method.xrange_count
+/// [`xrange_all`]: ../trait.Commands.html#method.xrange_all
+/// [`xrevrange`]: ../trait.Commands.html#method.xrevrange
+/// [`xrevrange_count`]: ../trait.Commands.html#method.xrevrange_count
+/// [`xrevrange_all`]: ../trait.Commands.html#method.xrevrange_all
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamRangeReply {
@@ -237,7 +237,7 @@ pub struct StreamRangeReply {
 ///
 /// Represents that ownership of the specified messages was changed.
 ///
-/// [`xclaim`]: ./trait.StreamCommands.html#method.xclaim
+/// [`xclaim`]: ../trait.Commands.html#method.xclaim
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamClaimReply {
@@ -250,7 +250,7 @@ pub struct StreamClaimReply {
 /// Data returned here were fetched from the stream without
 /// having been acknowledged.
 ///
-/// [`xpending`]: ./trait.StreamCommands.html#method.xpending
+/// [`xpending`]: ../trait.Commands.html#method.xpending
 ///
 #[derive(Debug, Clone)]
 pub enum StreamPendingReply {
@@ -277,6 +277,8 @@ impl StreamPendingReply {
 }
 
 /// Inner reply type when an [`xpending`] command has data.
+///
+/// [`xpending`]: ../trait.Commands.html#method.xpending
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingData {
     /// Limit on the number of messages to return per call.
@@ -297,8 +299,8 @@ pub struct StreamPendingData {
 /// Data returned here have been fetched from the stream without
 /// any acknowledgement.
 ///
-/// [`xpending_count`]: ./trait.StreamCommands.html#method.xpending_count
-/// [`xpending_consumer_count`]: ./trait.StreamCommands.html#method.xpending_consumer_count
+/// [`xpending_count`]: ../trait.Commands.html#method.xpending_count
+/// [`xpending_consumer_count`]: ../trait.Commands.html#method.xpending_consumer_count
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingCountReply {
@@ -314,7 +316,7 @@ pub struct StreamPendingCountReply {
 /// The very first and last IDs in the stream are shown,
 /// in order to give some sense about what is the stream content.
 ///
-/// [`xinfo_stream`]: ./trait.StreamCommands.html#method.xinfo_stream
+/// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoStreamReply {
@@ -337,7 +339,7 @@ pub struct StreamInfoStreamReply {
 /// Reply type used with [`xinfo_consumer`] command, an array of every
 /// consumer in a specific consumer group.
 ///
-/// [`xinfo_consumer`]: ./trait.StreamCommands.html#method.xinfo_consumer
+/// [`xinfo_consumer`]: ../trait.Commands.html#method.xinfo_consumer
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumersReply {
@@ -350,7 +352,7 @@ pub struct StreamInfoConsumersReply {
 /// This output represents all the consumer groups associated with
 /// the stream.
 ///
-/// [`xinfo_groups`]: ./trait.StreamCommands.html#method.xinfo_groups
+/// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroupsReply {
@@ -360,7 +362,7 @@ pub struct StreamInfoGroupsReply {
 
 /// A consumer parsed from [`xinfo_consumers`] command.
 ///
-/// [`xinfo_consumers`]: ./trait.StreamCommands.html#method.xinfo_consumers
+/// [`xinfo_consumers`]: ../trait.Commands.html#method.xinfo_consumers
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumer {
@@ -374,7 +376,7 @@ pub struct StreamInfoConsumer {
 
 /// A group parsed from [`xinfo_groups`] command.
 ///
-/// [`xinfo_groups`]: ./trait.StreamCommands.html#method.xinfo_groups
+/// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroup {
@@ -388,7 +390,9 @@ pub struct StreamInfoGroup {
     pub last_delivered_id: String,
 }
 
-/// Represents a pending message parsed from `xpending` methods.
+/// Represents a pending message parsed from [`xpending`] methods.
+///
+/// [`xpending`]: ../trait.Commands.html#method.xpending
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingId {
     /// The ID of the message.
