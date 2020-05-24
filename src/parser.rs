@@ -1,10 +1,12 @@
-use std::io::Read;
-use std::str;
+use std::{
+    io::{self, Read},
+    str,
+};
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use combine::{
-    any,
+    any, choice, eof,
     error::StreamError,
     opaque,
     parser::{
@@ -57,8 +59,8 @@ where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
-    opaque!({
-        any_send_sync_partial_state(any().then_partial(move |&mut b| {
+    opaque!(any_send_sync_partial_state(choice((
+        any().then_partial(move |&mut b| {
             let line = || {
                 recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
                     |line: &[u8]| {
@@ -144,8 +146,11 @@ where
                 b'-' => error().map(Err),
                 b => combine::unexpected_any(combine::error::Token(b))
             )
-        }))
-    })
+        }),
+        eof().map(|_| Err(RedisError::from(io::Error::from(
+            io::ErrorKind::UnexpectedEof,
+        ))))
+    ))))
 }
 
 #[cfg(feature = "aio")]
@@ -172,6 +177,7 @@ mod aio_support {
     impl Decoder for ValueCodec {
         type Item = Value;
         type Error = RedisError;
+
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
