@@ -10,7 +10,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::{self, Poll};
 
-use combine::{parser::combinator::AnySendPartialState, stream::PointerOffset};
+use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 
 #[cfg(all(unix, feature = "tokio-comp"))]
 use tokio::net::UnixStream as UnixStreamTokio;
@@ -235,7 +235,7 @@ impl PubSub {
 pub struct Connection {
     con: ActualConnection,
     buf: Vec<u8>,
-    decoder: combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
+    decoder: combine::stream::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
     db: i64,
 
     /// Flag indicating whether the connection was left in the PubSub state after dropping `PubSub`.
@@ -243,6 +243,13 @@ pub struct Connection {
     /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
+}
+
+fn assert_sync<T: Sync>() {}
+
+#[allow(unused)]
+fn test() {
+    assert_sync::<Connection>();
 }
 
 impl Connection {
