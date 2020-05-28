@@ -279,6 +279,9 @@ fn test_script_returning_complex_type() {
     .unwrap();
 }
 
+// Allowing `nth(0)` for similarity with the following `nth(1)`.
+// Allowing `let ()` as `query_async` requries the type it converts the result to.
+#[allow(clippy::let_unit_value, clippy::iter_nth_zero)]
 #[tokio::test]
 async fn io_error_on_kill_issue_320() {
     let ctx = TestContext::new();
@@ -310,7 +313,7 @@ async fn io_error_on_kill_issue_320() {
         .expect("id value");
 
     let mut killer_conn = ctx.async_connection().await.unwrap();
-    let _: () = cmd("CLIENT")
+    let () = cmd("CLIENT")
         .arg("KILL")
         .arg("ID")
         .arg(client_to_kill)
