@@ -71,6 +71,58 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
     }
 }
 
+use crate::aio::ConnectionLike as AsyncConnection;
+
+///Represents a redis iterator that can be used with async connections.  
+#[cfg(feature = "aio")]
+pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+    batch: Vec<T>,
+    cursor: u64,
+    con: &'a mut (dyn AsyncConnection + 'a),
+    cmd: Cmd,
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
+    ///A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html) over values returned from the redis cursor.
+    ///```rust,no_run
+    ///let iter = conn.sscan("set_key").await.unwrap();
+    ///let stream = iter.stream();
+    ///futures::pin_mut!(stream);
+    ///while let Some(element) = stream.next().await {
+    ///    //Do something with element
+    ///}
+    ///```
+    #[inline]
+    pub fn stream(self) -> impl futures::Stream<Item = T> + 'a {
+        // we need to do this in a loop until we produce at least one item
+        // or we find the actual end of the iteration.  This is necessary
+        // because with filtering an iterator it is possible that a whole
+        // chunk is not matching the pattern and thus yielding empty results.
+        futures::stream::unfold(self, |mut cur_self| async move {
+            loop {
+                if let Some(v) = cur_self.batch.pop() {
+                    return Some((v, cur_self));
+                };
+                if cur_self.cursor == 0 {
+                    return None;
+                }
+
+                let rv = unwrap_or!(
+                    cur_self.con.req_packed_command(&cur_self.cmd).await.ok(),
+                    return None
+                );
+                let (cur, mut batch): (u64, Vec<T>) =
+                    unwrap_or!(from_redis_value(&rv).ok(), return None);
+                batch.reverse();
+
+                cur_self.cursor = cur;
+                cur_self.batch = batch;
+            }
+        })
+    }
+}
+
 fn countdigits(mut v: usize) -> usize {
     let mut result = 1;
     loop {
@@ -369,6 +421,44 @@ impl Cmd {
 
         batch.reverse();
         Ok(Iter {
+            batch,
+            cursor,
+            con,
+            cmd: self,
+        })
+    }
+
+    /// Similar to `iter()` but returns an [AsyncIter](struct.AsyncIter.html) over the items of the
+    /// bulk result or iterator.  A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html)
+    /// can be obtained by calling `stream()` on the AsyncIter.  In normal mode this is not in any way more
+    /// efficient than just querying into a `Vec<T>` as it's internally
+    /// implemented as buffering into a vector.  This however is useful when
+    /// `cursor_arg` was used in which case the stream will query for more
+    /// items until the server side cursor is exhausted.
+    ///
+    /// This is useful for commands such as `SSCAN`, `SCAN` and others in async contexts.
+    ///
+    /// One speciality of this function is that it will check if the response
+    /// looks like a cursor or not and always just looks at the payload.
+    /// This way you can use the function the same for responses in the
+    /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
+    /// tuple of cursor and list).
+    #[cfg(feature = "aio")]
+    #[inline]
+    pub async fn iter_async<'a, T: FromRedisValue + 'a>(
+        self,
+        con: &'a mut dyn AsyncConnection,
+    ) -> RedisResult<AsyncIter<'a, T>> {
+        let rv = con.req_packed_command(&self).await?;
+
+        let (cursor, mut batch) = if rv.looks_like_cursor() {
+            from_redis_value::<(u64, Vec<T>)>(&rv)?
+        } else {
+            (0, from_redis_value(&rv)?)
+        };
+
+        batch.reverse();
+        Ok(AsyncIter {
             batch,
             cursor,
             con,

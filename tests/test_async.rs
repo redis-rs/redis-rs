@@ -227,6 +227,50 @@ fn test_transaction_multiplexed_connection() {
 }
 
 #[test]
+fn test_async_scanning() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        ctx.multiplexed_async_connection()
+            .and_then(|mut con| {
+                async move {
+                    let mut unseen = std::collections::HashSet::new();
+
+                    for x in 0..1000 {
+                        redis::cmd("SADD")
+                            .arg("foo")
+                            .arg(x)
+                            .query_async(&mut con)
+                            .await?;
+                        unseen.insert(x);
+                    }
+
+                    let iter = redis::cmd("SSCAN")
+                        .arg("foo")
+                        .cursor_arg(0)
+                        .clone()
+                        .iter_async(&mut con)
+                        .await
+                        .unwrap();
+
+                    let stream = iter.stream();
+                    futures::pin_mut!(stream);
+                    while let Some(x) = stream.next().await {
+                        // type inference limitations
+                        let x: usize = x;
+                        unseen.remove(&x);
+                    }
+
+                    assert_eq!(unseen.len(), 0);
+                    Ok(())
+                }
+            })
+            .map_err(|err| panic!("{}", err))
+            .await
+    })
+    .unwrap();
+}
+
+#[test]
 #[cfg(feature = "script")]
 fn test_script() {
     use redis::RedisError;
