@@ -35,7 +35,7 @@ use futures_util::{
 
 use pin_project_lite::pin_project;
 
-use crate::cmd;
+use crate::cmd::{cmd, Cmd};
 use crate::connection::Msg;
 use crate::connection::{ConnectionAddr, ConnectionInfo};
 
@@ -430,7 +430,7 @@ fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
 pub trait ConnectionLike {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a [u8]) -> RedisFuture<'a, Value>;
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
 
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
@@ -450,13 +450,13 @@ pub trait ConnectionLike {
 }
 
 impl ConnectionLike for Connection {
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a [u8]) -> RedisFuture<'a, Value> {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
             self.buf.clear();
-            self.buf.copy_from_slice(cmd);
+            cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
             self.read_response().await
         })
@@ -811,11 +811,17 @@ impl MultiplexedConnection {
 }
 
 impl ConnectionLike for MultiplexedConnection {
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a [u8]) -> RedisFuture<'a, Value> {
+    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
-            let value = self.pipeline.send(Vec::from(cmd)).await.map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
+            let value = self
+                .pipeline
+                .send(cmd.get_packed_command())
+                .await
+                .map_err(|err| {
+                    err.unwrap_or_else(|| {
+                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+                    })
+                })?;
             Ok(value)
         })
         .boxed()
@@ -1014,7 +1020,7 @@ mod connection_manager {
     }
 
     impl ConnectionLike for ConnectionManager {
-        fn req_packed_command<'a>(&'a mut self, cmd: &'a [u8]) -> RedisFuture<'a, Value> {
+        fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
             (async move {
                 // Clone connection to avoid having to lock the ArcSwap in write mode
                 let guard = self.connection.load();
