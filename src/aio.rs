@@ -223,6 +223,19 @@ impl PubSub {
             .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
     }
 
+    /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions consuming it.
+    ///
+    /// The message itself is still generic and can be converted into an appropriate type through
+    /// the helper methods on it.
+    /// This can be useful in cases where the stream needs to be returned or held by something other
+    //  than the [`PubSub`].
+    pub fn into_on_message(self) -> impl Stream<Item = Msg> {
+        ValueCodec::default()
+            .framed(self.0.con)
+            .into_stream()
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
+    }
+
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
     pub async fn into_connection(mut self) -> Connection {
         self.0.exit_pubsub().await.ok();
