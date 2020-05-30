@@ -73,7 +73,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 
 use crate::aio::ConnectionLike as AsyncConnection;
 
-///Represents a redis iterator that can be used with async connections.  
+/// Represents a redis iterator that can be used with async connections.  
 #[cfg(feature = "aio")]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     batch: Vec<T>,
@@ -84,15 +84,16 @@ pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
-    ///A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html) over values returned from the redis cursor.
-    ///```rust,no_run
-    ///let iter = conn.sscan("set_key").await.unwrap();
-    ///let stream = iter.stream();
-    ///futures::pin_mut!(stream);
-    ///while let Some(element) = stream.next().await {
+    /// A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html)
+    /// over values returned from the redis cursor.
+    /// ```rust,no_run
+    /// let iter = conn.sscan("set_key").await.unwrap();
+    /// let stream = iter.stream();
+    /// futures::pin_mut!(stream);
+    /// while let Some(element) = stream.next().await {
     ///    //Do something with element
-    ///}
-    ///```
+    /// }
+    /// ```
     #[inline]
     pub fn stream(self) -> impl futures::Stream<Item = T> + 'a {
         // we need to do this in a loop until we produce at least one item
@@ -428,7 +429,7 @@ impl Cmd {
         })
     }
 
-    /// Similar to `iter()` but returns an [AsyncIter](struct.AsyncIter.html) over the items of the
+    /// Similar to `iter()` but returns an AsyncIter over the items of the
     /// bulk result or iterator.  A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html)
     /// can be obtained by calling `stream()` on the AsyncIter.  In normal mode this is not in any way more
     /// efficient than just querying into a `Vec<T>` as it's internally

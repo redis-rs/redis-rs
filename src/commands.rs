@@ -179,7 +179,8 @@ macro_rules! implement_commands {
                 }
             )*
 
-            /// Incrementally iterate the keys space.  Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Incrementally iterate the keys space.  
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn scan<RV: FromRedisValue>(&mut self) -> RedisFuture<AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
@@ -188,7 +189,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
-            /// Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
@@ -197,7 +198,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate hash fields and associated values.
-            /// Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
                 let mut c = cmd("HSCAN");
@@ -206,7 +207,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate hash fields and associated values for
-            /// field names matching a pattern.  Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// field names matching a pattern.  Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
@@ -215,7 +216,8 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate set elements.  Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Incrementally iterate set elements.  
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
@@ -224,7 +226,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
-            /// Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
@@ -233,7 +235,8 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements.  Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Incrementally iterate sorted set elements.  
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
@@ -241,7 +244,8 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements for elements matching a pattern.  Call `stream()` on the resulting AsyncIter to obtain a `futures::Stream`.
+            /// Incrementally iterate sorted set elements for elements matching a pattern.  
+            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
