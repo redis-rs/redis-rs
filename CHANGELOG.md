@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.15.1...HEAD) - ReleaseDate
+## [0.16.0](https://github.com/mitsuhiko/redis-rs/compare/0.15.1...0.16.0) - 2020-05-10
 
 **Fixes and improvements**
 
@@ -8,7 +8,10 @@
 * Add an afl fuzz target ([#274](https://github.com/mitsuhiko/redis-rs/pull/274))
 * Updated to combine 4 and avoid async dependencies for sync-only ([#272](https://github.com/mitsuhiko/redis-rs/pull/272))
     * **BREAKING CHANGE**: The parser type now only persists the buffer and takes the Read instance in `parse_value`
+* Implement a connection manager for automatic reconnection ([#278](https://github.com/mitsuhiko/redis-rs/pull/278))
+* Add async-std support ([#281](https://github.com/mitsuhiko/redis-rs/pull/281))
 * Fix key extraction for some stream commands ([#283](https://github.com/mitsuhiko/redis-rs/pull/283))
+* Add asynchronous PubSub support ([#287](https://github.com/mitsuhiko/redis-rs/pull/287))
 
 ### Breaking changes
 

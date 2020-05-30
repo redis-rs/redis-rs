@@ -1,12 +1,7 @@
-use redis;
-
-use futures;
-
 use futures::{future, prelude::*};
+use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
 
 use crate::support::*;
-
-use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 
 mod support;
 
@@ -282,6 +277,59 @@ fn test_script_returning_complex_type() {
             .await
     })
     .unwrap();
+}
+
+// Allowing `nth(0)` for similarity with the following `nth(1)`.
+// Allowing `let ()` as `query_async` requries the type it converts the result to.
+#[allow(clippy::let_unit_value, clippy::iter_nth_zero)]
+#[tokio::test]
+async fn io_error_on_kill_issue_320() {
+    let ctx = TestContext::new();
+
+    let mut conn_to_kill = ctx.async_connection().await.unwrap();
+    cmd("CLIENT")
+        .arg("SETNAME")
+        .arg("to-kill")
+        .query_async::<_, ()>(&mut conn_to_kill)
+        .await
+        .unwrap();
+
+    let client_list: String = cmd("CLIENT")
+        .arg("LIST")
+        .query_async(&mut conn_to_kill)
+        .await
+        .unwrap();
+
+    eprintln!("{}", client_list);
+    let client_to_kill = client_list
+        .split('\n')
+        .find(|line| line.contains("to-kill"))
+        .expect("line")
+        .split(' ')
+        .nth(0)
+        .expect("id")
+        .split('=')
+        .nth(1)
+        .expect("id value");
+
+    let mut killer_conn = ctx.async_connection().await.unwrap();
+    let () = cmd("CLIENT")
+        .arg("KILL")
+        .arg("ID")
+        .arg(client_to_kill)
+        .query_async(&mut killer_conn)
+        .await
+        .unwrap();
+    let mut killed_client = conn_to_kill;
+
+    let err = loop {
+        match killed_client.get::<_, Option<String>>("a").await {
+            // We are racing against the server being shutdown so try until we a get an io error
+            Ok(_) => tokio::time::delay_for(std::time::Duration::from_millis(50)).await,
+            Err(err) => break err,
+        }
+    };
+    assert_eq!(err.kind(), ErrorKind::IoError); // Shouldn't this be IoError?
 }
 
 mod pub_sub {
