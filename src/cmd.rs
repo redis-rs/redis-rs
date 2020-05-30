@@ -78,7 +78,6 @@ use crate::aio::ConnectionLike as AsyncConnection;
 #[cfg(feature = "aio")]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     batch: Vec<T>,
-    cursor: u64,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -109,8 +108,10 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
             if let Some(v) = self.batch.pop() {
                 return Some(v);
             };
-            if self.cursor == 0 {
-                return None;
+            if let Some(cursor) = self.cmd.cursor {
+                if cursor == 0 {
+                    return None;
+                }
             }
 
             let rv = unwrap_or!(
@@ -121,7 +122,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
                 unwrap_or!(from_redis_value(&rv).ok(), return None);
             batch.reverse();
 
-            self.cursor = cur;
+            self.cmd.cursor = Some(cur);
             self.batch = batch;
         }
     }
@@ -450,7 +451,7 @@ impl Cmd {
     #[cfg(feature = "aio")]
     #[inline]
     pub async fn iter_async<'a, T: FromRedisValue + 'a>(
-        self,
+        mut self,
         con: &'a mut (dyn AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
         let rv = con.req_packed_command(&self).await?;
@@ -460,11 +461,15 @@ impl Cmd {
         } else {
             (0, from_redis_value(&rv)?)
         };
+        if cursor == 0 {
+            self.cursor = None;
+        } else {
+            self.cursor = Some(cursor);
+        }
 
         batch.reverse();
         Ok(AsyncIter {
             batch,
-            cursor,
             con,
             cmd: self,
         })
