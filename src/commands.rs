@@ -1,8 +1,8 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::cmd::{cmd, Cmd, Iter, AsyncIter, Pipeline};
+use crate::cmd::{cmd, Cmd, Iter, Pipeline};
 use crate::connection::{Connection, ConnectionLike, Msg};
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, RedisFuture, ToRedisArgs};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -171,7 +171,7 @@ macro_rules! implement_commands {
                 fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
                     & $lifetime mut self
                     $(, $argname: $argty)*
-                ) -> RedisFuture<'a, RV>
+                ) -> crate::types::RedisFuture<'a, RV>
                 where
                     RV: FromRedisValue,
                 {
@@ -180,75 +180,68 @@ macro_rules! implement_commands {
             )*
 
             /// Incrementally iterate the keys space.  
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
-            fn scan<RV: FromRedisValue>(&mut self) -> RedisFuture<AsyncIter<'_, RV>> {
+            fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0);
                 Box::pin(async move { c.iter_async(self).await })
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move { c.iter_async(self).await })
             }
 
             /// Incrementally iterate hash fields and associated values.
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
-            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
             }
 
             /// Incrementally iterate hash fields and associated values for
-            /// field names matching a pattern.  Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
+            /// field names matching a pattern. 
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })
             }
 
             /// Incrementally iterate set elements.  
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
-            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })
             }
 
             /// Incrementally iterate sorted set elements.  
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
-            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisFuture<AsyncIter<'_, RV>> {
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
             }
 
             /// Incrementally iterate sorted set elements for elements matching a pattern.  
-            /// Call `stream()` on the resulting `AsyncIter` to obtain a `futures::Stream`.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> RedisFuture<AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })

@@ -244,7 +244,7 @@ fn test_async_scanning() {
                         unseen.insert(x);
                     }
 
-                    let iter = redis::cmd("SSCAN")
+                    let mut iter = redis::cmd("SSCAN")
                         .arg("foo")
                         .cursor_arg(0)
                         .clone()
@@ -252,9 +252,7 @@ fn test_async_scanning() {
                         .await
                         .unwrap();
 
-                    let stream = iter.stream();
-                    futures::pin_mut!(stream);
-                    while let Some(x) = stream.next().await {
+                    while let Some(x) = iter.next().await {
                         // type inference limitations
                         let x: usize = x;
                         unseen.remove(&x);
