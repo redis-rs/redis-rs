@@ -121,6 +121,8 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
             let (cur, mut batch): (u64, Vec<T>) =
                 unwrap_or!(from_redis_value(&rv).ok(), return None);
             batch.reverse();
+            println!("cur: {:?}", cur);
+            println!("batch: {:?}", batch.len());
 
             self.cursor = cur;
             self.batch = batch;
