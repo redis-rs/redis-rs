@@ -455,8 +455,7 @@ impl ConnectionLike for Connection {
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
-            self.buf.clear();
-            self.buf.copy_from_slice(cmd);
+            self.buf = Vec::from(cmd);
             self.con.write_all(&self.buf).await?;
             self.read_response().await
         })
