@@ -1,15 +1,17 @@
-use std::io::Read;
-use std::str;
+use std::{
+    io::{self, Read},
+    str,
+};
 
 use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
 
 use combine::{
-    any,
+    any, choice, eof,
     error::StreamError,
     opaque,
     parser::{
         byte::{crlf, take_until_bytes},
-        combinator::{any_send_partial_state, AnySendPartialState},
+        combinator::{any_send_sync_partial_state, AnySendSyncPartialState},
         range::{recognize, take},
     },
     stream::{PointerOffset, RangeStream, StreamErrorFor},
@@ -52,13 +54,13 @@ where
 }
 
 fn value<'a, I>(
-) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendPartialState>
+) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
-    opaque!({
-        any_send_partial_state(any().then_partial(move |&mut b| {
+    opaque!(any_send_sync_partial_state(choice((
+        any().then_partial(move |&mut b| {
             let line = || {
                 recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
                     |line: &[u8]| {
@@ -144,8 +146,11 @@ where
                 b'-' => error().map(Err),
                 b => combine::unexpected_any(combine::error::Token(b))
             )
-        }))
-    })
+        }),
+        eof().map(|_| Err(RedisError::from(io::Error::from(
+            io::ErrorKind::UnexpectedEof,
+        ))))
+    ))))
 }
 
 #[cfg(feature = "aio")]
@@ -158,7 +163,7 @@ mod aio_support {
 
     #[derive(Default)]
     pub struct ValueCodec {
-        state: AnySendPartialState,
+        state: AnySendSyncPartialState,
     }
 
     impl Encoder<Vec<u8>> for ValueCodec {
@@ -172,6 +177,7 @@ mod aio_support {
     impl Decoder for ValueCodec {
         type Item = Value;
         type Error = RedisError;
+
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
@@ -202,7 +208,7 @@ mod aio_support {
 
     /// Parses a redis value asynchronously.
     pub async fn parse_redis_value_async<R>(
-        decoder: &mut combine::stream::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
+        decoder: &mut combine::stream::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
         read: &mut R,
     ) -> RedisResult<Value>
     where
@@ -233,7 +239,7 @@ pub use self::aio_support::*;
 
 /// The internal redis response parser.
 pub struct Parser {
-    decoder: combine::stream::decoder::Decoder<AnySendPartialState, PointerOffset<[u8]>>,
+    decoder: combine::stream::decoder::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
 }
 
 impl Default for Parser {

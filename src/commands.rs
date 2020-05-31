@@ -1,8 +1,8 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
-use crate::connection::{ConnectionLike, Msg, Connection};
-use crate::cmd::{cmd, Cmd, Pipeline, Iter};
+use crate::cmd::{cmd, Cmd, Iter, Pipeline};
+use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -1751,8 +1751,9 @@ pub trait PubSubCommands: Sized {
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
     fn subscribe<C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              C: ToRedisArgs;
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        C: ToRedisArgs;
 
     /// Subscribe to a list of channels using PSUBSCRIBE and run the provided
     /// closure for each message received.
@@ -1761,8 +1762,9 @@ pub trait PubSubCommands: Sized {
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
     fn psubscribe<P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              P: ToRedisArgs;
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        P: ToRedisArgs;
 }
 
 impl<T> Commands for T where T: ConnectionLike {}
@@ -1772,8 +1774,9 @@ impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + ?Sized 
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              C: ToRedisArgs
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        C: ToRedisArgs,
     {
         let mut pubsub = self.as_pubsub();
         pubsub.subscribe(channels)?;
@@ -1788,8 +1791,9 @@ impl PubSubCommands for Connection {
     }
 
     fn psubscribe<P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              P: ToRedisArgs
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        P: ToRedisArgs,
     {
         let mut pubsub = self.as_pubsub();
         pubsub.psubscribe(patterns)?;
@@ -1800,6 +1804,6 @@ impl PubSubCommands for Connection {
                 ControlFlow::Continue => continue,
                 ControlFlow::Break(value) => return Ok(value),
             }
-        };
+        }
     }
 }
