@@ -15,7 +15,7 @@ pub enum StreamMaxlen {
     /// Match an exact count
     Equals(usize),
     /// Match an approximate count
-    Aprrox(usize),
+    Approx(usize),
 }
 
 impl ToRedisArgs for StreamMaxlen {
@@ -25,7 +25,7 @@ impl ToRedisArgs for StreamMaxlen {
     {
         let (ch, val) = match *self {
             StreamMaxlen::Equals(v) => ("=", v),
-            StreamMaxlen::Aprrox(v) => ("~", v),
+            StreamMaxlen::Approx(v) => ("~", v),
         };
         out.write_arg(b"MAXLEN");
         out.write_arg(ch.as_bytes());
