@@ -252,7 +252,7 @@ fn test_async_scanning() {
                         .await
                         .unwrap();
 
-                    while let Some(x) = iter.next().await {
+                    while let Some(x) = iter.next_item().await {
                         // type inference limitations
                         let x: usize = x;
                         unseen.remove(&x);

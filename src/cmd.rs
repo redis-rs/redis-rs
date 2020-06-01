@@ -92,14 +92,14 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
     /// con.sadd("my_set", 42i32).await?;
     /// con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
-    /// while let Some(element) = iter.next().await {
+    /// while let Some(element) = iter.next_item().await {
     ///     assert!(element == 42 || element == 43);
     /// }
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub async fn next(&mut self) -> Option<T> {
+    pub async fn next_item(&mut self) -> Option<T> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
