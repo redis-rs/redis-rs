@@ -36,19 +36,37 @@ fn main() {
     // Launch consumer threads which repeatedly read from the
     // streams at various speeds.  They'll effectively compete
     // to consume the stream.
+    //
+    // Consumer groups are only appropriate for cases where you
+    // do NOT want each consumer to read ALL of the data.  This
+    // example is a contrived scenario so that each consumer
+    // receives its own, specific chunk of data.
+    //
+    // Once the data is read, the redis-rs lib will automatically
+    // acknowledge its receipt via XACK.
+    //
+    // Read more about reading with consumer groups here:
+    // https://redis.io/commands/xreadgroup
     for slowness in 2..4 {
         let repeat = 5;
         handles.push(thread::spawn(move || {
             let c = redis::Client::open("redis://127.0.0.1/").unwrap();
+
+            // We must create each group and each consumer
+            // See https://redis.io/commands/xreadgroup#differences-between-xread-and-xreadgroup
+            let mut con = c.get_connection().expect("con");
+
+            for key in vec![DOG_STREAM, CAT_STREAM, DUCK_STREAM] {
+                let created: Result<(), _> =
+                    con.xgroup_create_mkstream(key, group_name(slowness), "$");
+                if let Err(e) = created {
+                    println!("Group already exists: {:?}", e)
+                }
+            }
+
             for _ in 0..repeat {
-                let read_reply_group = xreadgroup_records(&c).expect("group read");
-                todo!("XACK");
-                todo!("XACK");
-                todo!("XACK");
-                todo!("XACK");
-                todo!("XACK");
-                todo!("XACK");
-                todo!("XACK");
+                let read_reply_group = xreadgroup_records(&c, slowness).expect("group read");
+
                 print_records(read_reply_group);
                 thread::sleep(Duration::from_millis(random_wait_millis(slowness)))
             }
@@ -126,7 +144,7 @@ fn thrifty_rand() -> u8 {
 }
 
 fn random_wait_millis(slowness: u8) -> u64 {
-    (thrifty_rand() * thrifty_rand() * 35 * slowness) as u64
+    thrifty_rand() as u64 * thrifty_rand() as u64 * 35 * slowness as u64
 }
 
 /// Generate a potentially unique value.
@@ -168,11 +186,28 @@ fn xread_records(client: &redis::Client) -> RedisResult<StreamReadReply> {
     )
 }
 
-#[cfg(feature = "streams")]
-fn xreadgroup_records(client: &redis::Client) -> RedisResult<StreamReadReply> {
-    let mut _con = client.get_connection().expect("conn");
+fn group_name(slowness: u8) -> String {
+    format!("example-group-{}", slowness)
+}
 
-    todo!()
+fn consumer_name(slowness: u8) -> String {
+    format!("example-consumer-{}", slowness)
+}
+
+#[cfg(feature = "streams")]
+fn xreadgroup_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
+    let mut con = client.get_connection().expect("conn");
+
+    let opts = StreamReadOptions::default()
+        .block(BLOCK_MILLIS)
+        .count(3)
+        .group(group_name(slowness), consumer_name(slowness));
+
+    con.xread_options(
+        &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
+        &[">", ">", ">"],
+        opts,
+    )
 }
 
 fn print_records(srr: StreamReadReply) {
@@ -202,6 +237,6 @@ fn xread_records(client: &redis::Client) -> RedisResult<StreamReadyReply> {
 }
 
 #[cfg(not(feature = "streams"))]
-fn xreadgroup_records(client: &redis::Client) -> RedisResult<StreamReadReply> {
+fn xreadgroup_records(client: &redis::Client, ids: ExampleIds) -> RedisResult<StreamReadReply> {
     Ok(())
 }
