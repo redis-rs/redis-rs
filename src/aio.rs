@@ -440,7 +440,7 @@ fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
 }
 
 /// An async abstraction over connections.
-pub trait ConnectionLike: Sized {
+pub trait ConnectionLike {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;

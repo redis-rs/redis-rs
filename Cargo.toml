@@ -62,7 +62,7 @@ cluster = ["crc16", "rand"]
 script = ["sha1"]
 async-std-comp = ["aio", "async-std"]
 tokio-comp = ["aio", "tokio"]
-connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
+connection-manager = ["futures", "tokio-rt-core", "arc-swap", "futures"]
 
 
 [dev-dependencies]
