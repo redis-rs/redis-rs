@@ -507,16 +507,18 @@ impl FromRedisValue for StreamReadReply {
 impl FromRedisValue for StreamRangeReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
-        let mut reply = StreamRangeReply::default();
-        for row in &rows {
-            let mut i = StreamId::default();
-            for (id, map) in row.iter() {
-                i.id = id.to_owned();
-                i.map = map.to_owned();
-            }
-            reply.ids.push(i);
-        }
-        Ok(reply)
+        let ids: Vec<StreamId> = rows
+            .iter()
+            .flat_map(|row| {
+                row.iter()
+                    .map(|(id, map)| StreamId {
+                        id: id.to_string(),
+                        map: map.to_owned(),
+                    })
+                    .collect::<Vec<StreamId>>()
+            })
+            .collect();
+        Ok(StreamRangeReply { ids })
     }
 }
 
