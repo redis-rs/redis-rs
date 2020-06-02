@@ -572,7 +572,7 @@ impl FromRedisValue for StreamPendingReply {
             for consumer in &consumer_data {
                 let mut info = StreamInfoConsumer::default();
                 info.name = consumer[0].to_owned();
-                if let Ok(v) = consumer[1].to_owned().parse::<usize>() {
+                if let Ok(v) = consumer[1].parse::<usize>() {
                     info.pending = v;
                 }
                 result.consumers.push(info);
