@@ -505,13 +505,10 @@ impl FromRedisValue for StreamRangeReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
-            .iter()
+            .into_iter()
             .flat_map(|row| {
-                row.iter()
-                    .map(|(id, map)| StreamId {
-                        id: id.to_string(),
-                        map: map.to_owned(),
-                    })
+                row.into_iter()
+                    .map(|(id, map)| StreamId { id, map })
                     .collect::<Vec<StreamId>>()
             })
             .collect();
