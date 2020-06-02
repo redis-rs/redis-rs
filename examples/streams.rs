@@ -15,12 +15,11 @@ fn main() {
 
     println!("Demonstrating XADD followed by XREAD, single threaded\n");
 
-    xadd_records(&client).expect("contrived record generation");
+    add_records(&client).expect("contrived record generation");
 
-    let read_reply_simple = xread_records(&client).expect("simple read");
-    print_records(read_reply_simple);
+    read_records(&client).expect("simple read");
 
-    run_multi_consumers(client)
+    demo_group_reads(client)
 }
 
 const DOG_STREAM: &str = "example-dog";
@@ -28,7 +27,7 @@ const CAT_STREAM: &str = "example-cat";
 const DUCK_STREAM: &str = "example-duck";
 
 #[cfg(feature = "streams")]
-fn run_multi_consumers(client: redis::Client) {
+fn demo_group_reads(client: redis::Client) {
     println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
 
     let mut handles = vec![];
@@ -39,7 +38,7 @@ fn run_multi_consumers(client: redis::Client) {
         let repeat = 30;
         let slowness = 1;
         for _ in 0..repeat {
-            xadd_records(&client).expect("add");
+            add_records(&client).expect("add");
             thread::sleep(Duration::from_millis(random_wait_millis(slowness)))
         }
     }));
@@ -58,7 +57,7 @@ fn run_multi_consumers(client: redis::Client) {
     //
     // Read more about reading with consumer groups here:
     // https://redis.io/commands/xreadgroup
-    for slowness in 2..4 {
+    for slowness in 2..5 {
         let repeat = 5;
         handles.push(thread::spawn(move || {
             let c = redis::Client::open("redis://127.0.0.1/").unwrap();
@@ -76,9 +75,8 @@ fn run_multi_consumers(client: redis::Client) {
             }
 
             for _ in 0..repeat {
-                let read_reply_group = xreadgroup_records(&c, slowness).expect("group read");
+                read_group_records(&c, slowness).expect("group read");
 
-                print_records(read_reply_group);
                 thread::sleep(Duration::from_millis(random_wait_millis(slowness)))
             }
         }))
@@ -92,7 +90,7 @@ fn run_multi_consumers(client: redis::Client) {
 /// Generate some contrived records and add them to various
 /// streams.
 #[cfg(feature = "streams")]
-fn xadd_records(client: &redis::Client) -> RedisResult<()> {
+fn add_records(client: &redis::Client) -> RedisResult<()> {
     let mut con = client.get_connection().expect("conn");
 
     let maxlen = StreamMaxlen::Approx(1000);
@@ -176,7 +174,7 @@ const BLOCK_MILLIS: usize = 5000;
 /// just go back to the beginning of time and ask for all the
 /// records in the stream.
 #[cfg(feature = "streams")]
-fn xread_records(client: &redis::Client) -> RedisResult<StreamReadReply> {
+fn read_records(client: &redis::Client) -> RedisResult<()> {
     let mut con = client.get_connection().expect("conn");
 
     let opts = StreamReadOptions::default().block(BLOCK_MILLIS);
@@ -186,38 +184,14 @@ fn xread_records(client: &redis::Client) -> RedisResult<StreamReadReply> {
     // Same as above
     let another_form = "0";
 
-    con.xread_options(
-        &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
-        &[starting_id, another_form, starting_id],
-        opts,
-    )
-}
+    let srr: StreamReadReply = con
+        .xread_options(
+            &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
+            &[starting_id, another_form, starting_id],
+            opts,
+        )
+        .expect("read");
 
-fn group_name(slowness: u8) -> String {
-    format!("example-group-{}", slowness)
-}
-
-fn consumer_name(slowness: u8) -> String {
-    format!("example-consumer-{}", slowness)
-}
-
-#[cfg(feature = "streams")]
-fn xreadgroup_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
-    let mut con = client.get_connection().expect("conn");
-
-    let opts = StreamReadOptions::default()
-        .block(BLOCK_MILLIS)
-        .count(3)
-        .group(group_name(slowness), consumer_name(slowness));
-
-    con.xread_options(
-        &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
-        &[">", ">", ">"],
-        opts,
-    )
-}
-
-fn print_records(srr: StreamReadReply) {
     for StreamKey { key, ids } in srr.keys {
         println!("Stream {}", key);
         for StreamId { id, map } in ids {
@@ -231,22 +205,66 @@ fn print_records(srr: StreamReadReply) {
             }
         }
     }
+
+    Ok(())
 }
 
-#[cfg(not(feature = "streams"))]
-fn xadd_records(client: &redis::Client) -> RedisResult<()> {
+fn group_name(slowness: u8) -> String {
+    format!("example-group-{}", slowness)
+}
+
+fn consumer_name(slowness: u8) -> String {
+    format!("example-consumer-{}", slowness)
+}
+
+#[cfg(feature = "streams")]
+fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
+    let mut con = client.get_connection().expect("conn");
+
+    let opts = StreamReadOptions::default()
+        .block(BLOCK_MILLIS)
+        .count(3)
+        .group(group_name(slowness), consumer_name(slowness));
+
+    let srr: StreamReadReply = con
+        .xread_options(
+            &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
+            &[">", ">", ">"],
+            opts,
+        )
+        .expect("records");
+
+    for StreamKey { key, ids } in srr.keys {
+        for StreamId { id, map: _ } in ids {
+            println!(
+                "Stream {} ID {} Group(speed) {} SysTime {}",
+                key,
+                id,
+                slowness,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time")
+                    .as_millis()
+            );
+        }
+    }
     Ok(())
 }
 
 #[cfg(not(feature = "streams"))]
-fn xread_records(client: &redis::Client) -> RedisResult<StreamReadyReply> {
+fn add_records(client: &redis::Client) -> RedisResult<()> {
     Ok(())
 }
 
 #[cfg(not(feature = "streams"))]
-fn xreadgroup_records(client: &redis::Client, ids: ExampleIds) -> RedisResult<StreamReadReply> {
+fn read_records(client: &redis::Client) -> RedisResult<()> {
     Ok(())
 }
 
 #[cfg(not(feature = "streams"))]
-fn run_multi_consumers(client: redis::Client) {}
+fn read_group_records(client: &redis::Client, ids: ExampleIds) -> RedisResult<()> {
+    Ok(())
+}
+
+#[cfg(not(feature = "streams"))]
+fn demo_group_reads(client: redis::Client) {}
