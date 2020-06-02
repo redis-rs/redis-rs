@@ -335,6 +335,13 @@ impl RedisError {
         }
     }
 
+    pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
+        match &self.repr {
+            ErrorRepr::IoError(e) => Some(e),
+            _ => None,
+        }
+    }
+
     /// Indicates that this is a cluster error.
     pub fn is_cluster_error(&self) -> bool {
         match self.kind() {

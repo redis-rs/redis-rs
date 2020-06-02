@@ -1,8 +1,8 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::types::{FromRedisValue, ToRedisArgs, RedisResult, NumericBehavior};
-use crate::connection::{ConnectionLike, Msg, Connection};
-use crate::cmd::{cmd, Cmd, Pipeline, Iter};
+use crate::cmd::{cmd, Cmd, Iter, Pipeline};
+use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -178,6 +178,74 @@ macro_rules! implement_commands {
                     Box::pin(async move { ($body).query_async(self).await })
                 }
             )*
+
+            /// Incrementally iterate the keys space.  
+            #[inline]
+            fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0);
+                Box::pin(async move { c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements for elements matching a pattern.
+            #[inline]
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move { c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate hash fields and associated values.
+            #[inline]
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate hash fields and associated values for
+            /// field names matching a pattern. 
+            #[inline]
+            fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements.  
+            #[inline]
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements for elements matching a pattern.
+            #[inline]
+            fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate sorted set elements.  
+            #[inline]
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate sorted set elements for elements matching a pattern.  
+            #[inline]
+            fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
         }
 
         /// Implements common redis commands for pipelines.  Unlike the regular
@@ -1086,8 +1154,9 @@ pub trait PubSubCommands: Sized {
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
     fn subscribe<C, F, U>(&mut self, _: C, _: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              C: ToRedisArgs;
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        C: ToRedisArgs;
 
     /// Subscribe to a list of channels using PSUBSCRIBE and run the provided
     /// closure for each message received.
@@ -1096,19 +1165,21 @@ pub trait PubSubCommands: Sized {
     /// `ControlFlow::Break` or `ControlFlow::Continue` must be returned. This
     /// method will not return until `ControlFlow::Break` is observed.
     fn psubscribe<P, F, U>(&mut self, _: P, _: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              P: ToRedisArgs;
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        P: ToRedisArgs;
 }
 
 impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
-impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + ?Sized {}
+impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sized {}
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              C: ToRedisArgs
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        C: ToRedisArgs,
     {
         let mut pubsub = self.as_pubsub();
         pubsub.subscribe(channels)?;
@@ -1123,8 +1194,9 @@ impl PubSubCommands for Connection {
     }
 
     fn psubscribe<P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
-        where F: FnMut(Msg) -> ControlFlow<U>,
-              P: ToRedisArgs
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        P: ToRedisArgs,
     {
         let mut pubsub = self.as_pubsub();
         pubsub.psubscribe(patterns)?;
@@ -1135,6 +1207,6 @@ impl PubSubCommands for Connection {
                 ControlFlow::Continue => continue,
                 ControlFlow::Break(value) => return Ok(value),
             }
-        };
+        }
     }
 }

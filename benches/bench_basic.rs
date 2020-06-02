@@ -1,17 +1,11 @@
-#[macro_use]
-extern crate criterion;
-use redis;
-
-#[path = "../tests/support/mod.rs"]
-mod support;
+use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion, Throughput};
+use futures::{prelude::*, stream};
+use redis::{RedisError, Value};
 
 use support::*;
 
-use futures::{prelude::*, stream};
-
-use criterion::{Bencher, Benchmark, Criterion, Throughput};
-
-use redis::{RedisError, Value};
+#[path = "../tests/support/mod.rs"]
+mod support;
 
 fn get_client() -> redis::Client {
     redis::Client::open("redis://127.0.0.1:6379").unwrap()

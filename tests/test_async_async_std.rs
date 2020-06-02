@@ -1,7 +1,3 @@
-use redis;
-
-use futures;
-
 use futures::{future, prelude::*};
 
 use crate::support::*;

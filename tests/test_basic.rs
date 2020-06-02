@@ -1,5 +1,5 @@
 #![allow(clippy::let_unit_value)]
-use redis;
+
 use redis::{Commands, ConnectionLike, ControlFlow, PubSubCommands};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -794,5 +794,6 @@ fn test_redis_server_down() {
     let ping = redis::cmd("PING").query::<String>(&mut con);
 
     assert_eq!(ping.is_err(), true);
+    eprintln!("{}", ping.unwrap_err());
     assert_eq!(con.is_open(), false);
 }

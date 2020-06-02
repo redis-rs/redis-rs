@@ -1,22 +1,15 @@
 #![allow(dead_code)]
 
-use futures;
-use net2;
-use rand;
+use std::{
+    env, fs,
+    io::{self, Write},
+    path::PathBuf,
+    process,
+    thread::sleep,
+    time::Duration,
+};
 
-use redis;
-
-use std::env;
-use std::fs;
-use std::io::{self, Write};
-use std::process;
-use std::thread::sleep;
-use std::time::Duration;
-
-use std::path::PathBuf;
-
-use self::futures::Future;
-
+use futures::Future;
 use redis::Value;
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {

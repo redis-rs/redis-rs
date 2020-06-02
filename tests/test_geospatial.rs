@@ -1,9 +1,6 @@
 #![cfg(feature = "geospatial")]
 
-use redis;
-
-#[macro_use]
-extern crate assert_approx_eq;
+use assert_approx_eq::assert_approx_eq;
 
 use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{Commands, RedisResult};

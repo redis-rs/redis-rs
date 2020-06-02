@@ -1,10 +1,6 @@
 #![cfg(feature = "cluster")]
 #![allow(dead_code)]
 
-use rand;
-
-use redis;
-
 use std::fs;
 use std::process;
 use std::thread::sleep;

@@ -1,5 +1,5 @@
 use std::fmt;
-use std::io::Write;
+use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::from_utf8;
@@ -700,24 +700,30 @@ impl Connection {
             }
         };
         // shutdown connection on protocol error
-        match result {
-            Err(ref e) if e.kind() == ErrorKind::ResponseError => match self.con {
-                ActualConnection::Tcp(ref mut connection) => {
-                    let _ = connection.reader.shutdown(net::Shutdown::Both);
-                    connection.open = false;
+        if let Err(e) = &result {
+            let shutdown = e.kind() == ErrorKind::ResponseError
+                || match e.as_io_error() {
+                    Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
+                    None => false,
+                };
+            if shutdown {
+                match self.con {
+                    ActualConnection::Tcp(ref mut connection) => {
+                        let _ = connection.reader.shutdown(net::Shutdown::Both);
+                        connection.open = false;
+                    }
+                    #[cfg(feature = "tls")]
+                    ActualConnection::TcpTls(ref mut connection) => {
+                        let _ = connection.reader.shutdown();
+                        connection.open = false;
+                    }
+                    #[cfg(unix)]
+                    ActualConnection::Unix(ref mut connection) => {
+                        let _ = connection.sock.shutdown(net::Shutdown::Both);
+                        connection.open = false;
+                    }
                 }
-                #[cfg(feature = "tls")]
-                ActualConnection::TcpTls(ref mut connection) => {
-                    let _ = connection.reader.shutdown();
-                    connection.open = false;
-                }
-                #[cfg(unix)]
-                ActualConnection::Unix(ref mut connection) => {
-                    let _ = connection.sock.shutdown(net::Shutdown::Both);
-                    connection.open = false;
-                }
-            },
-            _ => (),
+            }
         }
         result
     }
