@@ -71,7 +71,7 @@ fn test_cmd_options() {
 
     // test maxlen options
 
-    assert_args!(StreamMaxlen::Aprrox(10), "MAXLEN", "~", "10");
+    assert_args!(StreamMaxlen::Approx(10), "MAXLEN", "~", "10");
     assert_args!(StreamMaxlen::Equals(10), "MAXLEN", "=", "10");
 
     // test read options
