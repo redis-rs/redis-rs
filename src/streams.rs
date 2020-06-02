@@ -485,17 +485,17 @@ impl FromRedisValue for StreamReadReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let rows: SRRows = from_redis_value(v)?;
         let mut reply = StreamReadReply::default();
-        for row in &rows {
+        for row in rows {
             for (key, entry) in row.iter() {
                 let mut k = StreamKey::default();
                 k.key = key.to_owned();
-                for id_row in entry {
-                    let mut i = StreamId::default();
+                for id_row in entry[..].iter() {
                     for (id, map) in id_row.iter() {
-                        i.id = id.to_owned();
-                        i.map = map.to_owned();
+                        k.ids.push(StreamId {
+                            id: id.to_string(),
+                            map: map.to_owned(),
+                        });
                     }
-                    k.ids.push(i);
                 }
                 reply.keys.push(k);
             }
