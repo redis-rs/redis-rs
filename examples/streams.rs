@@ -56,9 +56,9 @@ fn main() {
             // See https://redis.io/commands/xreadgroup#differences-between-xread-and-xreadgroup
             let mut con = c.get_connection().expect("con");
 
-            for key in vec![DOG_STREAM, CAT_STREAM, DUCK_STREAM] {
+            for key in &[DOG_STREAM, CAT_STREAM, DUCK_STREAM] {
                 let created: Result<(), _> =
-                    con.xgroup_create_mkstream(key, group_name(slowness), "$");
+                    con.xgroup_create_mkstream(*key, group_name(slowness), "$");
                 if let Err(e) = created {
                     println!("Group already exists: {:?}", e)
                 }
