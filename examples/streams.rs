@@ -27,6 +27,7 @@ const DOG_STREAM: &str = "example-dog";
 const CAT_STREAM: &str = "example-cat";
 const DUCK_STREAM: &str = "example-duck";
 
+#[cfg(feature = "streams")]
 fn run_multi_consumers(client: redis::Client) {
     println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
 
