@@ -238,7 +238,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
     for StreamKey { key, ids } in srr.keys {
         for StreamId { id, map: _ } in ids {
             println!(
-                "Stream {} ID {} Group(speed) {} SysTime {}",
+                "Stream {} ID {} Consumer slowness {} SysTime {}",
                 key,
                 id,
                 slowness,
