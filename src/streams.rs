@@ -542,15 +542,14 @@ impl FromRedisValue for StreamClaimReply {
 
 impl FromRedisValue for StreamPendingReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let parts: (usize, Option<String>, Option<String>, Vec<Vec<String>>) = from_redis_value(v)?;
-        let count = parts.0.to_owned() as usize;
+        let (count, start, end, consumer_data): (_, _, _, Vec<Vec<String>>) = from_redis_value(v)?;
 
         if count == 0 {
             Ok(StreamPendingReply::Empty)
         } else {
             let mut result = StreamPendingData::default();
 
-            let start_id = match parts.1.to_owned() {
+            let start_id = match start {
                 Some(start) => Ok(start),
                 None => Err(Error::new(
                     ErrorKind::Other,
@@ -558,7 +557,7 @@ impl FromRedisValue for StreamPendingReply {
                 )),
             }?;
 
-            let end_id = match parts.2.to_owned() {
+            let end_id = match end {
                 Some(end) => Ok(end),
                 None => Err(Error::new(
                     ErrorKind::Other,
@@ -570,7 +569,7 @@ impl FromRedisValue for StreamPendingReply {
             result.start_id = start_id;
             result.end_id = end_id;
 
-            for consumer in &parts.3 {
+            for consumer in &consumer_data {
                 let mut info = StreamInfoConsumer::default();
                 info.name = consumer[0].to_owned();
                 if let Ok(v) = consumer[1].to_owned().parse::<usize>() {
