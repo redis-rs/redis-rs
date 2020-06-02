@@ -484,20 +484,23 @@ type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>
 impl FromRedisValue for StreamReadReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let rows: SRRows = from_redis_value(v)?;
-        let mut reply = StreamReadReply::default();
-        for row in rows {
-            for (key, entry) in row.into_iter() {
-                let mut k = StreamKey::default();
-                k.key = key.to_owned();
-                for id_row in entry.into_iter() {
-                    for (id, map) in id_row.into_iter() {
-                        k.ids.push(StreamId { id, map });
-                    }
-                }
-                reply.keys.push(k);
-            }
-        }
-        Ok(reply)
+        let keys = rows
+            .into_iter()
+            .flat_map(|row| {
+                row.into_iter()
+                    .map(|(key, entry)| {
+                        let ids = entry
+                            .into_iter()
+                            .flat_map(|id_row| {
+                                id_row.into_iter().map(|(id, map)| StreamId { id, map })
+                            })
+                            .collect();
+                        StreamKey { key, ids }
+                    })
+                    .collect::<Vec<StreamKey>>()
+            })
+            .collect();
+        Ok(StreamReadReply { keys })
     }
 }
 
