@@ -486,15 +486,12 @@ impl FromRedisValue for StreamReadReply {
         let rows: SRRows = from_redis_value(v)?;
         let mut reply = StreamReadReply::default();
         for row in rows {
-            for (key, entry) in row.iter() {
+            for (key, entry) in row.into_iter() {
                 let mut k = StreamKey::default();
                 k.key = key.to_owned();
-                for id_row in entry[..].iter() {
-                    for (id, map) in id_row.iter() {
-                        k.ids.push(StreamId {
-                            id: id.to_string(),
-                            map: map.to_owned(),
-                        });
+                for id_row in entry.into_iter() {
+                    for (id, map) in id_row.into_iter() {
+                        k.ids.push(StreamId { id, map });
                     }
                 }
                 reply.keys.push(k);
@@ -569,7 +566,7 @@ impl FromRedisValue for StreamPendingReply {
             result.start_id = start_id;
             result.end_id = end_id;
 
-            for consumer in &consumer_data {
+            for consumer in consumer_data {
                 let mut info = StreamInfoConsumer::default();
                 info.name = consumer[0].to_owned();
                 if let Ok(v) = consumer[1].parse::<usize>() {
