@@ -1,4 +1,6 @@
+#[cfg(feature = "streams")]
 use redis::streams::{StreamId, StreamKey, StreamMaxlen, StreamReadOptions, StreamReadReply};
+
 use redis::{Commands, RedisResult, Value};
 use std::thread;
 use std::time::Duration;
@@ -18,6 +20,14 @@ fn main() {
     let read_reply_simple = xread_records(&client).expect("simple read");
     print_records(read_reply_simple);
 
+    run_multi_consumers(client)
+}
+
+const DOG_STREAM: &str = "example-dog";
+const CAT_STREAM: &str = "example-cat";
+const DUCK_STREAM: &str = "example-duck";
+
+fn run_multi_consumers(client: redis::Client) {
     println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
 
     let mut handles = vec![];
@@ -77,10 +87,6 @@ fn main() {
         h.join().expect("Join")
     }
 }
-
-const DOG_STREAM: &str = "example-dog";
-const CAT_STREAM: &str = "example-cat";
-const DUCK_STREAM: &str = "example-duck";
 
 /// Generate some contrived records and add them to various
 /// streams.
@@ -240,3 +246,6 @@ fn xread_records(client: &redis::Client) -> RedisResult<StreamReadyReply> {
 fn xreadgroup_records(client: &redis::Client, ids: ExampleIds) -> RedisResult<StreamReadReply> {
     Ok(())
 }
+
+#[cfg(not(feature = "streams"))]
+fn run_multi_consumers(client: redis::Client) {}
