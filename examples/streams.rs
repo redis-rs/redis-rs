@@ -75,8 +75,7 @@ fn demo_group_reads(client: &redis::Client) {
             // See https://redis.io/commands/xreadgroup#differences-between-xread-and-xreadgroup
 
             for key in STREAMS {
-                let created: Result<(), _> =
-                    con.xgroup_create_mkstream(*key, group_name(*slowness), "$");
+                let created: Result<(), _> = con.xgroup_create_mkstream(*key, GROUP_NAME, "$");
                 if let Err(e) = created {
                     println!("Group already exists: {:?}", e)
                 }
@@ -213,13 +212,11 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
     Ok(())
 }
 
-fn group_name(slowness: u8) -> String {
-    format!("example-group-{}", slowness)
-}
-
 fn consumer_name(slowness: u8) -> String {
     format!("example-consumer-{}", slowness)
 }
+
+const GROUP_NAME: &str = "example-group-aaa";
 
 #[cfg(feature = "streams")]
 fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
@@ -228,7 +225,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
     let opts = StreamReadOptions::default()
         .block(BLOCK_MILLIS)
         .count(3)
-        .group(group_name(slowness), consumer_name(slowness));
+        .group(GROUP_NAME, consumer_name(slowness));
 
     let srr: StreamReadReply = con
         .xread_options(
@@ -262,10 +259,8 @@ fn clean_up(client: &redis::Client) {
         let trimmed: RedisResult<()> = con.xtrim(*k, StreamMaxlen::Equals(0));
         trimmed.expect("trim");
 
-        for slowness in SLOWNESSES {
-            let destroyed: RedisResult<()> = con.xgroup_destroy(*k, group_name(*slowness));
-            destroyed.expect("xgroup destroy");
-        }
+        let destroyed: RedisResult<()> = con.xgroup_destroy(*k, GROUP_NAME);
+        destroyed.expect("xgroup destroy");
     }
 }
 
