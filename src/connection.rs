@@ -25,7 +25,7 @@ static DEFAULT_PORT: u16 = 6379;
 pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "redis+tls" | "redis+unix" | "unix" => Ok(result),
+            "redis" | "rediss" | "redis+unix" | "unix" => Ok(result),
             _ => Err(()),
         },
         Err(_) => Err(()),
@@ -137,7 +137,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
-    let addr = if url.scheme() == "redis+tls" {
+    let addr = if url.scheme() == "rediss" {
         #[cfg(feature = "tls")]
         {
             match url.fragment() {
@@ -217,7 +217,7 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match self.scheme() {
-            "redis" | "redis+tls" => url_to_tcp_connection_info(self),
+            "redis" | "rediss" => url_to_tcp_connection_info(self),
             "unix" | "redis+unix" => url_to_unix_connection_info(self),
             _ => fail!((
                 ErrorKind::InvalidClientConfig,

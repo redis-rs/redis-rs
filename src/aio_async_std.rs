@@ -1,9 +1,7 @@
 use crate::aio::{ActualConnection, Connect};
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
-use async_native_tls::TlsConnector;
-#[cfg(feature = "tls")]
-use async_native_tls::TlsStream;
+use async_native_tls::{TlsConnector, TlsStream};
 use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;

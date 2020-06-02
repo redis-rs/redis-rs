@@ -23,8 +23,7 @@ use tokio::{
 #[cfg(feature = "tokio-comp")]
 use tokio::net::TcpStream as TcpStreamTokio;
 
-#[cfg(feature = "tokio-comp")]
-#[cfg(feature = "tls")]
+#[cfg(feature = "tokio-tls-comp")]
 use tokio_tls::TlsStream as TlsStreamTokio;
 
 #[cfg(feature = "tls")]
@@ -59,6 +58,7 @@ use crate::aio_async_std;
 pub(crate) trait Connect {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection>;
+
     // Performs a TCP TLS connection
     #[cfg(feature = "tls")]
     async fn connect_tcp_tls(
@@ -66,6 +66,7 @@ pub(crate) trait Connect {
         socket_addr: SocketAddr,
         insecure: bool,
     ) -> RedisResult<ActualConnection>;
+
     /// Performs a UNIX connection
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<ActualConnection>;
@@ -126,8 +127,7 @@ pub(crate) enum ActualConnection {
     #[cfg(feature = "tokio-comp")]
     TcpTokio(TcpStreamTokio),
     /// Represents a Tokio TLS encrypted TCP connection
-    #[cfg(feature = "tokio-comp")]
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "tokio-tls-comp")]
     TcpTlsTokio(TlsStreamTokio<TcpStreamTokio>),
     /// Represents a Tokio Unix connection.
     #[cfg(unix)]
@@ -137,8 +137,7 @@ pub(crate) enum ActualConnection {
     #[cfg(feature = "async-std-comp")]
     TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
     /// Represents an Async_std TLS encrypted TCP connection.
-    #[cfg(feature = "async-std-comp")]
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "async-std-tls-comp")]
     TcpTlsAsyncStd(aio_async_std::TlsStreamAsyncStdWrapped),
     /// Represents an Async_std Unix connection.
     #[cfg(feature = "async-std-comp")]
@@ -155,16 +154,14 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "tokio-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tokio-tls-comp")]
             ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "async-std-tls-comp")]
             ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
@@ -176,16 +173,14 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "tokio-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tokio-tls-comp")]
             ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "async-std-tls-comp")]
             ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_flush(cx),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
@@ -197,16 +192,14 @@ impl AsyncWrite for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "tokio-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tokio-tls-comp")]
             ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "async-std-tls-comp")]
             ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
@@ -224,16 +217,14 @@ impl AsyncRead for ActualConnection {
         match &mut *self {
             #[cfg(feature = "tokio-comp")]
             ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "tokio-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tokio-tls-comp")]
             ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             #[cfg(feature = "tokio-comp")]
             ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(feature = "async-std-comp")]
             ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "async-std-tls-comp")]
             ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(feature = "async-std-comp")]
             #[cfg(unix)]
@@ -879,8 +870,7 @@ impl MultiplexedConnection {
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, boxed(driver))
             }
-            #[cfg(feature = "tokio-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "tokio-tls-comp")]
             ActualConnection::TcpTlsTokio(tls) => {
                 let codec = ValueCodec::default().framed(tls);
                 let (pipeline, driver) = Pipeline::new(codec);
@@ -892,8 +882,7 @@ impl MultiplexedConnection {
                 let (pipeline, driver) = Pipeline::new(codec);
                 (pipeline, boxed(driver))
             }
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(feature = "tls")]
+            #[cfg(feature = "async-std-tls-comp")]
             ActualConnection::TcpTlsAsyncStd(tcp) => {
                 let codec = ValueCodec::default().framed(tcp);
                 let (pipeline, driver) = Pipeline::new(codec);

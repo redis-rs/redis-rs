@@ -156,7 +156,7 @@ fn do_redis_code(url: &str) -> redis::RedisResult<()> {
 fn main() {
     // at this point the errors are fatal, let's just fail hard.
     let url = if env::args().nth(1) == Some("--tls".into()) {
-        "redis+tls://127.0.0.1:6380/#insecure"
+        "rediss://127.0.0.1:6380/#insecure"
     } else {
         "redis://127.0.0.1:6379/"
     };
