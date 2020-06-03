@@ -536,28 +536,31 @@ impl FromRedisValue for StreamClaimReply {
 
 impl FromRedisValue for StreamPendingReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let (count, start, end, consumer_data): (_, _, _, Vec<Vec<String>>) = from_redis_value(v)?;
+        let (count, start, end, consumer_data): (
+            _,
+            Option<String>,
+            Option<String>,
+            Vec<Vec<String>>,
+        ) = from_redis_value(v)?;
 
         if count == 0 {
             Ok(StreamPendingReply::Empty)
         } else {
             let mut result = StreamPendingData::default();
 
-            let start_id = match start {
-                Some(start) => Ok(start),
-                None => Err(Error::new(
+            let start_id = start.ok_or_else(|| {
+                Error::new(
                     ErrorKind::Other,
                     "IllegalState: Non-zero pending expects start id",
-                )),
-            }?;
+                )
+            })?;
 
-            let end_id = match end {
-                Some(end) => Ok(end),
-                None => Err(Error::new(
+            let end_id = end.ok_or_else(|| {
+                Error::new(
                     ErrorKind::Other,
                     "IllegalState: Non-zero pending expects end id",
-                )),
-            }?;
+                )
+            })?;
 
             result.count = count;
             result.start_id = start_id;
