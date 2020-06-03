@@ -305,10 +305,7 @@ fn test_assorted_2() {
     assert_eq!(data_reply.count(), 3);
 
     if let StreamPendingReply::Data(data) = data_reply {
-        assert_eq!(data.start_id, "1000-1");
-        assert_eq!(data.end_id, "1001-1");
-        assert_eq!(data.consumers.len(), 1);
-        assert_eq!(data.consumers[0].name, "c99");
+        assert_stream_pending_data(data)
     } else {
         panic!("Expected StreamPendingReply::Data but got Empty");
     }
@@ -321,6 +318,26 @@ fn test_assorted_2() {
         .xpending_consumer_count("k99", "g99", "-", "+", 10, "c99")
         .unwrap();
     assert_eq!(reply.ids.len(), 3);
+
+    for StreamPendingId {
+        id,
+        consumer,
+        times_delivered,
+        last_delivered_ms,
+    } in reply.ids
+    {
+        assert!(!id.is_empty());
+        assert!(!consumer.is_empty());
+        assert!(times_delivered > 0);
+        assert!(last_delivered_ms > 0);
+    }
+}
+
+fn assert_stream_pending_data(data: StreamPendingData) {
+    assert_eq!(data.start_id, "1000-1");
+    assert_eq!(data.end_id, "1001-1");
+    assert_eq!(data.consumers.len(), 1);
+    assert_eq!(data.consumers[0].name, "c99");
 }
 
 #[test]
