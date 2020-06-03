@@ -540,7 +540,7 @@ impl FromRedisValue for StreamPendingReply {
             _,
             Option<String>,
             Option<String>,
-            Vec<Vec<String>>,
+            Vec<Option<(String, String)>>,
         ) = from_redis_value(v)?;
 
         if count == 0 {
@@ -566,13 +566,15 @@ impl FromRedisValue for StreamPendingReply {
             result.start_id = start_id;
             result.end_id = end_id;
 
-            for consumer in consumer_data {
-                let mut info = StreamInfoConsumer::default();
-                info.name = consumer[0].to_owned();
-                if let Ok(v) = consumer[1].parse::<usize>() {
-                    info.pending = v;
+            for cd in consumer_data {
+                if let Some((name, pending)) = cd {
+                    let mut info = StreamInfoConsumer::default();
+                    info.name = name;
+                    if let Ok(v) = pending.parse::<usize>() {
+                        info.pending = v;
+                    }
+                    result.consumers.push(info);
                 }
-                result.consumers.push(info);
             }
 
             Ok(StreamPendingReply::Data(result))
