@@ -323,13 +323,12 @@ fn test_assorted_2() {
         id,
         consumer,
         times_delivered,
-        last_delivered_ms,
+        last_delivered_ms: _,
     } in reply.ids
     {
         assert!(!id.is_empty());
         assert!(!consumer.is_empty());
         assert!(times_delivered > 0);
-        assert!(last_delivered_ms > 0);
     }
 }
 
