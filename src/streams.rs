@@ -534,14 +534,15 @@ impl FromRedisValue for StreamClaimReply {
     }
 }
 
+type SPRInner = (
+    usize,
+    Option<String>,
+    Option<String>,
+    Vec<Option<(String, String)>>,
+);
 impl FromRedisValue for StreamPendingReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let (count, start, end, consumer_data): (
-            _,
-            Option<String>,
-            Option<String>,
-            Vec<Option<(String, String)>>,
-        ) = from_redis_value(v)?;
+        let (count, start, end, consumer_data): SPRInner = from_redis_value(v)?;
 
         if count == 0 {
             Ok(StreamPendingReply::Empty)
