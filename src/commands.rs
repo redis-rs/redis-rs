@@ -230,7 +230,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements.  
+            /// Incrementally iterate sorted set elements.
             #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
@@ -238,7 +238,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements for elements matching a pattern.  
+            /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
