@@ -1154,7 +1154,7 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(rv)
                 }
                 let mut offset = 0;
-                while offset < items.len() - 1 {
+                while offset < items.len() {
                     rv.push(($({let $name = (); from_redis_value(
                          &items[{ offset += 1; offset - 1 }])?},)*));
                 }
