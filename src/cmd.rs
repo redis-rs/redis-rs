@@ -33,7 +33,7 @@ pub struct Pipeline {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: Vec<T>,
+    batch: std::vec::IntoIter<T>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
@@ -49,7 +49,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.pop() {
+            if let Some(v) = self.batch.next() {
                 return Some(v);
             };
             if self.cursor == 0 {
@@ -61,12 +61,10 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
                 return None
             );
             let rv = unwrap_or!(self.con.req_packed_command(&pcmd).ok(), return None);
-            let (cur, mut batch): (u64, Vec<T>) =
-                unwrap_or!(from_redis_value(&rv).ok(), return None);
-            batch.reverse();
+            let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
 
             self.cursor = cur;
-            self.batch = batch;
+            self.batch = batch.into_iter();
         }
     }
 }
@@ -74,10 +72,10 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 #[cfg(feature = "aio")]
 use crate::aio::ConnectionLike as AsyncConnection;
 
-/// Represents a redis iterator that can be used with async connections.  
+/// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
-    batch: Vec<T>,
+    batch: std::vec::IntoIter<T>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -105,7 +103,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.pop() {
+            if let Some(v) = self.batch.next() {
                 return Some(v);
             };
             if let Some(cursor) = self.cmd.cursor {
@@ -118,12 +116,10 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
                 self.con.req_packed_command(&self.cmd).await.ok(),
                 return None
             );
-            let (cur, mut batch): (u64, Vec<T>) =
-                unwrap_or!(from_redis_value(&rv).ok(), return None);
-            batch.reverse();
+            let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
 
             self.cmd.cursor = Some(cur);
-            self.batch = batch;
+            self.batch = batch.into_iter();
         }
     }
 }
@@ -418,15 +414,14 @@ impl Cmd {
         let pcmd = self.get_packed_command();
         let rv = con.req_packed_command(&pcmd)?;
 
-        let (cursor, mut batch) = if rv.looks_like_cursor() {
+        let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
         } else {
             (0, from_redis_value(&rv)?)
         };
 
-        batch.reverse();
         Ok(Iter {
-            batch,
+            batch: batch.into_iter(),
             cursor,
             con,
             cmd: self,
@@ -456,7 +451,7 @@ impl Cmd {
     ) -> RedisResult<AsyncIter<'a, T>> {
         let rv = con.req_packed_command(&self).await?;
 
-        let (cursor, mut batch) = if rv.looks_like_cursor() {
+        let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
         } else {
             (0, from_redis_value(&rv)?)
@@ -467,9 +462,8 @@ impl Cmd {
             self.cursor = Some(cursor);
         }
 
-        batch.reverse();
         Ok(AsyncIter {
-            batch,
+            batch: batch.into_iter(),
             con,
             cmd: self,
         })
