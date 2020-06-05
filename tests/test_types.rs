@@ -77,13 +77,13 @@ fn test_vec() {
 fn test_tuple() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Bulk(vec![
         Value::Data("1".into()),
         Value::Data("2".into()),
         Value::Data("3".into()),
-    ]));
+    ])]));
 
-    assert_eq!(v, Ok((1i32, 2, 3,)));
+    assert_eq!(v, Ok(((1i32, 2, 3,),)));
 }
 
 #[test]
