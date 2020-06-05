@@ -1153,10 +1153,11 @@ macro_rules! from_redis_value_for_tuple {
                 if items.len() == 0 {
                     return Ok(rv)
                 }
-                let mut offset = 0;
-                while offset < items.len() {
-                    rv.push(($({let $name = (); from_redis_value(
-                         &items[{ offset += 1; offset - 1 }])?},)*));
+                for chunk in items.chunks_exact(n) {
+                    match chunk {
+                        [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
+                         _ => unreachable!(),
+                    }
                 }
                 Ok(rv)
             }
