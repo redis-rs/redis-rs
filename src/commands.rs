@@ -233,7 +233,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements.  
+            /// Incrementally iterate sorted set elements.
             #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
@@ -1233,7 +1233,6 @@ implement_commands! {
             .arg(ids)
     }
 
-    
     /// This is the optional arguments version for claiming unacked, pending messages
     /// currently checked out by another consumer.
     ///
@@ -1728,7 +1727,7 @@ implement_commands! {
     fn xrevrange_all<K: ToRedisArgs>(key: K) {
         cmd("XREVRANGE").arg(key).arg("+").arg("-")
     }
- 
+
     /// This is the reverse version of `xrange_count`.
     /// The same rules apply for `start` and `end` here.
     ///
