@@ -87,6 +87,39 @@ fn test_tuple() {
 }
 
 #[test]
+fn test_vec_nested_tuple() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("hi".into()),
+            Value::Data("redis".into()),
+            Value::Data("99".into()),
+        ]),
+        Value::Bulk(vec![
+            Value::Data("3".into()),
+            Value::Data("4".into()),
+            Value::Data("hello".into()),
+            Value::Data("rust".into()),
+            Value::Data("100".into()),
+        ]),
+    ]))
+    .expect("from");
+
+    let w = FromRedisValue::from_redis_value(&v);
+
+    assert_eq!(
+        w,
+        Ok(vec![
+            (1i32, 2, "hi".to_string(), "redis".to_string(), 99),
+            (3i32, 4, "hello".to_string(), "rust".to_string(), 100)
+        ])
+    );
+}
+
+#[test]
 fn test_hashmap() {
     use fnv::FnvHasher;
     use redis::{FromRedisValue, Value};
