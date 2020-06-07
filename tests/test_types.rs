@@ -87,6 +87,26 @@ fn test_tuple() {
 }
 
 #[test]
+fn test_nested_single_tuple() {
+    use redis::{FromRedisValue, Value};
+
+    let v =
+        FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Bulk(vec![Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("hi".into()),
+            Value::Data("redis".into()),
+            Value::Data("99".into()),
+        ])])]));
+    assert_eq!(
+        v,
+        Ok(vec![
+            ((1i32, 2, "hi".to_string(), "redis".to_string(), 99),)
+        ])
+    );
+}
+
+#[test]
 fn test_vec_nested_tuple() {
     use redis::{FromRedisValue, Value};
 
