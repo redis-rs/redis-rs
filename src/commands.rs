@@ -182,7 +182,7 @@ macro_rules! implement_commands {
                 }
             )*
 
-            /// Incrementally iterate the keys space.  
+            /// Incrementally iterate the keys space.
             #[inline]
             fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
@@ -207,7 +207,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate hash fields and associated values for
-            /// field names matching a pattern. 
+            /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
@@ -216,7 +216,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate set elements.  
+            /// Incrementally iterate set elements.
             #[inline]
             fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
@@ -241,7 +241,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements for elements matching a pattern.  
+            /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
@@ -1110,7 +1110,7 @@ implement_commands! {
     //
 
     /// Ack pending stream messages checked out by a consumer.
-    /// 
+    ///
     /// ```text
     /// XACK <key> <group> <id> <id> ... <id>
     /// ```
@@ -1186,7 +1186,7 @@ implement_commands! {
 
 
     /// BTreeMap variant for adding a stream message while capping the stream at a maxlength.
-    /// 
+    ///
     /// ```text
     /// XADD key [MAXLEN [~|=] <count>] <ID or *> [rust BTreeMap] ...
     /// ```
@@ -1419,7 +1419,7 @@ implement_commands! {
     ///
     /// *It's possible this return value might not contain new fields
     /// added by Redis in future versions.*
-    /// 
+    ///
     /// ```text
     /// XINFO CONSUMERS <key> <group>
     /// ```
@@ -1628,7 +1628,7 @@ implement_commands! {
             .arg(start)
             .arg(end)
             .arg("COUNT")
-            .arg(count)    
+            .arg(count)
     }
 
 
@@ -1680,7 +1680,7 @@ implement_commands! {
     /// XREAD [BLOCK <milliseconds>] [COUNT <count>]
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
-    /// 
+    ///
     /// XREADGROUP [BLOCK <milliseconds>] [COUNT <count>] [NOACK] [GROUP group-name consumer-name]
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
