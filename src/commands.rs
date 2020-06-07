@@ -179,7 +179,7 @@ macro_rules! implement_commands {
                 }
             )*
 
-            /// Incrementally iterate the keys space.  
+            /// Incrementally iterate the keys space.
             #[inline]
             fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
@@ -204,7 +204,7 @@ macro_rules! implement_commands {
             }
 
             /// Incrementally iterate hash fields and associated values for
-            /// field names matching a pattern. 
+            /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
@@ -213,7 +213,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate set elements.  
+            /// Incrementally iterate set elements.
             #[inline]
             fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
@@ -230,7 +230,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements.  
+            /// Incrementally iterate sorted set elements.
             #[inline]
             fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
@@ -238,7 +238,7 @@ macro_rules! implement_commands {
                 Box::pin(async move {c.iter_async(self).await })
             }
 
-            /// Incrementally iterate sorted set elements for elements matching a pattern.  
+            /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
                     (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
