@@ -243,6 +243,14 @@ impl From<Utf8Error> for RedisError {
     }
 }
 
+impl From<std::string::FromUtf8Error> for RedisError {
+    fn from(_: std::string::FromUtf8Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8"),
+        }
+    }
+}
+
 impl From<(ErrorKind, &'static str)> for RedisError {
     fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError {
