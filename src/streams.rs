@@ -604,9 +604,15 @@ impl FromRedisValue for StreamPendingCountReply {
                                     times_delivered,
                                 });
                             }
-                            _ => todo!(),
+                            _ => fail!((
+                                crate::types::ErrorKind::TypeError,
+                                "Cannot parse redis data (inner)"
+                            )),
                         },
-                        _ => todo!(),
+                        _ => fail!((
+                            crate::types::ErrorKind::TypeError,
+                            "Cannot parse redis data (outer)"
+                        )),
                     }
                 }
             }

@@ -7,6 +7,7 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
+use std::string::FromUtf8Error;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -243,10 +244,10 @@ impl From<Utf8Error> for RedisError {
     }
 }
 
-impl From<std::string::FromUtf8Error> for RedisError {
-    fn from(_: std::string::FromUtf8Error) -> RedisError {
+impl From<FromUtf8Error> for RedisError {
+    fn from(_: FromUtf8Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8"),
+            repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Cannot convert from UTF-8"),
         }
     }
 }
