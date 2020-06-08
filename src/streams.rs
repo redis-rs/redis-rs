@@ -585,7 +585,6 @@ impl FromRedisValue for StreamPendingReply {
 
 impl FromRedisValue for StreamPendingCountReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        println!("spcr {:?}", v);
         let mut reply = StreamPendingCountReply::default();
         match v {
             Value::Bulk(outer_tuple) => {
