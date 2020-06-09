@@ -1,7 +1,6 @@
 //! Adds experimental async IO support to redis.
 // TODO greetings
 // TODO   trigger build
-// TODO    ............
 // TODO        !!!
 // TODO    its a build
 // TODO    buildem
