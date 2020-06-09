@@ -487,17 +487,13 @@ impl FromRedisValue for StreamReadReply {
         let keys = rows
             .into_iter()
             .flat_map(|row| {
-                row.into_iter()
-                    .map(|(key, entry)| {
-                        let ids = entry
-                            .into_iter()
-                            .flat_map(|id_row| {
-                                id_row.into_iter().map(|(id, map)| StreamId { id, map })
-                            })
-                            .collect();
-                        StreamKey { key, ids }
-                    })
-                    .collect::<Vec<StreamKey>>()
+                row.into_iter().map(|(key, entry)| {
+                    let ids = entry
+                        .into_iter()
+                        .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map }))
+                        .collect();
+                    StreamKey { key, ids }
+                })
             })
             .collect();
         Ok(StreamReadReply { keys })
@@ -509,11 +505,7 @@ impl FromRedisValue for StreamRangeReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| {
-                row.into_iter()
-                    .map(|(id, map)| StreamId { id, map })
-                    .collect::<Vec<StreamId>>()
-            })
+            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
         Ok(StreamRangeReply { ids })
     }
@@ -524,11 +516,7 @@ impl FromRedisValue for StreamClaimReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| {
-                row.into_iter()
-                    .map(|(id, map)| StreamId { id, map })
-                    .collect::<Vec<StreamId>>()
-            })
+            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
         Ok(StreamClaimReply { ids })
     }
