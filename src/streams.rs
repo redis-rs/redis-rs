@@ -452,21 +452,15 @@ impl StreamId {
     /// Fetches value of a given field and converts it to the specified
     /// type.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
-        match self.find(&key) {
+        match self.map.get(key) {
             Some(ref x) => from_redis_value(*x).ok(),
             None => None,
         }
     }
 
-    /// Fetches the value of a given field without performing any
-    /// type conversion.
-    pub fn find(&self, key: &&str) -> Option<&Value> {
-        self.map.get(*key)
-    }
-
     /// Does the message contain a particular field?
     pub fn contains_key(&self, key: &&str) -> bool {
-        self.find(key).is_some()
+        self.map.get(*key).is_some()
     }
 
     /// Returns how many field/value pairs exist in this message.
