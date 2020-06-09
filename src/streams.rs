@@ -435,7 +435,7 @@ pub struct StreamId {
 
 impl StreamId {
     /// Converts a `Value::Bulk` into a `StreamId`.
-    pub fn from_bulk_value(v: &Value) -> RedisResult<Self> {
+    fn from_bulk_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
         if let Value::Bulk(ref values) = *v {
             if let Some(v) = values.get(0) {
