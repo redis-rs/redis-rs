@@ -53,7 +53,7 @@ Cluster mode can be used by specifying "cluster" as a features entry in your Car
 
 `redis = { version = "0.16.0", features = [ "cluster"] }`
 
-Then you can simply use the `ClusterClient` which accepts a list of the available nodes.
+Then you can simply use the `ClusterClient` which accepts a list of available nodes.
 
 ```rust
 use redis::cluster::ClusterClient;
