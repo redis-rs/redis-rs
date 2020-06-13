@@ -74,6 +74,8 @@ pub struct ConnectionInfo {
     pub addr: Box<ConnectionAddr>,
     /// The database number to use.  This is usually `0`.
     pub db: i64,
+    /// Optionally a username that should be used for connection.
+    pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub passwd: Option<String>,
 }
@@ -126,6 +128,17 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
             ),
         },
+        username: if url.username().is_empty() {
+            None
+        } else {
+            match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
+                Ok(decoded) => Some(decoded.into_owned()),
+                Err(_) => fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Username is not valid UTF-8 string"
+                )),
+            }
+        },
         passwd: match url.password() {
             Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
                 Ok(decoded) => Some(decoded.into_owned()),
@@ -153,6 +166,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             ),
             None => 0,
         },
+        username: Some(url.username().to_string()).filter(|user| !user.is_empty()),
         passwd: url.password().map(|pw| pw.to_string()),
     })
 }
@@ -356,8 +370,12 @@ pub fn connect(
         pubsub: false,
     };
 
-    if let Some(ref passwd) = connection_info.passwd {
-        match cmd("AUTH").arg(&**passwd).query::<Value>(&mut rv) {
+    if let Some(passwd) = &connection_info.passwd {
+        let mut command = cmd("AUTH");
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
+        }
+        match command.arg(passwd).query::<Value>(&mut rv) {
             Ok(Value::Okay) => {}
             _ => {
                 fail!((
