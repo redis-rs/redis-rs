@@ -895,7 +895,7 @@ mod tests {
                     db: 0,
                     username: None,
                     passwd: None,
-                }
+                },
             ),
             (
                 url::Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
@@ -904,15 +904,23 @@ mod tests {
                     db: 2,
                     username: Some("%johndoe%".to_string()),
                     passwd: Some("#@<>$".to_string()),
-                }
+                },
             ),
         ];
         for (url, expected) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url.clone()).unwrap();
             assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
             assert_eq!(res.db, expected.db, "db of {} is not expected", url);
-            assert_eq!(res.username, expected.username, "username of {} is not expected", url);
-            assert_eq!(res.passwd, expected.passwd, "passwd of {} is not expected", url);
+            assert_eq!(
+                res.username, expected.username,
+                "username of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.passwd, expected.passwd,
+                "passwd of {} is not expected",
+                url
+            );
         }
     }
 
@@ -920,9 +928,18 @@ mod tests {
     fn test_url_to_tcp_connection_info_failed() {
         let cases = vec![
             (url::Url::parse("redis://").unwrap(), "Missing hostname"),
-            (url::Url::parse("redis://127.0.0.1/db").unwrap(), "Invalid database number"),
-            (url::Url::parse("redis://C3%B0@127.0.0.1").unwrap(), "Username is not valid UTF-8 string"),
-            (url::Url::parse("redis://:C3%B0@127.0.0.1").unwrap(), "Password is not valid UTF-8 string"),
+            (
+                url::Url::parse("redis://127.0.0.1/db").unwrap(),
+                "Invalid database number",
+            ),
+            (
+                url::Url::parse("redis://C3%B0@127.0.0.1").unwrap(),
+                "Username is not valid UTF-8 string",
+            ),
+            (
+                url::Url::parse("redis://:C3%B0@127.0.0.1").unwrap(),
+                "Password is not valid UTF-8 string",
+            ),
         ];
         for (url, expected) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url);
@@ -944,5 +961,5 @@ mod tests {
     #[ignore]
     #[test]
     #[cfg(unix)]
-    fn test_url_to_unix_connection_info() { }
+    fn test_url_to_unix_connection_info() {}
 }
