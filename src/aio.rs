@@ -380,7 +380,11 @@ where
     C: ConnectionLike,
 {
     if let Some(passwd) = &connection_info.passwd {
-        match cmd("AUTH").arg(passwd).query_async(con).await {
+        let mut command = cmd("AUTH");
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
+        }
+        match command.arg(passwd).query_async(con).await {
             Ok(Value::Okay) => (),
             _ => {
                 fail!((

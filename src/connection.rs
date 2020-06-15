@@ -74,6 +74,8 @@ pub struct ConnectionInfo {
     pub addr: Box<ConnectionAddr>,
     /// The database number to use.  This is usually `0`.
     pub db: i64,
+    /// Optionally a username that should be used for connection.
+    pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub passwd: Option<String>,
 }
@@ -126,6 +128,17 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
             ),
         },
+        username: if url.username().is_empty() {
+            None
+        } else {
+            match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
+                Ok(decoded) => Some(decoded.into_owned()),
+                Err(_) => fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Username is not valid UTF-8 string"
+                )),
+            }
+        },
         passwd: match url.password() {
             Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
                 Ok(decoded) => Some(decoded.into_owned()),
@@ -153,6 +166,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             ),
             None => 0,
         },
+        username: Some(url.username().to_string()).filter(|user| !user.is_empty()),
         passwd: url.password().map(|pw| pw.to_string()),
     })
 }
@@ -356,8 +370,12 @@ pub fn connect(
         pubsub: false,
     };
 
-    if let Some(ref passwd) = connection_info.passwd {
-        match cmd("AUTH").arg(&**passwd).query::<Value>(&mut rv) {
+    if let Some(passwd) = &connection_info.passwd {
+        let mut command = cmd("AUTH");
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
+        }
+        match command.arg(passwd).query::<Value>(&mut rv) {
             Ok(Value::Okay) => {}
             _ => {
                 fail!((
@@ -841,4 +859,107 @@ pub fn transaction<
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_redis_url() {
+        let cases = vec![
+            ("redis://127.0.0.1", true),
+            ("redis+unix:///run/redis.sock", true),
+            ("unix:///run/redis.sock", true),
+            ("http://127.0.0.1", false),
+            ("tcp://127.0.0.1", false),
+        ];
+        for (url, expected) in cases.into_iter() {
+            let res = parse_redis_url(&url);
+            assert_eq!(
+                res.is_ok(),
+                expected,
+                "Parsed result of `{}` is not expected",
+                url,
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_to_tcp_connection_info() {
+        let cases = vec![
+            (
+                url::Url::parse("redis://127.0.0.1").unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379)),
+                    db: 0,
+                    username: None,
+                    passwd: None,
+                },
+            ),
+            (
+                url::Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Tcp("example.com".to_string(), 6379)),
+                    db: 2,
+                    username: Some("%johndoe%".to_string()),
+                    passwd: Some("#@<>$".to_string()),
+                },
+            ),
+        ];
+        for (url, expected) in cases.into_iter() {
+            let res = url_to_tcp_connection_info(url.clone()).unwrap();
+            assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
+            assert_eq!(res.db, expected.db, "db of {} is not expected", url);
+            assert_eq!(
+                res.username, expected.username,
+                "username of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.passwd, expected.passwd,
+                "passwd of {} is not expected",
+                url
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_to_tcp_connection_info_failed() {
+        let cases = vec![
+            (url::Url::parse("redis://").unwrap(), "Missing hostname"),
+            (
+                url::Url::parse("redis://127.0.0.1/db").unwrap(),
+                "Invalid database number",
+            ),
+            (
+                url::Url::parse("redis://C3%B0@127.0.0.1").unwrap(),
+                "Username is not valid UTF-8 string",
+            ),
+            (
+                url::Url::parse("redis://:C3%B0@127.0.0.1").unwrap(),
+                "Password is not valid UTF-8 string",
+            ),
+        ];
+        for (url, expected) in cases.into_iter() {
+            let res = url_to_tcp_connection_info(url);
+            assert_eq!(
+                res.as_ref().unwrap_err().kind(),
+                crate::ErrorKind::InvalidClientConfig,
+                "{}",
+                res.as_ref().unwrap_err(),
+            );
+            assert_eq!(
+                res.as_ref().unwrap_err().to_string(),
+                expected,
+                "{}",
+                res.as_ref().unwrap_err(),
+            );
+        }
+    }
+
+    #[ignore]
+    #[test]
+    #[cfg(unix)]
+    fn test_url_to_unix_connection_info() {}
 }
