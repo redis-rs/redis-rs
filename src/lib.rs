@@ -70,7 +70,7 @@
 //! * URL objects from the redis-url crate.
 //! * `ConnectionInfo` objects.
 //!
-//! The URL format is `redis://[:<passwd>@]<hostname>[:port][/<db>]`
+//! The URL format is `redis://[<username>][:<passwd>@]<hostname>[:port][/<db>]`
 //!
 //! If Unix socket support is available you can use a unix URL in this format:
 //!
