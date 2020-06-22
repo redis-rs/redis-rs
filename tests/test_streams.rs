@@ -398,7 +398,11 @@ fn test_xclaim() {
     // save this StreamId for later
     let claim = &reply.keys[0].ids[0];
     let _claim_1 = &reply.keys[0].ids[1];
-    let claim_justids = &reply.keys[0].just_ids();
+    let claim_justids = &reply.keys[0]
+        .ids
+        .iter()
+        .map(|msg| &msg.id)
+        .collect::<Vec<&String>>();
 
     // sleep for 5ms
     sleep(Duration::from_millis(5));

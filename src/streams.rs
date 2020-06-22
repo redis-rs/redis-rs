@@ -417,13 +417,6 @@ pub struct StreamKey {
     pub ids: Vec<StreamId>,
 }
 
-impl StreamKey {
-    /// Return only the stream `id`'s without their data.
-    pub fn just_ids(&self) -> Vec<&String> {
-        self.ids.iter().map(|msg| &msg.id).collect::<Vec<&String>>()
-    }
-}
-
 /// Represents a stream `id` and its field/values as a `HashMap`
 #[derive(Default, Debug, Clone)]
 pub struct StreamId {
