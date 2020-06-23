@@ -1,3 +1,5 @@
+#![cfg(feature = "acl")]
+
 use std::collections::HashSet;
 
 use redis::acl::{AclInfo, Rule};
