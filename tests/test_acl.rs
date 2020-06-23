@@ -20,7 +20,7 @@ fn test_acl_help() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let res: Vec<String> = con.acl_help().expect("Got help manual");
-    assert!(res.len() > 0);
+    assert!(!res.is_empty());
 }
 
 #[test]

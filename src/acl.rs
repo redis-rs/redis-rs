@@ -161,7 +161,7 @@ impl FromRedisValue for AclInfo {
                 let passwords: Vec<String> = FromRedisValue::from_redis_value(&passwords)?;
                 let passwords = passwords
                     .into_iter()
-                    .map(|pass| Rule::AddHashedPass(pass))
+                    .map(Rule::AddHashedPass)
                     .collect::<Vec<Rule>>();
 
                 let command_values: String = FromRedisValue::from_redis_value(&commands)?;
@@ -170,8 +170,8 @@ impl FromRedisValue for AclInfo {
                     let rule = match command {
                         x if x.starts_with("+@") => Rule::AddCategory(x[2..].to_owned()),
                         x if x.starts_with("-@") => Rule::RemoveCategory(x[2..].to_owned()),
-                        x if x.starts_with("+") => Rule::AddCommand(x[1..].to_owned()),
-                        x if x.starts_with("-") => Rule::RemoveCommand(x[1..].to_owned()),
+                        x if x.starts_with('+') => Rule::AddCommand(x[1..].to_owned()),
+                        x if x.starts_with('-') => Rule::RemoveCommand(x[1..].to_owned()),
                         _ => not_convertible_type_error!(
                             command,
                             "Expect a command addition/removal"
@@ -181,10 +181,7 @@ impl FromRedisValue for AclInfo {
                 }
 
                 let keys: Vec<String> = FromRedisValue::from_redis_value(&keys)?;
-                let keys = keys
-                    .into_iter()
-                    .map(|pat| Rule::Pattern(pat))
-                    .collect::<Vec<Rule>>();
+                let keys = keys.into_iter().map(Rule::Pattern).collect::<Vec<Rule>>();
                 (flags, passwords, commands, keys)
             }
             _ => not_convertible_type_error!(v, "Response type not convertible to Rule."),
