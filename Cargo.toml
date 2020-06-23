@@ -89,6 +89,9 @@ required-features = ["async-std-comp"]
 name = "parser"
 required-features = ["aio"]
 
+[[test]]
+name = "test_acl"
+
 [[bench]]
 name = "bench_basic"
 harness = false
