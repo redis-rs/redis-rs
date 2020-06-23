@@ -385,6 +385,8 @@ pub use crate::{
 
 mod macros;
 
+pub mod acl;
+
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
