@@ -10,6 +10,8 @@ use crate::geo;
 #[cfg(feature = "streams")]
 use crate::streams;
 
+use crate::acl;
+
 macro_rules! implement_commands {
     (
         $lifetime: lifetime
@@ -903,6 +905,96 @@ implement_commands! {
     /// Posts a message to the given channel.
     fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
         cmd("PUBLISH").arg(channel).arg(message)
+    }
+
+    // ACL commands
+
+    /// When Redis is configured to use an ACL file (with the aclfile
+    /// configuration option), this command will reload the ACLs from the file,
+    /// replacing all the current ACL rules with the ones defined in the file.
+    fn acl_load<>() {
+        cmd("ACL").arg("LOAD")
+    }
+
+    /// When Redis is configured to use an ACL file (with the aclfile
+    /// configuration option), this command will save the currently defined
+    /// ACLs from the server memory to the ACL file.
+    fn acl_save<>() {
+        cmd("ACL").arg("SAVE")
+    }
+
+    /// Shows the currently active ACL rules in the Redis server.
+    fn acl_list<>() {
+        cmd("ACL").arg("LIST")
+    }
+
+    /// Shows a list of all the usernames of the currently configured users in
+    /// the Redis ACL system.
+    fn acl_users<>() {
+        cmd("ACL").arg("USERS")
+    }
+
+    /// Returns all the rules defined for an existing ACL user.
+    fn acl_getuser<K: ToRedisArgs>(username: K) {
+        cmd("ACL").arg("GETUSER").arg(username)
+    }
+
+    /// Creates an ACL user without any privilege.
+    fn acl_setuser<K: ToRedisArgs>(username: K) {
+        cmd("ACL").arg("SETUSER").arg(username)
+    }
+
+    /// Creates an ACL user with the specified rules or modify the rules of
+    /// an existing user.
+    fn acl_setuser_rules<K: ToRedisArgs>(username: K, rules: &'a [acl::Rule]) {
+        cmd("ACL").arg("SETUSER").arg(username).arg(rules)
+    }
+
+    /// Delete all the specified ACL users and terminate all the connections
+    /// that are authenticated with such users.
+    fn acl_deluser<K: ToRedisArgs>(usernames: &'a [K]) {
+        cmd("ACL").arg("DELUSER").arg(usernames)
+    }
+
+    /// Shows the available ACL categories.
+    fn acl_cat<>() {
+        cmd("ACL").arg("CAT")
+    }
+
+    /// Shows all the Redis commands in the specified category.
+    fn acl_cat_categoryname<K: ToRedisArgs>(categoryname: K) {
+        cmd("ACL").arg("CAT").arg(categoryname)
+    }
+
+    /// Generates a 256-bits password starting from /dev/urandom if available.
+    fn acl_genpass<>() {
+        cmd("ACL").arg("GENPASS")
+    }
+
+    /// Generates a 1-to-1024-bits password starting from /dev/urandom if available.
+    fn acl_genpass_bits<>(bits: isize) {
+        cmd("ACL").arg("GENPASS").arg(bits)
+    }
+
+    /// Returns the username the current connection is authenticated with.
+    fn acl_whoami<>() {
+        cmd("ACL").arg("WHOAMI")
+    }
+
+    /// Shows a list of recent ACL security events
+    fn acl_log<>(count: isize) {
+        cmd("ACL").arg("LOG").arg(count)
+
+    }
+
+    /// Clears the ACL log.
+    fn acl_log_reset<>() {
+        cmd("ACL").arg("LOG").arg("RESET")
+    }
+
+    /// Returns a helpful text describing the different subcommands.
+    fn acl_help<>() {
+        cmd("ACL").arg("HELP")
     }
 
     //
