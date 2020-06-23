@@ -7,6 +7,9 @@ use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
 #[cfg(feature = "geospatial")]
 use crate::geo;
 
+#[cfg(feature = "streams")]
+use crate::streams;
+
 macro_rules! implement_commands {
     (
         $lifetime: lifetime
@@ -902,7 +905,9 @@ implement_commands! {
         cmd("PUBLISH").arg(channel).arg(message)
     }
 
+    //
     // geospatial commands
+    //
 
     /// Adds the specified geospatial items to the specified key.
     ///
@@ -1100,6 +1105,665 @@ implement_commands! {
             .arg(options)
     }
 
+    //
+    // streams commands
+    //
+
+    /// Ack pending stream messages checked out by a consumer.
+    ///
+    /// ```text
+    /// XACK <key> <group> <id> <id> ... <id>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xack<K: ToRedisArgs, G: ToRedisArgs, I: ToRedisArgs>(
+        key: K,
+        group: G,
+        ids: &'a [I]) {
+        cmd("XACK")
+            .arg(key)
+            .arg(group)
+            .arg(ids)
+    }
+
+
+    /// Add a stream message by `key`. Use `*` as the `id` for the current timestamp.
+    ///
+    /// ```text
+    /// XADD key <ID or *> [field value] [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd<K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(
+        key: K,
+        id: ID,
+        items: &'a [(F, V)]
+    ) {
+        cmd("XADD").arg(key).arg(id).arg(items)
+    }
+
+
+    /// BTreeMap variant for adding a stream message by `key`.
+    /// Use `*` as the `id` for the current timestamp.
+    ///
+    /// ```text
+    /// XADD key <ID or *> [rust BTreeMap] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
+        key: K,
+        id: ID,
+        map: BTM
+    ) {
+        cmd("XADD").arg(key).arg(id).arg(map)
+    }
+
+    /// Add a stream message while capping the stream at a maxlength.
+    ///
+    /// ```text
+    /// XADD key [MAXLEN [~|=] <count>] <ID or *> [field value] [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_maxlen<
+        K: ToRedisArgs,
+        ID: ToRedisArgs,
+        F: ToRedisArgs,
+        V: ToRedisArgs
+    >(
+        key: K,
+        maxlen: streams::StreamMaxlen,
+        id: ID,
+        items: &'a [(F, V)]
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(maxlen)
+            .arg(id)
+            .arg(items)
+    }
+
+
+    /// BTreeMap variant for adding a stream message while capping the stream at a maxlength.
+    ///
+    /// ```text
+    /// XADD key [MAXLEN [~|=] <count>] <ID or *> [rust BTreeMap] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_maxlen_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
+        key: K,
+        maxlen: streams::StreamMaxlen,
+        id: ID,
+        map: BTM
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(maxlen)
+            .arg(id)
+            .arg(map)
+    }
+
+
+
+    /// Claim pending, unacked messages, after some period of time,
+    /// currently checked out by another consumer.
+    ///
+    /// This method only accepts the must-have arguments for claiming messages.
+    /// If optional arguments are required, see `xclaim_options` below.
+    ///
+    /// ```text
+    /// XCLAIM <key> <group> <consumer> <min-idle-time> [<ID-1> <ID-2>]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xclaim<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs, MIT: ToRedisArgs, ID: ToRedisArgs>(
+        key: K,
+        group: G,
+        consumer: C,
+        min_idle_time: MIT,
+        ids: &'a [ID]
+    ) {
+        cmd("XCLAIM")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+            .arg(min_idle_time)
+            .arg(ids)
+    }
+
+    /// This is the optional arguments version for claiming unacked, pending messages
+    /// currently checked out by another consumer.
+    ///
+    /// ```no_run
+    /// use redis::{Connection,Commands,RedisResult};
+    /// use redis::streams::{StreamClaimOptions,StreamClaimReply};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// // Claim all pending messages for key "k1",
+    /// // from group "g1", checked out by consumer "c1"
+    /// // for 10ms with RETRYCOUNT 2 and FORCE
+    ///
+    /// let opts = StreamClaimOptions::default()
+    ///     .with_force()
+    ///     .retry(2);
+    /// let results: RedisResult<StreamClaimReply> =
+    ///     con.xclaim_options("k1", "g1", "c1", 10, &["0"], opts);
+    ///
+    /// // All optional arguments return a `Result<StreamClaimReply>` with one exception:
+    /// // Passing JUSTID returns only the message `id` and omits the HashMap for each message.
+    ///
+    /// let opts = StreamClaimOptions::default()
+    ///     .with_justid();
+    /// let results: RedisResult<Vec<String>> =
+    ///     con.xclaim_options("k1", "g1", "c1", 10, &["0"], opts);
+    /// ```
+    ///
+    /// ```text
+    /// XCLAIM <key> <group> <consumer> <min-idle-time> <ID-1> <ID-2>
+    ///     [IDLE <milliseconds>] [TIME <mstime>] [RETRYCOUNT <count>]
+    ///     [FORCE] [JUSTID]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xclaim_options<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        C: ToRedisArgs,
+        MIT: ToRedisArgs,
+        ID: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        consumer: C,
+        min_idle_time: MIT,
+        ids: &'a [ID],
+        options: streams::StreamClaimOptions
+    ) {
+        cmd("XCLAIM")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+            .arg(min_idle_time)
+            .arg(ids)
+            .arg(options)
+    }
+
+
+    /// Deletes a list of `id`s for a given stream `key`.
+    ///
+    /// ```text
+    /// XDEL <key> [<ID1> <ID2> ... <IDN>]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xdel<K: ToRedisArgs, ID: ToRedisArgs>(
+        key: K,
+        ids: &'a [ID]
+    ) {
+        cmd("XDEL").arg(key).arg(ids)
+    }
+
+
+    /// This command is used for creating a consumer `group`. It expects the stream key
+    /// to already exist. Otherwise, use `xgroup_create_mkstream` if it doesn't.
+    /// The `id` is the starting message id all consumers should read from. Use `$` If you want
+    /// all consumers to read from the last message added to stream.
+    ///
+    /// ```text
+    /// XGROUP CREATE <key> <groupname> <id or $>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_create<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(
+        key: K,
+        group: G,
+        id: ID
+    ) {
+        cmd("XGROUP")
+            .arg("CREATE")
+            .arg(key)
+            .arg(group)
+            .arg(id)
+    }
+
+
+    /// This is the alternate version for creating a consumer `group`
+    /// which makes the stream if it doesn't exist.
+    ///
+    /// ```text
+    /// XGROUP CREATE <key> <groupname> <id or $> [MKSTREAM]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_create_mkstream<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        ID: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        id: ID
+    ) {
+        cmd("XGROUP")
+            .arg("CREATE")
+            .arg(key)
+            .arg(group)
+            .arg(id)
+            .arg("MKSTREAM")
+    }
+
+
+    /// Alter which `id` you want consumers to begin reading from an existing
+    /// consumer `group`.
+    ///
+    /// ```text
+    /// XGROUP SETID <key> <groupname> <id or $>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_setid<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(
+        key: K,
+        group: G,
+        id: ID
+    ) {
+        cmd("XGROUP")
+            .arg("SETID")
+            .arg(key)
+            .arg(group)
+            .arg(id)
+    }
+
+
+    /// Destroy an existing consumer `group` for a given stream `key`
+    ///
+    /// ```text
+    /// XGROUP SETID <key> <groupname> <id or $>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_destroy<K: ToRedisArgs, G: ToRedisArgs>(
+        key: K,
+        group: G
+    ) {
+        cmd("XGROUP").arg("DESTROY").arg(key).arg(group)
+    }
+
+    /// This deletes a `consumer` from an existing consumer `group`
+    /// for given stream `key.
+    ///
+    /// ```text
+    /// XGROUP DELCONSUMER <key> <groupname> <consumername>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_delconsumer<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs>(
+        key: K,
+        group: G,
+        consumer: C
+    ) {
+        cmd("XGROUP")
+            .arg("DELCONSUMER")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+    }
+
+
+    /// This returns all info details about
+    /// which consumers have read messages for given consumer `group`.
+    /// Take note of the StreamInfoConsumersReply return type.
+    ///
+    /// *It's possible this return value might not contain new fields
+    /// added by Redis in future versions.*
+    ///
+    /// ```text
+    /// XINFO CONSUMERS <key> <group>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xinfo_consumers<K: ToRedisArgs, G: ToRedisArgs>(
+        key: K,
+        group: G
+    ) {
+        cmd("XINFO")
+            .arg("CONSUMERS")
+            .arg(key)
+            .arg(group)
+    }
+
+
+    /// Returns all consumer `group`s created for a given stream `key`.
+    /// Take note of the StreamInfoGroupsReply return type.
+    ///
+    /// *It's possible this return value might not contain new fields
+    /// added by Redis in future versions.*
+    ///
+    /// ```text
+    /// XINFO GROUPS <key>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xinfo_groups<K: ToRedisArgs>(key: K) {
+        cmd("XINFO").arg("GROUPS").arg(key)
+    }
+
+
+    /// Returns info about high-level stream details
+    /// (first & last message `id`, length, number of groups, etc.)
+    /// Take note of the StreamInfoStreamReply return type.
+    ///
+    /// *It's possible this return value might not contain new fields
+    /// added by Redis in future versions.*
+    ///
+    /// ```text
+    /// XINFO STREAM <key>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xinfo_stream<K: ToRedisArgs>(key: K) {
+        cmd("XINFO").arg("STREAM").arg(key)
+    }
+
+    /// Returns the number of messages for a given stream `key`.
+    ///
+    /// ```text
+    /// XLEN <key>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xlen<K: ToRedisArgs>(key: K) {
+        cmd("XLEN").arg(key)
+    }
+
+
+    /// This is a basic version of making XPENDING command calls which only
+    /// passes a stream `key` and consumer `group` and it
+    /// returns details about which consumers have pending messages
+    /// that haven't been acked.
+    ///
+    /// You can use this method along with
+    /// `xclaim` or `xclaim_options` for determining which messages
+    /// need to be retried.
+    ///
+    /// Take note of the StreamPendingReply return type.
+    ///
+    /// ```text
+    /// XPENDING <key> <group> [<start> <stop> <count> [<consumer>]]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xpending<K: ToRedisArgs, G: ToRedisArgs>(
+        key: K,
+        group: G
+    )  {
+        cmd("XPENDING").arg(key).arg(group)
+    }
+
+
+    /// This XPENDING version returns a list of all messages over the range.
+    /// You can use this for paginating pending messages (but without the message HashMap).
+    ///
+    /// Start and end follow the same rules `xrange` args. Set start to `-`
+    /// and end to `+` for the entire stream.
+    ///
+    /// Take note of the StreamPendingCountReply return type.
+    ///
+    /// ```text
+    /// XPENDING <key> <group> <start> <stop> <count>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xpending_count<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        S: ToRedisArgs,
+        E: ToRedisArgs,
+        C: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        start: S,
+        end: E,
+        count: C
+    )  {
+        cmd("XPENDING")
+            .arg(key)
+            .arg(group)
+            .arg(start)
+            .arg(end)
+            .arg(count)
+    }
+
+
+    /// An alternate version of `xpending_count` which filters by `consumer` name.
+    ///
+    /// Start and end follow the same rules `xrange` args. Set start to `-`
+    /// and end to `+` for the entire stream.
+    ///
+    /// Take note of the StreamPendingCountReply return type.
+    ///
+    /// ```text
+    /// XPENDING <key> <group> <start> <stop> <count> <consumer>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xpending_consumer_count<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        S: ToRedisArgs,
+        E: ToRedisArgs,
+        C: ToRedisArgs,
+        CN: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        start: S,
+        end: E,
+        count: C,
+        consumer: CN
+    ) {
+        cmd("XPENDING")
+            .arg(key)
+            .arg(group)
+            .arg(start)
+            .arg(end)
+            .arg(count)
+            .arg(consumer)
+    }
+
+    /// Returns a range of messages in a given stream `key`.
+    ///
+    /// Set `start` to `-` to begin at the first message.
+    /// Set `end` to `+` to end the most recent message.
+    /// You can pass message `id` to both `start` and `end`.
+    ///
+    /// Take note of the StreamRangeReply return type.
+    ///
+    /// ```text
+    /// XRANGE key start end
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xrange<K: ToRedisArgs, S: ToRedisArgs, E: ToRedisArgs>(
+        key: K,
+        start: S,
+        end: E
+    )  {
+        cmd("XRANGE").arg(key).arg(start).arg(end)
+    }
+
+
+    /// A helper method for automatically returning all messages in a stream by `key`.
+    /// **Use with caution!**
+    ///
+    /// ```text
+    /// XRANGE key - +
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xrange_all<K: ToRedisArgs>(key: K)  {
+        cmd("XRANGE").arg(key).arg("-").arg("+")
+    }
+
+
+    /// A method for paginating a stream by `key`.
+    ///
+    /// ```text
+    /// XRANGE key start end [COUNT <n>]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xrange_count<K: ToRedisArgs, S: ToRedisArgs, E: ToRedisArgs, C: ToRedisArgs>(
+        key: K,
+        start: S,
+        end: E,
+        count: C
+    )  {
+        cmd("XRANGE")
+            .arg(key)
+            .arg(start)
+            .arg(end)
+            .arg("COUNT")
+            .arg(count)
+    }
+
+
+    /// Read a list of `id`s for each stream `key`.
+    /// This is the basic form of reading streams.
+    /// For more advanced control, like blocking, limiting, or reading by consumer `group`,
+    /// see `xread_options`.
+    ///
+    /// ```text
+    /// XREAD STREAMS key_1 key_2 ... key_N ID_1 ID_2 ... ID_N
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xread<K: ToRedisArgs, ID: ToRedisArgs>(
+        keys: &'a [K],
+        ids: &'a [ID]
+    ) {
+        cmd("XREAD").arg("STREAMS").arg(keys).arg(ids)
+    }
+
+    /// This method handles setting optional arguments for
+    /// `XREAD` or `XREADGROUP` Redis commands.
+    /// ```no_run
+    /// use redis::{Connection,RedisResult,Commands};
+    /// use redis::streams::{StreamReadOptions,StreamReadReply};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// // Read 10 messages from the start of the stream,
+    /// // without registering as a consumer group.
+    ///
+    /// let opts = StreamReadOptions::default()
+    ///     .count(10);
+    /// let results: RedisResult<StreamReadReply> =
+    ///     con.xread_options(&["k1"], &["0"], opts);
+    ///
+    /// // Read all undelivered messages for a given
+    /// // consumer group. Be advised: the consumer group must already
+    /// // exist before making this call. Also note: we're passing
+    /// // '>' as the id here, which means all undelivered messages.
+    ///
+    /// let opts = StreamReadOptions::default()
+    ///     .group("group-1", "consumer-1");
+    /// let results: RedisResult<StreamReadReply> =
+    ///     con.xread_options(&["k1"], &[">"], opts);
+    /// ```
+    ///
+    /// ```text
+    /// XREAD [BLOCK <milliseconds>] [COUNT <count>]
+    ///     STREAMS key_1 key_2 ... key_N
+    ///     ID_1 ID_2 ... ID_N
+    ///
+    /// XREADGROUP [BLOCK <milliseconds>] [COUNT <count>] [NOACK] [GROUP group-name consumer-name]
+    ///     STREAMS key_1 key_2 ... key_N
+    ///     ID_1 ID_2 ... ID_N
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
+        keys: &'a [K],
+        ids: &'a [ID],
+        options: streams::StreamReadOptions
+    ) {
+        cmd(if options.read_only() {
+            "XREAD"
+        } else {
+            "XREADGROUP"
+        })
+        .arg(options)
+        .arg("STREAMS")
+        .arg(keys)
+        .arg(ids)
+    }
+
+    /// This is the reverse version of `xrange`.
+    /// The same rules apply for `start` and `end` here.
+    ///
+    /// ```text
+    /// XREVRANGE key end start
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xrevrange<K: ToRedisArgs, E: ToRedisArgs, S: ToRedisArgs>(
+        key: K,
+        end: E,
+        start: S
+    ) {
+        cmd("XREVRANGE").arg(key).arg(end).arg(start)
+    }
+
+    /// This is the reverse version of `xrange_all`.
+    /// The same rules apply for `start` and `end` here.
+    ///
+    /// ```text
+    /// XREVRANGE key + -
+    /// ```
+    fn xrevrange_all<K: ToRedisArgs>(key: K) {
+        cmd("XREVRANGE").arg(key).arg("+").arg("-")
+    }
+
+    /// This is the reverse version of `xrange_count`.
+    /// The same rules apply for `start` and `end` here.
+    ///
+    /// ```text
+    /// XREVRANGE key end start [COUNT <n>]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xrevrange_count<K: ToRedisArgs, E: ToRedisArgs, S: ToRedisArgs, C: ToRedisArgs>(
+        key: K,
+        end: E,
+        start: S,
+        count: C
+    ) {
+        cmd("XREVRANGE")
+            .arg(key)
+            .arg(end)
+            .arg(start)
+            .arg("COUNT")
+            .arg(count)
+    }
+
+
+    /// Trim a stream `key` to a MAXLEN count.
+    ///
+    /// ```text
+    /// XTRIM <key> MAXLEN [~|=] <count>  (Same as XADD MAXLEN option)
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xtrim<K: ToRedisArgs>(
+        key: K,
+        maxlen: streams::StreamMaxlen
+    ) {
+        cmd("XTRIM").arg(key).arg(maxlen)
+    }
 }
 
 /// Allows pubsub callbacks to stop receiving messages.
