@@ -441,7 +441,11 @@ where
     C: ConnectionLike,
 {
     if let Some(passwd) = &connection_info.passwd {
-        match cmd("AUTH").arg(passwd).query_async(con).await {
+        let mut command = cmd("AUTH");
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
+        }
+        match command.arg(passwd).query_async(con).await {
             Ok(Value::Okay) => (),
             _ => {
                 fail!((
@@ -908,7 +912,20 @@ impl MultiplexedConnection {
             pipeline,
             db: connection_info.db,
         };
-        authenticate(connection_info, &mut con).await?;
+        let driver = {
+            let auth = authenticate(connection_info, &mut con);
+            futures_util::pin_mut!(auth);
+
+            match futures_util::future::select(auth, driver).await {
+                futures_util::future::Either::Left((result, driver)) => {
+                    result?;
+                    driver
+                }
+                futures_util::future::Either::Right(((), _)) => {
+                    unreachable!("Multiplexed connection driver unexpectedly terminated")
+                }
+            }
+        };
         Ok((con, driver))
     }
 }

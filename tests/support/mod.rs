@@ -240,6 +240,7 @@ impl TestContext {
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: Box::new(server.get_client_addr().clone()),
             db: 0,
+            username: None,
             passwd: None,
         })
         .unwrap();

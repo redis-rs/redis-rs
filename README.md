@@ -47,6 +47,29 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 }
 ```
 
+## Cluster Support
+
+Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
+
+`redis = { version = "0.16.0", features = [ "cluster"] }`
+
+Then you can simply use the `ClusterClient` which accepts a list of available nodes.
+
+```rust
+use redis::cluster::ClusterClient;
+use redis::Commands;
+
+fn fetch_an_integer() -> String {
+    // connect to redis
+    let nodes = vec!["redis://127.0.0.1/"];
+    let client = ClusterClient::open(nodes).unwrap();
+    let mut connection = client.get_connection().unwrap();
+    let _: () = connection.set("test", "test_data").unwrap();
+    let rv: String = connection.get("test").unwrap();
+    return rv;
+}
+```
+
 ## Development
 
 If you want to develop on the library there are a few commands provided

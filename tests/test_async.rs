@@ -374,6 +374,29 @@ async fn io_error_on_kill_issue_320() {
     assert_eq!(err.kind(), ErrorKind::IoError); // Shouldn't this be IoError?
 }
 
+#[tokio::test]
+async fn invalid_password_issue_343() {
+    let ctx = TestContext::new();
+    let coninfo = redis::ConnectionInfo {
+        addr: Box::new(ctx.server.get_client_addr().clone()),
+        db: 0,
+        username: None,
+        passwd: Some("asdcasc".to_string()),
+    };
+    let client = redis::Client::open(coninfo).unwrap();
+    let err = client
+        .get_multiplexed_tokio_connection()
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(
+        err.kind(),
+        ErrorKind::AuthenticationFailed,
+        "Unexpected error: {}",
+        err
+    );
+}
+
 mod pub_sub {
     use std::collections::HashMap;
     use std::time::Duration;
