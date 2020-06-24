@@ -42,7 +42,7 @@ impl RedisCluster {
                     folders.push(path);
                     addrs.push(format!("127.0.0.1:{}", port));
                     dbg!(&cmd);
-                    vec![cmd.spawn().unwrap()]
+                    cmd.spawn().unwrap()
                 },
             ));
         }

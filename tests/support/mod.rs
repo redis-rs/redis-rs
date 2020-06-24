@@ -48,7 +48,8 @@ enum ServerType {
 }
 
 pub struct RedisServer {
-    pub processes: Vec<process::Child>,
+    pub process: process::Child,
+    stunnel_process: Option<process::Child>,
     addr: redis::ConnectionAddr,
 }
 
@@ -86,125 +87,132 @@ impl RedisServer {
                     .unwrap();
                 let redis_port = redis_listener.local_addr().unwrap().port();
                 if tls {
-                    // create a self-signed TLS server cert
-                    process::Command::new("openssl")
-                        .args(&[
-                            "req",
-                            "-nodes",
-                            "-new",
-                            "-x509",
-                            "-keyout",
-                            &format!("/tmp/redis-rs-test-{}.pem", redis_port),
-                            "-out",
-                            &format!("/tmp/redis-rs-test-{}.crt", redis_port),
-                            "-subj",
-                            "/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost",
-                        ])
-                        .stdout(process::Stdio::null())
-                        .stderr(process::Stdio::null())
-                        .spawn()
-                        .expect("failed to spawn openssl")
-                        .wait()
-                        .expect("failed to create self-signed TLS certificate");
-
-                    // prepare the run of stunnel
-                    let stunnel_listener = net2::TcpBuilder::new_v4()
-                        .unwrap()
-                        .reuse_address(true)
-                        .unwrap()
-                        .bind("127.0.0.1:0")
-                        .unwrap()
-                        .listen(1)
-                        .unwrap();
-                    let stunnel_port = stunnel_listener.local_addr().unwrap().port();
-                    let stunnel_config_path = format!("/tmp/redis-rs-stunnel-{}.conf", redis_port);
-                    let mut stunnel_config_file = fs::File::create(&stunnel_config_path).unwrap();
-                    stunnel_config_file
-                        .write_all(
-                            format!(
-                                r#"
-                                cert = /tmp/redis-rs-test-{redis_port}.crt
-                                key = /tmp/redis-rs-test-{redis_port}.pem
-                                verify = 0
-                                foreground = yes
-                                [redis]
-                                accept = 127.0.0.1:{stunnel_port}
-                                connect = 127.0.0.1:{redis_port}
-                                    "#,
-                                stunnel_port = stunnel_port,
-                                redis_port = redis_port
-                            )
-                            .as_bytes(),
-                        )
-                        .expect("could not write stunnel config file");
-
-                    // prepare a regular redis, with stunnel in front
-                    let addr = redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port);
-                    let mut server = RedisServer::new_with_addr(addr, |cmd| {
-                        let stunnel = process::Command::new("stunnel")
-                            .arg(&stunnel_config_path)
-                            .stdout(process::Stdio::null())
-                            .stderr(process::Stdio::null())
-                            .spawn()
-                            .expect("could not start stunnel");
-                        vec![stunnel, cmd.spawn().unwrap()]
-                    });
-                    server.addr = redis::ConnectionAddr::TcpTls {
+                    let addr = redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
-                        port: stunnel_port,
+                        port: redis_port,
                         insecure: true,
                     };
-                    server
+                    RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
                 } else {
                     let addr = redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port);
-                    RedisServer::new_with_addr(addr, |cmd| vec![cmd.spawn().unwrap()])
+                    RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
                 }
             }
             ServerType::Unix => {
                 let (a, b) = rand::random::<(u64, u64)>();
                 let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
                 let addr = redis::ConnectionAddr::Unix(PathBuf::from(&path));
-                RedisServer::new_with_addr(addr, |cmd| vec![cmd.spawn().unwrap()])
+                RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
             }
         }
     }
 
-    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> Vec<process::Child>>(
+    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
         spawner: F,
     ) -> RedisServer {
-        let mut cmd = process::Command::new("redis-server");
-        cmd.stdout(process::Stdio::null())
+        let mut redis_cmd = process::Command::new("redis-server");
+        redis_cmd
+            .stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
-
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
-                cmd.arg("--port")
+                redis_cmd
+                    .arg("--port")
                     .arg(server_port.to_string())
                     .arg("--bind")
                     .arg(bind);
+
+                RedisServer {
+                    process: spawner(&mut redis_cmd),
+                    stunnel_process: None,
+                    addr,
+                }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                cmd.arg("--port")
-                    .arg(port.to_string())
-                    .arg("--bind")
-                    .arg(host);
+                // prepare redis with unix socket
+                redis_cmd
+                    .arg("--port")
+                    .arg("0")
+                    .arg("--unixsocket")
+                    .arg(&format!("/tmp/redis-rs-test-{}.sock", port));
+
+                // create a self-signed TLS server cert
+                process::Command::new("openssl")
+                    .args(&[
+                        "req",
+                        "-nodes",
+                        "-new",
+                        "-x509",
+                        "-keyout",
+                        &format!("/tmp/redis-rs-test-{}.pem", port),
+                        "-out",
+                        &format!("/tmp/redis-rs-test-{}.crt", port),
+                        "-subj",
+                        "/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost",
+                    ])
+                    .stdout(process::Stdio::null())
+                    .stderr(process::Stdio::null())
+                    .spawn()
+                    .expect("failed to spawn openssl")
+                    .wait()
+                    .expect("failed to create self-signed TLS certificate");
+
+                let stunnel_config_path = format!("/tmp/redis-rs-stunnel-{}.conf", port);
+                let mut stunnel_config_file = fs::File::create(&stunnel_config_path).unwrap();
+                stunnel_config_file
+                    .write_all(
+                        format!(
+                            r#"
+                            cert = /tmp/redis-rs-test-{stunnel_port}.crt
+                            key = /tmp/redis-rs-test-{stunnel_port}.pem
+                            verify = 0
+                            foreground = yes
+                            [redis]
+                            accept = {host}:{stunnel_port}
+                            connect = /tmp/redis-rs-test-{stunnel_port}.sock
+                            "#,
+                            host = host,
+                            stunnel_port = port,
+                        )
+                        .as_bytes(),
+                    )
+                    .expect("could not write stunnel config file");
+
+                let addr = redis::ConnectionAddr::TcpTls {
+                    host: "127.0.0.1".to_string(),
+                    port,
+                    insecure: true,
+                };
+                let mut stunnel_cmd = process::Command::new("stunnel");
+                stunnel_cmd
+                    .stdout(process::Stdio::null())
+                    .stderr(process::Stdio::null())
+                    .arg(&stunnel_config_path);
+
+                RedisServer {
+                    process: spawner(&mut redis_cmd),
+                    stunnel_process: Some(stunnel_cmd.spawn().expect("could not start stunnel")),
+                    addr,
+                }
             }
             redis::ConnectionAddr::Unix(ref path) => {
-                cmd.arg("--port").arg("0").arg("--unixsocket").arg(&path);
+                redis_cmd
+                    .arg("--port")
+                    .arg("0")
+                    .arg("--unixsocket")
+                    .arg(&path);
+                RedisServer {
+                    process: spawner(&mut redis_cmd),
+                    stunnel_process: None,
+                    addr,
+                }
             }
-        };
-
-        RedisServer {
-            processes: spawner(&mut cmd),
-            addr,
         }
     }
 
     pub fn wait(&mut self) {
-        for p in self.processes.iter_mut() {
-            p.wait().unwrap();
-        }
+        self.process.wait().unwrap();
     }
 
     pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
@@ -212,10 +220,8 @@ impl RedisServer {
     }
 
     pub fn stop(&mut self) {
-        for p in self.processes.iter_mut() {
-            let _ = p.kill();
-            let _ = p.wait();
-        }
+        let _ = self.process.kill();
+        let _ = self.process.wait();
         if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
             fs::remove_file(&path).ok();
         }
@@ -247,11 +253,16 @@ impl TestContext {
         let mut con;
 
         let millisecond = Duration::from_millis(1);
+        let mut retries = 0;
         loop {
             match client.get_connection() {
                 Err(err) => {
                     if err.is_connection_refusal() {
                         sleep(millisecond);
+                        retries += 1;
+                        if retries > 100000 {
+                            panic!("Tried to connect too many times, last error: {}", err);
+                        }
                     } else {
                         panic!("Could not connect: {}", err);
                     }
