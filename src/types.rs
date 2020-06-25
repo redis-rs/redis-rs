@@ -590,11 +590,20 @@ impl InfoDict {
 pub trait RedisWrite {
     /// Accepts a serialized redis command.
     fn write_arg(&mut self, arg: &[u8]);
+
+    /// Accepts a serialized redis command.
+    fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
+        self.write_arg(&arg.to_string().as_bytes())
+    }
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
     fn write_arg(&mut self, arg: &[u8]) {
         self.push(arg.to_owned());
+    }
+
+    fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
+        self.push(arg.to_string().into_bytes())
     }
 }
 
