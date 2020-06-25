@@ -212,7 +212,7 @@ impl ToRedisArgs for RadiusOptions {
 
         if let Some(n) = self.count {
             out.write_arg(b"COUNT");
-            out.write_arg(format!("{}", n).as_bytes());
+            out.write_arg_fmt(n);
         }
 
         match self.order {
