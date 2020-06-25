@@ -70,32 +70,30 @@ impl ToRedisArgs for Rule {
     {
         use self::Rule::*;
 
-        let rule = match self {
-            On => "on".to_owned(),
-            Off => "off".to_owned(),
+        match self {
+            On => out.write_arg(b"on"),
+            Off => out.write_arg(b"off"),
 
-            AddCommand(cmd) => "+".to_owned() + cmd,
-            RemoveCommand(cmd) => "-".to_owned() + cmd,
-            AddCategory(cat) => "+@".to_owned() + cat,
-            RemoveCategory(cat) => "-@".to_owned() + cat,
-            AllCommands => "allcommands".to_owned(),
-            NoCommands => "nocommands".to_owned(),
+            AddCommand(cmd) => out.write_arg_fmt(format_args!("+{}", cmd)),
+            RemoveCommand(cmd) => out.write_arg_fmt(format_args!("-{}", cmd)),
+            AddCategory(cat) => out.write_arg_fmt(format_args!("+@{}", cat)),
+            RemoveCategory(cat) => out.write_arg_fmt(format_args!("-@{}", cat)),
+            AllCommands => out.write_arg(b"allcommands"),
+            NoCommands => out.write_arg(b"nocommands"),
 
-            AddPass(pass) => ">".to_owned() + pass,
-            RemovePass(pass) => "<".to_owned() + pass,
-            AddHashedPass(pass) => "#".to_owned() + pass,
-            RemoveHashedPass(pass) => "!".to_owned() + pass,
-            NoPass => "nopass".to_owned(),
-            ResetPass => "resetpass".to_owned(),
+            AddPass(pass) => out.write_arg_fmt(format_args!(">{}", pass)),
+            RemovePass(pass) => out.write_arg_fmt(format_args!("<{}", pass)),
+            AddHashedPass(pass) => out.write_arg_fmt(format_args!("#{}", pass)),
+            RemoveHashedPass(pass) => out.write_arg_fmt(format_args!("!{}", pass)),
+            NoPass => out.write_arg(b"nopass"),
+            ResetPass => out.write_arg(b"resetpass"),
 
-            Pattern(pat) => "~".to_owned() + pat,
-            AllKeys => "allkeys".to_owned(),
-            ResetKeys => "resetkeys".to_owned(),
+            Pattern(pat) => out.write_arg_fmt(format_args!("~{}", pat)),
+            AllKeys => out.write_arg(b"allkeys"),
+            ResetKeys => out.write_arg(b"resetkeys"),
 
-            Reset => "reset".to_owned(),
+            Reset => out.write_arg(b"reset"),
         };
-
-        out.write_arg(rule.as_bytes());
     }
 }
 
