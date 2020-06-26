@@ -213,6 +213,9 @@ impl RedisServer {
 
     pub fn wait(&mut self) {
         self.process.wait().unwrap();
+        if let Some(p) = self.stunnel_process.as_mut() {
+            p.wait().unwrap();
+        };
     }
 
     pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
@@ -222,6 +225,10 @@ impl RedisServer {
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
+        if let Some(p) = self.stunnel_process.as_mut() {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
         if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
             fs::remove_file(&path).ok();
         }
