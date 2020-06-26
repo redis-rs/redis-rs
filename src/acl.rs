@@ -1,15 +1,17 @@
 //! Defines types to use with the ACL commands.
 
-use crate::types::{ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value};
+use crate::types::{
+    ErrorKind, FromRedisValue, RedisError, RedisResult, RedisWrite, ToRedisArgs, Value,
+};
 
-macro_rules! not_convertible_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!((
+macro_rules! not_convertible_error {
+    ($v:expr, $det:expr) => {
+        RedisError::from((
             ErrorKind::TypeError,
-            "Response type not convertible to Rule",
-            format!("{:?} (response was {:?})", $det, $v)
+            "Response type not convertible",
+            format!("{:?} (response was {:?})", $det, $v),
         ))
-    }};
+    };
 }
 
 /// ACL rules are used in order to activate or remove a flag, or to perform a
@@ -135,54 +137,86 @@ pub struct AclInfo {
 
 impl FromRedisValue for AclInfo {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let values: Vec<Value> = FromRedisValue::from_redis_value(v)?;
-        let mut it = values.into_iter().skip(1).step_by(2);
+        let mut it = v
+            .as_sequence()
+            .ok_or_else(|| not_convertible_error!(v, ""))?
+            .iter()
+            .skip(1)
+            .step_by(2);
+
         let (flags, passwords, commands, keys) = match (it.next(), it.next(), it.next(), it.next())
         {
             (Some(flags), Some(passwords), Some(commands), Some(keys)) => {
                 // Parse flags
                 // Ref: https://git.io/JfNyb
-                let flag_values: Vec<Vec<u8>> = FromRedisValue::from_redis_value(&flags)?;
-                let mut flags = Vec::with_capacity(flag_values.len());
-                for flag in flag_values.into_iter() {
-                    let rule = match flag.as_slice() {
-                        b"on" => Rule::On,
-                        b"off" => Rule::Off,
-                        b"allkeys" => Rule::AllKeys,
-                        b"allcommands" => Rule::AllCommands,
-                        b"nopass" => Rule::NoPass,
-                        _ => not_convertible_type_error!("", "Expect an ACL flag"),
-                    };
-                    flags.push(rule);
-                }
+                let flags = flags
+                    .as_sequence()
+                    .ok_or_else(|| {
+                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                    })?
+                    .iter()
+                    .map(|flag| match flag {
+                        Value::Data(flag) => match flag.as_slice() {
+                            b"on" => Ok(Rule::On),
+                            b"off" => Ok(Rule::Off),
+                            b"allkeys" => Ok(Rule::AllKeys),
+                            b"allcommands" => Ok(Rule::AllCommands),
+                            b"nopass" => Ok(Rule::NoPass),
+                            _ => Err(not_convertible_error!(flag, "Expect a valid ACL flag")),
+                        },
+                        _ => Err(not_convertible_error!(
+                            flag,
+                            "Expect an arbitrary binary data"
+                        )),
+                    })
+                    .collect::<RedisResult<_>>()?;
 
-                let passwords: Vec<String> = FromRedisValue::from_redis_value(&passwords)?;
                 let passwords = passwords
-                    .into_iter()
-                    .map(Rule::AddHashedPass)
-                    .collect::<Vec<Rule>>();
+                    .as_sequence()
+                    .ok_or_else(|| {
+                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                    })?
+                    .iter()
+                    .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value(pass)?)))
+                    .collect::<RedisResult<_>>()?;
 
-                let command_values: String = FromRedisValue::from_redis_value(&commands)?;
-                let mut commands = Vec::new();
-                for command in command_values.split_terminator(' ') {
-                    let rule = match command {
-                        x if x.starts_with("+@") => Rule::AddCategory(x[2..].to_owned()),
-                        x if x.starts_with("-@") => Rule::RemoveCategory(x[2..].to_owned()),
-                        x if x.starts_with('+') => Rule::AddCommand(x[1..].to_owned()),
-                        x if x.starts_with('-') => Rule::RemoveCommand(x[1..].to_owned()),
-                        _ => not_convertible_type_error!(
-                            command,
-                            "Expect a command addition/removal"
-                        ),
-                    };
-                    commands.push(rule);
+                let commands = match commands {
+                    Value::Data(cmd) => std::str::from_utf8(cmd)?,
+                    _ => {
+                        return Err(not_convertible_error!(
+                            commands,
+                            "Expect a valid UTF8 string"
+                        ))
+                    }
                 }
+                .split_terminator(' ')
+                .map(|cmd| match cmd {
+                    x if x.starts_with("+@") => Ok(Rule::AddCategory(x[2..].to_owned())),
+                    x if x.starts_with("-@") => Ok(Rule::RemoveCategory(x[2..].to_owned())),
+                    x if x.starts_with('+') => Ok(Rule::AddCommand(x[1..].to_owned())),
+                    x if x.starts_with('-') => Ok(Rule::RemoveCommand(x[1..].to_owned())),
+                    _ => Err(not_convertible_error!(
+                        cmd,
+                        "Expect a command addition/removal"
+                    )),
+                })
+                .collect::<RedisResult<_>>()?;
 
-                let keys: Vec<String> = FromRedisValue::from_redis_value(&keys)?;
-                let keys = keys.into_iter().map(Rule::Pattern).collect::<Vec<Rule>>();
+                let keys = keys
+                    .as_sequence()
+                    .ok_or_else(|| not_convertible_error!(keys, ""))?
+                    .iter()
+                    .map(|pat| Ok(Rule::Pattern(String::from_redis_value(pat)?)))
+                    .collect::<RedisResult<_>>()?;
+
                 (flags, passwords, commands, keys)
             }
-            _ => not_convertible_type_error!(v, "Response type not convertible to Rule."),
+            _ => {
+                return Err(not_convertible_error!(
+                    v,
+                    "Expect a resposne from `ACL GETUSER`"
+                ))
+            }
         };
 
         Ok(Self {
