@@ -1,4 +1,4 @@
-use std::io;
+use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
 use crate::types::{
@@ -243,9 +243,14 @@ fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
 
 impl RedisWrite for Cmd {
     fn write_arg(&mut self, arg: &[u8]) {
-        let prev = self.data.len();
-        self.args.push(Arg::Simple(prev + arg.len()));
         self.data.extend_from_slice(arg);
+        self.args.push(Arg::Simple(self.data.len()));
+    }
+
+    fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
+        use std::io::Write;
+        write!(self.data, "{}", arg).unwrap();
+        self.args.push(Arg::Simple(self.data.len()));
     }
 }
 

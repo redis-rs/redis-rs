@@ -91,6 +91,10 @@ To build the docs:
 
     $ make docs
 
+We encourage you to run `clippy` prior to seeking a merge for your work.  The lints can be quite strict.  Running this on your own workstation can save you time, since Travis CI will fail any build that doesn't satisfy `clippy`:
+
+    $ cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
+
 To run fuzz tests with afl, first install cargo-afl (`cargo install -f afl`),
 then run:
 
