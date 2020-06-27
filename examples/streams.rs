@@ -176,8 +176,9 @@ fn thrifty_rand() -> u8 {
         + 1
 }
 
+const MAGIC: u64 = 11;
 fn random_wait_millis(slowness: u8) -> u64 {
-    thrifty_rand() as u64 * thrifty_rand() as u64 * 35 * slowness as u64
+    thrifty_rand() as u64 * thrifty_rand() as u64 * MAGIC * slowness as u64
 }
 
 /// Generate a potentially unique value.
