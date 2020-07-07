@@ -171,6 +171,7 @@ impl RedisServer {
                     .write_all(
                         format!(
                             r#"
+                            pid = {tempdir}/stunnel.pid
                             cert = {tempdir}/cert.crt
                             key = {tempdir}/key.pem
                             verify = 0
