@@ -59,7 +59,8 @@ tokio-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.3", optional = true }
 
 [features]
-default = ["streams", "geospatial", "tokio-comp", "async-std-comp", "script"]
+default = ["acl", "streams", "geospatial", "tokio-comp", "async-std-comp", "script"]
+acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/sync", "tokio/stream", "tokio/tcp", "tokio/uds", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio-02"]
 tokio-rt-core = ["tokio-comp", "tokio/rt-core"]
 geospatial = []
@@ -97,6 +98,9 @@ required-features = ["async-std-comp"]
 [[test]]
 name = "parser"
 required-features = ["aio"]
+
+[[test]]
+name = "test_acl"
 
 [[bench]]
 name = "bench_basic"

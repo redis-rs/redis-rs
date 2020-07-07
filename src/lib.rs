@@ -52,6 +52,7 @@
 //! There are a few features defined that can enable additional functionality
 //! if so desired.  Some of them are turned on by default.
 //!
+//! * `acl`: enables acl support (enabled by default)
 //! * `aio`: enables async IO support (enabled by default)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
@@ -384,6 +385,10 @@ pub use crate::{
 };
 
 mod macros;
+
+#[cfg(feature = "acl")]
+#[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+pub mod acl;
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
