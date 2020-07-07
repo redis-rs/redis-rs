@@ -78,6 +78,7 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
+                eprintln!("getting a random port for redis");
                 let redis_listener = net2::TcpBuilder::new_v4()
                     .unwrap()
                     .reuse_address(true)
@@ -93,8 +94,10 @@ impl RedisServer {
                         port: redis_port,
                         insecure: true,
                     };
+                    eprintln!("spawning redis+tls");
                     RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
                 } else {
+                    eprintln!("spawning redis");
                     let addr = redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port);
                     RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
                 }
@@ -114,8 +117,8 @@ impl RedisServer {
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
         redis_cmd
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null());
+            .stdout(process::Stdio::inherit())
+            .stderr(process::Stdio::inherit());
         let tempdir = tempdir::TempDir::new("redis").expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
@@ -133,6 +136,7 @@ impl RedisServer {
                 }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
+                eprintln!("preparing redis with unix socket");
                 // prepare redis with unix socket
                 redis_cmd
                     .arg("--port")
@@ -140,6 +144,7 @@ impl RedisServer {
                     .arg("--unixsocket")
                     .arg(tempdir.path().join("redis.sock"));
 
+                eprintln!("generating cert");
                 // create a self-signed TLS server cert
                 process::Command::new("openssl")
                     .arg("req")
@@ -152,13 +157,14 @@ impl RedisServer {
                     .arg(tempdir.path().join("cert.crt"))
                     .arg("-subj")
                     .arg("/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost")
-                    .stdout(process::Stdio::null())
-                    .stderr(process::Stdio::null())
+                    .stdout(process::Stdio::inherit())
+                    .stderr(process::Stdio::inherit())
                     .spawn()
                     .expect("failed to spawn openssl")
                     .wait()
                     .expect("failed to create self-signed TLS certificate");
 
+                eprintln!("preparing stunnel.conf");
                 let stunnel_config_path = tempdir.path().join("stunnel.conf");
                 let mut stunnel_config_file = fs::File::create(&stunnel_config_path).unwrap();
                 stunnel_config_file
@@ -188,10 +194,11 @@ impl RedisServer {
                 };
                 let mut stunnel_cmd = process::Command::new("stunnel");
                 stunnel_cmd
-                    .stdout(process::Stdio::null())
-                    .stderr(process::Stdio::null())
+                    .stdout(process::Stdio::inherit())
+                    .stderr(process::Stdio::inherit())
                     .arg(&stunnel_config_path);
 
+                eprintln!("starting stunnel");
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     stunnel_process: Some(stunnel_cmd.spawn().expect("could not start stunnel")),
@@ -227,11 +234,15 @@ impl RedisServer {
     }
 
     pub fn stop(&mut self) {
+        eprintln!("stopping redis");
         let _ = self.process.kill();
         let _ = self.process.wait();
+        eprintln!("stopped redis");
         if let Some(p) = self.stunnel_process.as_mut() {
+            eprintln!("killing stunnel");
             let _ = p.kill();
             let _ = p.wait();
+            eprintln!("stopped stunnel");
         }
         if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
             fs::remove_file(&path).ok();
