@@ -737,6 +737,16 @@ implement_commands! {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
     }
 
+    /// Removes and returns up to count members with the highest scores in a sorted set
+    fn zpopmax<K: ToRedisArgs>(key: K, count: isize) {
+        cmd("ZPOPMAX").arg(key).arg(count)
+    }
+
+    /// Removes and returns up to count members with the lowest scores in a sorted set
+    fn zpopmin<K: ToRedisArgs>(key: K, count: isize) {
+        cmd("ZPOPMIN").arg(key).arg(count)
+    }
+
     /// Return a range of members in a sorted set, by index
     fn zrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZRANGE").arg(key).arg(start).arg(stop)
