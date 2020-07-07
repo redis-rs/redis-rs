@@ -269,12 +269,17 @@ impl TestContext {
         .unwrap();
         let mut con;
 
-        let retry = Duration::from_millis(10);
+        let millisecond = Duration::from_millis(1);
+        let mut retries = 0;
         loop {
             match client.get_connection() {
                 Err(err) => {
                     if err.is_connection_refusal() {
-                        sleep(retry);
+                        sleep(millisecond);
+                        retries += 1;
+                        if retries > 100000 {
+                            panic!("Tried to connect too many times, last error: {}", err);
+                        }
                     } else {
                         panic!("Could not connect: {}", err);
                     }
