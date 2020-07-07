@@ -146,15 +146,17 @@ impl RedisServer {
 
                 eprintln!("generating cert");
                 // create a self-signed TLS server cert
+                let tls_key_path = tempdir.path().join("key.pem");
+                let tls_cert_path = tempdir.path().join("cert.crt");
                 process::Command::new("openssl")
                     .arg("req")
                     .arg("-nodes")
                     .arg("-new")
                     .arg("-x509")
                     .arg("-keyout")
-                    .arg(tempdir.path().join("key.pem"))
+                    .arg(&tls_key_path)
                     .arg("-out")
-                    .arg(tempdir.path().join("cert.crt"))
+                    .arg(&tls_cert_path)
                     .arg("-subj")
                     .arg("/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost")
                     .stdout(process::Stdio::inherit())
@@ -163,6 +165,11 @@ impl RedisServer {
                     .expect("failed to spawn openssl")
                     .wait()
                     .expect("failed to create self-signed TLS certificate");
+                use std::os::unix::fs::PermissionsExt;
+                fs::metadata(tls_key_path)
+                    .unwrap()
+                    .permissions()
+                    .set_mode(0o600);
 
                 eprintln!("preparing stunnel.conf");
                 let stunnel_config_path = tempdir.path().join("stunnel.conf");
