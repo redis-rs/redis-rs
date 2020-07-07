@@ -112,8 +112,8 @@ impl RedisServer {
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
         redis_cmd
-            .stdout(process::Stdio::inherit())
-            .stderr(process::Stdio::inherit());
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null());
         let tempdir = tempdir::TempDir::new("redis").expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
@@ -152,8 +152,8 @@ impl RedisServer {
                     .arg(&tls_cert_path)
                     .arg("-subj")
                     .arg("/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost")
-                    .stdout(process::Stdio::inherit())
-                    .stderr(process::Stdio::inherit())
+                    .stdout(process::Stdio::null())
+                    .stderr(process::Stdio::null())
                     .spawn()
                     .expect("failed to spawn openssl")
                     .wait()
@@ -194,8 +194,8 @@ impl RedisServer {
                 };
                 let mut stunnel_cmd = process::Command::new("stunnel");
                 stunnel_cmd
-                    .stdout(process::Stdio::inherit())
-                    .stderr(process::Stdio::inherit())
+                    .stdout(process::Stdio::null())
+                    .stderr(process::Stdio::null())
                     .arg(&stunnel_config_path);
 
                 RedisServer {
