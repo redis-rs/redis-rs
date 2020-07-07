@@ -50,6 +50,7 @@ enum ServerType {
 pub struct RedisServer {
     pub process: process::Child,
     stunnel_process: Option<process::Child>,
+    tempdir: Option<tempdir::TempDir>,
     addr: redis::ConnectionAddr,
 }
 
@@ -115,6 +116,7 @@ impl RedisServer {
         redis_cmd
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
+        let tempdir = tempdir::TempDir::new("redis").expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -126,6 +128,7 @@ impl RedisServer {
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     stunnel_process: None,
+                    tempdir: None,
                     addr,
                 }
             }
@@ -135,22 +138,20 @@ impl RedisServer {
                     .arg("--port")
                     .arg("0")
                     .arg("--unixsocket")
-                    .arg(&format!("/tmp/redis-rs-test-{}.sock", port));
+                    .arg(tempdir.path().join("redis.sock"));
 
                 // create a self-signed TLS server cert
                 process::Command::new("openssl")
-                    .args(&[
-                        "req",
-                        "-nodes",
-                        "-new",
-                        "-x509",
-                        "-keyout",
-                        &format!("/tmp/redis-rs-test-{}.pem", port),
-                        "-out",
-                        &format!("/tmp/redis-rs-test-{}.crt", port),
-                        "-subj",
-                        "/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost",
-                    ])
+                    .arg("req")
+                    .arg("-nodes")
+                    .arg("-new")
+                    .arg("-x509")
+                    .arg("-keyout")
+                    .arg(tempdir.path().join("key.pem"))
+                    .arg("-out")
+                    .arg(tempdir.path().join("cert.crt"))
+                    .arg("-subj")
+                    .arg("/C=XX/ST=crates/L=redis-rs/O=testing/CN=localhost")
                     .stdout(process::Stdio::null())
                     .stderr(process::Stdio::null())
                     .spawn()
@@ -158,20 +159,21 @@ impl RedisServer {
                     .wait()
                     .expect("failed to create self-signed TLS certificate");
 
-                let stunnel_config_path = format!("/tmp/redis-rs-stunnel-{}.conf", port);
+                let stunnel_config_path = tempdir.path().join("stunnel.conf");
                 let mut stunnel_config_file = fs::File::create(&stunnel_config_path).unwrap();
                 stunnel_config_file
                     .write_all(
                         format!(
                             r#"
-                            cert = /tmp/redis-rs-test-{stunnel_port}.crt
-                            key = /tmp/redis-rs-test-{stunnel_port}.pem
+                            cert = {tempdir}/cert.crt
+                            key = {tempdir}/key.pem
                             verify = 0
                             foreground = yes
                             [redis]
                             accept = {host}:{stunnel_port}
-                            connect = /tmp/redis-rs-test-{stunnel_port}.sock
+                            connect = {tempdir}/redis.sock
                             "#,
+                            tempdir = tempdir.path().display(),
                             host = host,
                             stunnel_port = port,
                         )
@@ -193,6 +195,7 @@ impl RedisServer {
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     stunnel_process: Some(stunnel_cmd.spawn().expect("could not start stunnel")),
+                    tempdir: Some(tempdir),
                     addr,
                 }
             }
@@ -205,6 +208,7 @@ impl RedisServer {
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     stunnel_process: None,
+                    tempdir: Some(tempdir),
                     addr,
                 }
             }
