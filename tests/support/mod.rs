@@ -78,7 +78,6 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
-                eprintln!("getting a random port for redis");
                 let redis_listener = net2::TcpBuilder::new_v4()
                     .unwrap()
                     .reuse_address(true)
@@ -88,6 +87,7 @@ impl RedisServer {
                     .listen(1)
                     .unwrap();
                 let redis_port = redis_listener.local_addr().unwrap().port();
+                eprintln!("getting a random port for redis: {}", redis_port);
                 if tls {
                     let addr = redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
