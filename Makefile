@@ -20,7 +20,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types --all-features --test-threads=1
+	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types --all-features -- --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
