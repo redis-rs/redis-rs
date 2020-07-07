@@ -158,11 +158,6 @@ impl RedisServer {
                     .expect("failed to spawn openssl")
                     .wait()
                     .expect("failed to create self-signed TLS certificate");
-                use std::os::unix::fs::PermissionsExt;
-                fs::metadata(tls_key_path)
-                    .unwrap()
-                    .permissions()
-                    .set_mode(0o600);
 
                 let stunnel_config_path = tempdir.path().join("stunnel.conf");
                 let mut stunnel_config_file = fs::File::create(&stunnel_config_path).unwrap();
