@@ -189,120 +189,12 @@ mod tokio_aio {
     }
 }
 
-/// Represents an async Connection (TCP or Unix. Tokio or Async Std)
-pub enum ActualConnection {
-    /// Represents a Tokio TCP connection.
-    #[cfg(feature = "tokio-comp")]
-    TcpTokio(TcpStreamTokio),
-    /// Represents a Tokio TLS encrypted TCP connection
-    #[cfg(feature = "tokio-tls-comp")]
-    TcpTlsTokio(TlsStreamTokio<TcpStreamTokio>),
-    /// Represents a Tokio Unix connection.
-    #[cfg(unix)]
-    #[cfg(feature = "tokio-comp")]
-    UnixTokio(UnixStreamTokio),
-    /// Represents an Async_std TCP connection.
-    #[cfg(feature = "async-std-comp")]
-    TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
-    /// Represents an Async_std TLS encrypted TCP connection.
-    #[cfg(feature = "async-std-tls-comp")]
-    TcpTlsAsyncStd(aio_async_std::TlsStreamAsyncStdWrapped),
-    /// Represents an Async_std Unix connection.
-    #[cfg(feature = "async-std-comp")]
-    #[cfg(unix)]
-    UnixAsyncStd(aio_async_std::UnixStreamAsyncStdWrapped),
-}
-
-impl AsyncWrite for ActualConnection {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        match &mut *self {
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::TcpTokio(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "tokio-tls-comp")]
-            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::UnixTokio(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "async-std-tls-comp")]
-            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(unix)]
-            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        match &mut *self {
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::TcpTokio(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "tokio-tls-comp")]
-            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::UnixTokio(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "async-std-comp")]
-            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "async-std-tls-comp")]
-            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(unix)]
-            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-        match &mut *self {
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::TcpTokio(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "tokio-tls-comp")]
-            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::UnixTokio(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "async-std-comp")]
-            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "async-std-tls-comp")]
-            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(unix)]
-            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_shutdown(cx),
-        }
-    }
-}
-
-impl AsyncRead for ActualConnection {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        match &mut *self {
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::TcpTokio(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "tokio-tls-comp")]
-            ActualConnection::TcpTlsTokio(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
-            ActualConnection::UnixTokio(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            ActualConnection::TcpAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "async-std-tls-comp")]
-            ActualConnection::TcpTlsAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "async-std-comp")]
-            #[cfg(unix)]
-            ActualConnection::UnixAsyncStd(r) => Pin::new(r).poll_read(cx, buf),
-        }
-    }
-}
+/// Trait for objects that implements `AsyncRead` and `AsyncWrite`
+pub trait AsyncStream: AsyncRead + AsyncWrite {}
+impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
 
 /// Represents a `PubSub` connection.
-pub struct PubSub<C = ActualConnection>(Connection<C>);
+pub struct PubSub<C = Pin<Box<dyn AsyncStream + Send + Sync>>>(Connection<C>);
 
 impl<C> PubSub<C>
 where
@@ -377,7 +269,7 @@ where
 }
 
 /// Represents a stateful redis TCP connection.
-pub struct Connection<C = ActualConnection> {
+pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     con: C,
     buf: Vec<u8>,
     decoder: combine::stream::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
@@ -397,10 +289,7 @@ fn test() {
     assert_sync::<Connection>();
 }
 
-impl<C> Connection<C>
-where
-    C: Unpin + AsyncRead + AsyncWrite + Send,
-{
+impl<C> Connection<C> {
     fn map<D>(self, f: impl FnOnce(C) -> D) -> Connection<D> {
         let Self {
             con,
@@ -417,7 +306,12 @@ where
             pubsub,
         }
     }
+}
 
+impl<C> Connection<C>
+where
+    C: Unpin + AsyncRead + AsyncWrite + Send,
+{
     /// Converts this [`Connection`] into [`PubSub`].
     pub fn into_pubsub(self) -> PubSub<C> {
         PubSub::new(self)
@@ -499,12 +393,14 @@ where
 pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     use self::tokio_aio::Tokio;
     let con = connect::<Tokio>(connection_info).await?;
-    Ok(con.map(|con| match con {
-        Tokio::Tcp(x) => ActualConnection::TcpTokio(x),
-        #[cfg(feature = "tokio-tls-comp")]
-        Tokio::TcpTls(x) => ActualConnection::TcpTlsTokio(x),
-        #[cfg(unix)]
-        Tokio::Unix(x) => ActualConnection::UnixTokio(x),
+    Ok(con.map(|con| -> Pin<Box<dyn AsyncStream + Send + Sync>> {
+        match con {
+            Tokio::Tcp(x) => Box::pin(x),
+            #[cfg(feature = "tokio-tls-comp")]
+            Tokio::TcpTls(x) => Box::pin(x),
+            #[cfg(unix)]
+            Tokio::Unix(x) => Box::pin(x),
+        }
     }))
 }
 
@@ -513,12 +409,14 @@ pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Conn
 pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     use aio_async_std::AsyncStd;
     let con = connect::<AsyncStd>(connection_info).await?;
-    Ok(con.map(|con| match con {
-        AsyncStd::Tcp(x) => ActualConnection::TcpAsyncStd(x),
-        #[cfg(feature = "async-std-tls-comp")]
-        AsyncStd::TcpTls(x) => ActualConnection::TcpTlsAsyncStd(x),
-        #[cfg(unix)]
-        AsyncStd::Unix(x) => ActualConnection::UnixAsyncStd(x),
+    Ok(con.map(|con| -> Pin<Box<dyn AsyncStream + Send + Sync>> {
+        match con {
+            AsyncStd::Tcp(x) => Box::pin(x),
+            #[cfg(feature = "async-std-tls-comp")]
+            AsyncStd::TcpTls(x) => Box::pin(x),
+            #[cfg(unix)]
+            AsyncStd::Unix(x) => Box::pin(x),
+        }
     }))
 }
 
@@ -527,17 +425,6 @@ where
     C: Unpin + Connect + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-
-    prepare_connection(con, connection_info).await
-}
-
-async fn prepare_connection<C>(
-    con: C,
-    connection_info: &ConnectionInfo,
-) -> RedisResult<Connection<C>>
-where
-    C: Unpin + AsyncRead + AsyncWrite + Send,
-{
     let mut rv = Connection {
         con,
         buf: Vec::new(),
