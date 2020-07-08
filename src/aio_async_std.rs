@@ -130,14 +130,25 @@ impl AsyncRead for UnixStreamAsyncStdWrapped {
 }
 
 /// Represents an AsyncStd connectable
-pub struct AsyncStd;
+pub enum AsyncStd {
+    /// Represents an Async_std TCP connection.
+    #[cfg(feature = "async-std-comp")]
+    TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
+    /// Represents an Async_std TLS encrypted TCP connection.
+    #[cfg(feature = "async-std-tls-comp")]
+    TcpTlsAsyncStd(aio_async_std::TlsStreamAsyncStdWrapped),
+    /// Represents an Async_std Unix connection.
+    #[cfg(feature = "async-std-comp")]
+    #[cfg(unix)]
+    UnixAsyncStd(aio_async_std::UnixStreamAsyncStdWrapped),
+}
 
 #[async_trait]
 impl Connect for AsyncStd {
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<ActualConnection> {
+    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(TcpStream::connect(&socket_addr)
             .await
-            .map(|con| ActualConnection::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?)
     }
 
     #[cfg(feature = "tls")]
@@ -145,7 +156,7 @@ impl Connect for AsyncStd {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-    ) -> RedisResult<ActualConnection> {
+    ) -> RedisResult<Self> {
         let tcp_stream = TcpStream::connect(&socket_addr).await?;
         let tls_connector = if insecure {
             TlsConnector::new()
@@ -158,13 +169,13 @@ impl Connect for AsyncStd {
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
-            .map(|con| ActualConnection::TcpTlsAsyncStd(TlsStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::TcpTlsAsyncStd(TlsStreamAsyncStdWrapped(con)))?)
     }
 
     #[cfg(unix)]
-    async fn connect_unix(path: &Path) -> RedisResult<ActualConnection> {
+    async fn connect_unix(path: &Path) -> RedisResult<Self> {
         Ok(UnixStream::connect(path)
             .await
-            .map(|con| ActualConnection::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?)
     }
 }
