@@ -21,7 +21,7 @@ before_cache:
 before_install: |
   sudo add-apt-repository ppa:chris-lea/redis-server -y
   sudo apt-get update
-  sudo apt-get install redis-server=5:6.0.5-1chl1~xenial1 -y
+  sudo apt-get install redis-server=5:6.0.5-1chl1~xenial1 stunnel -y
 
 matrix:
   include:
