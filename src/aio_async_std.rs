@@ -1,4 +1,4 @@
-use crate::aio::{ActualConnection, Connect};
+use crate::aio::{ActualConnection, AsyncStream, Connect};
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
 use async_native_tls::{TlsConnector, TlsStream};
@@ -177,5 +177,15 @@ impl Connect for AsyncStd {
         Ok(UnixStream::connect(path)
             .await
             .map(|con| Self::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?)
+    }
+
+    fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
+        match self {
+            AsyncStd::TcpAsyncStd(x) => Box::pin(x),
+            #[cfg(feature = "async-std-tls-comp")]
+            AsyncStd::TcpTlsAsyncStd(x) => Box::pin(x),
+            #[cfg(unix)]
+            AsyncStd::UnixAsyncStd(x) => Box::pin(x),
+        }
     }
 }

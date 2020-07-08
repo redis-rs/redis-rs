@@ -55,7 +55,7 @@ use crate::aio_async_std;
 
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
-pub(crate) trait Connect: Sized {
+pub(crate) trait Connect: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
 
@@ -70,11 +70,15 @@ pub(crate) trait Connect: Sized {
     /// Performs a UNIX connection
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self>;
+
+    fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
+        Box::pin(self)
+    }
 }
 
 #[cfg(feature = "tokio-comp")]
 mod tokio_aio {
-    use super::{async_trait, Connect, RedisResult, SocketAddr, TcpStreamTokio};
+    use super::{async_trait, AsyncStream, Connect, RedisResult, SocketAddr, TcpStreamTokio};
 
     use std::{
         io,
@@ -185,6 +189,16 @@ mod tokio_aio {
         #[cfg(unix)]
         async fn connect_unix(path: &Path) -> RedisResult<Self> {
             Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
+        }
+
+        fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
+            match self {
+                Tokio::Tcp(x) => Box::pin(x),
+                #[cfg(feature = "tokio-tls-comp")]
+                Tokio::TcpTls(x) => Box::pin(x),
+                #[cfg(unix)]
+                Tokio::Unix(x) => Box::pin(x),
+            }
         }
     }
 }
@@ -393,15 +407,7 @@ where
 pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     use self::tokio_aio::Tokio;
     let con = connect::<Tokio>(connection_info).await?;
-    Ok(con.map(|con| -> Pin<Box<dyn AsyncStream + Send + Sync>> {
-        match con {
-            Tokio::Tcp(x) => Box::pin(x),
-            #[cfg(feature = "tokio-tls-comp")]
-            Tokio::TcpTls(x) => Box::pin(x),
-            #[cfg(unix)]
-            Tokio::Unix(x) => Box::pin(x),
-        }
-    }))
+    Ok(con.map(Connect::boxed))
 }
 
 /// Opens a connection.
@@ -409,15 +415,7 @@ pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Conn
 pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
     use aio_async_std::AsyncStd;
     let con = connect::<AsyncStd>(connection_info).await?;
-    Ok(con.map(|con| -> Pin<Box<dyn AsyncStream + Send + Sync>> {
-        match con {
-            AsyncStd::Tcp(x) => Box::pin(x),
-            #[cfg(feature = "async-std-tls-comp")]
-            AsyncStd::TcpTls(x) => Box::pin(x),
-            #[cfg(unix)]
-            AsyncStd::Unix(x) => Box::pin(x),
-        }
-    }))
+    Ok(con.map(Connect::boxed))
 }
 
 pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
@@ -471,7 +469,7 @@ where
     Ok(())
 }
 
-async fn connect_simple<T: Connect>(connection_info: &ConnectionInfo) -> RedisResult<T> {
+pub(crate) async fn connect_simple<T: Connect>(connection_info: &ConnectionInfo) -> RedisResult<T> {
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;
