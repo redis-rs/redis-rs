@@ -75,12 +75,12 @@
 //!
 //! If Unix socket support is available you can use a unix URL in this format:
 //!
-//! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
+//! `redis+unix:///<path>[?db=<db>][&password=<password>]`
 //!
 //! For compatibility with some other redis libraries, the "unix" scheme
 //! is also supported:
 //!
-//! `unix:///[:<passwd>@]<path>[?db=<db>]`
+//! `unix:///<path>[?db=<db>][&password=<password>]`
 //!
 //! ## Executing Low-Level Commands
 //!

@@ -203,20 +203,21 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
 #[cfg(unix)]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
         ))),
-        db: match url.query_pairs().find(|&(ref key, _)| key == "db") {
-            Some((_, db)) => unwrap_or!(
+        db: match query.get("db") {
+            Some(db) => unwrap_or!(
                 db.parse::<i64>().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
             ),
             None => 0,
         },
-        username: Some(url.username().to_string()).filter(|user| !user.is_empty()),
-        passwd: url.password().map(|pw| pw.to_string()),
+        username: query.get("username").map(|username| username.to_string()),
+        passwd: query.get("password").map(|password| password.to_string()),
     })
 }
 
