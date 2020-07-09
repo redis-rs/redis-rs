@@ -82,9 +82,30 @@ fn demo_group_reads(client: &redis::Client) {
             }
 
             for _ in 0..repeat {
-                read_group_records(&ca, *slowness).expect("group read");
+                let read_reply = read_group_records(&ca, *slowness).expect("group read");
 
-                thread::sleep(Duration::from_millis(random_wait_millis(*slowness)))
+                // fake some expensive work
+                for StreamKey { key, ids } in read_reply.keys {
+                    for StreamId { id, map: _ } in &ids {
+                        thread::sleep(Duration::from_millis(random_wait_millis(*slowness)));
+                        println!(
+                            "Stream {} ID {} Consumer slowness {} SysTime {}",
+                            key,
+                            id,
+                            slowness,
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .expect("time")
+                                .as_millis()
+                        );
+                    }
+
+                    // acknowledge each stream and message ID once all messages are
+                    // correctly processed
+                    let id_strs: Vec<&String> =
+                        ids.iter().map(|StreamId { id, map: _ }| id).collect();
+                    con.xack(key, GROUP_NAME, &id_strs).expect("ack")
+                }
             }
         }))
     }
@@ -155,8 +176,9 @@ fn thrifty_rand() -> u8 {
         + 1
 }
 
+const MAGIC: u64 = 11;
 fn random_wait_millis(slowness: u8) -> u64 {
-    thrifty_rand() as u64 * thrifty_rand() as u64 * 35 * slowness as u64
+    thrifty_rand() as u64 * thrifty_rand() as u64 * MAGIC * slowness as u64
 }
 
 /// Generate a potentially unique value.
@@ -219,7 +241,7 @@ fn consumer_name(slowness: u8) -> String {
 const GROUP_NAME: &str = "example-group-aaa";
 
 #[cfg(feature = "streams")]
-fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
+fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
     let mut con = client.get_connection().expect("conn");
 
     let opts = StreamReadOptions::default()
@@ -235,21 +257,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<()> {
         )
         .expect("records");
 
-    for StreamKey { key, ids } in srr.keys {
-        for StreamId { id, map: _ } in ids {
-            println!(
-                "Stream {} ID {} Consumer slowness {} SysTime {}",
-                key,
-                id,
-                slowness,
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("time")
-                    .as_millis()
-            );
-        }
-    }
-    Ok(())
+    Ok(srr)
 }
 
 #[cfg(feature = "streams")]
