@@ -17,120 +17,55 @@ use async_std::os::unix::net::UnixStream;
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Wraps the async_std TcpStream in order to implement the required Traits for it
-pub struct TcpStreamAsyncStdWrapped(TcpStream);
+pin_project_lite::pin_project! {
+    /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
+    /// for it
+    pub struct AsyncStdWrapped<T> {  #[pin] inner: T }
+}
 
-/// Wraps the async_native_tls TlsStream in order to implement the required Traits for it
-#[cfg(feature = "tls")]
-pub struct TlsStreamAsyncStdWrapped(TlsStream<TcpStream>);
+impl<T> AsyncStdWrapped<T> {
+    fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
 
-#[cfg(unix)]
-/// Wraps the async_std UnixStream in order to implement the required Traits for it
-pub struct UnixStreamAsyncStdWrapped(UnixStream);
-
-impl AsyncWrite for TcpStreamAsyncStdWrapped {
+impl<T> AsyncWrite for AsyncStdWrapped<T>
+where
+    T: async_std::io::Write,
+{
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut core::task::Context,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
+        async_std::io::Write::poll_write(self.project().inner, cx, buf)
     }
 
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut core::task::Context,
     ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
+        async_std::io::Write::poll_flush(self.project().inner, cx)
     }
 
     fn poll_shutdown(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut core::task::Context,
     ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
+        async_std::io::Write::poll_close(self.project().inner, cx)
     }
 }
 
-impl AsyncRead for TcpStreamAsyncStdWrapped {
+impl<T> AsyncRead for AsyncStdWrapped<T>
+where
+    T: async_std::io::Read,
+{
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut core::task::Context,
         buf: &mut [u8],
     ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
-    }
-}
-
-#[cfg(feature = "tls")]
-impl AsyncWrite for TlsStreamAsyncStdWrapped {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
-    }
-}
-
-#[cfg(feature = "tls")]
-impl AsyncRead for TlsStreamAsyncStdWrapped {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
-    }
-}
-
-#[cfg(unix)]
-impl AsyncWrite for UnixStreamAsyncStdWrapped {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Write::poll_write(Pin::new(&mut self.0), cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_flush(Pin::new(&mut self.0), cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-    ) -> std::task::Poll<Result<(), tokio::io::Error>> {
-        async_std::io::Write::poll_close(Pin::new(&mut self.0), cx)
-    }
-}
-
-#[cfg(unix)]
-impl AsyncRead for UnixStreamAsyncStdWrapped {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
-        buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(Pin::new(&mut self.0), cx, buf)
+        async_std::io::Read::poll_read(self.project().inner, cx, buf)
     }
 }
 
@@ -138,14 +73,14 @@ impl AsyncRead for UnixStreamAsyncStdWrapped {
 pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
     #[cfg(feature = "async-std-comp")]
-    Tcp(TcpStreamAsyncStdWrapped),
+    Tcp(AsyncStdWrapped<TcpStream>),
     /// Represents an Async_std TLS encrypted TCP connection.
     #[cfg(feature = "async-std-tls-comp")]
-    TcpTls(TlsStreamAsyncStdWrapped),
+    TcpTls(AsyncStdWrapped<TlsStream<TcpStream>>),
     /// Represents an Async_std Unix connection.
     #[cfg(feature = "async-std-comp")]
     #[cfg(unix)]
-    Unix(UnixStreamAsyncStdWrapped),
+    Unix(AsyncStdWrapped<UnixStream>),
 }
 
 impl AsyncWrite for AsyncStd {
@@ -206,7 +141,7 @@ impl Connect for AsyncStd {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(TcpStream::connect(&socket_addr)
             .await
-            .map(|con| Self::Tcp(TcpStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
 
     #[cfg(feature = "tls")]
@@ -227,14 +162,14 @@ impl Connect for AsyncStd {
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
-            .map(|con| Self::TcpTls(TlsStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::TcpTls(AsyncStdWrapped::new(con)))?)
     }
 
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
         Ok(UnixStream::connect(path)
             .await
-            .map(|con| Self::Unix(UnixStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::Unix(AsyncStdWrapped::new(con)))?)
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
