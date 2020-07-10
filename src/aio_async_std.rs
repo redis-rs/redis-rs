@@ -1,4 +1,13 @@
-use crate::aio::{ActualConnection, AsyncStream, Connect};
+#[cfg(unix)]
+use std::path::Path;
+use std::{
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    task::{self, Poll},
+};
+
+use crate::aio::{AsyncStream, Connect};
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
 use async_native_tls::{TlsConnector, TlsStream};
@@ -6,10 +15,6 @@ use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
 use async_trait::async_trait;
-use std::net::SocketAddr;
-#[cfg(unix)]
-use std::path::Path;
-use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Wraps the async_std TcpStream in order to implement the required Traits for it
@@ -133,14 +138,67 @@ impl AsyncRead for UnixStreamAsyncStdWrapped {
 pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
     #[cfg(feature = "async-std-comp")]
-    TcpAsyncStd(aio_async_std::TcpStreamAsyncStdWrapped),
+    Tcp(TcpStreamAsyncStdWrapped),
     /// Represents an Async_std TLS encrypted TCP connection.
     #[cfg(feature = "async-std-tls-comp")]
-    TcpTlsAsyncStd(aio_async_std::TlsStreamAsyncStdWrapped),
+    TcpTls(TlsStreamAsyncStdWrapped),
     /// Represents an Async_std Unix connection.
     #[cfg(feature = "async-std-comp")]
     #[cfg(unix)]
-    UnixAsyncStd(aio_async_std::UnixStreamAsyncStdWrapped),
+    Unix(UnixStreamAsyncStdWrapped),
+}
+
+impl AsyncWrite for AsyncStd {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            AsyncStd::Tcp(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "tokio-tls-comp")]
+            AsyncStd::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(unix)]
+            #[cfg(feature = "tokio-comp")]
+            AsyncStd::Unix(r) => Pin::new(r).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        match &mut *self {
+            AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "tokio-tls-comp")]
+            AsyncStd::TcpTls(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(unix)]
+            AsyncStd::Unix(r) => Pin::new(r).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+        match &mut *self {
+            AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "tokio-tls-comp")]
+            AsyncStd::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(unix)]
+            AsyncStd::Unix(r) => Pin::new(r).poll_shutdown(cx),
+        }
+    }
+}
+
+impl AsyncRead for AsyncStd {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut *self {
+            AsyncStd::Tcp(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "tokio-tls-comp")]
+            AsyncStd::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(unix)]
+            AsyncStd::Unix(r) => Pin::new(r).poll_read(cx, buf),
+        }
+    }
 }
 
 #[async_trait]
@@ -148,7 +206,7 @@ impl Connect for AsyncStd {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(TcpStream::connect(&socket_addr)
             .await
-            .map(|con| Self::TcpAsyncStd(TcpStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::Tcp(TcpStreamAsyncStdWrapped(con)))?)
     }
 
     #[cfg(feature = "tls")]
@@ -169,23 +227,23 @@ impl Connect for AsyncStd {
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
-            .map(|con| Self::TcpTlsAsyncStd(TlsStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::TcpTls(TlsStreamAsyncStdWrapped(con)))?)
     }
 
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
         Ok(UnixStream::connect(path)
             .await
-            .map(|con| Self::UnixAsyncStd(UnixStreamAsyncStdWrapped(con)))?)
+            .map(|con| Self::Unix(UnixStreamAsyncStdWrapped(con)))?)
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         match self {
-            AsyncStd::TcpAsyncStd(x) => Box::pin(x),
+            AsyncStd::Tcp(x) => Box::pin(x),
             #[cfg(feature = "async-std-tls-comp")]
-            AsyncStd::TcpTlsAsyncStd(x) => Box::pin(x),
+            AsyncStd::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]
-            AsyncStd::UnixAsyncStd(x) => Box::pin(x),
+            AsyncStd::Unix(x) => Box::pin(x),
         }
     }
 }

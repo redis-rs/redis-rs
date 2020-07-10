@@ -163,7 +163,8 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        crate::aio::MultiplexedConnection::new_async_std(&self.connection_info).await
+        let con = self.get_simple_async_std_connection().await?;
+        crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
