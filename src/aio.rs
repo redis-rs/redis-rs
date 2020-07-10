@@ -77,7 +77,7 @@ pub(crate) trait Connect: AsyncStream + Send + Sync + Sized + 'static {
 }
 
 #[cfg(feature = "tokio-comp")]
-mod tokio_aio {
+pub(crate) mod tokio_aio {
     use super::{async_trait, AsyncStream, Connect, RedisResult, SocketAddr, TcpStreamTokio};
 
     use std::{
@@ -326,6 +326,16 @@ impl<C> Connection<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
+    pub(crate) fn new(connection_info: &ConnectionInfo, con: C) -> Self {
+        Connection {
+            con,
+            buf: Vec::new(),
+            decoder: combine::stream::Decoder::new(),
+            db: connection_info.db,
+            pubsub: false,
+        }
+    }
+
     /// Converts this [`Connection`] into [`PubSub`].
     pub fn into_pubsub(self) -> PubSub<C> {
         PubSub::new(self)
@@ -423,13 +433,7 @@ where
     C: Unpin + Connect + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    let mut rv = Connection {
-        con,
-        buf: Vec::new(),
-        decoder: combine::stream::Decoder::new(),
-        db: connection_info.db,
-        pubsub: false,
-    };
+    let mut rv = Connection::new(connection_info, con);
 
     authenticate(connection_info, &mut rv).await?;
 
@@ -838,24 +842,7 @@ pub struct MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    /// Creates a multiplexed connection from a connection and executor.
-    #[cfg(feature = "tokio-comp")]
-    pub(crate) async fn new_tokio(
-        connection_info: &ConnectionInfo,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple::<tokio_aio::Tokio>(connection_info).await?;
-        Ok(MultiplexedConnection::create_connection(connection_info, con).await?)
-    }
-    /// Creates a multiplexed connection from a connection and executor.
-    #[cfg(feature = "async-std-comp")]
-    pub(crate) async fn new_async_std(
-        connection_info: &ConnectionInfo,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)> {
-        let con = connect_simple::<aio_async_std::AsyncStd>(connection_info).await?;
-        MultiplexedConnection::create_connection(connection_info, con).await
-    }
-
-    async fn create_connection<C>(
+    pub(crate) async fn new<C>(
         connection_info: &ConnectionInfo,
         con: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
@@ -951,6 +938,8 @@ mod connection_manager {
     use futures::future::{self, Shared};
     use futures_util::future::BoxFuture;
 
+    use crate::Client;
+
     /// A `ConnectionManager` is a proxy that wraps a [multiplexed
     /// connection][multiplexed-connection] and automatically reconnects to the
     /// server when necessary.
@@ -979,7 +968,7 @@ mod connection_manager {
     #[derive(Clone)]
     pub struct ConnectionManager {
         /// Information used for the connection. This is needed to be able to reconnect.
-        connection_info: ConnectionInfo,
+        client: Client,
         /// The connection future.
         ///
         /// The `ArcSwap` is required to be able to replace the connection
@@ -998,34 +987,14 @@ mod connection_manager {
         ///
         /// This requires the `connection-manager` feature, which will also pull in
         /// the Tokio executor.
-        pub async fn new(connection_info: ConnectionInfo) -> RedisResult<Self> {
+        pub async fn new(client: Client) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
 
-            #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
-            let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
-
-            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
-
-            #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
-            let con = if tokio::runtime::Handle::try_current().is_ok() {
-                connect_simple::<tokio_aio::Tokio>(&connection_info).await?
-            } else {
-                connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
-            };
-
-            #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-            compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
-            let (connection, driver) =
-                MultiplexedConnection::create_connection(&connection_info, con).await?;
-
-            // Spawn the driver that drives the connection future
-            tokio::spawn(driver);
+            let connection = client.get_multiplexed_async_connection().await?;
 
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
-                connection_info,
+                client,
                 connection: Arc::new(ArcSwap::from_pointee(
                     future::ok(connection).boxed().shared(),
                 )),
@@ -1040,32 +1009,11 @@ mod connection_manager {
             &self,
             current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
-            let connection_info = self.connection_info.clone();
-            let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
-                let con = connect_simple::<tokio_aio::Tokio>(&connection_info).await?;
-
-                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                let con = connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?;
-
-                #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
-                let con = if tokio::runtime::Handle::try_current().is_ok() {
-                    connect_simple::<tokio_aio::Tokio>(&connection_info).await?
-                } else {
-                    connect_simple::<aio_async_std::AsyncStd>(&connection_info).await?
-                };
-
-                #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-                compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
-                let (new_connection, driver) =
-                    MultiplexedConnection::create_connection(&connection_info, con).await?;
-
-                tokio::spawn(driver);
-                Ok(new_connection)
-            }
-            .boxed()
-            .shared();
+            let client = self.client.clone();
+            let new_connection: SharedRedisFuture<MultiplexedConnection> =
+                async move { Ok(client.get_multiplexed_async_connection().await?) }
+                    .boxed()
+                    .shared();
 
             // Update the connection in the connection manager
             let new_connection_arc = Arc::new(new_connection.clone());
@@ -1146,7 +1094,7 @@ mod connection_manager {
         }
 
         fn get_db(&self) -> i64 {
-            self.connection_info.db
+            self.client.connection_info().db
         }
     }
 }

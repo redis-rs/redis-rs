@@ -1,6 +1,9 @@
-use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
-use crate::types::{RedisResult, Value};
-use std::time::Duration;
+use std::{pin::Pin, time::Duration};
+
+use crate::{
+    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    types::{RedisResult, Value},
+};
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -55,29 +58,8 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "aio")]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
-        {
-            self.get_tokio_connection().await
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-        {
-            self.get_async_std_connection().await
-        }
-
-        #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
-        {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                self.get_tokio_connection().await
-            } else {
-                self.get_async_std_connection().await
-            }
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-        {
-            compile_error!("tokio-comp or async-std-comp features required for aio feature")
-        }
+        let con = self.get_simple_async_connection().await?;
+        Ok(crate::aio::Connection::new(&self.connection_info, con))
     }
 
     /// Returns an async connection from the client.
@@ -143,7 +125,6 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    ///
     /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
     #[cfg(feature = "async-std-comp")]
     pub async fn get_multiplexed_async_std_connection(
@@ -166,7 +147,8 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        crate::aio::MultiplexedConnection::new_tokio(&self.connection_info).await
+        let con = self.get_simple_tokio_connection().await?;
+        crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
@@ -206,7 +188,64 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
-        Ok(crate::aio::ConnectionManager::new(self.connection_info.clone()).await?)
+        Ok(crate::aio::ConnectionManager::new(self.clone()).await?)
+    }
+
+    #[cfg(feature = "tokio-comp")]
+    async fn get_simple_tokio_connection(
+        &self,
+    ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
+        use crate::aio::Connect;
+        Ok(
+            crate::aio::connect_simple::<crate::aio::tokio_aio::Tokio>(&self.connection_info)
+                .await?
+                .boxed(),
+        )
+    }
+
+    #[cfg(feature = "async-std-comp")]
+    async fn get_simple_async_std_connection(
+        &self,
+    ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
+        use crate::aio::Connect;
+        Ok(
+            crate::aio::connect_simple::<crate::aio_async_std::AsyncStd>(&self.connection_info)
+                .await?
+                .boxed(),
+        )
+    }
+
+    #[cfg(feature = "aio")]
+    async fn get_simple_async_connection(
+        &self,
+    ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
+        #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+        {
+            self.get_simple_tokio_connection().await
+        }
+
+        #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+        {
+            self.get_simple_async_std_connection().await
+        }
+
+        #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+        {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                self.get_simple_tokio_connection().await
+            } else {
+                self.get_simple_async_std_connection().await
+            }
+        }
+
+        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+        {
+            compile_error!("tokio-comp or async-std-comp features required for aio feature")
+        }
+    }
+
+    pub(crate) fn connection_info(&self) -> &ConnectionInfo {
+        &self.connection_info
     }
 }
 
