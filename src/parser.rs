@@ -214,7 +214,7 @@ mod aio_support {
     where
         R: AsyncRead + std::marker::Unpin,
     {
-        let result = combine::decode_tokio_02!(*decoder, *read, value(), |input, _| {
+        let result = combine::decode_tokio_02!(*decoder, read, value(), |input, _| {
             combine::stream::easy::Stream::from(input)
         });
         match result {
@@ -268,7 +268,7 @@ impl Parser {
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
         let mut decoder = &mut self.decoder;
-        let result = combine::decode!(decoder, reader, value(), |input, _| {
+        let result = combine::decode!(decoder, &mut reader, value(), |input, _| {
             combine::stream::easy::Stream::from(input)
         });
         match result {
