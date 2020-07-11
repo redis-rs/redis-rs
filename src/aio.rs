@@ -23,9 +23,6 @@ use tokio::{
 #[cfg(feature = "tokio-comp")]
 use tokio::net::TcpStream as TcpStreamTokio;
 
-#[cfg(feature = "tokio-tls-comp")]
-use tokio_tls::TlsStream as TlsStreamTokio;
-
 #[cfg(feature = "tls")]
 use native_tls::TlsConnector;
 
@@ -91,6 +88,9 @@ pub(crate) mod tokio_aio {
     #[cfg(feature = "tls")]
     use super::TlsConnector;
 
+    #[cfg(feature = "tokio-tls-comp")]
+    use tokio_tls::TlsStream;
+
     #[cfg(unix)]
     use super::{Path, UnixStreamTokio};
 
@@ -99,7 +99,7 @@ pub(crate) mod tokio_aio {
         Tcp(TcpStreamTokio),
         /// Represents a Tokio TLS encrypted TCP connection
         #[cfg(feature = "tokio-tls-comp")]
-        TcpTls(TlsStreamTokio<TcpStreamTokio>),
+        TcpTls(TlsStream<TcpStreamTokio>),
         /// Represents a Tokio Unix connection.
         #[cfg(unix)]
         Unix(UnixStreamTokio),
