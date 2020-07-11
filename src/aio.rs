@@ -50,12 +50,9 @@ use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
-#[cfg(feature = "async-std-comp")]
-use crate::aio_async_std;
-
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
-pub(crate) trait Connect: AsyncStream + Send + Sync + Sized + 'static {
+pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
 
@@ -71,6 +68,8 @@ pub(crate) trait Connect: AsyncStream + Send + Sync + Sized + 'static {
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self>;
 
+    fn spawn(f: impl Future<Output = ()> + Send + 'static);
+
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         Box::pin(self)
     }
@@ -78,9 +77,10 @@ pub(crate) trait Connect: AsyncStream + Send + Sync + Sized + 'static {
 
 #[cfg(feature = "tokio-comp")]
 pub(crate) mod tokio_aio {
-    use super::{async_trait, AsyncStream, Connect, RedisResult, SocketAddr, TcpStreamTokio};
+    use super::{async_trait, AsyncStream, RedisResult, RedisRuntime, SocketAddr, TcpStreamTokio};
 
     use std::{
+        future::Future,
         io,
         pin::Pin,
         task::{self, Poll},
@@ -159,12 +159,13 @@ pub(crate) mod tokio_aio {
     }
 
     #[async_trait]
-    impl Connect for Tokio {
+    impl RedisRuntime for Tokio {
         async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
             Ok(TcpStreamTokio::connect(&socket_addr)
                 .await
                 .map(Tokio::Tcp)?)
         }
+
         #[cfg(feature = "tls")]
         async fn connect_tcp_tls(
             hostname: &str,
@@ -186,9 +187,14 @@ pub(crate) mod tokio_aio {
                 .await
                 .map(Tokio::TcpTls)?)
         }
+
         #[cfg(unix)]
         async fn connect_unix(path: &Path) -> RedisResult<Self> {
             Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
+        }
+
+        fn spawn(f: impl Future<Output = ()> + Send + 'static) {
+            tokio::spawn(f);
         }
 
         fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
@@ -304,7 +310,7 @@ fn test() {
 }
 
 impl<C> Connection<C> {
-    fn map<D>(self, f: impl FnOnce(C) -> D) -> Connection<D> {
+    pub(crate) fn map<D>(self, f: impl FnOnce(C) -> D) -> Connection<D> {
         let Self {
             con,
             buf,
@@ -326,14 +332,16 @@ impl<C> Connection<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
-    pub(crate) fn new(connection_info: &ConnectionInfo, con: C) -> Self {
-        Connection {
+    pub(crate) async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+        let mut rv = Connection {
             con,
             buf: Vec::new(),
             decoder: combine::stream::Decoder::new(),
             db: connection_info.db,
             pubsub: false,
-        }
+        };
+        authenticate(connection_info, &mut rv).await?;
+        Ok(rv)
     }
 
     /// Converts this [`Connection`] into [`PubSub`].
@@ -412,32 +420,12 @@ where
     }
 }
 
-/// Opens a connection.
-#[cfg(feature = "tokio-comp")]
-pub async fn connect_tokio(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    use self::tokio_aio::Tokio;
-    let con = connect::<Tokio>(connection_info).await?;
-    Ok(con.map(Connect::boxed))
-}
-
-/// Opens a connection.
-#[cfg(feature = "async-std-comp")]
-pub async fn connect_async_std(connection_info: &ConnectionInfo) -> RedisResult<Connection> {
-    use aio_async_std::AsyncStd;
-    let con = connect::<AsyncStd>(connection_info).await?;
-    Ok(con.map(Connect::boxed))
-}
-
 pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
 where
-    C: Unpin + Connect + AsyncRead + AsyncWrite + Send,
+    C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    let mut rv = Connection::new(connection_info, con);
-
-    authenticate(connection_info, &mut rv).await?;
-
-    Ok(rv)
+    Connection::new(connection_info, con).await
 }
 
 async fn authenticate<C>(connection_info: &ConnectionInfo, con: &mut C) -> RedisResult<()>
@@ -473,7 +461,9 @@ where
     Ok(())
 }
 
-pub(crate) async fn connect_simple<T: Connect>(connection_info: &ConnectionInfo) -> RedisResult<T> {
+pub(crate) async fn connect_simple<T: RedisRuntime>(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<T> {
     Ok(match *connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;

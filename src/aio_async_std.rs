@@ -1,13 +1,14 @@
 #[cfg(unix)]
 use std::path::Path;
 use std::{
+    future::Future,
     io,
     net::SocketAddr,
     pin::Pin,
     task::{self, Poll},
 };
 
-use crate::aio::{AsyncStream, Connect};
+use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
 use async_native_tls::{TlsConnector, TlsStream};
@@ -137,7 +138,7 @@ impl AsyncRead for AsyncStd {
 }
 
 #[async_trait]
-impl Connect for AsyncStd {
+impl RedisRuntime for AsyncStd {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(TcpStream::connect(&socket_addr)
             .await
@@ -170,6 +171,10 @@ impl Connect for AsyncStd {
         Ok(UnixStream::connect(path)
             .await
             .map(|con| Self::Unix(AsyncStdWrapped::new(con)))?)
+    }
+
+    fn spawn(f: impl Future<Output = ()> + Send + 'static) {
+        async_std::task::spawn(f);
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
