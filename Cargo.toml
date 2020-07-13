@@ -30,7 +30,7 @@ url = "2.1.1"
 # We need this for script support
 sha1 = { version = "0.6.0", optional = true }
 
-combine = { version = "4.3.0", default-features = false, features = ["std"] }
+combine = { version = "4.2.1", default-features = false, features = ["std"] }
 
 # Only needed for AIO
 bytes = { version = "0.5.5", optional = true }

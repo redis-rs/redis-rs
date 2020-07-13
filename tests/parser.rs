@@ -3,17 +3,19 @@ mod support;
 #[macro_use]
 extern crate quickcheck;
 
-use std::{io, pin::Pin};
+use std::{io, pin::Pin, iter};
 
 use {
     futures::task::{self, Poll},
     partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
     tokio::io::AsyncRead,
+    rand::Rng,
 };
 
 use redis::Value;
 
 use crate::support::{block_on_all, encode_value};
+use rand::distributions::Alphanumeric;
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);
@@ -71,7 +73,7 @@ fn arbitrary_value<G: ::quickcheck::Gen>(g: &mut G, recursive_size: usize) -> Va
                     let s = g.size();
                     g.gen_range(0, s)
                 };
-                let status = g.gen_ascii_chars().take(size).collect();
+                let status = iter::repeat(()).map(|()| g.sample(Alphanumeric)).take(size).collect();
                 if status == "OK" {
                     Value::Okay
                 } else {
