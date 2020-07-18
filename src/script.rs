@@ -6,6 +6,7 @@ use crate::connection::ConnectionLike;
 use crate::types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
 
 /// Represents a lua script.
+#[derive(Debug, Clone)]
 pub struct Script {
     code: String,
     hash: String,
