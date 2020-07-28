@@ -1,6 +1,6 @@
 #![allow(clippy::let_unit_value)]
 
-use redis::{Commands, ConnectionLike, ControlFlow, PubSubCommands};
+use redis::{Commands, ConnectionInfo, ConnectionLike, ControlFlow, PubSubCommands};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
@@ -18,6 +18,11 @@ fn test_parse_redis_url() {
     redis::parse_redis_url(&redis_url).unwrap();
     redis::parse_redis_url("unix:/var/run/redis/redis.sock").unwrap();
     assert!(redis::parse_redis_url("127.0.0.1").is_err());
+}
+
+#[test]
+fn test_redis_url_fromstr() {
+    let _info: ConnectionInfo = "redis://127.0.0.1:1234/0".parse().unwrap();
 }
 
 #[test]

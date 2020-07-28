@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::str::from_utf8;
+use std::str::{from_utf8, FromStr};
 use std::time::Duration;
 
 use crate::cmd::{cmd, pipe, Pipeline};
@@ -99,6 +99,14 @@ pub struct ConnectionInfo {
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub passwd: Option<String>,
+}
+
+impl FromStr for ConnectionInfo {
+    type Err = RedisError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.into_connection_info()
+    }
 }
 
 /// Converts an object into a connection info struct.  This allows the
