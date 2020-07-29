@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.16.0...HEAD) - ReleaseDate
+
+**Fixes and improvements**
+
+* Added Redis Streams commands ([#162](https://github.com/mitsuhiko/redis-rs/pull/319))
+* Added support for zpopmin and zpopmax ([#351](https://github.com/mitsuhiko/redis-rs/pull/351))
+* Added TLS support, gated by a feature flag ([#305](https://github.com/mitsuhiko/redis-rs/pull/305))
+* Added Debug and Clone implementations to redis::Script ([#365](https://github.com/mitsuhiko/redis-rs/pull/365))
+* Added FromStr for ConnectionInfo ([#368](https://github.com/mitsuhiko/redis-rs/pull/368))
+* Support SCAN methods on async connections ([#326](https://github.com/mitsuhiko/redis-rs/pull/326))
+* Removed unnecessary overhead around `Value` conversions ([#327](https://github.com/mitsuhiko/redis-rs/pull/327))
+* Support for Redis 6 auth ([#341](https://github.com/mitsuhiko/redis-rs/pull/341))
+* BUGFIX: Make aio::Connection Sync again ([#321](https://github.com/mitsuhiko/redis-rs/pull/321))
+* BUGFIX: Return UnexpectedEof if we try to decode at eof ([#322](https://github.com/mitsuhiko/redis-rs/pull/322))
+
 ## [0.16.0](https://github.com/mitsuhiko/redis-rs/compare/0.15.1...0.16.0) - 2020-05-10
 
 **Fixes and improvements**
@@ -12,7 +27,6 @@
 * Add async-std support ([#281](https://github.com/mitsuhiko/redis-rs/pull/281))
 * Fix key extraction for some stream commands ([#283](https://github.com/mitsuhiko/redis-rs/pull/283))
 * Add asynchronous PubSub support ([#287](https://github.com/mitsuhiko/redis-rs/pull/287))
-* Add Redis Streams commands ([#162](https://github.com/mitsuhiko/redis-rs/pull/319))
 
 ### Breaking changes
 
