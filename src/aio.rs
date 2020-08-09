@@ -47,7 +47,7 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
 #[cfg(feature = "async-std-comp")]
@@ -236,6 +236,9 @@ impl AsyncRead for ActualConnection {
 /// Represents a `PubSub` connection.
 pub struct PubSub(Connection);
 
+/// Represents a MONITORing connection.
+pub struct Monitor(Connection);
+
 impl PubSub {
     fn new(con: Connection) -> Self {
         Self(con)
@@ -305,6 +308,34 @@ impl PubSub {
     }
 }
 
+impl Monitor {
+    /// Create a [`Monitor`] from a [`Connection`]
+    pub fn new(con: Connection) -> Self {
+        Self(con)
+    }
+
+    /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
+    pub async fn monitor(&mut self) -> RedisResult<()> {
+        Ok(cmd("MONITOR").query_async(&mut self.0).await?)
+    }
+
+    /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
+    pub fn on_message<'a, T: FromRedisValue>(&'a mut self) -> impl Stream<Item = T> + 'a {
+        ValueCodec::default()
+            .framed(&mut self.0.con)
+            .into_stream()
+            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+    }
+
+    /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
+    pub fn into_on_message<T: FromRedisValue>(self) -> impl Stream<Item = T> {
+        ValueCodec::default()
+            .framed(self.0.con)
+            .into_stream()
+            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+    }
+}
+
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
@@ -330,6 +361,11 @@ impl Connection {
     /// Converts this [`Connection`] into [`PubSub`].
     pub fn into_pubsub(self) -> PubSub {
         PubSub::new(self)
+    }
+
+    /// Converts this [`Connection`] into [`Monitor`]
+    pub fn into_monitor(self) -> Monitor {
+        Monitor::new(self)
     }
 
     /// Fetches a single response from the connection.
