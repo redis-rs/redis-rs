@@ -763,7 +763,7 @@ impl ToRedisArgs for bool {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(if *self { b"true" } else { b"false" })
+        out.write_arg(if *self { b"1" } else { b"0" })
     }
 }
 
@@ -1057,6 +1057,16 @@ impl FromRedisValue for bool {
                     invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
+            Value::Data(ref bytes) => {
+                let res = from_utf8(bytes)?.to_string();
+                if res == "1" {
+                    Ok(true)
+                } else if res == "0" {
+                    Ok(false)
+                } else {
+                     invalid_type_error!(v, "Response type not bool compatible.");
+                }
+            },
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
