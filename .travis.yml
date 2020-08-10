@@ -12,16 +12,14 @@ cache:
 before_cache:
   - rm -rf /home/travis/.cargo/registry
 
-# This is not a an official ppa but seems to be a well-known one. Replace it if
-# we can get Redis 6 from main stream package mananger.
-#
-# Refs:
-# - https://github.com/antirez/redis/issues/1732
-# - https://launchpad.net/~chris-lea/+archive/ubuntu/redis-server
 before_install: |
-  sudo add-apt-repository ppa:chris-lea/redis-server -y
   sudo apt-get update
-  sudo apt-get install redis-server=5:6.0.5-1chl1~xenial1 stunnel -y
+  sudo apt-get install stunnel -y
+
+install: |
+  wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
+  tar -xzvf 6.0.6.tar.gz;
+  pushd redis-6.0.6 && BUILD_TLS=yes make && export PATH=$PWD/src:$PATH && popd;
 
 matrix:
   include:
