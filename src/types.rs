@@ -1058,10 +1058,9 @@ impl FromRedisValue for bool {
                 }
             }
             Value::Data(ref bytes) => {
-                let res = from_utf8(bytes)?.to_string();
-                if res == "1" {
+                if bytes == b"1" {
                     Ok(true)
-                } else if res == "0" {
+                } else if bytes == b"0" {
                     Ok(false)
                 } else {
                      invalid_type_error!(v, "Response type not bool compatible.");
