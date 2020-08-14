@@ -132,6 +132,15 @@ fn test_hashmap() {
 fn test_bool() {
     use redis::{ErrorKind, FromRedisValue, Value};
 
+    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    assert_eq!(v, Ok(true));
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("0".into()));
+    assert_eq!(v, Ok(false));
+
+    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Data("garbage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
     let v = FromRedisValue::from_redis_value(&Value::Status("1".into()));
     assert_eq!(v, Ok(true));
 
