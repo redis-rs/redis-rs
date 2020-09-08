@@ -226,8 +226,7 @@ fn test_transaction_multiplexed_connection() {
     .unwrap();
 }
 
-#[test]
-fn test_async_scanning() {
+fn test_async_scanning(batch_size: usize) {
     let ctx = TestContext::new();
     block_on_all(async move {
         ctx.multiplexed_async_connection()
@@ -235,7 +234,7 @@ fn test_async_scanning() {
                 async move {
                     let mut unseen = std::collections::HashSet::new();
 
-                    for x in 0..1000 {
+                    for x in 0..batch_size {
                         redis::cmd("SADD")
                             .arg("foo")
                             .arg(x)
@@ -255,7 +254,8 @@ fn test_async_scanning() {
                     while let Some(x) = iter.next_item().await {
                         // type inference limitations
                         let x: usize = x;
-                        unseen.remove(&x);
+                        // if this assertion fails, too many items were returned by the iterator.
+                        assert!(unseen.remove(&x));
                     }
 
                     assert_eq!(unseen.len(), 0);
@@ -266,6 +266,16 @@ fn test_async_scanning() {
             .await
     })
     .unwrap();
+}
+
+#[test]
+fn test_async_scanning_big_batch() {
+    test_async_scanning(1000)
+}
+
+#[test]
+fn test_async_scanning_small_batch() {
+    test_async_scanning(2)
 }
 
 #[test]
