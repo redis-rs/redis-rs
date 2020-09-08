@@ -110,6 +110,8 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
                 if cursor == 0 {
                     return None;
                 }
+            } else {
+                return None;
             }
 
             let rv = unwrap_or!(
