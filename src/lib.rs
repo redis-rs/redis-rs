@@ -152,7 +152,7 @@
 //!
 //! # Iteration Protocol
 //!
-//! In addition to sending a single query you iterators are also supported.  When
+//! In addition to sending a single query, iterators are also supported.  When
 //! used with regular bulk responses they don't give you much over querying and
 //! converting into a vector (both use a vector internally) but they can also
 //! be used with `SCAN` like commands in which case iteration will send more
