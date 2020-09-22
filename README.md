@@ -47,6 +47,26 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 }
 ```
 
+## TLS Support
+
+To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
+
+```
+redis = { version = "0.16.0", default-features = false, features = ["tls"] }
+
+# if you use tokio
+redis = { version = "0.16.0", default-features = false, features = ["tls", "tokio-tls-comp"] }
+
+# if you use async-std
+redis = { version = "0.16.0", default-features = false, features = ["tls", "async-std-tls-comp"] }
+```
+
+then you should be able to connect to a redis instance using the `redis://` URL scheme:
+
+```rust
+let client = redis::Client::open("rediss://127.0.0.1/")?;
+```
+
 ## Cluster Support
 
 Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
