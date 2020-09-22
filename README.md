@@ -51,7 +51,7 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 
 Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
 
-`redis = { version = "0.16.0", features = [ "cluster"] }`
+`redis = { version = "0.17.0", features = [ "cluster"] }`
 
 Then you can simply use the `ClusterClient` which accepts a list of available nodes.
 
