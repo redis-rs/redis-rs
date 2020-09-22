@@ -1,7 +1,7 @@
 //! Redis cluster support.
 //!
 //! This module extends the library to be able to use cluster.
-//! ClusterClient impletemts traits of ConnectionLike and Commands.
+//! ClusterClient implements traits of ConnectionLike and Commands.
 //!
 //! Note that the cluster support currently does not provide pubsub
 //! functionality.
