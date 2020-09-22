@@ -52,13 +52,13 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
 
 ```
-redis = { version = "0.16.0", default-features = false, features = ["tls"] }
+redis = { version = "0.17.0", default-features = false, features = ["tls"] }
 
 # if you use tokio
-redis = { version = "0.16.0", default-features = false, features = ["tls", "tokio-tls-comp"] }
+redis = { version = "0.17.0", default-features = false, features = ["tls", "tokio-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.16.0", default-features = false, features = ["tls", "async-std-tls-comp"] }
+redis = { version = "0.17.0", default-features = false, features = ["tls", "async-std-tls-comp"] }
 ```
 
 then you should be able to connect to a redis instance using the `redis://` URL scheme:
@@ -71,7 +71,7 @@ let client = redis::Client::open("rediss://127.0.0.1/")?;
 
 Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
 
-`redis = { version = "0.16.0", features = [ "cluster"] }`
+`redis = { version = "0.17.0", features = [ "cluster"] }`
 
 Then you can simply use the `ClusterClient` which accepts a list of available nodes.
 
