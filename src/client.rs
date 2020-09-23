@@ -73,7 +73,7 @@ impl Client {
             }
             #[cfg(feature = "async-std-comp")]
             Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio_async_std::AsyncStd>()
+                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
                     .await?
             }
         };
@@ -99,7 +99,7 @@ impl Client {
     pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
-            crate::aio::connect::<crate::aio_async_std::AsyncStd>(&self.connection_info)
+            crate::aio::connect::<crate::aio::async_std::AsyncStd>(&self.connection_info)
                 .await?
                 .map(RedisRuntime::boxed),
         )
@@ -144,7 +144,7 @@ impl Client {
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio_async_std::AsyncStd>()
+        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
             .await
     }
 
@@ -178,7 +178,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio_async_std::AsyncStd>()
+        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
             .await
     }
 

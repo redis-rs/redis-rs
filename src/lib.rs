@@ -394,11 +394,6 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
 
-/// Enables the async_std compatibility
-#[cfg(feature = "async-std-comp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
-pub mod aio_async_std;
-
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;

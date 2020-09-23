@@ -47,6 +47,11 @@ use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
+/// Enables the async_std compatibility
+#[cfg(feature = "async-std-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+pub mod async_std;
+
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
