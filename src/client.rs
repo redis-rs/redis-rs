@@ -67,7 +67,7 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        let con = match self.get_runtime() {
+        let con = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
                 self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
@@ -116,7 +116,7 @@ impl Client {
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        match self.get_runtime() {
+        match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => self.get_multiplexed_tokio_connection().await,
             #[cfg(feature = "async-std-comp")]
@@ -244,32 +244,6 @@ impl Client {
             .boxed())
     }
 
-    fn get_runtime(&self) -> Runtime {
-        #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
-        {
-            Runtime::Tokio
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-        {
-            Runtime::AsyncStd
-        }
-
-        #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
-        {
-            if tokio::runtime::Handle::try_current().is_ok() {
-                Runtime::Tokio
-            } else {
-                Runtime::AsyncStd
-            }
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-        {
-            compile_error!("tokio-comp or async-std-comp features required for aio feature")
-        }
-    }
-
     #[cfg(feature = "connection-manager")]
     pub(crate) fn connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
@@ -277,12 +251,7 @@ impl Client {
 }
 
 #[cfg(feature = "aio")]
-enum Runtime {
-    #[cfg(feature = "tokio-comp")]
-    Tokio,
-    #[cfg(feature = "async-std-comp")]
-    AsyncStd,
-}
+use crate::aio::Runtime;
 
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {

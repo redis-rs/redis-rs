@@ -71,7 +71,7 @@ async-std-comp = ["aio", "async-std"]
 async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
 tokio-comp = ["aio", "tokio", "tokio/tcp", "tokio/uds"]
 tokio-tls-comp = ["tls", "tokio-tls"]
-connection-manager = ["tokio-rt-core", "arc-swap", "futures"]
+connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
 
 

@@ -76,6 +76,51 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum Runtime {
+    #[cfg(feature = "tokio-comp")]
+    Tokio,
+    #[cfg(feature = "async-std-comp")]
+    AsyncStd,
+}
+
+impl Runtime {
+    pub(crate) fn locate() -> Self {
+        #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+        {
+            Runtime::Tokio
+        }
+
+        #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+        {
+            Runtime::AsyncStd
+        }
+
+        #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+        {
+            if ::tokio::runtime::Handle::try_current().is_ok() {
+                Runtime::Tokio
+            } else {
+                Runtime::AsyncStd
+            }
+        }
+
+        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
+        {
+            compile_error!("tokio-comp or async-std-comp features required for aio feature")
+        }
+    }
+
+    fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => tokio::Tokio::spawn(f),
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => async_std::AsyncStd::spawn(f),
+        }
+    }
+}
+
 /// Trait for objects that implements `AsyncRead` and `AsyncWrite`
 pub trait AsyncStream: AsyncRead + AsyncWrite {}
 impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
@@ -831,6 +876,8 @@ mod connection_manager {
         /// The `ArcSwap` is required to be able to replace the connection
         /// without making the `ConnectionManager` mutable.
         connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
+
+        runtime: Runtime,
     }
 
     /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -847,6 +894,7 @@ mod connection_manager {
         pub async fn new(client: Client) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
 
+            let runtime = Runtime::locate();
             let connection = client.get_multiplexed_async_connection().await?;
 
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
@@ -855,6 +903,7 @@ mod connection_manager {
                 connection: Arc::new(ArcSwap::from_pointee(
                     future::ok(connection).boxed().shared(),
                 )),
+                runtime,
             })
         }
 
@@ -881,7 +930,7 @@ mod connection_manager {
             // If the swap happened...
             if Arc::ptr_eq(&prev, &current) {
                 // ...start the connection attempt immediately but do not wait on it.
-                ::tokio::spawn(new_connection);
+                self.runtime.spawn(new_connection.map(|_| ()));
             }
         }
     }
