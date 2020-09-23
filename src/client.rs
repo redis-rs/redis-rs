@@ -68,7 +68,7 @@ impl Client {
         let con = match self.get_runtime() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio_aio::Tokio>()
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
                     .await?
             }
             #[cfg(feature = "async-std-comp")]
@@ -87,7 +87,7 @@ impl Client {
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
-            crate::aio::connect::<crate::aio::tokio_aio::Tokio>(&self.connection_info)
+            crate::aio::connect::<crate::aio::tokio::Tokio>(&self.connection_info)
                 .await?
                 .map(RedisRuntime::boxed),
         )
@@ -131,7 +131,7 @@ impl Client {
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::tokio_aio::Tokio>()
+        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
             .await
     }
 
@@ -161,7 +161,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::tokio_aio::Tokio>()
+        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
             .await
     }
 

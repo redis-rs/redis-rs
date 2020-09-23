@@ -12,16 +12,10 @@ use std::task::{self, Poll};
 
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 
-#[cfg(all(unix, feature = "tokio-comp"))]
-use tokio::net::UnixStream as UnixStreamTokio;
-
-use tokio::{
+use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::{mpsc, oneshot},
 };
-
-#[cfg(feature = "tokio-comp")]
-use tokio::net::TcpStream as TcpStreamTokio;
 
 #[cfg(feature = "tls")]
 use native_tls::TlsConnector;
@@ -52,6 +46,11 @@ use crate::{from_redis_value, ToRedisArgs};
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
 
+/// Enables the tokio compatibility
+#[cfg(feature = "tokio-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+pub mod tokio;
+
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
@@ -74,143 +73,6 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         Box::pin(self)
-    }
-}
-
-#[cfg(feature = "tokio-comp")]
-pub(crate) mod tokio_aio {
-    use super::{async_trait, AsyncStream, RedisResult, RedisRuntime, SocketAddr, TcpStreamTokio};
-
-    use std::{
-        future::Future,
-        io,
-        pin::Pin,
-        task::{self, Poll},
-    };
-
-    use tokio::io::{AsyncRead, AsyncWrite};
-
-    #[cfg(feature = "tls")]
-    use super::TlsConnector;
-
-    #[cfg(feature = "tokio-tls-comp")]
-    use tokio_tls::TlsStream;
-
-    #[cfg(unix)]
-    use super::{Path, UnixStreamTokio};
-
-    pub enum Tokio {
-        /// Represents a Tokio TCP connection.
-        Tcp(TcpStreamTokio),
-        /// Represents a Tokio TLS encrypted TCP connection
-        #[cfg(feature = "tokio-tls-comp")]
-        TcpTls(TlsStream<TcpStreamTokio>),
-        /// Represents a Tokio Unix connection.
-        #[cfg(unix)]
-        Unix(UnixStreamTokio),
-    }
-
-    impl AsyncWrite for Tokio {
-        fn poll_write(
-            mut self: Pin<&mut Self>,
-            cx: &mut task::Context,
-            buf: &[u8],
-        ) -> Poll<io::Result<usize>> {
-            match &mut *self {
-                Tokio::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-                #[cfg(feature = "tokio-tls-comp")]
-                Tokio::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
-                #[cfg(unix)]
-                #[cfg(feature = "tokio-comp")]
-                Tokio::Unix(r) => Pin::new(r).poll_write(cx, buf),
-            }
-        }
-
-        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-            match &mut *self {
-                Tokio::Tcp(r) => Pin::new(r).poll_flush(cx),
-                #[cfg(feature = "tokio-tls-comp")]
-                Tokio::TcpTls(r) => Pin::new(r).poll_flush(cx),
-                #[cfg(unix)]
-                Tokio::Unix(r) => Pin::new(r).poll_flush(cx),
-            }
-        }
-
-        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
-            match &mut *self {
-                Tokio::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-                #[cfg(feature = "tokio-tls-comp")]
-                Tokio::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
-                #[cfg(unix)]
-                Tokio::Unix(r) => Pin::new(r).poll_shutdown(cx),
-            }
-        }
-    }
-
-    impl AsyncRead for Tokio {
-        fn poll_read(
-            mut self: Pin<&mut Self>,
-            cx: &mut task::Context,
-            buf: &mut [u8],
-        ) -> Poll<io::Result<usize>> {
-            match &mut *self {
-                Tokio::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-                #[cfg(feature = "tokio-tls-comp")]
-                Tokio::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
-                #[cfg(unix)]
-                Tokio::Unix(r) => Pin::new(r).poll_read(cx, buf),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl RedisRuntime for Tokio {
-        async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-            Ok(TcpStreamTokio::connect(&socket_addr)
-                .await
-                .map(Tokio::Tcp)?)
-        }
-
-        #[cfg(feature = "tls")]
-        async fn connect_tcp_tls(
-            hostname: &str,
-            socket_addr: SocketAddr,
-            insecure: bool,
-        ) -> RedisResult<Self> {
-            let tls_connector: tokio_tls::TlsConnector = if insecure {
-                TlsConnector::builder()
-                    .danger_accept_invalid_certs(true)
-                    .danger_accept_invalid_hostnames(true)
-                    .use_sni(false)
-                    .build()?
-            } else {
-                TlsConnector::new()?
-            }
-            .into();
-            Ok(tls_connector
-                .connect(hostname, TcpStreamTokio::connect(&socket_addr).await?)
-                .await
-                .map(Tokio::TcpTls)?)
-        }
-
-        #[cfg(unix)]
-        async fn connect_unix(path: &Path) -> RedisResult<Self> {
-            Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
-        }
-
-        fn spawn(f: impl Future<Output = ()> + Send + 'static) {
-            tokio::spawn(f);
-        }
-
-        fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
-            match self {
-                Tokio::Tcp(x) => Box::pin(x),
-                #[cfg(feature = "tokio-tls-comp")]
-                Tokio::TcpTls(x) => Box::pin(x),
-                #[cfg(unix)]
-                Tokio::Unix(x) => Box::pin(x),
-            }
-        }
     }
 }
 
@@ -1019,7 +881,7 @@ mod connection_manager {
             // If the swap happened...
             if Arc::ptr_eq(&prev, &current) {
                 // ...start the connection attempt immediately but do not wait on it.
-                tokio::spawn(new_connection);
+                ::tokio::spawn(new_connection);
             }
         }
     }
