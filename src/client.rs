@@ -59,6 +59,8 @@ impl Client {
     }
 }
 
+/// To enable async support you need to chose one of the supported runtimes and active its
+/// corresponding feature: `tokio-comp` or `async-std`
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl Client {
