@@ -38,6 +38,8 @@ matrix:
 script:
   - make $COMMAND
   - cargo check --benches --all-features
+  - cargo check --no-default-features --features tokio-comp
+  - cargo check --no-default-features --features async-std-comp
   - |
     ([ "$RUST_VERSION" = "nightly" ] || [ "$RUST_VERSION" = "beta" ]) && exit 0 # Don't cargo-fmt on nightly or beta
     make style-check
@@ -45,7 +47,7 @@ script:
     # Remove dev-dependencies so they do not enable features accidentally
     # https://github.com/rust-lang/cargo/issues/4664
     sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-    cargo build --all-features
+    cargo check --all-features
 
 notifications:
   email: false

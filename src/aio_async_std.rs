@@ -73,13 +73,11 @@ where
 /// Represents an AsyncStd connectable
 pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
-    #[cfg(feature = "async-std-comp")]
     Tcp(AsyncStdWrapped<TcpStream>),
     /// Represents an Async_std TLS encrypted TCP connection.
     #[cfg(feature = "async-std-tls-comp")]
     TcpTls(AsyncStdWrapped<TlsStream<TcpStream>>),
     /// Represents an Async_std Unix connection.
-    #[cfg(feature = "async-std-comp")]
     #[cfg(unix)]
     Unix(AsyncStdWrapped<UnixStream>),
 }
@@ -92,10 +90,9 @@ impl AsyncWrite for AsyncStd {
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "tokio-tls-comp")]
+            #[cfg(feature = "async-std-tls-comp")]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
             AsyncStd::Unix(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
@@ -103,7 +100,7 @@ impl AsyncWrite for AsyncStd {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "tokio-tls-comp")]
+            #[cfg(feature = "async-std-tls-comp")]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_flush(cx),
@@ -113,7 +110,7 @@ impl AsyncWrite for AsyncStd {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "tokio-tls-comp")]
+            #[cfg(feature = "async-std-tls-comp")]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_shutdown(cx),

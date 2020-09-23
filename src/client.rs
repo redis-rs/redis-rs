@@ -1,4 +1,7 @@
-use std::{pin::Pin, time::Duration};
+use std::time::Duration;
+
+#[cfg(feature = "aio")]
+use std::pin::Pin;
 
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
@@ -54,9 +57,13 @@ impl Client {
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
         Ok(connect(&self.connection_info, Some(timeout))?)
     }
+}
 
+#[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+impl Client {
     /// Returns an async connection from the client.
-    #[cfg(feature = "aio")]
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
         let con = match self.get_runtime() {
             #[cfg(feature = "tokio-comp")]
@@ -76,6 +83,7 @@ impl Client {
 
     /// Returns an async connection from the client.
     #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
@@ -87,6 +95,7 @@ impl Client {
 
     /// Returns an async connection from the client.
     #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
@@ -97,7 +106,11 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(all(feature = "aio", feature = "tokio-rt-core"))]
+    #[cfg(any(feature = "tokio-rt-core", feature = "async-std-comp"))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(feature = "tokio-rt-core", feature = "async-std-comp")))
+    )]
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
@@ -113,11 +126,8 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    ///
-    /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
-    #[cfg(feature = "tokio-rt-core")]
     #[cfg(feature = "tokio-comp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
@@ -129,8 +139,8 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    /// This requires the `tokio-rt-core` feature as it uses the default tokio executor.
     #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
@@ -144,6 +154,7 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn create_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<(
@@ -160,6 +171,7 @@ impl Client {
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn create_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<(
@@ -185,17 +197,14 @@ impl Client {
     /// A connection manager can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
-    /// This requires the `connection-manager` feature, which in turn pulls in
-    /// the Tokio executor.
-    ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
     pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
         Ok(crate::aio::ConnectionManager::new(self.clone()).await?)
     }
 
-    #[cfg(all(feature = "aio", feature = "tokio-rt-core"))]
     async fn get_multiplexed_async_connection_inner<T>(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection>
@@ -209,7 +218,6 @@ impl Client {
         Ok(connection)
     }
 
-    #[cfg(all(feature = "aio", feature = "tokio-rt-core"))]
     async fn create_multiplexed_async_connection_inner<T>(
         &self,
     ) -> RedisResult<(
@@ -223,7 +231,6 @@ impl Client {
         crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
     }
 
-    #[cfg(feature = "aio")]
     async fn get_simple_async_connection<T>(
         &self,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
@@ -235,7 +242,6 @@ impl Client {
             .boxed())
     }
 
-    #[cfg(feature = "aio")]
     fn get_runtime(&self) -> Runtime {
         #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
         {
@@ -262,11 +268,13 @@ impl Client {
         }
     }
 
+    #[cfg(feature = "connection-manager")]
     pub(crate) fn connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
     }
 }
 
+#[cfg(feature = "aio")]
 enum Runtime {
     #[cfg(feature = "tokio-comp")]
     Tokio,
