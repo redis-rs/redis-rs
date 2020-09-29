@@ -107,7 +107,7 @@ To run benchmarks:
 
     $ make bench
 
-To build the docs:
+To build the docs (require nightly compiler, see [rust-lang/rust#43781](https://github.com/rust-lang/rust/issues/43781)):
 
     $ make docs
 
