@@ -1,4 +1,5 @@
-#[cfg(feature = "streams")]
+#![cfg(feature = "streams")]
+
 use redis::streams::{StreamId, StreamKey, StreamMaxlen, StreamReadOptions, StreamReadReply};
 
 use redis::{Commands, RedisResult, Value};
@@ -33,7 +34,6 @@ fn main() {
     clean_up(&client)
 }
 
-#[cfg(feature = "streams")]
 fn demo_group_reads(client: &redis::Client) {
     println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
 
@@ -117,7 +117,6 @@ fn demo_group_reads(client: &redis::Client) {
 
 /// Generate some contrived records and add them to various
 /// streams.
-#[cfg(feature = "streams")]
 fn add_records(client: &redis::Client) -> RedisResult<()> {
     let mut con = client.get_connection().expect("conn");
 
@@ -202,7 +201,6 @@ const BLOCK_MILLIS: usize = 5000;
 /// ID from which they need to read, but in this example, we
 /// just go back to the beginning of time and ask for all the
 /// records in the stream.
-#[cfg(feature = "streams")]
 fn read_records(client: &redis::Client) -> RedisResult<()> {
     let mut con = client.get_connection().expect("conn");
 
@@ -240,7 +238,6 @@ fn consumer_name(slowness: u8) -> String {
 
 const GROUP_NAME: &str = "example-group-aaa";
 
-#[cfg(feature = "streams")]
 fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
     let mut con = client.get_connection().expect("conn");
 
@@ -260,7 +257,6 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<Strea
     Ok(srr)
 }
 
-#[cfg(feature = "streams")]
 fn clean_up(client: &redis::Client) {
     let mut con = client.get_connection().expect("con");
     for k in STREAMS {
@@ -271,24 +267,3 @@ fn clean_up(client: &redis::Client) {
         destroyed.expect("xgroup destroy");
     }
 }
-
-#[cfg(not(feature = "streams"))]
-fn add_records(client: &redis::Client) -> RedisResult<()> {
-    Ok(())
-}
-
-#[cfg(not(feature = "streams"))]
-fn read_records(client: &redis::Client) -> RedisResult<()> {
-    Ok(())
-}
-
-#[cfg(not(feature = "streams"))]
-fn read_group_records(client: &redis::Client) -> RedisResult<()> {
-    Ok(())
-}
-
-#[cfg(not(feature = "streams"))]
-fn demo_group_reads(client: &redis::Client) {}
-
-#[cfg(not(feature = "streams"))]
-fn clean_up(client: &redis::Client) {}

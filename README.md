@@ -47,18 +47,32 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 }
 ```
 
+## Async support
+
+To enable asynchronous clients a feature for the underlying feature need to be activated.
+
+```
+# if you use tokio
+redis = { version = "0.17.0", features = ["tokio-comp"] }
+# for the multiplexed client
+redis = { version = "0.17.0", features = ["tokio-rt-core"] }
+
+# if you use async-std
+redis = { version = "0.17.0", features = ["async-std-comp"] }
+```
+
 ## TLS Support
 
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
 
 ```
-redis = { version = "0.17.0", default-features = false, features = ["tls"] }
+redis = { version = "0.17.0", features = ["tls"] }
 
 # if you use tokio
-redis = { version = "0.17.0", default-features = false, features = ["tls", "tokio-tls-comp"] }
+redis = { version = "0.17.0", features = ["tls", "tokio-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.17.0", default-features = false, features = ["tls", "async-std-tls-comp"] }
+redis = { version = "0.17.0", features = ["tls", "async-std-tls-comp"] }
 ```
 
 then you should be able to connect to a redis instance using the `redis://` URL scheme:
