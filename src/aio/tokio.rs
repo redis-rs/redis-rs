@@ -46,7 +46,6 @@ impl AsyncWrite for Tokio {
             #[cfg(feature = "tokio-tls-comp")]
             Tokio::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
-            #[cfg(feature = "tokio-comp")]
             Tokio::Unix(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
@@ -123,8 +122,14 @@ impl RedisRuntime for Tokio {
         Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
     }
 
+    #[cfg(feature = "tokio-rt-core")]
     fn spawn(f: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(f);
+    }
+
+    #[cfg(not(feature = "tokio-rt-core"))]
+    fn spawn(_: impl Future<Output = ()> + Send + 'static) {
+        unreachable!()
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {

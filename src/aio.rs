@@ -111,6 +111,7 @@ impl Runtime {
         }
     }
 
+    #[allow(dead_code)]
     fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
         match self {
             #[cfg(feature = "tokio-comp")]
