@@ -23,9 +23,8 @@ Documentation on the library can be found at
 
 ## Basic Operation
 
-To open a connection you need to create a client and then to fetch a
-connection from it.  In the future there will be a connection pool for
-those, currently each connection is separate and not pooled.
+To open a connection you need to create a client and then fetch a
+connection from it.
 
 Many commands are implemented through the `Commands` trait but manual
 command creation is also possible.
@@ -46,6 +45,36 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
     con.get("my_key")
 }
 ```
+
+## R2D2 Support 
+
+Opening a new database connection every time one 
+is needed is both inefficient and can lead to resource exhaustion under 
+high traffic conditions. To prevent this, you can use a connection pool, 
+which will maintain a set of open connections to a database, handing them 
+out for repeated use. You can use the popular `r2d2` connection pool by enabling the 
+`r2d2` feature:
+```
+redis = { version = "0.17.0", features = ["r2d2"] }
+```
+You can then use `r2d2::Pool::builder()` to create a connection pool:
+
+```rust
+let client = redis::Client::open("redis://127.0.0.1/").unwrap()
+let pool = r2d2::Pool::builder().build(client)
+```
+
+Retrieving a connection from the pool is done through the `get()` method.
+The connection can then be used as usual:
+
+```rust
+let mut conn = pool.get().unwrap()
+
+let _: () = conn.set("KEY", "VALUE").unwrap();
+let val: String = conn.get("KEY").unwrap();
+```
+
+[Click here for a complete example](https://github.com/mitsuhiko/redis-rs/blob/master/examples/r2d2.rs).
 
 ## Async support
 
