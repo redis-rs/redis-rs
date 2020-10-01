@@ -80,7 +80,7 @@ let val: String = conn.get("KEY").unwrap();
 
 To enable asynchronous clients a feature for the underlying feature need to be activated.
 
-```
+```toml
 # if you use tokio
 redis = { version = "0.17.0", features = ["tokio-comp"] }
 # for the multiplexed client
@@ -89,6 +89,9 @@ redis = { version = "0.17.0", features = ["tokio-rt-core"] }
 # if you use async-std
 redis = { version = "0.17.0", features = ["async-std-comp"] }
 ```
+
+Note that you cannot use r2d2 with an asynchronous client because r2d2 is a synchronous
+connection pool implementation. For an asynchronous connection pool, look into [`deadpool-redis`](https://crates.io/crates/deadpool-redis) or [`bb8-redis`](https://crates.io/crates/bb8-redis/0.3.1)
 
 ## TLS Support
 
