@@ -99,6 +99,20 @@
 //! about the actual return value (other than that it is not a failure)
 //! you can always type annotate it to the unit type `()`.
 //!
+//! Note that commands with a sub-command (like "MEMORY USAGE", "ACL WHOAMI",
+//! "LATENCY HISTORY", etc) must specify the sub-command as a separate `arg`:
+//!
+//! ```rust,no_run
+//! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<usize> {
+//!     // This will result in a server error: "unknown command `MEMORY USAGE`"
+//!     // because "USAGE" is technically a sub-command of "MEMORY".
+//!     redis::cmd("MEMORY USAGE").arg("my_key").query(con)?;
+//!
+//!     // However, this will work as you'd expect
+//!     redis::cmd("MEMORY").arg("USAGE").arg("my_key").query(con)
+//! }
+//! ```
+//!
 //! ## Executing High-Level Commands
 //!
 //! The high-level interface is similar.  For it to become available you
