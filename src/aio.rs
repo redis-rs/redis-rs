@@ -972,7 +972,7 @@ mod connection_manager {
             current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
             let client = self.client.clone();
-            let timeout = self.timeout.clone();
+            let timeout = self.timeout;
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
                 let mut connection = client.get_multiplexed_async_connection().await?;
                 connection.set_timeout(timeout);
