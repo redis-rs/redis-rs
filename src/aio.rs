@@ -15,6 +15,7 @@ use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset
 use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::{mpsc, oneshot},
+    time::{timeout, Duration},
 };
 
 #[cfg(feature = "tls")]
@@ -742,6 +743,7 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
+    timeout: Option<Duration>,
 }
 
 impl MultiplexedConnection {
@@ -767,6 +769,7 @@ impl MultiplexedConnection {
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
+            timeout: None,
         };
         let driver = {
             let auth = authenticate(connection_info, &mut con);
@@ -784,20 +787,29 @@ impl MultiplexedConnection {
         };
         Ok((con, driver))
     }
+
+    /// Sets the timeout for the connection.
+    ///
+    /// If the provided value is `None`, then 'req_packed_command' and `req_packed_commands` calls will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
+    pub fn set_timeout(&mut self, dur: Option<Duration>) {
+        self.timeout = dur
+    }
 }
 
 impl ConnectionLike for MultiplexedConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move {
-            let value = self
-                .pipeline
-                .send(cmd.get_packed_command())
-                .await
-                .map_err(|err| {
-                    err.unwrap_or_else(|| {
-                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
-                    })
-                })?;
+            let value = match self.timeout {
+                Some(dur) => timeout(dur, self.pipeline.send(cmd.get_packed_command()))
+                    .await
+                    .map_err(|_| RedisError::from(io::Error::from(io::ErrorKind::TimedOut)))?,
+                None => self.pipeline.send(cmd.get_packed_command()).await,
+            }
+            .map_err(|err| {
+                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+            })?;
             Ok(value)
         })
         .boxed()
@@ -810,15 +822,23 @@ impl ConnectionLike for MultiplexedConnection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         (async move {
-            let mut value = self
-                .pipeline
-                .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
+            let mut value = match self.timeout {
+                Some(dur) => timeout(
+                    dur,
+                    self.pipeline
+                        .send_recv_multiple(cmd.get_packed_pipeline(), offset + count),
+                )
                 .await
-                .map_err(|err| {
-                    err.unwrap_or_else(|| {
-                        RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
-                    })
-                })?;
+                .map_err(|_| RedisError::from(io::Error::from(io::ErrorKind::TimedOut)))?,
+                None => {
+                    self.pipeline
+                        .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
+                        .await
+                }
+            }
+            .map_err(|err| {
+                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+            })?;
 
             value.drain(..offset);
             Ok(value)
@@ -878,6 +898,8 @@ mod connection_manager {
         /// without making the `ConnectionManager` mutable.
         connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
+        timeout: Option<Duration>,
+
         runtime: Runtime,
     }
 
@@ -896,7 +918,8 @@ mod connection_manager {
             // Create a MultiplexedConnection and wait for it to be established
 
             let runtime = Runtime::locate();
-            let connection = client.get_multiplexed_async_connection().await?;
+            let mut connection = client.get_multiplexed_async_connection().await?;
+            connection.set_timeout(None);
 
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
@@ -905,7 +928,39 @@ mod connection_manager {
                     future::ok(connection).boxed().shared(),
                 )),
                 runtime,
+                timeout: None,
             })
+        }
+
+        /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+        ///
+        /// This requires the `connection-manager` feature, which will also pull in
+        /// the Tokio executor.
+        pub async fn with_timeout(client: Client, timeout: Duration) -> RedisResult<Self> {
+            // Create a MultiplexedConnection and wait for it to be established
+
+            let runtime = Runtime::locate();
+            let mut connection = client.get_multiplexed_async_connection().await?;
+            connection.set_timeout(Some(timeout));
+
+            // Wrap the connection in an `ArcSwap` instance for fast atomic access
+            Ok(Self {
+                client,
+                connection: Arc::new(ArcSwap::from_pointee(
+                    future::ok(connection).boxed().shared(),
+                )),
+                runtime,
+                timeout: Some(timeout),
+            })
+        }
+
+        /// Sets the timeout for the underlying connection.
+        ///
+        /// If the provided value is `None`, then 'req_packed_command' and `req_packed_commands` calls will
+        /// block indefinitely. It is an error to pass the zero `Duration` to this
+        /// method.
+        pub async fn set_timeout(&mut self, dur: Option<Duration>) {
+            self.timeout = dur
         }
 
         /// Reconnect and overwrite the old connection.
@@ -917,10 +972,14 @@ mod connection_manager {
             current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
             let client = self.client.clone();
-            let new_connection: SharedRedisFuture<MultiplexedConnection> =
-                async move { Ok(client.get_multiplexed_async_connection().await?) }
-                    .boxed()
-                    .shared();
+            let timeout = self.timeout.clone();
+            let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+                let mut connection = client.get_multiplexed_async_connection().await?;
+                connection.set_timeout(timeout);
+                Ok(connection)
+            }
+            .boxed()
+            .shared();
 
             // Update the connection in the connection manager
             let new_connection_arc = Arc::new(new_connection.clone());
