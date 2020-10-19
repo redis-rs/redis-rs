@@ -354,6 +354,8 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, warn(broken_intra_doc_links))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // public api
 pub use crate::client::Client;
