@@ -225,20 +225,21 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
 #[cfg(unix)]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
         ))),
-        db: match url.query_pairs().find(|&(ref key, _)| key == "db") {
-            Some((_, db)) => unwrap_or!(
+        db: match query.get("db") {
+            Some(db) => unwrap_or!(
                 db.parse::<i64>().ok(),
                 fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
             ),
             None => 0,
         },
-        username: Some(url.username().to_string()).filter(|user| !user.is_empty()),
-        passwd: url.password().map(|pw| pw.to_string()),
+        username: query.get("user").map(|username| username.to_string()),
+        passwd: query.get("pass").map(|password| password.to_string()),
     })
 }
 
@@ -1128,8 +1129,73 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[test]
     #[cfg(unix)]
-    fn test_url_to_unix_connection_info() {}
+    fn test_url_to_unix_connection_info() {
+        let cases = vec![
+            (
+                url::Url::parse("unix:///var/run/redis.sock").unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
+                    db: 0,
+                    username: None,
+                    passwd: None,
+                },
+            ),
+            (
+                url::Url::parse("redis+unix:///var/run/redis.sock?db=1").unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
+                    db: 1,
+                    username: None,
+                    passwd: None,
+                },
+            ),
+            (
+                url::Url::parse(
+                    "unix:///example.sock?user=%25johndoe%25&pass=%23%40%3C%3E%24&db=2",
+                )
+                .unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
+                    db: 2,
+                    username: Some("%johndoe%".to_string()),
+                    passwd: Some("#@<>$".to_string()),
+                },
+            ),
+            (
+                url::Url::parse(
+                    "redis+unix:///example.sock?pass=%26%3F%3D+%2A%2B&db=2&user=%25johndoe%25",
+                )
+                .unwrap(),
+                ConnectionInfo {
+                    addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
+                    db: 2,
+                    username: Some("%johndoe%".to_string()),
+                    passwd: Some("&?= *+".to_string()),
+                },
+            ),
+        ];
+        for (url, expected) in cases.into_iter() {
+            assert_eq!(
+                ConnectionAddr::Unix(url.to_file_path().unwrap()),
+                *expected.addr,
+                "addr of {} is not expected",
+                url
+            );
+            let res = url_to_unix_connection_info(url.clone()).unwrap();
+            assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
+            assert_eq!(res.db, expected.db, "db of {} is not expected", url);
+            assert_eq!(
+                res.username, expected.username,
+                "username of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.passwd, expected.passwd,
+                "passwd of {} is not expected",
+                url
+            );
+        }
+    }
 }
