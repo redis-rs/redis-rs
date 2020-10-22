@@ -251,7 +251,7 @@ impl From<native_tls::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
-                format!("{:?}", err),
+                err.to_string(),
             ),
         }
     }
