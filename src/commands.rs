@@ -77,6 +77,15 @@ macro_rules! implement_commands {
                 c.iter(self)
             }
 
+            /// Incrementally iterate the keys space for keys matching a pattern.
+            /// This fn is useful incase that redis has too many keys
+            #[inline]
+            fn scan_match_count<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P, count: usize) -> RedisResult<Iter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg("MATCH").arg(pattern).arg("COUNT").arg(count);
+                c.iter(self)
+            }
+
             /// Incrementally iterate hash fields and associated values.
             #[inline]
             fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> RedisResult<Iter<'_, RV>> {
