@@ -77,8 +77,30 @@ macro_rules! implement_commands {
                 c.iter(self)
             }
 
-            /// Incrementally iterate the keys space for keys matching a pattern.
-            /// This fn is useful incase that redis has too many keys
+            /// Incrementally iterate the keys space for keys matching a pattern with a count argument.
+            /// This function is useful incase that Redis has many keys
+            /// # Examples:
+            ///
+            /// ```ignore
+            /// let client = redis::Client::open("redis://127.0.0.1/")?;
+            /// let mut con = client.get_connection()?;
+            ///
+            /// let mut pipe = Pipeline::new();
+            /// for i in 0..1_000 {
+            ///     let key = format!("key:{}", i);
+            ///     pipe.cmd("SET").arg(key).arg(i).ignore();
+            /// }
+            /// pipe.query::<()>(&mut con)?;
+            ///
+            /// let instant_scan = Instant::now();
+            /// let count_scan = con.scan_match::<&str, String>("key:*")?.count();
+            /// let instant_scan = instant_scan.elapsed().as_millis();
+            ///
+            /// let instant_scan_count = Instant::now();
+            /// let count = con.scan_match_count::<&str, String>("key:*", 100)?.count();
+            /// let instant_scan_count = instant_scan_count.elapsed().as_millis();
+            /// assert_eq!(count, count_scan);
+            /// ```
             #[inline]
             fn scan_match_count<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P, count: usize) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SCAN");
