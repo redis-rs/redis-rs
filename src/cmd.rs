@@ -414,10 +414,7 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(
-        self,
-        con: &'a mut dyn ConnectionLike,
-    ) -> RedisResult<Iter<'a, T>> {
+    pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
         let pcmd = self.get_packed_command();
         let rv = con.req_packed_command(&pcmd)?;
 

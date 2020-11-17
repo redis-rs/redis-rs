@@ -326,8 +326,8 @@ impl RedisError {
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match self.repr {
-            ErrorRepr::WithDescription(kind, _) => kind,
-            ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
+            ErrorRepr::WithDescription(kind, _)
+            | ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
             ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
             ErrorRepr::IoError(_) => ErrorKind::IoError,
         }
@@ -336,8 +336,8 @@ impl RedisError {
     /// Returns the error detail.
     pub fn detail(&self) -> Option<&str> {
         match self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail) => Some(detail.as_str()),
-            ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
+            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail)
+            | ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
             _ => None,
         }
     }
@@ -386,10 +386,7 @@ impl RedisError {
 
     /// Indicates that this failure is an IO failure.
     pub fn is_io_error(&self) -> bool {
-        match self.kind() {
-            ErrorKind::IoError => true,
-            _ => false,
-        }
+        self.as_io_error().is_some()
     }
 
     pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
@@ -401,12 +398,10 @@ impl RedisError {
 
     /// Indicates that this is a cluster error.
     pub fn is_cluster_error(&self) -> bool {
-        match self.kind() {
-            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self.kind(),
+            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown
+        )
     }
 
     /// Returns true if this error indicates that the connection was
@@ -433,11 +428,10 @@ impl RedisError {
     /// Note that this may not be accurate depending on platform.
     pub fn is_timeout(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => match err.kind() {
-                io::ErrorKind::TimedOut => true,
-                io::ErrorKind::WouldBlock => true,
-                _ => false,
-            },
+            ErrorRepr::IoError(ref err) => matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ),
             _ => false,
         }
     }
@@ -445,10 +439,10 @@ impl RedisError {
     /// Returns true if error was caused by a dropped connection.
     pub fn is_connection_dropped(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => match err.kind() {
-                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset => true,
-                _ => false,
-            },
+            ErrorRepr::IoError(ref err) => matches!(
+                err.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+            ),
             _ => false,
         }
     }
