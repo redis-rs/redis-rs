@@ -98,7 +98,9 @@ impl Runtime {
 
         #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
         {
-            if ::tokio::runtime::Handle::try_current().is_ok() {
+            // TODO How to detect tokio? Or remove detection?
+            // if ::tokio::runtime::Handle::try_current().is_ok() {
+            if true {
                 Runtime::Tokio
             } else {
                 Runtime::AsyncStd

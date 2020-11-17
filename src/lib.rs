@@ -58,7 +58,7 @@
 //! * `script`: enables script support (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `cluster`: enables redis cluster support (optional)
-//! * `tokio-rt-core`: enables support for tokio-rt (optional)
+//! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //!
 //! ## Connection Parameters
