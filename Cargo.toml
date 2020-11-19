@@ -109,7 +109,7 @@ required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-multiplexed"
-required-features = ["tokio-rt-core"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-await"
