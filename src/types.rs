@@ -1036,6 +1036,8 @@ from_redis_value_for_num!(i32);
 from_redis_value_for_num!(u32);
 from_redis_value_for_num!(i64);
 from_redis_value_for_num!(u64);
+from_redis_value_for_num!(i128);
+from_redis_value_for_num!(u128);
 from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
 from_redis_value_for_num!(isize);
