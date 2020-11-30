@@ -6,9 +6,12 @@ extern crate quickcheck;
 use std::{io, pin::Pin};
 
 use {
-    futures::task::{self, Poll},
+    futures::{
+        ready,
+        task::{self, Poll},
+    },
     partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
-    tokio::io::AsyncRead,
+    tokio::io::{AsyncRead, ReadBuf},
 };
 
 use redis::Value;
@@ -96,12 +99,17 @@ where
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         match self.ops.next() {
             Some(PartialOp::Limited(n)) => {
-                let len = std::cmp::min(n, buf.len());
-                Pin::new(&mut self.inner).poll_read(cx, &mut buf[..len])
+                let len = std::cmp::min(n, buf.remaining());
+                buf.initialize_unfilled();
+                let mut sub_buf = buf.take(len);
+                ready!(Pin::new(&mut self.inner).poll_read(cx, &mut sub_buf))?;
+                let initialized = sub_buf.initialized().len();
+                buf.advance(initialized);
+                Poll::Ready(Ok(()))
             }
             Some(PartialOp::Err(err)) => {
                 if err == io::ErrorKind::WouldBlock {

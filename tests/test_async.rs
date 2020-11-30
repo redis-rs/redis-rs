@@ -377,7 +377,7 @@ async fn io_error_on_kill_issue_320() {
     let err = loop {
         match killed_client.get::<_, Option<String>>("a").await {
             // We are racing against the server being shutdown so try until we a get an io error
-            Ok(_) => tokio::time::delay_for(std::time::Duration::from_millis(50)).await,
+            Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
             Err(err) => break err,
         }
     };

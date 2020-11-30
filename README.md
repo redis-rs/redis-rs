@@ -54,8 +54,6 @@ To enable asynchronous clients a feature for the underlying feature need to be a
 ```
 # if you use tokio
 redis = { version = "0.17.0", features = ["tokio-comp"] }
-# for the multiplexed client
-redis = { version = "0.17.0", features = ["tokio-rt-core"] }
 
 # if you use async-std
 redis = { version = "0.17.0", features = ["async-std-comp"] }

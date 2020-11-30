@@ -13,12 +13,12 @@ use futures::Future;
 use redis::Value;
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
-    let mut builder = tokio::runtime::Builder::new();
+    let mut builder = tokio::runtime::Builder::new_current_thread();
 
     #[cfg(feature = "aio")]
     builder.enable_io();
 
-    builder.basic_scheduler().build().unwrap()
+    builder.build().unwrap()
 }
 
 pub fn block_on_all<F>(f: F) -> F::Output
@@ -308,14 +308,14 @@ impl TestContext {
         self.server.stop();
     }
 
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     pub fn multiplexed_async_connection(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
         self.multiplexed_async_connection_tokio()
     }
 
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     pub fn multiplexed_async_connection_tokio(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {

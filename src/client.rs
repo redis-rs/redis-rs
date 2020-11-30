@@ -108,10 +108,10 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-rt-core", feature = "async-std-comp"))]
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     #[cfg_attr(
         docsrs,
-        doc(cfg(any(feature = "tokio-rt-core", feature = "async-std-comp")))
+        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
     )]
     pub async fn get_multiplexed_async_connection(
         &self,
@@ -128,7 +128,7 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
@@ -155,8 +155,8 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    #[cfg(feature = "tokio-rt-core")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn create_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<(
