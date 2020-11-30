@@ -107,8 +107,8 @@ where
                 buf.initialize_unfilled();
                 let mut sub_buf = buf.take(len);
                 ready!(Pin::new(&mut self.inner).poll_read(cx, &mut sub_buf))?;
-                let initialized = sub_buf.initialized().len();
-                buf.advance(initialized);
+                let filled = sub_buf.filled().len();
+                buf.advance(filled);
                 Poll::Ready(Ok(()))
             }
             Some(PartialOp::Err(err)) => {
