@@ -1063,9 +1063,9 @@ impl FromRedisValue for bool {
                 } else if bytes == b"0" {
                     Ok(false)
                 } else {
-                     invalid_type_error!(v, "Response type not bool compatible.");
+                    invalid_type_error!(v, "Response type not bool compatible.");
                 }
-            },
+            }
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
