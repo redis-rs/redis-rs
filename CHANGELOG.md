@@ -1,16 +1,22 @@
-<a name=""></a>
-##  (2020-12-03)
+<a name="0.18.0"></a>
+## 0.18.0 (2020-12-03)
 
 
 #### Bug Fixes
 
 *   Don't require tokio for the connection manager ([46be86f3](https://github.com/mitsuhiko/redis-rs/commit/46be86f3f07df4900559bf9a4dfd0b5138c3ac52))
 
+* Make ToRedisArgs and FromRedisValue consistent for booleans
+
+BREAKING CHANGE
+
+bool are now written as 0 and 1 instead of true and false. Parsing a bool still accept true and false so this should not break anything for must users however if you are reading something out that was stored as a bool you may see different results.
+
 #### Features
 
 *   Update tokio dependency to 0.3 ([bf5e0af3](https://github.com/mitsuhiko/redis-rs/commit/bf5e0af31c08be1785656031ffda96c355ee83c4), closes [#396](https://github.com/mitsuhiko/redis-rs/issues/396))
 *   add doc_cfg for Makefile and docs.rs config ([1bf79517](https://github.com/mitsuhiko/redis-rs/commit/1bf795174521160934f3695326897458246e4978))
-
+*   Impl FromRedisValue for i128 and u128
 
 
 # Changelog
