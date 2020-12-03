@@ -21,7 +21,7 @@ bool are now written as 0 and 1 instead of true and false. Parsing a bool still 
 
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.17.0...HEAD) - ReleaseDate
+## [0.18.0](https://github.com/mitsuhiko/redis-rs/compare/0.17.0...0.18.0) - 2020-12-03
 
 ## [0.17.0](https://github.com/mitsuhiko/redis-rs/compare/0.16.0...0.17.0) - 2020-07-29
 
