@@ -1,3 +1,18 @@
+<a name=""></a>
+##  (2020-12-03)
+
+
+#### Bug Fixes
+
+*   Don't require tokio for the connection manager ([46be86f3](https://github.com/mitsuhiko/redis-rs/commit/46be86f3f07df4900559bf9a4dfd0b5138c3ac52))
+
+#### Features
+
+*   Update tokio dependency to 0.3 ([bf5e0af3](https://github.com/mitsuhiko/redis-rs/commit/bf5e0af31c08be1785656031ffda96c355ee83c4), closes [#396](https://github.com/mitsuhiko/redis-rs/issues/396))
+*   add doc_cfg for Makefile and docs.rs config ([1bf79517](https://github.com/mitsuhiko/redis-rs/commit/1bf795174521160934f3695326897458246e4978))
+
+
+
 # Changelog
 
 ## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.17.0...HEAD) - ReleaseDate
