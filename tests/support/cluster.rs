@@ -62,7 +62,36 @@ impl RedisCluster {
         let status = dbg!(cmd).status().unwrap();
         assert!(status.success());
 
-        RedisCluster { servers, folders }
+        let cluster = RedisCluster { servers, folders };
+        if replicas > 0 {
+            cluster.wait_for_replicas(replicas);
+        }
+        cluster
+    }
+
+    fn wait_for_replicas(&self, replicas: u16) {
+        'server: for server in &self.servers {
+            let addr = format!("redis://{}/", server.get_client_addr());
+            eprintln!("waiting until {} knows required number of replicas", addr);
+            let client = redis::Client::open(addr).unwrap();
+            let mut con = client.get_connection().unwrap();
+
+            // retry 100 times
+            for _ in 1..100 {
+                let value = redis::cmd("CLUSTER").arg("SLOTS").query(&mut con).unwrap();
+                let slots: Vec<Vec<redis::Value>> = redis::from_redis_value(&value).unwrap();
+
+                // all slots should have following items:
+                // [start slot range, end slot range, master's IP, replica1's IP, replica2's IP,... ]
+                if slots.iter().all(|slot| slot.len() >= 3 + replicas as usize) {
+                    continue 'server;
+                }
+
+                sleep(Duration::from_millis(100));
+            }
+
+            panic!("failed to create enough replicas");
+        }
     }
 
     pub fn stop(&mut self) {
