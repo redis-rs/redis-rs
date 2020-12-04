@@ -1,6 +1,7 @@
 #![cfg(feature = "cluster")]
 #![allow(dead_code)]
 
+use std::convert::identity;
 use std::fs;
 use std::process;
 use std::thread::sleep;
@@ -91,14 +92,26 @@ pub struct TestClusterContext {
 
 impl TestClusterContext {
     pub fn new(nodes: u16, replicas: u16) -> TestClusterContext {
+        Self::new_with_cluster_client_builder(nodes, replicas, identity)
+    }
+
+    pub fn new_with_cluster_client_builder<F>(
+        nodes: u16,
+        replicas: u16,
+        initializer: F,
+    ) -> TestClusterContext
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
         let cluster = RedisCluster::new(nodes, replicas);
-        let client = redis::cluster::ClusterClient::open(
+        let mut builder = redis::cluster::ClusterClientBuilder::new(
             cluster
                 .iter_servers()
                 .map(|x| format!("redis://{}/", x.get_client_addr()))
                 .collect(),
-        )
-        .unwrap();
+        );
+        builder = initializer(builder);
+        let client = builder.open().unwrap();
         TestClusterContext { cluster, client }
     }
 
