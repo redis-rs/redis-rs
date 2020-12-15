@@ -558,6 +558,11 @@ implement_commands! {
         cmd("LPOP").arg(key)
     }
 
+    /// Returns the index of the first matching value of the list stored at key.
+    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("LPOS").arg(key).arg(value)
+    }
+
     /// Insert all the specified values at the head of the list stored at key.
     fn lpush<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("LPUSH").arg(key).arg(value)
