@@ -914,7 +914,7 @@ mod connection_manager {
         /// when the connection loss was detected.
         fn reconnect(
             &self,
-            current: arc_swap::Guard<'_, Arc<SharedRedisFuture<MultiplexedConnection>>>,
+            current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
             let client = self.client.clone();
             let new_connection: SharedRedisFuture<MultiplexedConnection> =
