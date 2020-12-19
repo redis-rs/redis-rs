@@ -402,6 +402,11 @@ implement_commands! {
             "INCRBY"
         }).arg(key).arg(delta)
     }
+    
+    /// Decrement the numeric value of a key by the given amount.
+    fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
+        cmd("DECRBY").arg(key).arg(delta)
+    }
 
     /// Sets or clears the bit at offset in the string value stored at key.
     fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) {
