@@ -2033,7 +2033,7 @@ impl PubSubCommands for Connection {
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = LposOptions::default()
 ///         .count(count)
-///         .rank(raml)
+///         .rank(rank)
 ///         .maxlen(maxlen);
 ///     con.lpos(key, value, opts)
 /// }
