@@ -2014,3 +2014,79 @@ impl PubSubCommands for Connection {
         }
     }
 }
+
+/// Options for the [LPOS] command
+///
+/// https://redis.io/commands/lpos
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, LposOptions};
+/// fn fetch_list_position(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     value: &str,
+///     count: usize,
+///     rank: isize,
+///     maxlen: usize,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = LposOptions::default()
+///         .count(count)
+///         .rank(raml)
+///         .maxlen(maxlen);
+///     con.lpos(key, value, opts)
+/// }
+/// ```
+#[derive(Default)]
+pub struct LposOptions {
+    count: Option<usize>,
+    maxlen: Option<usize>,
+    rank: Option<isize>,
+}
+
+impl LposOptions {
+    /// Limit the results to the first N matching items.
+    pub fn count(mut self, n: usize) -> Self {
+        self.count = Some(n);
+        self
+    }
+
+    /// Return the value of N from the matching items.
+    pub fn rank(mut self, n: isize) -> Self {
+        self.rank = Some(n);
+        self
+    }
+
+    /// Limit the search to N items in the list.
+    pub fn maxlen(mut self, n: usize) -> Self {
+        self.maxlen = Some(n);
+        self
+    }
+}
+
+impl ToRedisArgs for LposOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(n) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg_fmt(n);
+        }
+
+        if let Some(n) = self.rank {
+            out.write_arg(b"RANK");
+            out.write_arg_fmt(n);
+        }
+
+        if let Some(n) = self.maxlen {
+            out.write_arg(b"MAXLEN");
+            out.write_arg_fmt(n);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        false
+    }
+}
