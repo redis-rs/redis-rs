@@ -2,7 +2,7 @@
 #![cfg_attr(rustfmt, rustfmt_skip)]
 use crate::cmd::{cmd, Cmd, Iter, Pipeline};
 use crate::connection::{Connection, ConnectionLike, Msg};
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite};
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -559,8 +559,8 @@ implement_commands! {
     }
 
     /// Returns the index of the first matching value of the list stored at key.
-    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
-        cmd("LPOS").arg(key).arg(value)
+    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: LposOptions) {
+        cmd("LPOS").arg(key).arg(value).arg(options)
     }
 
     /// Insert all the specified values at the head of the list stored at key.
