@@ -360,7 +360,7 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 // public api
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter, Pipeline};
-pub use crate::commands::{Commands, ControlFlow, PubSubCommands};
+pub use crate::commands::{Commands, ControlFlow, LposOptions, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub,
