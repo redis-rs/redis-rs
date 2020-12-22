@@ -157,3 +157,54 @@ fn test_acl_log() {
     assert_eq!(logs.len(), 0);
     assert_eq!(con.acl_log_reset(), Ok(()));
 }
+
+#[test]
+fn test_acl_resetuser() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    assert_eq!(
+        con.acl_list(),
+        Ok(vec!["user default on nopass ~* +@all".to_owned()])
+    );
+    assert_eq!(con.acl_users(), Ok(vec!["default".to_owned()]));
+    assert_eq!(con.acl_setuser("bob"), Ok(()));
+    assert_eq!(
+        con.acl_users(),
+        Ok(vec!["bob".to_owned(), "default".to_owned()])
+    );
+    assert_eq!(
+        con.acl_setuser_rules(
+            "bob",
+            &[
+                Rule::On,
+                Rule::AddHashedPass(
+                    "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
+                ),
+                Rule::Pattern("redis:*".to_owned()),
+                Rule::AddCommand("set".to_owned())
+            ],
+        ),
+        Ok(())
+    );
+    // ACL SETUSER bob RESET
+    assert_eq!(con.acl_resetuser("bob"), Ok(()));
+    let acl_info: AclInfo = con.acl_getuser("bob").expect("Got user");
+    assert_eq!(
+        acl_info,
+        AclInfo {
+            flags: vec![Rule::Off],
+            passwords: vec![],
+            commands: vec![Rule::RemoveCategory("all".to_owned()),],
+            keys: vec![]
+        }
+    );
+    assert_eq!(
+        con.acl_list(),
+        Ok(vec![
+            "user bob off -@all".to_owned(),
+            "user default on nopass ~* +@all".to_owned(),
+        ])
+    );
+    assert_eq!(con.acl_deluser(&["bob"]), Ok(1));
+    assert_eq!(con.acl_users(), Ok(vec!["default".to_owned()]));
+}

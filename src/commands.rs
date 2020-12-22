@@ -977,6 +977,13 @@ implement_commands! {
         cmd("ACL").arg("SETUSER").arg(username)
     }
 
+    /// Reset an existing ACL user.
+    #[cfg(feature = "acl")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    fn acl_resetuser<K: ToRedisArgs>(username: K) {
+        cmd("ACL").arg("SETUSER").arg(username).arg("RESET")
+    }
+
     /// Creates an ACL user with the specified rules or modify the rules of
     /// an existing user.
     #[cfg(feature = "acl")]
