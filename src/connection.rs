@@ -520,6 +520,44 @@ impl ActualConnection {
     }
 }
 
+fn connect_auth(con: &mut Connection, connection_info: &ConnectionInfo) -> RedisResult<()> {
+    let mut command = cmd("AUTH");
+    if let Some(username) = &connection_info.username {
+        command.arg(username);
+    }
+    let passwd = connection_info.passwd.as_ref().unwrap();
+    let err = match command.arg(passwd).query::<Value>(con) {
+        Ok(Value::Okay) => return Ok(()),
+        Ok(_) => {
+            fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to authenticate, returns Ok() != Value::Okay"
+            ));
+        }
+        Err(e) => e,
+    };
+    let err_msg = err.detail().ok_or((
+        ErrorKind::AuthenticationFailed,
+        "Password authentication failed",
+    ))?;
+    if !err_msg.contains("wrong number of arguments for 'auth' command") {
+        fail!((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        ));
+    }
+
+    // fallback to AUTH version <= 5
+    let mut command = cmd("AUTH");
+    match command.arg(passwd).query::<Value>(con) {
+        Ok(Value::Okay) => Ok(()),
+        _ => fail!((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        )),
+    }
+}
+
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
@@ -532,20 +570,8 @@ pub fn connect(
         pubsub: false,
     };
 
-    if let Some(passwd) = &connection_info.passwd {
-        let mut command = cmd("AUTH");
-        if let Some(username) = &connection_info.username {
-            command.arg(username);
-        }
-        match command.arg(passwd).query::<Value>(&mut rv) {
-            Ok(Value::Okay) => {}
-            _ => {
-                fail!((
-                    ErrorKind::AuthenticationFailed,
-                    "Password authentication failed"
-                ));
-            }
-        }
+    if connection_info.passwd.is_some() {
+        connect_auth(&mut rv, connection_info)?;
     }
 
     if connection_info.db != 0 {
