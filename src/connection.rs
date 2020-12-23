@@ -742,11 +742,10 @@ impl Connection {
         };
         // shutdown connection on protocol error
         if let Err(e) = &result {
-            let shutdown = e.kind() == ErrorKind::ResponseError
-                || match e.as_io_error() {
-                    Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
-                    None => false,
-                };
+            let shutdown = match e.as_io_error() {
+                Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
+                None => false,
+            };
             if shutdown {
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
