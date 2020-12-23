@@ -386,6 +386,11 @@ implement_commands! {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
+    /// Unlink one or more keys.
+    fn unlink<K: ToRedisArgs>(key: K) {
+        cmd("UNLINK").arg(key)
+    }
+
     // common string operations
 
     /// Append a value to a key.
