@@ -10,7 +10,7 @@
 
 BREAKING CHANGE
 
-bool are now written as 0 and 1 instead of true and false. Parsing a bool still accept true and false so this should not break anything for must users however if you are reading something out that was stored as a bool you may see different results.
+bool are now written as 0 and 1 instead of true and false. Parsing a bool still accept true and false so this should not break anything for most users however if you are reading something out that was stored as a bool you may see different results.
 
 #### Features
 
