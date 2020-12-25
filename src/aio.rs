@@ -27,7 +27,7 @@ use futures_util::{
     future::{Future, FutureExt, TryFutureExt},
     ready,
     sink::Sink,
-    stream::{Stream, StreamExt, TryStreamExt as _},
+    stream::{self, Stream, StreamExt, TryStreamExt as _},
 };
 
 use pin_project_lite::pin_project;
@@ -714,8 +714,8 @@ where
         T::Error: ::std::fmt::Debug,
     {
         const BUFFER_SIZE: usize = 50;
-        let (sender, receiver) = mpsc::channel(BUFFER_SIZE);
-        let f = receiver
+        let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(PipelineSink::new::<SinkItem>(sink_stream))
             .map(|_| ());
