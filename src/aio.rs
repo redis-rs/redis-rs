@@ -352,6 +352,30 @@ where
         }
         match command.arg(passwd).query_async(con).await {
             Ok(Value::Okay) => (),
+            Err(e) => {
+                let err_msg = e.detail().ok_or((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed",
+                ))?;
+
+                if !err_msg.contains("wrong number of arguments for 'auth' command") {
+                    fail!((
+                        ErrorKind::AuthenticationFailed,
+                        "Password authentication failed",
+                    ));
+                }
+
+                let mut command = cmd("AUTH");
+                match command.arg(passwd).query_async(con).await {
+                    Ok(Value::Okay) => (),
+                    _ => {
+                        fail!((
+                            ErrorKind::AuthenticationFailed,
+                            "Password authentication failed"
+                        ));
+                    }
+                }
+            }
             _ => {
                 fail!((
                     ErrorKind::AuthenticationFailed,
