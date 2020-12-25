@@ -105,6 +105,23 @@ fn test_hash_ops() {
     assert_eq!(h.get("key_2"), Some(&2i32));
 }
 
+// Requires redis-server >= 4.0.0.
+// Not supported with the current appveyor/windows binary deployed.
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn test_unlink() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(42));
+    assert_eq!(con.unlink("foo"), Ok(1));
+
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    redis::cmd("SET").arg("bar").arg(42).execute(&mut con);
+    assert_eq!(con.unlink(&["foo", "bar"]), Ok(2));
+}
+
 #[test]
 fn test_set_ops() {
     let ctx = TestContext::new();
