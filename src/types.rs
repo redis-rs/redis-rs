@@ -455,8 +455,9 @@ impl RedisError {
     ///
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
-        if self.kind() != ErrorKind::Ask {
-            return None;
+        match self.kind() {
+            ErrorKind::Ask | ErrorKind::Moved => (),
+            _ => return None,
         }
         let mut iter = self.detail()?.split_ascii_whitespace();
         let slot_id: u16 = iter.next()?.parse().ok()?;

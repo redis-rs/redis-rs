@@ -457,17 +457,21 @@ impl ClusterConnection {
 
         let mut retries = 16;
         let mut excludes = HashSet::new();
-        let mut asking = None::<String>;
+        let mut redirected = None::<String>;
+        let mut is_asking = false;
         loop {
             // Get target address and response.
             let (addr, rv) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if let Some(addr) = asking.take() {
+                let (addr, conn) = if let Some(addr) = redirected.take() {
                     let conn = self.get_connection_by_addr(&mut *connections, &addr)?;
-                    // if we are in asking mode we want to feed a single
-                    // ASKING command into the connection before what we
-                    // actually want to execute.
-                    conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                    if is_asking {
+                        // if we are in asking mode we want to feed a single
+                        // ASKING command into the connection before what we
+                        // actually want to execute.
+                        conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                        is_asking = false;
+                    }
                     (addr.to_string(), conn)
                 } else if !excludes.is_empty() || slot.is_none() {
                     get_random_connection(&mut *connections, Some(&excludes))
@@ -489,11 +493,16 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            asking = err.redirect_node().map(|x| x.0.to_string());
+                            redirected = err.redirect_node().map(|x| format!("redis://{}", x.0));
+                            is_asking = true;
                         } else if kind == ErrorKind::Moved {
-                            // Refresh slots and request again.
+                            // Refresh slots.
                             self.refresh_slots()?;
                             excludes.clear();
+
+                            // Request again.
+                            redirected = err.redirect_node().map(|x| format!("redis://{}", x.0));
+                            is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.

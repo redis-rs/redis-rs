@@ -1,6 +1,7 @@
 #![cfg(feature = "cluster")]
 #![allow(dead_code)]
 
+use std::convert::identity;
 use std::fs;
 use std::process;
 use std::thread::sleep;
@@ -61,7 +62,36 @@ impl RedisCluster {
         let status = dbg!(cmd).status().unwrap();
         assert!(status.success());
 
-        RedisCluster { servers, folders }
+        let cluster = RedisCluster { servers, folders };
+        if replicas > 0 {
+            cluster.wait_for_replicas(replicas);
+        }
+        cluster
+    }
+
+    fn wait_for_replicas(&self, replicas: u16) {
+        'server: for server in &self.servers {
+            let addr = format!("redis://{}/", server.get_client_addr());
+            eprintln!("waiting until {} knows required number of replicas", addr);
+            let client = redis::Client::open(addr).unwrap();
+            let mut con = client.get_connection().unwrap();
+
+            // retry 100 times
+            for _ in 1..100 {
+                let value = redis::cmd("CLUSTER").arg("SLOTS").query(&mut con).unwrap();
+                let slots: Vec<Vec<redis::Value>> = redis::from_redis_value(&value).unwrap();
+
+                // all slots should have following items:
+                // [start slot range, end slot range, master's IP, replica1's IP, replica2's IP,... ]
+                if slots.iter().all(|slot| slot.len() >= 3 + replicas as usize) {
+                    continue 'server;
+                }
+
+                sleep(Duration::from_millis(100));
+            }
+
+            panic!("failed to create enough replicas");
+        }
     }
 
     pub fn stop(&mut self) {
@@ -91,14 +121,26 @@ pub struct TestClusterContext {
 
 impl TestClusterContext {
     pub fn new(nodes: u16, replicas: u16) -> TestClusterContext {
+        Self::new_with_cluster_client_builder(nodes, replicas, identity)
+    }
+
+    pub fn new_with_cluster_client_builder<F>(
+        nodes: u16,
+        replicas: u16,
+        initializer: F,
+    ) -> TestClusterContext
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
         let cluster = RedisCluster::new(nodes, replicas);
-        let client = redis::cluster::ClusterClient::open(
+        let mut builder = redis::cluster::ClusterClientBuilder::new(
             cluster
                 .iter_servers()
                 .map(|x| format!("redis://{}/", x.get_client_addr()))
                 .collect(),
-        )
-        .unwrap();
+        );
+        builder = initializer(builder);
+        let client = builder.open().unwrap();
         TestClusterContext { cluster, client }
     }
 
