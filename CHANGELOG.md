@@ -1,3 +1,14 @@
+<a name="0.19.0"></a>
+## 0.19.0 (2020-12-26)
+
+
+#### Features
+
+*   Update to tokio 1.0 ([41960194](https://github.com/mitsuhiko/redis-rs/commit/4196019494aafc2bab718bafd1fdfd5e8c195ffa))
+*   use the node specified in the MOVED error ([8a53e269](https://github.com/mitsuhiko/redis-rs/commit/8a53e2699d7d7bd63f222de778ed6820b0a65665))
+
+
+
 <a name="0.18.0"></a>
 ## 0.18.0 (2020-12-03)
 
