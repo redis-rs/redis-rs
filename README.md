@@ -73,7 +73,7 @@ redis = { version = "0.17.0", features = ["tls", "tokio-tls-comp"] }
 redis = { version = "0.17.0", features = ["tls", "async-std-tls-comp"] }
 ```
 
-then you should be able to connect to a redis instance using the `redis://` URL scheme:
+then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/")?;
