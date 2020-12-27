@@ -8,7 +8,6 @@ homepage = "https://github.com/mitsuhiko/redis-rs"
 repository = "https://github.com/mitsuhiko/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
-readme = "README.md"
 edition = "2018"
 
 [package.metadata.docs.rs]
