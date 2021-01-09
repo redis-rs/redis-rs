@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
 
-use crate::cmd::{cmd, pipe, Pipeline};
+use crate::cmd::{cmd, pipe};
 use crate::parser::Parser;
+use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
 };

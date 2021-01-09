@@ -1,7 +1,8 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::cmd::{cmd, Cmd, Iter, Pipeline};
+use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite};
 
 #[cfg(feature = "geospatial")]
