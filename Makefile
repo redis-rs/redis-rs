@@ -30,7 +30,7 @@ test:
 test-single: test
 
 bench:
-	cargo bench --all-features --test-threads=1
+	cargo bench --all-features
 
 docs:
 	@RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
