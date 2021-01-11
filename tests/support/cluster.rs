@@ -147,4 +147,21 @@ impl TestClusterContext {
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
         self.client.get_connection().unwrap()
     }
+
+    pub fn wait_for_cluster_up(&self) {
+        let mut con = self.connection();
+        let mut c = redis::cmd("CLUSTER");
+        c.arg("INFO");
+
+        for _ in 0..100 {
+            let r: String = c.query::<String>(&mut con).unwrap();
+            if r.starts_with("cluster_state:ok") {
+                return;
+            }
+
+            sleep(Duration::from_millis(25));
+        }
+
+        panic!("failed waiting for cluster to be ready");
+    }
 }

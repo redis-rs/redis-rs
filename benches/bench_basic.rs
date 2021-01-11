@@ -25,7 +25,7 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = current_thread_runtime();
+    let runtime = current_thread_runtime();
     let con = client.get_async_connection();
     let mut con = runtime.block_on(con).unwrap();
 
@@ -112,7 +112,7 @@ fn bench_long_pipeline(b: &mut Bencher) {
 
 fn bench_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = current_thread_runtime();
+    let runtime = current_thread_runtime();
     let mut con = runtime.block_on(client.get_async_connection()).unwrap();
 
     let pipe = long_pipeline();
@@ -126,7 +126,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 
 fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = current_thread_runtime();
+    let runtime = current_thread_runtime();
     let mut con = runtime
         .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
@@ -142,7 +142,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 
 fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
     let client = get_client();
-    let mut runtime = current_thread_runtime();
+    let runtime = current_thread_runtime();
     let con = runtime
         .block_on(client.get_multiplexed_tokio_connection())
         .unwrap();
