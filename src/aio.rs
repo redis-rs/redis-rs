@@ -245,7 +245,9 @@ impl<C> Connection<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
-    pub(crate) async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+    /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
+    /// and a `ConnectionInfo`
+    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
             buf: Vec::new(),
@@ -769,9 +771,11 @@ pub struct MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    pub(crate) async fn new<C>(
+    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
+    /// and a `ConnectionInfo`
+    pub async fn new<C>(
         connection_info: &ConnectionInfo,
-        con: C,
+        stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
@@ -785,7 +789,7 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
-        let codec = ValueCodec::default().framed(con);
+        let codec = ValueCodec::default().framed(stream);
         let (pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let mut con = MultiplexedConnection {
