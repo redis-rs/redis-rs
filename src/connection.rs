@@ -817,13 +817,32 @@ impl ConnectionLike for Connection {
         }
         self.con.send_bytes(cmd)?;
         let mut rv = vec![];
+        let mut first_err = None;
         for idx in 0..(offset + count) {
-            let item = self.read_response()?;
-            if idx >= offset {
-                rv.push(item);
+            // When processing a transaction, some responses may be errors.
+            // We need to keep processing the rest of the responses in that case,
+            // so bailing early with `?` would not be correct.
+            // See: https://github.com/mitsuhiko/redis-rs/issues/436
+            let response = self.read_response();
+            match response {
+                Ok(item) => {
+                    if idx >= offset {
+                        rv.push(item);
+                    }
+                }
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
             }
         }
-        Ok(rv)
+
+        if let Some(err) = first_err {
+            Err(err)
+        } else {
+            Ok(rv)
+        }
     }
 
     fn get_db(&self) -> i64 {
