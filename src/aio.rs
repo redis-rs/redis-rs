@@ -505,16 +505,37 @@ where
             cmd.write_packed_pipeline(&mut self.buf);
             self.con.write_all(&self.buf).await?;
 
+            let mut first_err = None;
+
             for _ in 0..offset {
-                self.read_response().await?;
+                let response = self.read_response().await;
+                if let Err(err) = response {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
             }
 
             let mut rv = Vec::with_capacity(count);
             for _ in 0..count {
-                rv.push(self.read_response().await?);
+                let response = self.read_response().await;
+                match response {
+                    Ok(item) => {
+                        rv.push(item);
+                    }
+                    Err(err) => {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    }
+                }
             }
 
-            Ok(rv)
+            if let Some(err) = first_err {
+                Err(err)
+            } else {
+                Ok(rv)
+            }
         })
         .boxed()
     }
