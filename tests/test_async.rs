@@ -97,6 +97,44 @@ fn test_pipeline_transaction() {
     .unwrap();
 }
 
+#[test]
+fn test_pipeline_transaction_with_errors() {
+    use redis::RedisError;
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+
+        let _: () = con.set("x", 42).await.unwrap();
+
+        // Make Redis a replica of a nonexistent master, thereby making it read-only.
+        let _: () = redis::cmd("slaveof")
+            .arg("1.1.1.1")
+            .arg("1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+
+        // Ensure that a write command fails with a READONLY error
+        let err: RedisResult<()> = redis::pipe()
+            .atomic()
+            .set("x", 142)
+            .ignore()
+            .get("x")
+            .query_async(&mut con)
+            .await;
+
+        assert_eq!(err.unwrap_err().code(), Some("READONLY"));
+
+        let x: i32 = con.get("x").await.unwrap();
+        assert_eq!(x, 42);
+
+        Ok(())
+    })
+    .map_err(|err: RedisError| err)
+    .unwrap();
+}
+
 fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let mut con = con.clone();
     async move {

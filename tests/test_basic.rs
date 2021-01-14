@@ -1,6 +1,6 @@
 #![allow(clippy::let_unit_value)]
 
-use redis::{Commands, ConnectionInfo, ConnectionLike, ControlFlow, PubSubCommands};
+use redis::{Commands, ConnectionInfo, ConnectionLike, ControlFlow, PubSubCommands, RedisResult};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
@@ -299,6 +299,34 @@ fn test_pipeline_transaction() {
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
+}
+
+#[test]
+fn test_pipeline_transaction_with_errors() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con.set("x", 42).unwrap();
+
+    // Make Redis a replica of a nonexistent master, thereby making it read-only.
+    let _: () = redis::cmd("slaveof")
+        .arg("1.1.1.1")
+        .arg("1")
+        .query(&mut con)
+        .unwrap();
+
+    // Ensure that a write command fails with a READONLY error
+    let err: RedisResult<()> = redis::pipe()
+        .atomic()
+        .set("x", 142)
+        .ignore()
+        .get("x")
+        .query(&mut con);
+
+    assert_eq!(err.unwrap_err().code(), Some("READONLY"));
+
+    let x: i32 = con.get("x").unwrap();
+    assert_eq!(x, 42);
 }
 
 #[test]
