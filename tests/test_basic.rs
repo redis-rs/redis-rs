@@ -309,7 +309,7 @@ fn test_pipeline_transaction_with_errors() {
     let _: () = con.set("x", 42).unwrap();
 
     // Make Redis a replica of a nonexistent master, thereby making it read-only.
-    let _: () = redis::cmd("replicaof")
+    let _: () = redis::cmd("slaveof")
         .arg("1.1.1.1")
         .arg("1")
         .query(&mut con)
