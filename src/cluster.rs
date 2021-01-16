@@ -565,7 +565,7 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum RoutingInfo {
     AllNodes,
     AllMasters,
@@ -619,7 +619,7 @@ impl RoutingInfo {
             b"XGROUP" | b"XINFO" => get_arg(&args, 2).and_then(RoutingInfo::for_key),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = args.iter().position(|a| match a {
-                    Value::Data(a) => a == b"STREAMS",
+                    Value::Data(a) => a.eq_ignore_ascii_case(b"STREAMS"),
                     _ => false,
                 })?;
                 get_arg(&args, streams_position + 1).and_then(RoutingInfo::for_key)
@@ -744,12 +744,34 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
 
 #[cfg(test)]
 mod tests {
-    use super::get_hashtag;
+    use super::{cmd, get_hashtag, RoutingInfo};
 
     #[test]
     fn test_get_hashtag() {
         assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
         assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
+    }
+
+    #[test]
+    fn test_routing_info_mixed_capatalization() {
+        let mut upper = cmd("XREAD");
+        upper.arg("STREAMS").arg("foo").arg(0);
+
+        let mut lower = cmd("xread");
+        lower.arg("streams").arg("foo").arg(0);
+
+        assert_eq!(
+            RoutingInfo::for_packed_command(&upper.get_packed_command()).unwrap(),
+            RoutingInfo::for_packed_command(&lower.get_packed_command()).unwrap()
+        );
+
+        let mut mixed = cmd("xReAd");
+        mixed.arg("StReAmS").arg("foo").arg(0);
+
+        assert_eq!(
+            RoutingInfo::for_packed_command(&lower.get_packed_command()).unwrap(),
+            RoutingInfo::for_packed_command(&mixed.get_packed_command()).unwrap()
+        );
     }
 }
