@@ -54,121 +54,11 @@ use super::{
     ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
 };
 
+pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
+
 const SLOT_SIZE: usize = 16384;
 
 type SlotMap = BTreeMap<u16, String>;
-
-/// This is a ClusterClientBuilder of Redis cluster client.
-pub struct ClusterClientBuilder {
-    initial_nodes: RedisResult<Vec<ConnectionInfo>>,
-    readonly: bool,
-    password: Option<String>,
-}
-
-impl ClusterClientBuilder {
-    /// Generate the base configuration for new Client.
-    pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
-        ClusterClientBuilder {
-            initial_nodes: initial_nodes
-                .into_iter()
-                .map(|x| x.into_connection_info())
-                .collect(),
-            readonly: false,
-            password: None,
-        }
-    }
-
-    /// Connect to a redis cluster server and return a cluster client.
-    /// This does not actually open a connection yet but it performs some basic checks on the URL.
-    /// The password of initial nodes must be the same all.
-    ///
-    /// # Errors
-    ///
-    /// If it is failed to parse initial_nodes or the initial nodes has different password, an error is returned.
-    pub fn open(self) -> RedisResult<ClusterClient> {
-        ClusterClient::open_internal(self)
-    }
-
-    /// Set password for new ClusterClient.
-    pub fn password(mut self, password: String) -> ClusterClientBuilder {
-        self.password = Some(password);
-        self
-    }
-
-    /// Set read only mode for new ClusterClient.
-    /// Default is not read only mode.
-    /// When it is set to readonly mode, all query use replica nodes except there are no replica nodes.
-    /// If there are no replica nodes, it use master node.
-    pub fn readonly(mut self, readonly: bool) -> ClusterClientBuilder {
-        self.readonly = readonly;
-        self
-    }
-}
-
-/// This is a Redis cluster client.
-pub struct ClusterClient {
-    initial_nodes: Vec<ConnectionInfo>,
-    readonly: bool,
-    password: Option<String>,
-}
-
-impl ClusterClient {
-    /// Connect to a redis cluster server and return a cluster client.
-    /// This does not actually open a connection yet but it performs some basic checks on the URL.
-    /// The password of initial nodes must be the same all.
-    ///
-    /// # Errors
-    ///
-    /// If it is failed to parse initial_nodes or the initial nodes has different password, an error is returned.
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).open()
-    }
-
-    /// Open and get a Redis cluster connection.
-    ///
-    /// # Errors
-    ///
-    /// If it is failed to open connections and to create slots, an error is returned.
-    pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
-        ClusterConnection::new(
-            self.initial_nodes.clone(),
-            self.readonly,
-            self.password.clone(),
-        )
-    }
-
-    fn open_internal(builder: ClusterClientBuilder) -> RedisResult<ClusterClient> {
-        let initial_nodes = builder.initial_nodes?;
-        let mut nodes = Vec::with_capacity(initial_nodes.len());
-        let mut connection_info_password = None::<String>;
-
-        for (index, info) in initial_nodes.into_iter().enumerate() {
-            if let ConnectionAddr::Unix(_) = *info.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
-            }
-
-            if builder.password.is_none() {
-                if index == 0 {
-                    connection_info_password = info.passwd.clone();
-                } else if connection_info_password != info.passwd {
-                    return Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "Cannot use different password among initial nodes.",
-                    )));
-                }
-            }
-
-            nodes.push(info);
-        }
-
-        Ok(ClusterClient {
-            initial_nodes: nodes,
-            readonly: builder.readonly,
-            password: builder.password.or(connection_info_password),
-        })
-    }
-}
 
 /// This is a connection of Redis cluster.
 pub struct ClusterConnection {
@@ -181,7 +71,7 @@ pub struct ClusterConnection {
 }
 
 impl ClusterConnection {
-    fn new(
+    pub(crate) fn new(
         initial_nodes: Vec<ConnectionInfo>,
         readonly: bool,
         password: Option<String>,
@@ -610,12 +500,6 @@ impl ConnectionLike for ClusterConnection {
     }
 }
 
-impl Clone for ClusterClient {
-    fn clone(&self) -> ClusterClient {
-        ClusterClient::open(self.initial_nodes.clone()).unwrap()
-    }
-}
-
 fn connect<T: IntoConnectionInfo>(
     info: T,
     readonly: bool,
@@ -861,61 +745,6 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
 #[cfg(test)]
 mod tests {
     use super::get_hashtag;
-    use super::{ClusterClient, ClusterClientBuilder};
-    use super::{ConnectionInfo, IntoConnectionInfo};
-
-    fn get_connection_data() -> Vec<ConnectionInfo> {
-        vec![
-            "redis://127.0.0.1:6379".into_connection_info().unwrap(),
-            "redis://127.0.0.1:6378".into_connection_info().unwrap(),
-            "redis://127.0.0.1:6377".into_connection_info().unwrap(),
-        ]
-    }
-
-    fn get_connection_data_with_password() -> Vec<ConnectionInfo> {
-        vec![
-            "redis://:password@127.0.0.1:6379"
-                .into_connection_info()
-                .unwrap(),
-            "redis://:password@127.0.0.1:6378"
-                .into_connection_info()
-                .unwrap(),
-            "redis://:password@127.0.0.1:6377"
-                .into_connection_info()
-                .unwrap(),
-        ]
-    }
-
-    #[test]
-    fn give_no_password() {
-        let client = ClusterClient::open(get_connection_data()).unwrap();
-        assert_eq!(client.password, None);
-    }
-
-    #[test]
-    fn give_password_by_initial_nodes() {
-        let client = ClusterClient::open(get_connection_data_with_password()).unwrap();
-        assert_eq!(client.password, Some("password".to_string()));
-    }
-
-    #[test]
-    fn give_different_password_by_initial_nodes() {
-        let result = ClusterClient::open(vec![
-            "redis://:password1@127.0.0.1:6379",
-            "redis://:password2@127.0.0.1:6378",
-            "redis://:password3@127.0.0.1:6377",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn give_password_by_method() {
-        let client = ClusterClientBuilder::new(get_connection_data_with_password())
-            .password("pass".to_string())
-            .open()
-            .unwrap();
-        assert_eq!(client.password, Some("pass".to_string()));
-    }
 
     #[test]
     fn test_get_hashtag() {
