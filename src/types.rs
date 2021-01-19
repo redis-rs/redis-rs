@@ -39,6 +39,7 @@ pub enum NumericBehavior {
 
 /// An enum of all error kinds.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
