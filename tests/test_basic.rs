@@ -295,7 +295,7 @@ fn test_pipeline_with_err() {
         .set("x", "another-x-value")
         .ignore()
         .get("y")
-        .query::<Vec<String>>(&mut con);
+        .query::<()>(&mut con);
     assert!(res.is_err() && res.unwrap_err().kind() == ErrorKind::ReadOnly);
 
     // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
