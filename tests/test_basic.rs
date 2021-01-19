@@ -1,6 +1,8 @@
 #![allow(clippy::let_unit_value)]
 
-use redis::{Commands, ConnectionInfo, ConnectionLike, ControlFlow, PubSubCommands, RedisResult};
+use redis::{
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, PubSubCommands, RedisResult,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
@@ -265,6 +267,43 @@ fn test_pipeline() {
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
+}
+
+#[test]
+fn test_pipeline_with_err() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = redis::cmd("SET")
+        .arg("x")
+        .arg("x-value")
+        .query(&mut con)
+        .unwrap();
+    let _: () = redis::cmd("SET")
+        .arg("y")
+        .arg("y-value")
+        .query(&mut con)
+        .unwrap();
+
+    let _: () = redis::cmd("SLAVEOF")
+        .arg("1.1.1.1")
+        .arg("99")
+        .query(&mut con)
+        .unwrap();
+
+    let res = redis::pipe()
+        .set("x", "another-x-value")
+        .ignore()
+        .get("y")
+        .query::<Vec<String>>(&mut con);
+    assert!(res.is_err() && res.unwrap_err().kind() == ErrorKind::ReadOnly);
+
+    // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
+    let res = redis::cmd("GET")
+        .arg("x")
+        .query::<String>(&mut con)
+        .unwrap();
+    assert_eq!(res, "x-value");
 }
 
 #[test]

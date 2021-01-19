@@ -76,6 +76,8 @@ pub enum ErrorKind {
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
     ExtensionError,
+    /// Attempt to write to a read-only server
+    ReadOnly,
 }
 
 /// Internal low-level redis value enum.
@@ -385,6 +387,7 @@ impl RedisError {
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
+            ErrorKind::ReadOnly => "read-only",
         }
     }
 
