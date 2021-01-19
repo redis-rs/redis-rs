@@ -362,7 +362,7 @@ fn test_pipeline_transaction_with_errors() {
         .get("x")
         .query(&mut con);
 
-    assert_eq!(err.unwrap_err().code(), Some("READONLY"));
+    assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
 
     let x: i32 = con.get("x").unwrap();
     assert_eq!(x, 42);

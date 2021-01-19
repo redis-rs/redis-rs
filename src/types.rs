@@ -361,6 +361,7 @@ impl RedisError {
             ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
             ErrorKind::CrossSlot => Some("CROSSSLOT"),
             ErrorKind::MasterDown => Some("MASTERDOWN"),
+            ErrorKind::ReadOnly => Some("READONLY"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(&code),
                 _ => None,
