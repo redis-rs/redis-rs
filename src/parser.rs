@@ -129,6 +129,7 @@ where
                         "CLUSTERDOWN" => ErrorKind::ClusterDown,
                         "CROSSSLOT" => ErrorKind::CrossSlot,
                         "MASTERDOWN" => ErrorKind::MasterDown,
+                        "READONLY" => ErrorKind::ReadOnly,
                         code => return make_extension_error(code, pieces.next()),
                     };
                     match pieces.next() {
