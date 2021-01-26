@@ -423,6 +423,9 @@ pub mod cluster;
 #[cfg(feature = "cluster")]
 mod cluster_client;
 
+#[cfg(feature = "cluster")]
+mod cluster_routing;
+
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
