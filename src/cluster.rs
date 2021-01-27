@@ -50,13 +50,12 @@ use rand::{
 };
 
 use super::{
-    cmd, parse_redis_value, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
+    cmd, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind,
+    IntoConnectionInfo, RedisError, RedisResult, Value,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-
-const SLOT_SIZE: usize = 16384;
+use crate::cluster_routing::{RoutingInfo, Slot, SLOT_SIZE};
 
 type SlotMap = BTreeMap<u16, String>;
 
@@ -128,7 +127,7 @@ impl ClusterConnection {
     pub fn check_connection(&mut self) -> bool {
         let mut connections = self.connections.borrow_mut();
         for conn in connections.values_mut() {
-            if !check_connection(conn) {
+            if !conn.check_connection() {
                 return false;
             }
         }
@@ -157,7 +156,7 @@ impl ClusterConnection {
             };
 
             if let Ok(mut conn) = connect(info.clone(), readonly, password.clone()) {
-                if check_connection(&mut conn) {
+                if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
                 }
@@ -199,7 +198,7 @@ impl ClusterConnection {
                 if !new_connections.contains_key(addr) {
                     if connections.contains_key(addr) {
                         let mut conn = connections.remove(addr).unwrap();
-                        if check_connection(&mut conn) {
+                        if conn.check_connection() {
                             new_connections.insert(addr.to_string(), conn);
                             continue;
                         }
@@ -208,7 +207,7 @@ impl ClusterConnection {
                     if let Ok(mut conn) =
                         connect(addr.as_ref(), self.readonly, self.password.clone())
                     {
-                        if check_connection(&mut conn) {
+                        if conn.check_connection() {
                             new_connections.insert(addr.to_string(), conn);
                         }
                     }
@@ -240,7 +239,9 @@ impl ClusterConnection {
                             "Slot refresh error.",
                             format!(
                                 "Received overlapping slots {} and {}..{}",
-                                prev_end, slot_data.start, slot_data.end
+                                prev_end,
+                                slot_data.start(),
+                                slot_data.end()
                             ),
                         )));
                     }
@@ -519,12 +520,6 @@ where
     Ok(con)
 }
 
-fn check_connection(conn: &mut Connection) -> bool {
-    let mut cmd = Cmd::new();
-    cmd.arg("PING");
-    cmd.query::<String>(conn).is_ok()
-}
-
 fn get_random_connection<'a>(
     connections: &'a mut HashMap<String, Connection>,
     excludes: Option<&'a HashSet<String>>,
@@ -542,128 +537,6 @@ fn get_random_connection<'a>(
 
     let con = connections.get_mut(&addr).unwrap();
     (addr, con)
-}
-
-fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
-    let open = key.iter().position(|v| *v == b'{');
-    let open = match open {
-        Some(open) => open,
-        None => return None,
-    };
-
-    let close = key[open..].iter().position(|v| *v == b'}');
-    let close = match close {
-        Some(close) => close,
-        None => return None,
-    };
-
-    let rv = &key[open + 1..open + close];
-    if rv.is_empty() {
-        None
-    } else {
-        Some(rv)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum RoutingInfo {
-    AllNodes,
-    AllMasters,
-    Random,
-    Slot(u16),
-}
-
-fn get_arg(values: &[Value], idx: usize) -> Option<&[u8]> {
-    match values.get(idx) {
-        Some(Value::Data(ref data)) => Some(&data[..]),
-        _ => None,
-    }
-}
-
-fn get_command_arg(values: &[Value], idx: usize) -> Option<Vec<u8>> {
-    get_arg(values, idx).map(|x| x.to_ascii_uppercase())
-}
-
-fn get_u64_arg(values: &[Value], idx: usize) -> Option<u64> {
-    get_arg(values, idx)
-        .and_then(|x| std::str::from_utf8(x).ok())
-        .and_then(|x| x.parse().ok())
-}
-
-impl RoutingInfo {
-    pub fn for_packed_command(cmd: &[u8]) -> Option<RoutingInfo> {
-        parse_redis_value(cmd).ok().and_then(RoutingInfo::for_value)
-    }
-
-    pub fn for_value(value: Value) -> Option<RoutingInfo> {
-        let args = match value {
-            Value::Bulk(args) => args,
-            _ => return None,
-        };
-
-        match &get_command_arg(&args, 0)?[..] {
-            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
-            b"ECHO" | b"CONFIG" | b"CLIENT" | b"SLOWLOG" | b"DBSIZE" | b"LASTSAVE" | b"PING"
-            | b"INFO" | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"SAVE" | b"TIME"
-            | b"KEYS" => Some(RoutingInfo::AllNodes),
-            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF"
-            | b"SCRIPT KILL" | b"MOVE" | b"BITOP" => None,
-            b"EVALSHA" | b"EVAL" => {
-                let key_count = get_u64_arg(&args, 2)?;
-                if key_count == 0 {
-                    Some(RoutingInfo::Random)
-                } else {
-                    get_arg(&args, 3).and_then(RoutingInfo::for_key)
-                }
-            }
-            b"XGROUP" | b"XINFO" => get_arg(&args, 2).and_then(RoutingInfo::for_key),
-            b"XREAD" | b"XREADGROUP" => {
-                let streams_position = args.iter().position(|a| match a {
-                    Value::Data(a) => a.eq_ignore_ascii_case(b"STREAMS"),
-                    _ => false,
-                })?;
-                get_arg(&args, streams_position + 1).and_then(RoutingInfo::for_key)
-            }
-            _ => match get_arg(&args, 1) {
-                Some(key) => RoutingInfo::for_key(key),
-                None => Some(RoutingInfo::Random),
-            },
-        }
-    }
-
-    pub fn for_key(key: &[u8]) -> Option<RoutingInfo> {
-        let key = match get_hashtag(&key) {
-            Some(tag) => tag,
-            None => &key,
-        };
-        Some(RoutingInfo::Slot(
-            crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE as u16,
-        ))
-    }
-}
-
-#[derive(Debug)]
-struct Slot {
-    start: u16,
-    end: u16,
-    master: String,
-    replicas: Vec<String>,
-}
-
-impl Slot {
-    pub fn start(&self) -> u16 {
-        self.start
-    }
-    pub fn end(&self) -> u16 {
-        self.end
-    }
-    pub fn master(&self) -> &str {
-        &self.master
-    }
-    #[allow(dead_code)]
-    pub fn replicas(&self) -> &Vec<String> {
-        &self.replicas
-    }
 }
 
 // Get slot data from connection.
@@ -730,48 +603,9 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
             }
 
             let replicas = nodes.split_off(1);
-            result.push(Slot {
-                start,
-                end,
-                master: nodes.pop().unwrap(),
-                replicas,
-            });
+            result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
     }
 
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{cmd, get_hashtag, RoutingInfo};
-
-    #[test]
-    fn test_get_hashtag() {
-        assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
-        assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
-        assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
-    }
-
-    #[test]
-    fn test_routing_info_mixed_capatalization() {
-        let mut upper = cmd("XREAD");
-        upper.arg("STREAMS").arg("foo").arg(0);
-
-        let mut lower = cmd("xread");
-        lower.arg("streams").arg("foo").arg(0);
-
-        assert_eq!(
-            RoutingInfo::for_packed_command(&upper.get_packed_command()).unwrap(),
-            RoutingInfo::for_packed_command(&lower.get_packed_command()).unwrap()
-        );
-
-        let mut mixed = cmd("xReAd");
-        mixed.arg("StReAmS").arg("foo").arg(0);
-
-        assert_eq!(
-            RoutingInfo::for_packed_command(&lower.get_packed_command()).unwrap(),
-            RoutingInfo::for_packed_command(&mixed.get_packed_command()).unwrap()
-        );
-    }
 }
