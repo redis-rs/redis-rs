@@ -50,12 +50,12 @@ use rand::{
 };
 
 use super::{
-    cmd, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind,
-    IntoConnectionInfo, RedisError, RedisResult, Value,
+    cmd, parse_redis_value, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-use crate::cluster_routing::{RoutingInfo, Slot, SLOT_SIZE};
+use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 
 type SlotMap = BTreeMap<u16, String>;
 
@@ -326,12 +326,13 @@ impl ClusterConnection {
     }
 
     #[allow(clippy::unnecessary_unwrap)]
-    fn request<T, F>(&self, cmd: &[u8], mut func: F) -> RedisResult<T>
+    fn request<R, T, F>(&self, cmd: &R, mut func: F) -> RedisResult<T>
     where
+        R: ?Sized + Routable,
         T: MergeResults + std::fmt::Debug,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
-        let slot = match RoutingInfo::for_packed_command(cmd) {
+        let slot = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => None,
             Some(RoutingInfo::Slot(slot)) => Some(slot),
             Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
@@ -461,8 +462,13 @@ impl ConnectionLike for ClusterConnection {
         false
     }
 
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        self.request(cmd, move |conn| conn.req_command(cmd))
+    }
+
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        self.request(cmd, move |conn| conn.req_packed_command(cmd))
+        let value = parse_redis_value(cmd)?;
+        self.request(&value, move |conn| conn.req_packed_command(cmd))
     }
 
     fn req_packed_commands(
@@ -471,7 +477,8 @@ impl ConnectionLike for ClusterConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        self.request(cmd, move |conn| {
+        let value = parse_redis_value(cmd)?;
+        self.request(&value, move |conn| {
             conn.req_packed_commands(cmd, offset, count)
         })
     }

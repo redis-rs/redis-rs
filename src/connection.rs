@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
 
-use crate::cmd::{cmd, pipe};
+use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
@@ -615,6 +615,12 @@ pub trait ConnectionLike {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>>;
+
+    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        self.req_packed_command(&pcmd)
+    }
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
