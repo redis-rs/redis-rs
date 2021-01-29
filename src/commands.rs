@@ -835,7 +835,7 @@ implement_commands! {
 
     /// Remove all members in a sorted set between the given lexicographical range.
     fn zrembylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
-        cmd("ZREMBYLEX").arg(key).arg(min).arg(max)
+        cmd("ZREMRANGEBYLEX").arg(key).arg(min).arg(max)
     }
 
     /// Remove all members in a sorted set within the given indexes.
