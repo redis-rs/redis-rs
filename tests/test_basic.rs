@@ -849,3 +849,34 @@ fn test_redis_server_down() {
     eprintln!("{}", ping.unwrap_err());
     assert_eq!(con.is_open(), false);
 }
+
+#[test]
+fn test_zrembylex() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let mut c = redis::cmd("ZADD");
+    let setname = "myzset";
+    c.arg(setname)
+        .arg(0)
+        .arg("apple")
+        .arg(0)
+        .arg("banana")
+        .arg(0)
+        .arg("carrot")
+        .arg(0)
+        .arg("durian")
+        .arg(0)
+        .arg("eggplant")
+        .arg(0)
+        .arg("grapes");
+
+    c.query::<()>(&mut con).unwrap();
+
+    // Will remove "banana", "carrot", "durian" and "eggplant"
+    let num_removed: u32 = con.zrembylex(setname, "[banana", "[eggplant").unwrap();
+    assert_eq!(4, num_removed);
+
+    let remaining: Vec<String> = con.zrange(setname, 0, -1).unwrap();
+    assert_eq!(remaining, vec!["apple".to_string(), "grapes".to_string()]);
+}
