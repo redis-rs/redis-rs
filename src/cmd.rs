@@ -343,8 +343,7 @@ impl Cmd {
     /// you can retrieve data.
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
-        let pcmd = self.get_packed_command();
-        match con.req_packed_command(&pcmd) {
+        match con.req_command(self) {
             Ok(val) => from_redis_value(&val),
             Err(e) => Err(e),
         }
@@ -377,8 +376,7 @@ impl Cmd {
     /// tuple of cursor and list).
     #[inline]
     pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
-        let pcmd = self.get_packed_command();
-        let rv = con.req_packed_command(&pcmd)?;
+        let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
@@ -465,6 +463,31 @@ impl Cmd {
             Arg::Cursor => Arg::Cursor,
         })
     }
+
+    // Get a reference to the argument at `idx`
+    #[cfg(feature = "cluster")]
+    pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
+        if idx >= self.args.len() {
+            return None;
+        }
+
+        let start = if idx == 0 {
+            0
+        } else {
+            match self.args[idx - 1] {
+                Arg::Simple(n) => n,
+                _ => 0,
+            }
+        };
+        let end = match self.args[idx] {
+            Arg::Simple(n) => n,
+            _ => 0,
+        };
+        if start == 0 && end == 0 {
+            return None;
+        }
+        Some(&self.data[start..end])
+    }
 }
 
 /// Shortcut function to creating a command with a single argument.
@@ -505,4 +528,26 @@ pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
 /// Shortcut for creating a new pipeline.
 pub fn pipe() -> Pipeline {
     Pipeline::new()
+}
+
+#[cfg(test)]
+#[cfg(feature = "cluster")]
+mod tests {
+    use super::Cmd;
+
+    #[test]
+    fn test_cmd_arg_idx() {
+        let mut c = Cmd::new();
+        assert_eq!(c.arg_idx(0), None);
+
+        c.arg("SET");
+        assert_eq!(c.arg_idx(0), Some(&b"SET"[..]));
+        assert_eq!(c.arg_idx(1), None);
+
+        c.arg("foo").arg("42");
+        assert_eq!(c.arg_idx(1), Some(&b"foo"[..]));
+        assert_eq!(c.arg_idx(2), Some(&b"42"[..]));
+        assert_eq!(c.arg_idx(3), None);
+        assert_eq!(c.arg_idx(4), None);
+    }
 }
