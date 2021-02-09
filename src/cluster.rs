@@ -23,8 +23,8 @@
 //!
 //! # Pipelining
 //! ```rust,no_run
-//! use redis::{Commands, pipe};
-//! use redis::cluster::ClusterClient;
+//! use redis::Commands;
+//! use redis::cluster::{cluster_pipe, ClusterClient};
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let client = ClusterClient::open(nodes).unwrap();
@@ -32,7 +32,7 @@
 //!
 //! let key = "test";
 //!
-//! let _: () = pipe()
+//! let _: () = cluster_pipe()
 //!     .rpush(key, "123").ignore()
 //!     .ltrim(key, -10, -1).ignore()
 //!     .expire(key, 60).ignore()
@@ -55,6 +55,8 @@ use super::{
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
+use crate::cluster_pipeline::UNROUTABLE_ERROR;
+pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 
 type SlotMap = BTreeMap<u16, String>;
@@ -134,6 +136,14 @@ impl ClusterConnection {
         true
     }
 
+    pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
+        let mut result = Vec::new();
+        for cmd in pipe.commands() {
+            result.push(self.request(cmd, move |conn| conn.req_command(cmd))?)
+        }
+        Ok(result)
+    }
+
     /// Returns the connection status.
     ///
     /// The connection is open until any `read_response` call recieved an
@@ -141,7 +151,6 @@ impl ClusterConnection {
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
-
     fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         readonly: bool,
@@ -338,13 +347,7 @@ impl ClusterConnection {
             Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
                 return self.execute_on_all_nodes(func);
             }
-            None => {
-                return Err((
-                    ErrorKind::ClientError,
-                    "this command cannot be safely routed in cluster mode",
-                )
-                    .into())
-            }
+            None => fail!(UNROUTABLE_ERROR),
         };
 
         let mut retries = 16;

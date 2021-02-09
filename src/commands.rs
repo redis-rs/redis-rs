@@ -5,6 +5,9 @@ use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite};
 
+#[cfg(feature = "cluster")]
+use crate::cluster_pipeline::ClusterPipeline;
+
 #[cfg(feature = "geospatial")]
 use crate::geo;
 
@@ -259,6 +262,23 @@ macro_rules! implement_commands {
         /// commands trait, this returns the pipeline rather than a result
         /// directly.  Other than that it works the same however.
         impl Pipeline {
+            $(
+                $(#[$attr])*
+                #[inline]
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                    &mut self $(, $argname: $argty)*
+                ) -> &mut Self {
+                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                }
+            )*
+        }
+
+        // Implements common redis commands for cluster pipelines.  Unlike the regular
+        // commands trait, this returns the cluster pipeline rather than a result
+        // directly.  Other than that it works the same however.
+        #[cfg(feature = "cluster")]
+        impl ClusterPipeline {
             $(
                 $(#[$attr])*
                 #[inline]
