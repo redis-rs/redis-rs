@@ -163,3 +163,59 @@ fn test_cluster_pipeline_invalid_command() {
         "This command cannot be safely routed in cluster mode: Command 'KEYS' can't be executed in a cluster pipeline."
     );
 }
+
+#[test]
+fn test_cluster_pipeline_command_ordering() {
+    let cluster = TestClusterContext::new(3, 0);
+    cluster.wait_for_cluster_up();
+    let mut con = cluster.connection();
+    let mut pipe = cluster_pipe();
+
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    for i in 0..100 {
+        queries.push(format!("foo{}", i));
+        expected.push(format!("bar{}", i));
+        pipe.set(&queries[i], &expected[i]).ignore();
+    }
+    pipe.execute(&mut con);
+
+    pipe.clear();
+    for q in &queries {
+        pipe.get(q);
+    }
+
+    let got = pipe.query::<Vec<String>>(&mut con).unwrap();
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn test_cluster_pipeline_ordering_with_improper_command() {
+    let cluster = TestClusterContext::new(3, 0);
+    cluster.wait_for_cluster_up();
+    let mut con = cluster.connection();
+    let mut pipe = cluster_pipe();
+
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    for i in 0..10 {
+        if i == 5 {
+            pipe.cmd("hset").arg("foo").ignore();
+        } else {
+            let query = format!("foo{}", i);
+            let r = format!("bar{}", i);
+            pipe.set(&query, &r).ignore();
+            queries.push(query);
+            expected.push(r);
+        }
+    }
+    pipe.query::<()>(&mut con).unwrap_err();
+
+    pipe.clear();
+    for q in &queries {
+        pipe.get(q);
+    }
+
+    let got = pipe.query::<Vec<String>>(&mut con).unwrap();
+    assert_eq!(got, expected);
+}
