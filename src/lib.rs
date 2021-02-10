@@ -403,6 +403,7 @@ pub use crate::{
 };
 
 mod macros;
+mod pipeline;
 
 #[cfg(feature = "acl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
@@ -424,6 +425,9 @@ pub mod cluster;
 mod cluster_client;
 
 #[cfg(feature = "cluster")]
+mod cluster_pipeline;
+
+#[cfg(feature = "cluster")]
 mod cluster_routing;
 
 #[cfg(feature = "r2d2")]
@@ -439,6 +443,5 @@ mod cmd;
 mod commands;
 mod connection;
 mod parser;
-mod pipeline;
 mod script;
 mod types;

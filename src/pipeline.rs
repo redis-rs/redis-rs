@@ -1,3 +1,5 @@
+#![macro_use]
+
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{from_redis_value, ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
@@ -48,57 +50,6 @@ impl Pipeline {
         }
     }
 
-    /// Starts a new command.  Functions such as `arg` then become
-    /// available to add more arguments to that command.
-    #[inline]
-    pub fn cmd(&mut self, name: &str) -> &mut Pipeline {
-        self.commands.push(cmd(name));
-        self
-    }
-
-    /// Adds a command to the pipeline.
-    #[inline]
-    pub fn add_command(&mut self, cmd: Cmd) -> &mut Pipeline {
-        self.commands.push(cmd);
-        self
-    }
-
-    #[inline]
-    fn get_last_command(&mut self) -> &mut Cmd {
-        let idx = match self.commands.len() {
-            0 => panic!("No command on stack"),
-            x => x - 1,
-        };
-        &mut self.commands[idx]
-    }
-
-    /// Adds an argument to the last started command.  This works similar
-    /// to the `arg` method of the `Cmd` object.
-    ///
-    /// Note that this function fails the task if executed on an empty pipeline.
-    #[inline]
-    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Pipeline {
-        {
-            let cmd = self.get_last_command();
-            cmd.arg(arg);
-        }
-        self
-    }
-
-    /// Instructs the pipeline to ignore the return value of this command.
-    /// It will still be ensured that it is not an error, but any successful
-    /// result is just thrown away.  This makes result processing through
-    /// tuples much easier because you do not need to handle all the items
-    /// you do not care about.
-    #[inline]
-    pub fn ignore(&mut self) -> &mut Pipeline {
-        match self.commands.len() {
-            0 => true,
-            x => self.ignored_commands.insert(x - 1),
-        };
-        self
-    }
-
     /// This enables atomic mode.  In atomic mode the whole pipeline is
     /// enclosed in `MULTI`/`EXEC`.  From the user's point of view nothing
     /// changes however.  This is easier than using `MULTI`/`EXEC` yourself
@@ -116,21 +67,6 @@ impl Pipeline {
     pub fn atomic(&mut self) -> &mut Pipeline {
         self.transaction_mode = true;
         self
-    }
-
-    /// Returns an iterator over all the commands currently in this pipeline
-    pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
-        self.commands.iter()
-    }
-
-    fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
-        let mut rv = vec![];
-        for (idx, result) in resp.into_iter().enumerate() {
-            if !self.ignored_commands.contains(&idx) {
-                rv.push(result);
-            }
-        }
-        Value::Bulk(rv)
     }
 
     /// Returns the encoded pipeline commands.
@@ -203,16 +139,6 @@ impl Pipeline {
         )
     }
 
-    /// Clear a Pipeline object internal data structure.
-    ///
-    /// This allows reusing a Pipeline object as a clear object while performing a minimal amount of
-    /// memory released/reallocated.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.commands.clear();
-        self.ignored_commands.clear();
-    }
-
     #[cfg(feature = "aio")]
     async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
@@ -280,12 +206,6 @@ impl Pipeline {
     }
 }
 
-impl Default for Pipeline {
-    fn default() -> Pipeline {
-        Pipeline::new()
-    }
-}
-
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
     write_pipeline(&mut rv, cmds, atomic);
@@ -313,3 +233,93 @@ fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
         }
     }
 }
+
+// Macro to implement shared methods between Pipeline and ClusterPipeline
+macro_rules! implement_pipeline_commands {
+    ($struct_name:ident) => {
+        impl $struct_name {
+            /// Adds a command to the cluster pipeline.
+            #[inline]
+            pub fn add_command(&mut self, cmd: Cmd) -> &mut Self {
+                self.commands.push(cmd);
+                self
+            }
+
+            /// Starts a new command. Functions such as `arg` then become
+            /// available to add more arguments to that command.
+            #[inline]
+            pub fn cmd(&mut self, name: &str) -> &mut Self {
+                self.add_command(cmd(name))
+            }
+
+            /// Returns an iterator over all the commands currently in this pipeline
+            pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
+                self.commands.iter()
+            }
+
+            /// Instructs the pipeline to ignore the return value of this command.
+            /// It will still be ensured that it is not an error, but any successful
+            /// result is just thrown away.  This makes result processing through
+            /// tuples much easier because you do not need to handle all the items
+            /// you do not care about.
+            #[inline]
+            pub fn ignore(&mut self) -> &mut Self {
+                match self.commands.len() {
+                    0 => true,
+                    x => self.ignored_commands.insert(x - 1),
+                };
+                self
+            }
+
+            /// Adds an argument to the last started command. This works similar
+            /// to the `arg` method of the `Cmd` object.
+            ///
+            /// Note that this function fails the task if executed on an empty pipeline.
+            #[inline]
+            pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Self {
+                {
+                    let cmd = self.get_last_command();
+                    cmd.arg(arg);
+                }
+                self
+            }
+
+            /// Clear a pipeline object's internal data structure.
+            ///
+            /// This allows reusing a pipeline object as a clear object while performing a minimal
+            /// amount of memory released/reallocated.
+            #[inline]
+            pub fn clear(&mut self) {
+                self.commands.clear();
+                self.ignored_commands.clear();
+            }
+
+            #[inline]
+            fn get_last_command(&mut self) -> &mut Cmd {
+                let idx = match self.commands.len() {
+                    0 => panic!("No command on stack"),
+                    x => x - 1,
+                };
+                &mut self.commands[idx]
+            }
+
+            fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
+                let mut rv = vec![];
+                for (idx, result) in resp.into_iter().enumerate() {
+                    if !self.ignored_commands.contains(&idx) {
+                        rv.push(result);
+                    }
+                }
+                Value::Bulk(rv)
+            }
+        }
+
+        impl Default for $struct_name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
+implement_pipeline_commands!(Pipeline);

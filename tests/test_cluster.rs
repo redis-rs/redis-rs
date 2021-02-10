@@ -1,6 +1,7 @@
 #![cfg(feature = "cluster")]
 mod support;
 use crate::support::*;
+use redis::cluster::cluster_pipe;
 
 #[test]
 fn test_cluster_basics() {
@@ -85,18 +86,80 @@ fn test_cluster_script() {
 #[test]
 fn test_cluster_pipeline() {
     let cluster = TestClusterContext::new(3, 0);
+    cluster.wait_for_cluster_up();
     let mut con = cluster.connection();
 
-    let err = redis::pipe()
+    let resp = cluster_pipe()
         .cmd("SET")
         .arg("key_1")
         .arg(42)
+        .query::<Vec<String>>(&mut con)
+        .unwrap();
+
+    assert_eq!(resp, vec!["OK".to_string()]);
+}
+
+#[test]
+fn test_cluster_pipeline_multiple_keys() {
+    use redis::FromRedisValue;
+    let cluster = TestClusterContext::new(3, 0);
+    cluster.wait_for_cluster_up();
+    let mut con = cluster.connection();
+
+    let resp = cluster_pipe()
+        .cmd("HSET")
+        .arg("hash_1")
+        .arg("key_1")
+        .arg("value_1")
+        .cmd("ZADD")
+        .arg("zset")
+        .arg(1)
+        .arg("zvalue_2")
+        .query::<Vec<i64>>(&mut con)
+        .unwrap();
+
+    assert_eq!(resp, vec![1i64, 1i64]);
+
+    let resp = cluster_pipe()
+        .cmd("HGET")
+        .arg("hash_1")
+        .arg("key_1")
+        .cmd("ZCARD")
+        .arg("zset")
+        .query::<Vec<redis::Value>>(&mut con)
+        .unwrap();
+
+    let resp_1: String = FromRedisValue::from_redis_value(&resp[0]).unwrap();
+    assert_eq!(resp_1, "value_1".to_string());
+
+    let resp_2: usize = FromRedisValue::from_redis_value(&resp[1]).unwrap();
+    assert_eq!(resp_2, 1);
+}
+
+#[test]
+fn test_cluster_pipeline_invalid_command() {
+    let cluster = TestClusterContext::new(3, 0);
+    cluster.wait_for_cluster_up();
+    let mut con = cluster.connection();
+
+    let err = cluster_pipe()
+        .cmd("SET")
+        .arg("foo")
+        .arg(42)
         .ignore()
+        .cmd(" SCRIPT kill ")
         .query::<()>(&mut con)
         .unwrap_err();
 
     assert_eq!(
         err.to_string(),
-        "This connection does not support pipelining."
+        "This command cannot be safely routed in cluster mode: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+    );
+
+    let err = cluster_pipe().keys("*").query::<()>(&mut con).unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "This command cannot be safely routed in cluster mode: Command 'KEYS' can't be executed in a cluster pipeline."
     );
 }
