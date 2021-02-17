@@ -1,3 +1,14 @@
+<a name="0.20.0"></a>
+## 0.20.0 (2021-02-17)
+
+
+#### Features
+
+*   Make ErrorKind non_exhaustive for forwards compatibility ([ac5e1a60](https://github.com/mitsuhiko/redis-rs/commit/ac5e1a60d398814b18ed1b579fe3f6b337e545e9))
+* **aio:**  Allow the underlying IO stream to be customized ([6d2fc8fa](https://github.com/mitsuhiko/redis-rs/commit/6d2fc8faa707fbbbaae9fe092bbc90ce01224523))
+
+
+
 <a name="0.19.0"></a>
 ## 0.19.0 (2020-12-26)
 
