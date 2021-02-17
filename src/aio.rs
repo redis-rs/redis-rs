@@ -38,7 +38,7 @@ use crate::connection::{ConnectionAddr, ConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{ErrorKind, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 
 /// Enables the async_std compatibility
@@ -129,6 +129,9 @@ impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
 /// Represents a `PubSub` connection.
 pub struct PubSub<C = Pin<Box<dyn AsyncStream + Send + Sync>>>(Connection<C>);
 
+/// Represents a `Monitor` connection.
+pub struct Monitor<C = Pin<Box<dyn AsyncStream + Send + Sync>>>(Connection<C>);
+
 impl<C> PubSub<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
@@ -201,6 +204,37 @@ where
     }
 }
 
+impl<C> Monitor<C>
+where
+    C: Unpin + AsyncRead + AsyncWrite + Send,
+{
+    /// Create a [`Monitor`] from a [`Connection`]
+    pub fn new(con: Connection<C>) -> Self {
+        Self(con)
+    }
+
+    /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
+    pub async fn monitor(&mut self) -> RedisResult<()> {
+        Ok(cmd("MONITOR").query_async(&mut self.0).await?)
+    }
+
+    /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
+    pub fn on_message<'a, T: FromRedisValue>(&'a mut self) -> impl Stream<Item = T> + 'a {
+        ValueCodec::default()
+            .framed(&mut self.0.con)
+            .into_stream()
+            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+    }
+
+    /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
+    pub fn into_on_message<T: FromRedisValue>(self) -> impl Stream<Item = T> {
+        ValueCodec::default()
+            .framed(self.0.con)
+            .into_stream()
+            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+    }
+}
+
 /// Represents a stateful redis TCP connection.
 pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     con: C,
@@ -262,6 +296,11 @@ where
     /// Converts this [`Connection`] into [`PubSub`].
     pub fn into_pubsub(self) -> PubSub<C> {
         PubSub::new(self)
+    }
+
+    /// Converts this [`Connection`] into [`Monitor`]
+    pub fn into_monitor(self) -> Monitor<C> {
+        Monitor::new(self)
     }
 
     /// Fetches a single response from the connection.
