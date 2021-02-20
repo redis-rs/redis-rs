@@ -72,6 +72,7 @@ tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls", "tokio-native-tls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
+bytes-comp = ["bytes"]
 
 
 [dev-dependencies]
