@@ -163,7 +163,7 @@ fn test_bool() {
     assert_eq!(v, Ok(true));
 }
 
-#[cfg(feature = "bytes-comp")]
+#[cfg(feature = "bytes")]
 #[test]
 fn test_bytes() {
     use bytes::Bytes;
