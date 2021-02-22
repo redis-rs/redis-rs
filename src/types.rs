@@ -1242,6 +1242,16 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
     }
 }
 
+#[cfg(feature = "bytes")]
+impl FromRedisValue for bytes::Bytes {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            _ => invalid_type_error!(v, "Not binary data"),
+        }
+    }
+}
+
 /// A shortcut function to invoke `FromRedisValue::from_redis_value`
 /// to make the API slightly nicer.
 pub fn from_redis_value<T: FromRedisValue>(v: &Value) -> RedisResult<T> {

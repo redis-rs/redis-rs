@@ -163,6 +163,35 @@ fn test_bool() {
     assert_eq!(v, Ok(true));
 }
 
+#[cfg(feature = "bytes")]
+#[test]
+fn test_bytes() {
+    use bytes::Bytes;
+    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let content_bytes = Bytes::from_static(content);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(content_bytes));
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Okay);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Nil);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(0));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(42));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+}
+
 #[test]
 fn test_types_to_redis_args() {
     use redis::ToRedisArgs;
