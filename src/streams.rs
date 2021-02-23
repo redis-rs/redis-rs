@@ -7,29 +7,70 @@ use std::io::{Error, ErrorKind};
 
 // Stream Maxlen Enum
 
-/// Utility enum for passing `MAXLEN [= or ~] [COUNT]`
-/// arguments into `StreamCommands`.
+/// Utility enum for passing `MAXLEN|MINID [= or ~] threshold|id`
+/// arguments into `StreamCommands` for XADD and XTRIM.
 /// The enum value represents the count.
-#[derive(PartialEq, Eq, Clone, Debug, Copy)]
-pub enum StreamMaxlen {
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum StreamSizeLimit {
+    #[deprecated(
+        since = "0.21.0",
+        note = "Use StreamSizeLimit::MaxlenEquals instead. Changed to match increase in API surface in Redis 6.2"
+    )]
     /// Match an exact count
+    ///
+    /// Identical to MaxlenEquals. Use that instead as this variant will
+    /// be removed in the future.
     Equals(usize),
+    #[deprecated(
+        since = "0.21.0",
+        note = "Use StreamSizeLimit::MaxlenApprox instead. Changed to match increase in API surface in Redis 6.2"
+    )]
     /// Match an approximate count
+    ///
+    /// Identical to MaxlenApprox. Use that instead as this variant will
+    /// be removed in the future.
     Approx(usize),
+    /// Match an exact count
+    MaxlenEquals(usize),
+    /// Match an approximate count
+    MaxlenApprox(usize),
+    /// All entries before an ID
+    MinidEquals(String),
+    /// All entries before a point _somewhere_ before an ID
+    MinidApprox(String),
 }
 
-impl ToRedisArgs for StreamMaxlen {
+#[deprecated(
+    since = "0.21.0",
+    note = "Use StreamSizeLimit instead. Changed to match increase in API surface in Redis 6.2"
+)]
+/// Alias to StreamSizeLimit for backward-compatibility.
+///
+/// Will be removed in the future.
+pub type StreamMaxlen = StreamSizeLimit;
+
+impl ToRedisArgs for StreamSizeLimit {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
-        let (ch, val) = match *self {
-            StreamMaxlen::Equals(v) => ("=", v),
-            StreamMaxlen::Approx(v) => ("~", v),
+        #![allow(deprecated)]
+        use std::borrow::Cow;
+
+        let (kind, ch, val): (_, _, Cow<str>) = match self {
+            StreamSizeLimit::Equals(v) | StreamSizeLimit::MaxlenEquals(v) => {
+                ("MAXLEN", "=", v.to_string().into())
+            }
+            StreamSizeLimit::Approx(v) | StreamSizeLimit::MaxlenApprox(v) => {
+                ("MAXLEN", "~", v.to_string().into())
+            }
+
+            StreamSizeLimit::MinidEquals(v) => ("MINID", "=", v.into()),
+            StreamSizeLimit::MinidApprox(v) => ("MINID", "~", v.into()),
         };
-        out.write_arg(b"MAXLEN");
+        out.write_arg(kind.as_bytes());
         out.write_arg(ch.as_bytes());
-        val.write_redis_args(out);
+        (&*val).write_redis_args(out);
     }
 }
 
