@@ -303,6 +303,19 @@ pub struct Connection {
     pubsub: bool,
 }
 
+impl Connection {
+    /// get the url scheme from the actual connection object
+    pub fn url_scheme(&self) -> String {
+        match self.con {
+            ActualConnection::Tcp(_) => {"redis".to_string()},
+            #[cfg(feature = "tls")]
+            ActualConnection::TcpTls(_) => {"rediss".to_string()},
+            #[cfg(unix)]
+            ActualConnection::Unix(_) => {"redis+unix".to_string()},
+        }
+    }
+}
+
 /// Represents a pubsub connection.
 pub struct PubSub<'a> {
     con: &'a mut Connection,
@@ -375,7 +388,15 @@ impl ActualConnection {
                 let tls = match timeout {
                     None => {
                         let tcp = TcpStream::connect((host, port))?;
-                        tls_connector.connect(host, tcp).unwrap()
+                        let tls_res = tls_connector.connect(host, tcp);
+                        if let Err( e) = tls_res {
+                            return Err(RedisError::from((
+                                ErrorKind::IoError,
+                                "SSL Handshake error",
+                                e.to_string()
+                            )));
+                        }
+                        tls_res.unwrap()
                     }
                     Some(timeout) => {
                         let mut tcp = None;
