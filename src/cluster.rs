@@ -166,6 +166,13 @@ impl ClusterConnection {
         for info in initial_nodes.iter() {
             let addr = match *info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
+                ConnectionAddr::TcpTls{ref host, port, insecure} => {
+                    if insecure {
+                      format!("rediss://{}:{}#insecure", host, port)
+                    }else {
+                      format!("rediss://{}:{}", host, port)
+                    }
+                },
                 _ => panic!("No reach."),
             };
 
@@ -732,7 +739,11 @@ fn get_slots(connection: &mut Connection) -> RedisResult<Vec<Slot>> {
                         } else {
                             return None;
                         };
-                        Some(format!("redis://{}:{}", ip, port))
+                        if "rediss" == connection.url_scheme() {
+                            Some(format!("rediss://{}:{}#insecure", ip, port))
+                        }else {
+                            Some(format!("redis://{}:{}", ip, port))
+                        }
                     } else {
                         None
                     }
