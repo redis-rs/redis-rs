@@ -50,7 +50,7 @@ enum ServerType {
 pub struct RedisServer {
     pub process: process::Child,
     stunnel_process: Option<process::Child>,
-    tempdir: Option<tempdir::TempDir>,
+    tempdir: Option<tempfile::TempDir>,
     addr: redis::ConnectionAddr,
 }
 
@@ -114,7 +114,10 @@ impl RedisServer {
         redis_cmd
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
-        let tempdir = tempdir::TempDir::new("redis").expect("failed to create tempdir");
+        let tempdir = tempfile::Builder::new()
+            .prefix("redis")
+            .tempdir()
+            .expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
