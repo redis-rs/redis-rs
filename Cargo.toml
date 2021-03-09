@@ -76,7 +76,7 @@ streams = []
 
 [dev-dependencies]
 rand = "0.8"
-net2 = "0.2"
+socket2 = "0.3"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"

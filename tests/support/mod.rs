@@ -3,6 +3,7 @@
 use std::{
     env, fs,
     io::{self, Write},
+    net::SocketAddr,
     path::PathBuf,
     process,
     thread::sleep,
@@ -11,6 +12,7 @@ use std::{
 
 use futures::Future;
 use redis::Value;
+use socket2::{Domain, Socket, Type};
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
@@ -78,14 +80,12 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
-                let listener = net2::TcpBuilder::new_v4()
-                    .unwrap()
-                    .reuse_address(true)
-                    .unwrap()
-                    .bind("127.0.0.1:0")
-                    .unwrap()
-                    .listen(1)
-                    .unwrap();
+                let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+                let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
+                socket.set_reuse_address(true).unwrap();
+                socket.bind(addr).unwrap();
+                socket.listen(1).unwrap();
+                let listener = socket.into_tcp_listener();
                 let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
