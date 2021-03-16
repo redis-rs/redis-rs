@@ -1,2 +1,2 @@
 [workspace]
-members = ["redis"]
+members = ["redis", "redis-test"]
