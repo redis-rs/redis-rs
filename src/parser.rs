@@ -167,22 +167,12 @@ mod aio_support {
         state: AnySendSyncPartialState,
     }
 
-    impl Encoder<Vec<u8>> for ValueCodec {
-        type Error = RedisError;
-        fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-            dst.extend_from_slice(item.as_ref());
-            Ok(())
-        }
-    }
-
-    impl Decoder for ValueCodec {
-        type Item = Value;
-        type Error = RedisError;
-
-        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    impl ValueCodec {
+        fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
-                let mut stream = combine::easy::Stream(combine::stream::PartialStream(buffer));
+                let mut stream =
+                    combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
                 match combine::stream::decode(value(), &mut stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
@@ -204,6 +194,27 @@ mod aio_support {
                 Some(result) => Ok(Some(result?)),
                 None => Ok(None),
             }
+        }
+    }
+
+    impl Encoder<Vec<u8>> for ValueCodec {
+        type Error = RedisError;
+        fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            dst.extend_from_slice(item.as_ref());
+            Ok(())
+        }
+    }
+
+    impl Decoder for ValueCodec {
+        type Item = Value;
+        type Error = RedisError;
+
+        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(bytes, false)
+        }
+
+        fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(bytes, true)
         }
     }
 
