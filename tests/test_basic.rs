@@ -2,6 +2,7 @@
 
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, PubSubCommands, RedisResult,
+    ZRangeStoreOptions, ZRangeStoreOrdering,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -879,4 +880,145 @@ fn test_zrembylex() {
 
     let remaining: Vec<String> = con.zrange(setname, 0, -1).unwrap();
     assert_eq!(remaining, vec!["apple".to_string(), "grapes".to_string()]);
+}
+
+#[test]
+fn test_zrangestore_defaults() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple("test_zrangestore:src", &[(1, "A"), (2, "B"), (3, "C")])
+        .unwrap();
+
+    let count: usize = con
+        .zrangestore(
+            "test_zrangestore:dst",
+            "test_zrangestore:src",
+            1,
+            2,
+            Default::default(),
+        )
+        .unwrap();
+
+    assert_eq!(2, count);
+
+    let out: Vec<String> = con.zrange("test_zrangestore:dst", 0, -1).unwrap();
+
+    assert_eq!(vec![String::from("B"), String::from("C")], out);
+}
+
+#[test]
+fn test_zrangestore_rev() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple("test_zrangestore_rev:src", &[(1, "A"), (2, "B"), (3, "C")])
+        .unwrap();
+
+    let count: usize = con
+        .zrangestore(
+            "test_zrangestore_rev:dst",
+            "test_zrangestore_rev:src",
+            1,
+            2,
+            ZRangeStoreOptions::default().rev(true),
+        )
+        .unwrap();
+
+    assert_eq!(2, count);
+
+    let out: Vec<String> = con.zrange("test_zrangestore_rev:dst", 0, -1).unwrap();
+
+    assert_eq!(vec![String::from("A"), String::from("B")], out);
+}
+
+#[test]
+fn test_zrangestore_bylex() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple(
+            "test_zrangestore_bylex:src",
+            &[(1, "A"), (2, "B"), (3, "C")],
+        )
+        .unwrap();
+
+    let count: usize = con
+        .zrangestore(
+            "test_zrangestore_bylex:dst",
+            "test_zrangestore_bylex:src",
+            "[B",
+            "[B",
+            ZRangeStoreOptions::default().ordering(ZRangeStoreOrdering::ByLex),
+        )
+        .unwrap();
+
+    assert_eq!(1, count);
+
+    let out: Vec<String> = con.zrange("test_zrangestore_bylex:dst", 0, -1).unwrap();
+
+    assert_eq!(vec![String::from("B")], out);
+}
+
+#[test]
+fn test_zrangestore_byscore() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple(
+            "test_zrangestore_byscore:src",
+            &[(1, "A"), (2, "B"), (3, "C")],
+        )
+        .unwrap();
+
+    let count: usize = con
+        .zrangestore(
+            "test_zrangestore_byscore:dst",
+            "test_zrangestore_byscore:src",
+            2,
+            3,
+            ZRangeStoreOptions::default().ordering(ZRangeStoreOrdering::ByScore),
+        )
+        .unwrap();
+
+    assert_eq!(2, count);
+
+    let out: Vec<String> = con.zrange("test_zrangestore_byscore:dst", 0, -1).unwrap();
+
+    assert_eq!(vec![String::from("B"), String::from("C")], out);
+}
+
+#[test]
+fn test_zrangestore_limit() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple(
+            "test_zrangestore_limit:src",
+            &[(1, "A"), (2, "B"), (3, "C")],
+        )
+        .unwrap();
+
+    let count: usize = con
+        .zrangestore(
+            "test_zrangestore_limit:dst",
+            "test_zrangestore_limit:src",
+            "-inf",
+            "+inf",
+            ZRangeStoreOptions::default()
+                .ordering(ZRangeStoreOrdering::ByScore)
+                .limit((0, 1)),
+        )
+        .unwrap();
+
+    assert_eq!(1, count);
+
+    let out: Vec<String> = con.zrange("test_zrangestore_limit:dst", 0, -1).unwrap();
+
+    assert_eq!(vec![String::from("A")], out);
 }

@@ -843,6 +843,12 @@ implement_commands! {
             .arg("LIMIT").arg(offset).arg(count)
     }
 
+    /// This command is like `ZRANGE`, but stores the result in `dst` destination key.
+    fn zrangestore<DST: ToRedisArgs, K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
+            (dst: DST, src: K, min: M, max: MM, opts: ZRangeStoreOptions) {
+        cmd("ZRANGESTORE").arg(dst).arg(src).arg(min).arg(max).arg(opts)
+    }
+
     /// Determine the index of a member in a sorted set.
     fn zrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
         cmd("ZRANK").arg(key).arg(member)
@@ -2114,6 +2120,125 @@ impl ToRedisArgs for LposOptions {
         if let Some(n) = self.maxlen {
             out.write_arg(b"MAXLEN");
             out.write_arg_fmt(n);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        false
+    }
+}
+
+/// Used to specify the ordering for a `ZRANGESTORE` command.
+pub enum ZRangeStoreOrdering {
+    /// Specify a range in terms of the lexicographical order of members.
+    ByLex,
+    /// Specify a range in terms of member scores.
+    ByScore,
+    /// Specify a range in terms of the index position, also known as the *rank*.
+    /// This is the same as not explicitly setting the order.
+    Default,
+}
+
+impl Default for ZRangeStoreOrdering {
+    fn default() -> Self {
+        ZRangeStoreOrdering::Default
+    }
+}
+
+/// Options for use with `zrangestore()` and friends.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis::{Commands, ZRangeStoreOptions, ZRangeStoreOrdering};
+///
+/// fn zrangestore_opts_demo(conn: &mut redis::Connection) -> redis::RedisResult<()> {
+///     let default_opts: () =
+///         conn.zrangestore("dst", "src", 10, 100, ZRangeStoreOptions::default())?;
+///
+///     let reversed_bylex: () = conn.zrangestore(
+///         "dst",
+///         "src",
+///         "[a",
+///         "[z",
+///         ZRangeStoreOptions::default()
+///             .ordering(ZRangeStoreOrdering::ByLex)
+///             .rev(true),
+///     )?;
+///
+///     let limited: () = conn.zrangestore(
+///         "dst",
+///         "src",
+///         30,
+///         300,
+///         ZRangeStoreOptions::default()
+///             .ordering(ZRangeStoreOrdering::ByScore)
+///             .limit((3, 10)),
+///     )?;
+///     Ok(())
+/// }
+/// ```
+#[derive(Default)]
+pub struct ZRangeStoreOptions {
+    limit: Option<(isize, isize)>,
+    ordering: ZRangeStoreOrdering,
+    rev: bool,
+}
+
+impl ZRangeStoreOptions {
+    /// Specify or clear the `LIMIT <offset> <count>` option for a `ZRANGESTORE`
+    /// command.
+    ///
+    /// **Note:** limits can only be set in combination with `BYLEX` or `BYSCORE`
+    /// ordering. Specifying a `LIMIT` with default ordering will result an error
+    /// when the command is executed.
+    ///
+    /// ```
+    /// use redis::ZRangeStoreOptions;
+    /// let mut opts = ZRangeStoreOptions::default();
+    ///
+    /// // Sets offset to 1 and count to 100.
+    /// opts = opts.limit((1, 100));
+    ///
+    /// // Clear the limit by passing `None`
+    /// opts = opts.limit(None);
+    /// ```
+    pub fn limit<L: Into<Option<(isize, isize)>>>(mut self, limit: L) -> Self {
+        self.limit = limit.into();
+        self
+    }
+
+    /// Specify the sort order `ZRANGESTORE` command.
+    pub fn ordering(mut self, value: ZRangeStoreOrdering) -> Self {
+        self.ordering = value;
+        self
+    }
+
+    /// Add or clear the `REV` option to a `ZRANGESTORE` command.
+    pub fn rev(mut self, value: bool) -> Self {
+        self.rev = value;
+        self
+    }
+}
+
+impl ToRedisArgs for ZRangeStoreOptions {
+    fn write_redis_args<W>(&self, out: &mut W) where
+        W: ?Sized + RedisWrite {
+
+        match self.ordering {
+            ZRangeStoreOrdering::Default => (),
+            ZRangeStoreOrdering::ByLex => out.write_arg(b"BYLEX"),
+            ZRangeStoreOrdering::ByScore => out.write_arg(b"BYSCORE")
+        }
+
+        if self.rev {
+            out.write_arg(b"REV");
+        }
+
+        if let Some((offset, count)) = self.limit {
+            out.write_arg(b"LIMIT");
+            out.write_arg_fmt(offset);
+            out.write_arg_fmt(count);
         }
     }
 
