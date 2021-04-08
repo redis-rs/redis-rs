@@ -1095,4 +1095,5 @@ mod connection_manager {
 }
 
 #[cfg(feature = "connection-manager")]
+#[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::ConnectionManager;
