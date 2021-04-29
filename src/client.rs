@@ -57,6 +57,11 @@ impl Client {
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
         Ok(connect(&self.connection_info, Some(timeout))?)
     }
+
+    /// Returns a reference of client connection info object.
+    pub fn get_connection_info(&self) -> &ConnectionInfo {
+        &self.connection_info
+    }
 }
 
 /// To enable async support you need to chose one of the supported runtimes and active its
