@@ -58,9 +58,9 @@ impl Client {
         Ok(connect(&self.connection_info, Some(timeout))?)
     }
 
-    /// Returns a clone of client connection info object.
-    pub fn get_connection_info(&self) -> ConnectionInfo {
-        self.connection_info.clone()
+    /// Returns a reference of client connection info object.
+    pub fn get_connection_info(&self) -> &ConnectionInfo {
+        &self.connection_info
     }
 }
 
