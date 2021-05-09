@@ -180,7 +180,7 @@ where
     ///
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
-    pub fn on_message<'b>(&'b mut self) -> impl Stream<Item = Msg> + 'b {
+    pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
         ValueCodec::default()
             .framed(&mut self.con.con)
             .into_stream()
@@ -229,11 +229,11 @@ where
 
     /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
     pub async fn monitor(&mut self) -> RedisResult<()> {
-        self.packed_command(&mut cmd("MONITOR")).await
+        self.packed_command(&cmd("MONITOR")).await
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
-    pub fn on_message<'a, T: FromRedisValue>(&'a mut self) -> impl Stream<Item = T> + 'a {
+    pub fn on_message<T: FromRedisValue>(&mut self) -> impl Stream<Item = T> + '_ {
         ValueCodec::default()
             .framed(&mut self.con.con)
             .into_stream()
