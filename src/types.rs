@@ -989,11 +989,9 @@ pub trait FromRedisValue: Sized {
             .collect())
     }
 
-    /// This only exists internally as a workaround for the lack of
-    /// specialization.
-    #[doc(hidden)]
+    /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        None
+        Self::from_redis_value(&Value::Data(_vec.into())).map(|rv| vec![rv]).ok()
     }
 }
 
@@ -1030,6 +1028,7 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
+    // this hack allows us to specialize Vec<u8> to work with
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
@@ -1092,8 +1091,7 @@ impl FromRedisValue for String {
 impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
         match *v {
-            // this hack allows us to specialize Vec<u8> to work with
-            // binary data whereas all others will fail with an error.
+            // All binary data except u8 will try to parse into a single element vector.
             Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
                 None => invalid_type_error!(v, "Response type not vector compatible."),
