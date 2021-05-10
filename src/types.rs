@@ -991,7 +991,9 @@ pub trait FromRedisValue: Sized {
 
     /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        Self::from_redis_value(&Value::Data(_vec.into())).map(|rv| vec![rv]).ok()
+        Self::from_redis_value(&Value::Data(_vec.into()))
+            .map(|rv| vec![rv])
+            .ok()
     }
 }
 
