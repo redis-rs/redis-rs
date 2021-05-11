@@ -149,7 +149,7 @@ where
         }
     }
 
-    async fn packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisResult<()> {
+    async fn command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisResult<()> {
         self.buf.clear();
         cmd.write_packed_command(&mut self.buf);
         self.con.con.write_all(&self.buf).await?;
@@ -158,22 +158,22 @@ where
 
     /// Subscribes to a new channel.
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.packed_command(cmd("SUBSCRIBE").arg(channel)).await
+        self.command(cmd("SUBSCRIBE").arg(channel)).await
     }
 
     /// Subscribes to a new channel with a pattern.
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.packed_command(cmd("PSUBSCRIBE").arg(pchannel)).await
+        self.command(cmd("PSUBSCRIBE").arg(pchannel)).await
     }
 
     /// Unsubscribes from a channel.
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.packed_command(cmd("UNSUBSCRIBE").arg(channel)).await
+        self.command(cmd("UNSUBSCRIBE").arg(channel)).await
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.packed_command(cmd("PUNSUBSCRIBE").arg(pchannel)).await
+        self.command(cmd("PUNSUBSCRIBE").arg(pchannel)).await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
@@ -220,7 +220,7 @@ where
         }
     }
 
-    async fn packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisResult<()> {
+    async fn command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisResult<()> {
         self.buf.clear();
         cmd.write_packed_command(&mut self.buf);
         self.con.con.write_all(&self.buf).await?;
@@ -229,7 +229,7 @@ where
 
     /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
     pub async fn monitor(&mut self) -> RedisResult<()> {
-        self.packed_command(&cmd("MONITOR")).await
+        self.command(&cmd("MONITOR")).await
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
