@@ -1,3 +1,13 @@
+<a name="0.20.1"></a>
+### 0.20.1 (2021-05-18)
+
+
+#### Bug Fixes
+
+*   Error properly if eof is reached in the decoder ([306797c3](https://github.com/mitsuhiko/redis-rs/commit/306797c3c55ab24e0a29b6517356af794731d326))
+
+
+
 <a name="0.20.0"></a>
 ## 0.20.0 (2021-02-17)
 
