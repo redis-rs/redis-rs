@@ -17,9 +17,9 @@ before_install: |
   sudo apt-get install stunnel -y
 
 install: |
-  wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
-  tar -xzvf 6.0.6.tar.gz;
-  pushd redis-6.0.6 && BUILD_TLS=yes make && export PATH=$PWD/src:$PATH && popd;
+  wget https://github.com/redis/redis/archive/6.2.3.tar.gz;
+  tar -xzvf 6.2.3.tar.gz;
+  pushd redis-6.2.3 && BUILD_TLS=yes make && export PATH=$PWD/src:$PATH && popd;
 
 matrix:
   include:
