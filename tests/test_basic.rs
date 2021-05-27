@@ -2,8 +2,9 @@
 
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, PubSubCommands, RedisResult,
-    ZRangeStoreOptions, ZRangeStoreOrdering,
 };
+#[cfg(feature = "requires-redis-6-2")]
+use redis::{ZRangeStoreOptions, ZRangeStoreOrdering};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
@@ -883,6 +884,7 @@ fn test_zrembylex() {
 }
 
 #[test]
+#[cfg(feature = "requires-redis-6-2")]
 fn test_zrangestore_defaults() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -909,6 +911,7 @@ fn test_zrangestore_defaults() {
 }
 
 #[test]
+#[cfg(feature = "requires-redis-6-2")]
 fn test_zrangestore_rev() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -935,6 +938,7 @@ fn test_zrangestore_rev() {
 }
 
 #[test]
+#[cfg(feature = "requires-redis-6-2")]
 fn test_zrangestore_bylex() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -964,6 +968,7 @@ fn test_zrangestore_bylex() {
 }
 
 #[test]
+#[cfg(feature = "requires-redis-6-2")]
 fn test_zrangestore_byscore() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -993,6 +998,7 @@ fn test_zrangestore_byscore() {
 }
 
 #[test]
+#[cfg(feature = "requires-redis-6-2")]
 fn test_zrangestore_limit() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();

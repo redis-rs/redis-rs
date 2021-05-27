@@ -844,6 +844,8 @@ implement_commands! {
     }
 
     /// This command is like `ZRANGE`, but stores the result in `dst` destination key.
+    #[cfg(feature = "requires-redis-6-2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
     fn zrangestore<DST: ToRedisArgs, K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
             (dst: DST, src: K, min: M, max: MM, opts: ZRangeStoreOptions) {
         cmd("ZRANGESTORE").arg(dst).arg(src).arg(min).arg(max).arg(opts)
@@ -2129,6 +2131,8 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Used to specify the ordering for a `ZRANGESTORE` command.
+#[cfg(feature = "requires-redis-6-2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
 pub enum ZRangeStoreOrdering {
     /// Specify a range in terms of the lexicographical order of members.
     ByLex,
@@ -2139,6 +2143,8 @@ pub enum ZRangeStoreOrdering {
     Default,
 }
 
+#[cfg(feature = "requires-redis-6-2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
 impl Default for ZRangeStoreOrdering {
     fn default() -> Self {
         ZRangeStoreOrdering::Default
@@ -2178,6 +2184,8 @@ impl Default for ZRangeStoreOrdering {
 ///     Ok(())
 /// }
 /// ```
+#[cfg(feature = "requires-redis-6-2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
 #[derive(Default)]
 pub struct ZRangeStoreOptions {
     limit: Option<(isize, isize)>,
@@ -2185,6 +2193,8 @@ pub struct ZRangeStoreOptions {
     rev: bool,
 }
 
+#[cfg(feature = "requires-redis-6-2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
 impl ZRangeStoreOptions {
     /// Specify or clear the `LIMIT <offset> <count>` option for a `ZRANGESTORE`
     /// command.
@@ -2221,6 +2231,8 @@ impl ZRangeStoreOptions {
     }
 }
 
+#[cfg(feature = "requires-redis-6-2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "requires-redis-6-2")))]
 impl ToRedisArgs for ZRangeStoreOptions {
     fn write_redis_args<W>(&self, out: &mut W) where
         W: ?Sized + RedisWrite {

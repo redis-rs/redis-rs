@@ -14,6 +14,11 @@ install:
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
   - rustc -vV
   - cargo -vV
+  # N.B. redis-64 is a windows port of quite an old version of redis.
+  # It has long been deprecated due to high-criticality defects.
+  # Newer redis commands added to the crate are hidden behind features and will
+  # not be tested here unless said features are explicitly enabled, but this
+  # cannot happen until the method we use for running redis here changes.
   - cmd: nuget install redis-64 -excludeversion
   - set PATH=%PATH%;%APPVEYOR_BUILD_FOLDER%\redis-64\tools\
 
