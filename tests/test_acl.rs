@@ -27,10 +27,14 @@ fn test_acl_help() {
 fn test_acl_getsetdel_users() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    assert_eq!(
-        con.acl_list(),
-        Ok(vec!["user default on nopass ~* +@all".to_owned()])
-    );
+
+    let expected_acl_list = if cfg!(feature = "requires-redis-6-2") {
+        "user default on nopass ~* &* +@all"
+    } else {
+        "user default on nopass ~* +@all"
+    };
+
+    assert_eq!(con.acl_list(), Ok(vec![expected_acl_list.to_owned()]));
     assert_eq!(con.acl_users(), Ok(vec!["default".to_owned()]));
     // bob
     assert_eq!(con.acl_setuser("bob"), Ok(()));
