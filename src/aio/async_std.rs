@@ -26,7 +26,7 @@ pin_project_lite::pin_project! {
 }
 
 impl<T> AsyncStdWrapped<T> {
-    fn new(inner: T) -> Self {
+    pub(super) fn new(inner: T) -> Self {
         Self { inner }
     }
 }

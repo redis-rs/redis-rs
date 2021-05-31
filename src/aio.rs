@@ -279,7 +279,7 @@ where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`
+    /// and a `RedisConnectionInfo`
     pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
@@ -370,6 +370,19 @@ where
         // Finally, the connection is back in its normal state since all subscriptions were
         // cancelled *and* all unsubscribe messages were received.
         Ok(())
+    }
+}
+
+#[cfg(feature = "async-std-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+impl<C> Connection<async_std::AsyncStdWrapped<C>>
+where
+    C: Unpin + ::async_std::io::Read + ::async_std::io::Write + Send,
+{
+    /// Constructs a new `Connection` out of a `async_std::io::AsyncRead + async_std::io::AsyncWrite` object
+    /// and a `RedisConnectionInfo`
+    pub async fn new_async_std(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
+        Connection::new(connection_info, async_std::AsyncStdWrapped::new(con)).await
     }
 }
 
