@@ -124,6 +124,10 @@ name = "async-pub-sub"
 required-features = ["aio"]
 
 [[example]]
+name = "async-scan"
+required-features = ["aio"]
+
+[[example]]
 name = "async-connection-loss"
 required-features = ["connection-manager"]
 

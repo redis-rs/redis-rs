@@ -1,3 +1,10 @@
+#[cfg(feature = "aio")]
+use futures_util::{
+    task::{Context, Poll},
+    FutureExt, Stream,
+};
+#[cfg(feature = "aio")]
+use std::pin::Pin;
 use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
@@ -114,6 +121,17 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
             self.cmd.cursor = Some(cur);
             self.batch = batch.into_iter();
         }
+    }
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + Unpin + 'a> Stream for AsyncIter<'a, T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+        let this = self.get_mut();
+        let mut future = Box::pin(this.next_item());
+        future.poll_unpin(cx)
     }
 }
 
