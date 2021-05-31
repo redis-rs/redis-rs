@@ -33,8 +33,7 @@ use futures_util::{
 use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::Msg;
-use crate::connection::{ConnectionAddr, ConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -281,7 +280,7 @@ where
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
-    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+    pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
             buf: Vec::new(),
@@ -379,10 +378,10 @@ where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(connection_info, con).await
+    Connection::new(&connection_info.redis, con).await
 }
 
-async fn authenticate<C>(connection_info: &ConnectionInfo, con: &mut C) -> RedisResult<()>
+async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike,
 {
@@ -442,7 +441,7 @@ where
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<T> {
-    Ok(match *connection_info.addr {
+    Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;
             <T>::connect_tcp(socket_addr).await?
@@ -834,7 +833,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -1089,7 +1088,7 @@ mod connection_manager {
         }
 
         fn get_db(&self) -> i64 {
-            self.client.connection_info().db
+            self.client.connection_info().redis.db
         }
     }
 }

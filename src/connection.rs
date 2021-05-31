@@ -92,8 +92,16 @@ impl fmt::Display for ConnectionAddr {
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
+    /// A connection address for where to connect to.
+    pub addr: ConnectionAddr,
+
     /// A boxed connection address for where to connect to.
-    pub addr: Box<ConnectionAddr>,
+    pub redis: RedisConnectionInfo,
+}
+
+/// Redis specific/connection independent information used to establish a connection to redis.
+#[derive(Clone, Debug, Default)]
+pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub db: i64,
     /// Optionally a username that should be used for connection.
@@ -139,10 +147,8 @@ where
 {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         Ok(ConnectionInfo {
-            addr: Box::new(ConnectionAddr::Tcp(self.0.into(), self.1)),
-            db: 0,
-            username: None,
-            passwd: None,
+            addr: ConnectionAddr::Tcp(self.0.into(), self.1),
+            redis: RedisConnectionInfo::default(),
         })
     }
 }
@@ -192,34 +198,36 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         ConnectionAddr::Tcp(host, port)
     };
     Ok(ConnectionInfo {
-        addr: Box::new(addr),
-        db: match url.path().trim_matches('/') {
-            "" => 0,
-            path => unwrap_or!(
-                path.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-            ),
-        },
-        username: if url.username().is_empty() {
-            None
-        } else {
-            match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
-                Ok(decoded) => Some(decoded.into_owned()),
-                Err(_) => fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Username is not valid UTF-8 string"
-                )),
-            }
-        },
-        passwd: match url.password() {
-            Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
-                Ok(decoded) => Some(decoded.into_owned()),
-                Err(_) => fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Password is not valid UTF-8 string"
-                )),
+        addr,
+        redis: RedisConnectionInfo {
+            db: match url.path().trim_matches('/') {
+                "" => 0,
+                path => unwrap_or!(
+                    path.parse::<i64>().ok(),
+                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+                ),
             },
-            None => None,
+            username: if url.username().is_empty() {
+                None
+            } else {
+                match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
+                    Ok(decoded) => Some(decoded.into_owned()),
+                    Err(_) => fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Username is not valid UTF-8 string"
+                    )),
+                }
+            },
+            passwd: match url.password() {
+                Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
+                    Ok(decoded) => Some(decoded.into_owned()),
+                    Err(_) => fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Password is not valid UTF-8 string"
+                    )),
+                },
+                None => None,
+            },
         },
     })
 }
@@ -228,19 +236,21 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
+        addr: ConnectionAddr::Unix(unwrap_or!(
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
-        ))),
-        db: match query.get("db") {
-            Some(db) => unwrap_or!(
-                db.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-            ),
-            None => 0,
+        )),
+        redis: RedisConnectionInfo {
+            db: match query.get("db") {
+                Some(db) => unwrap_or!(
+                    db.parse::<i64>().ok(),
+                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+                ),
+                None => 0,
+            },
+            username: query.get("user").map(|username| username.to_string()),
+            passwd: query.get("pass").map(|password| password.to_string()),
         },
-        username: query.get("user").map(|username| username.to_string()),
-        passwd: query.get("pass").map(|password| password.to_string()),
     })
 }
 
@@ -521,7 +531,7 @@ impl ActualConnection {
     }
 }
 
-fn connect_auth(con: &mut Connection, connection_info: &ConnectionInfo) -> RedisResult<()> {
+fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> RedisResult<()> {
     let mut command = cmd("AUTH");
     if let Some(username) = &connection_info.username {
         command.arg(username);
@@ -564,6 +574,13 @@ pub fn connect(
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
+    setup_connection(con, &connection_info.redis)
+}
+
+fn setup_connection(
+    con: ActualConnection,
+    connection_info: &RedisConnectionInfo,
+) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
         parser: Parser::new(),

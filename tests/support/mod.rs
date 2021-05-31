@@ -259,10 +259,8 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: Box::new(server.get_client_addr().clone()),
-            db: 0,
-            username: None,
-            passwd: None,
+            addr: server.get_client_addr().clone(),
+            redis: Default::default(),
         })
         .unwrap();
         let mut con;
