@@ -107,7 +107,7 @@ pub struct RedisConnectionInfo {
     /// Optionally a username that should be used for connection.
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
-    pub passwd: Option<String>,
+    pub password: Option<String>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -218,7 +218,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     )),
                 }
             },
-            passwd: match url.password() {
+            password: match url.password() {
                 Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
                     Ok(decoded) => Some(decoded.into_owned()),
                     Err(_) => fail!((
@@ -249,7 +249,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => 0,
             },
             username: query.get("user").map(|username| username.to_string()),
-            passwd: query.get("pass").map(|password| password.to_string()),
+            password: query.get("pass").map(|password| password.to_string()),
         },
     })
 }
@@ -536,8 +536,8 @@ fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> 
     if let Some(username) = &connection_info.username {
         command.arg(username);
     }
-    let passwd = connection_info.passwd.as_ref().unwrap();
-    let err = match command.arg(passwd).query::<Value>(con) {
+    let password = connection_info.password.as_ref().unwrap();
+    let err = match command.arg(password).query::<Value>(con) {
         Ok(Value::Okay) => return Ok(()),
         Ok(_) => {
             fail!((
@@ -560,7 +560,7 @@ fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> 
 
     // fallback to AUTH version <= 5
     let mut command = cmd("AUTH");
-    match command.arg(passwd).query::<Value>(con) {
+    match command.arg(password).query::<Value>(con) {
         Ok(Value::Okay) => Ok(()),
         _ => fail!((
             ErrorKind::AuthenticationFailed,
@@ -588,7 +588,7 @@ fn setup_connection(
         pubsub: false,
     };
 
-    if connection_info.passwd.is_some() {
+    if connection_info.password.is_some() {
         connect_auth(&mut rv, connection_info)?;
     }
 
@@ -1133,7 +1133,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379)),
                     db: 0,
                     username: None,
-                    passwd: None,
+                    password: None,
                 },
             ),
             (
@@ -1142,7 +1142,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Tcp("example.com".to_string(), 6379)),
                     db: 2,
                     username: Some("%johndoe%".to_string()),
-                    passwd: Some("#@<>$".to_string()),
+                    password: Some("#@<>$".to_string()),
                 },
             ),
         ];
@@ -1156,8 +1156,8 @@ mod tests {
                 url
             );
             assert_eq!(
-                res.passwd, expected.passwd,
-                "passwd of {} is not expected",
+                res.password, expected.password,
+                "password of {} is not expected",
                 url
             );
         }
@@ -1207,7 +1207,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
                     db: 0,
                     username: None,
-                    passwd: None,
+                    password: None,
                 },
             ),
             (
@@ -1216,7 +1216,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
                     db: 1,
                     username: None,
-                    passwd: None,
+                    password: None,
                 },
             ),
             (
@@ -1228,7 +1228,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
                     db: 2,
                     username: Some("%johndoe%".to_string()),
-                    passwd: Some("#@<>$".to_string()),
+                    password: Some("#@<>$".to_string()),
                 },
             ),
             (
@@ -1240,7 +1240,7 @@ mod tests {
                     addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
                     db: 2,
                     username: Some("%johndoe%".to_string()),
-                    passwd: Some("&?= *+".to_string()),
+                    password: Some("&?= *+".to_string()),
                 },
             ),
         ];
@@ -1260,8 +1260,8 @@ mod tests {
                 url
             );
             assert_eq!(
-                res.passwd, expected.passwd,
-                "passwd of {} is not expected",
+                res.password, expected.password,
+                "password of {} is not expected",
                 url
             );
         }

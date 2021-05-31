@@ -385,12 +385,12 @@ async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> 
 where
     C: ConnectionLike,
 {
-    if let Some(passwd) = &connection_info.passwd {
+    if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
         if let Some(username) = &connection_info.username {
             command.arg(username);
         }
-        match command.arg(passwd).query_async(con).await {
+        match command.arg(password).query_async(con).await {
             Ok(Value::Okay) => (),
             Err(e) => {
                 let err_msg = e.detail().ok_or((
@@ -406,7 +406,7 @@ where
                 }
 
                 let mut command = cmd("AUTH");
-                match command.arg(passwd).query_async(con).await {
+                match command.arg(password).query_async(con).await {
                     Ok(Value::Okay) => (),
                     _ => {
                         fail!((

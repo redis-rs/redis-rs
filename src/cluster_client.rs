@@ -98,8 +98,8 @@ impl ClusterClient {
 
             if builder.password.is_none() {
                 if index == 0 {
-                    connection_info_password = info.redis.passwd.clone();
-                } else if connection_info_password != info.redis.passwd {
+                    connection_info_password = info.redis.password.clone();
+                } else if connection_info_password != info.redis.password {
                     return Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "Cannot use different password among initial nodes.",

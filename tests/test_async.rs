@@ -430,7 +430,7 @@ async fn invalid_password_issue_343() {
         redis: redis::RedisConnectionInfo {
             db: 0,
             username: None,
-            passwd: Some("asdcasc".to_string()),
+            password: Some("asdcasc".to_string()),
         },
     };
     let client = redis::Client::open(coninfo).unwrap();

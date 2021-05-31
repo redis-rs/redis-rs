@@ -652,7 +652,7 @@ where
     T: std::fmt::Debug,
 {
     let mut connection_info = info.into_connection_info()?;
-    connection_info.redis.passwd = password;
+    connection_info.redis.password = password;
     let client = super::Client::open(connection_info)?;
 
     let mut con = client.get_connection()?;
