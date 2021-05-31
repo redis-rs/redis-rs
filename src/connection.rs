@@ -1130,33 +1130,37 @@ mod tests {
             (
                 url::Url::parse("redis://127.0.0.1").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379)),
-                    db: 0,
-                    username: None,
-                    password: None,
+                    addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
+                    redis: Default::default(),
                 },
             ),
             (
                 url::Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Tcp("example.com".to_string(), 6379)),
-                    db: 2,
-                    username: Some("%johndoe%".to_string()),
-                    password: Some("#@<>$".to_string()),
+                    addr: ConnectionAddr::Tcp("example.com".to_string(), 6379),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("#@<>$".to_string()),
+                    },
                 },
             ),
         ];
         for (url, expected) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url.clone()).unwrap();
             assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
-            assert_eq!(res.db, expected.db, "db of {} is not expected", url);
             assert_eq!(
-                res.username, expected.username,
+                res.redis.db, expected.redis.db,
+                "db of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.redis.username, expected.redis.username,
                 "username of {} is not expected",
                 url
             );
             assert_eq!(
-                res.password, expected.password,
+                res.redis.password, expected.redis.password,
                 "password of {} is not expected",
                 url
             );
@@ -1204,19 +1208,23 @@ mod tests {
             (
                 url::Url::parse("unix:///var/run/redis.sock").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
-                    db: 0,
-                    username: None,
-                    password: None,
+                    addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 0,
+                        username: None,
+                        password: None,
+                    },
                 },
             ),
             (
                 url::Url::parse("redis+unix:///var/run/redis.sock?db=1").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Unix("/var/run/redis.sock".into())),
-                    db: 1,
-                    username: None,
-                    password: None,
+                    addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 1,
+                        username: None,
+                        password: None,
+                    },
                 },
             ),
             (
@@ -1225,10 +1233,12 @@ mod tests {
                 )
                 .unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
-                    db: 2,
-                    username: Some("%johndoe%".to_string()),
-                    password: Some("#@<>$".to_string()),
+                    addr: ConnectionAddr::Unix("/example.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("#@<>$".to_string()),
+                    },
                 },
             ),
             (
@@ -1237,30 +1247,36 @@ mod tests {
                 )
                 .unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Unix("/example.sock".into())),
-                    db: 2,
-                    username: Some("%johndoe%".to_string()),
-                    password: Some("&?= *+".to_string()),
+                    addr: ConnectionAddr::Unix("/example.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("&?= *+".to_string()),
+                    },
                 },
             ),
         ];
         for (url, expected) in cases.into_iter() {
             assert_eq!(
                 ConnectionAddr::Unix(url.to_file_path().unwrap()),
-                *expected.addr,
+                expected.addr,
                 "addr of {} is not expected",
                 url
             );
             let res = url_to_unix_connection_info(url.clone()).unwrap();
             assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
-            assert_eq!(res.db, expected.db, "db of {} is not expected", url);
             assert_eq!(
-                res.username, expected.username,
+                res.redis.db, expected.redis.db,
+                "db of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.redis.username, expected.redis.username,
                 "username of {} is not expected",
                 url
             );
             assert_eq!(
-                res.password, expected.password,
+                res.redis.password, expected.redis.password,
                 "password of {} is not expected",
                 url
             );
