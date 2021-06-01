@@ -666,7 +666,7 @@ where
                         // Need to gather more response values
                         return;
                     }
-                    Ok(mem::replace(&mut entry.buffer, Vec::new()))
+                    Ok(mem::take(&mut entry.buffer))
                 }
                 // If we fail we must respond immediately
                 Err(err) => Err(err),
