@@ -784,8 +784,8 @@ fn test_nice_hash_api() {
     }
 
     assert_eq!(found.len(), 2);
-    assert_eq!(found.contains(&("f3".to_string(), 4)), true);
-    assert_eq!(found.contains(&("f4".to_string(), 8)), true);
+    assert!(found.contains(&("f3".to_string(), 4)));
+    assert!(found.contains(&("f4".to_string(), 8)));
 }
 
 #[test]
@@ -845,9 +845,9 @@ fn test_redis_server_down() {
 
     let ping = redis::cmd("PING").query::<String>(&mut con);
 
-    assert_eq!(ping.is_err(), true);
+    assert!(ping.is_err());
     eprintln!("{}", ping.unwrap_err());
-    assert_eq!(con.is_open(), false);
+    assert!(!con.is_open());
 }
 
 #[test]
