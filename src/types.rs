@@ -420,6 +420,7 @@ impl RedisError {
     pub fn is_connection_refusal(&self) -> bool {
         match self.repr {
             ErrorRepr::IoError(ref err) => {
+                #[allow(clippy::match_like_matches_macro)]
                 match err.kind() {
                     io::ErrorKind::ConnectionRefused => true,
                     // if we connect to a unix socket and the file does not

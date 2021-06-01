@@ -481,7 +481,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 }
 
 fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
-    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+    let mut socket_addrs = (host, port).to_socket_addrs()?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
