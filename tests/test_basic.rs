@@ -18,7 +18,7 @@ fn test_parse_redis_url() {
     let redis_url = "redis://127.0.0.1:1234/0".to_string();
     redis::parse_redis_url(&redis_url).unwrap();
     redis::parse_redis_url("unix:/var/run/redis/redis.sock").unwrap();
-    assert!(redis::parse_redis_url("127.0.0.1").is_err());
+    assert!(redis::parse_redis_url("127.0.0.1").is_none());
 }
 
 #[test]
