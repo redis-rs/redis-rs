@@ -542,16 +542,15 @@ impl FromRedisValue for StreamPendingReply {
             result.start_id = start_id;
             result.end_id = end_id;
 
-            for cd in consumer_data {
-                if let Some((name, pending)) = cd {
-                    let mut info = StreamInfoConsumer::default();
-                    info.name = name;
-                    if let Ok(v) = pending.parse::<usize>() {
-                        info.pending = v;
-                    }
-                    result.consumers.push(info);
-                }
-            }
+            result.consumers = consumer_data
+                .into_iter()
+                .flatten()
+                .map(|(name, pending)| StreamInfoConsumer {
+                    name,
+                    pending: pending.parse().unwrap_or_default(),
+                    ..Default::default()
+                })
+                .collect();
 
             Ok(StreamPendingReply::Data(result))
         }
