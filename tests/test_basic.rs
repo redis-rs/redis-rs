@@ -134,7 +134,7 @@ fn test_set_ops() {
     redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
 
     let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
 
@@ -165,7 +165,7 @@ fn test_scan() {
         .arg(0)
         .query(&mut con)
         .unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
