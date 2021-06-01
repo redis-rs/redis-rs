@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, Bencher, Criterion, Throughput};
 use futures::{prelude::*, stream};
 use redis::{RedisError, Value};
 
@@ -170,30 +170,31 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
 }
 
 fn bench_query(c: &mut Criterion) {
-    c.bench(
-        "query",
-        Benchmark::new("simple_getsetdel", bench_simple_getsetdel)
-            .with_function("simple_getsetdel_async", bench_simple_getsetdel_async)
-            .with_function("simple_getsetdel_pipeline", bench_simple_getsetdel_pipeline)
-            .with_function(
-                "simple_getsetdel_pipeline_precreated",
-                bench_simple_getsetdel_pipeline_precreated,
-            ),
-    );
-    c.bench(
-        "query_pipeline",
-        Benchmark::new(
+    let mut group = c.benchmark_group("query");
+    group
+        .bench_function("simple_getsetdel", bench_simple_getsetdel)
+        .bench_function("simple_getsetdel_async", bench_simple_getsetdel_async)
+        .bench_function("simple_getsetdel_pipeline", bench_simple_getsetdel_pipeline)
+        .bench_function(
+            "simple_getsetdel_pipeline_precreated",
+            bench_simple_getsetdel_pipeline_precreated,
+        );
+    group.finish();
+
+    let mut group = c.benchmark_group("query_pipeline");
+    group
+        .bench_function(
             "multiplexed_async_implicit_pipeline",
             bench_multiplexed_async_implicit_pipeline,
         )
-        .with_function(
+        .bench_function(
             "multiplexed_async_long_pipeline",
             bench_multiplexed_async_long_pipeline,
         )
-        .with_function("async_long_pipeline", bench_async_long_pipeline)
-        .with_function("long_pipeline", bench_long_pipeline)
-        .throughput(Throughput::Elements(PIPELINE_QUERIES as u64)),
-    );
+        .bench_function("async_long_pipeline", bench_async_long_pipeline)
+        .bench_function("long_pipeline", bench_long_pipeline)
+        .throughput(Throughput::Elements(PIPELINE_QUERIES as u64));
+    group.finish();
 }
 
 fn bench_encode_small(b: &mut Bencher) {
@@ -246,13 +247,13 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
 }
 
 fn bench_encode(c: &mut Criterion) {
-    c.bench(
-        "encode",
-        Benchmark::new("pipeline", bench_encode_pipeline)
-            .with_function("pipeline_nested", bench_encode_pipeline_nested)
-            .with_function("integer", bench_encode_integer)
-            .with_function("small", bench_encode_small),
-    );
+    let mut group = c.benchmark_group("encode");
+    group
+        .bench_function("pipeline", bench_encode_pipeline)
+        .bench_function("pipeline_nested", bench_encode_pipeline_nested)
+        .bench_function("integer", bench_encode_integer)
+        .bench_function("small", bench_encode_small);
+    group.finish();
 }
 
 fn bench_decode_simple(b: &mut Bencher, input: &[u8]) {
@@ -268,12 +269,14 @@ fn bench_decode(c: &mut Criterion) {
         Value::Int(7512182390),
     ]);
 
-    c.bench("decode", {
+    let mut group = c.benchmark_group("decode");
+    {
         let mut input = Vec::new();
         support::encode_value(&value, &mut input).unwrap();
         assert_eq!(redis::parse_redis_value(&input).unwrap(), value);
-        Benchmark::new("decode", move |b| bench_decode_simple(b, &input))
-    });
+        group.bench_function("decode", move |b| bench_decode_simple(b, &input));
+    }
+    group.finish();
 }
 
 criterion_group!(bench, bench_query, bench_encode, bench_decode);
