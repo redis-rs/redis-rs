@@ -173,7 +173,7 @@ impl StreamReadOptions {
     }
 }
 
-impl ToRedisArgs for StreamReadOptions {
+impl ToRedisArgs for &StreamReadOptions {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

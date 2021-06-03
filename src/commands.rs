@@ -1860,7 +1860,7 @@ implement_commands! {
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID],
-        options: streams::StreamReadOptions
+        options: &'a streams::StreamReadOptions
     ) {
         cmd(if options.read_only() {
             "XREAD"

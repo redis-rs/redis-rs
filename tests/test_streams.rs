@@ -48,7 +48,7 @@ fn test_cmd_options() {
     assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
     let empty = StreamReadOptions::default();
-    assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+    assert_eq!(ToRedisArgs::to_redis_args(&&empty).len(), 0);
 
     let opts = StreamClaimOptions::default()
         .idle(50)
@@ -259,7 +259,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &[">"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);
@@ -278,7 +278,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &["0"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
     assert_eq!(reply.keys.len(), 1);
@@ -294,7 +294,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &[">"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
 
@@ -389,7 +389,7 @@ fn test_xclaim() {
         .xread_options(
             &["k1"],
             &[">"],
-            StreamReadOptions::default().group("g1", "c1"),
+            &StreamReadOptions::default().group("g1", "c1"),
         )
         .unwrap();
     // verify we have 10 ids
@@ -535,7 +535,7 @@ fn test_xgroup() {
         .xread_options(
             &["k1"],
             &[">"],
-            StreamReadOptions::default().group("g1", "c1"),
+            &StreamReadOptions::default().group("g1", "c1"),
         )
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);
