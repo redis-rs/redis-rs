@@ -9,13 +9,14 @@ fn test_is_single_arg() {
     let twobytesslice: &[_] = &[bytes, bytes][..];
     let twobytesvec = vec![bytes, bytes];
 
-    assert_eq!("foo".is_single_arg(), true);
-    assert_eq!(sslice.is_single_arg(), true);
-    assert_eq!(nestslice.is_single_arg(), true);
-    assert_eq!(nestvec.is_single_arg(), true);
-    assert_eq!(bytes.is_single_arg(), true);
-    assert_eq!(twobytesslice.is_single_arg(), false);
-    assert_eq!(twobytesvec.is_single_arg(), false);
+    assert!("foo".is_single_arg());
+    assert!(sslice.is_single_arg());
+    assert!(nestslice.is_single_arg());
+    assert!(nestvec.is_single_arg());
+    assert!(bytes.is_single_arg());
+
+    assert!(!twobytesslice.is_single_arg());
+    assert!(!twobytesvec.is_single_arg());
 }
 
 #[test]

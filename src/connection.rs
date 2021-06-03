@@ -23,13 +23,13 @@ static DEFAULT_PORT: u16 = 6379;
 /// This function takes a redis URL string and parses it into a URL
 /// as used by rust-url.  This is necessary as the default parser does
 /// not understand how redis URLs function.
-pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
+pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "redis+unix" | "unix" => Ok(result),
-            _ => Err(()),
+            "redis" | "rediss" | "redis+unix" | "unix" => Some(result),
+            _ => None,
         },
-        Err(_) => Err(()),
+        Err(_) => None,
     }
 }
 
@@ -127,8 +127,8 @@ impl IntoConnectionInfo for ConnectionInfo {
 impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
-            Ok(u) => u.into_connection_info(),
-            Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
+            Some(u) => u.into_connection_info(),
+            None => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
@@ -150,8 +150,8 @@ where
 impl IntoConnectionInfo for String {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(&self) {
-            Ok(u) => u.into_connection_info(),
-            Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
+            Some(u) => u.into_connection_info(),
+            None => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
@@ -892,22 +892,22 @@ impl<'a> PubSub<'a> {
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("SUBSCRIBE").arg(channel).query(self.con)?)
+        cmd("SUBSCRIBE").arg(channel).query(self.con)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?)
+        cmd("PSUBSCRIBE").arg(pchannel).query(self.con)
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("UNSUBSCRIBE").arg(channel).query(self.con)?)
+        cmd("UNSUBSCRIBE").arg(channel).query(self.con)
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?)
+        cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -1099,7 +1099,7 @@ mod tests {
         for (url, expected) in cases.into_iter() {
             let res = parse_redis_url(&url);
             assert_eq!(
-                res.is_ok(),
+                res.is_some(),
                 expected,
                 "Parsed result of `{}` is not expected",
                 url,

@@ -18,7 +18,7 @@ fn test_parse_redis_url() {
     let redis_url = "redis://127.0.0.1:1234/0".to_string();
     redis::parse_redis_url(&redis_url).unwrap();
     redis::parse_redis_url("unix:/var/run/redis/redis.sock").unwrap();
-    assert!(redis::parse_redis_url("127.0.0.1").is_err());
+    assert!(redis::parse_redis_url("127.0.0.1").is_none());
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn test_set_ops() {
     redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
 
     let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
 
@@ -165,7 +165,7 @@ fn test_scan() {
         .arg(0)
         .query(&mut con)
         .unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
@@ -784,8 +784,8 @@ fn test_nice_hash_api() {
     }
 
     assert_eq!(found.len(), 2);
-    assert_eq!(found.contains(&("f3".to_string(), 4)), true);
-    assert_eq!(found.contains(&("f4".to_string(), 8)), true);
+    assert!(found.contains(&("f3".to_string(), 4)));
+    assert!(found.contains(&("f4".to_string(), 8)));
 }
 
 #[test]
@@ -845,9 +845,9 @@ fn test_redis_server_down() {
 
     let ping = redis::cmd("PING").query::<String>(&mut con);
 
-    assert_eq!(ping.is_err(), true);
+    assert!(ping.is_err());
     eprintln!("{}", ping.unwrap_err());
-    assert_eq!(con.is_open(), false);
+    assert!(!con.is_open());
 }
 
 #[test]

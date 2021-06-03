@@ -176,7 +176,7 @@ where
     ///
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
-    pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
+    pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
             .into_stream()
@@ -219,7 +219,7 @@ where
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
-    pub fn on_message<'a, T: FromRedisValue>(&'a mut self) -> impl Stream<Item = T> + 'a {
+    pub fn on_message<T: FromRedisValue>(&mut self) -> impl Stream<Item = T> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
             .into_stream()
@@ -481,7 +481,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 }
 
 fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
-    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+    let mut socket_addrs = (host, port).to_socket_addrs()?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
@@ -666,7 +666,7 @@ where
                         // Need to gather more response values
                         return;
                     }
-                    Ok(mem::replace(&mut entry.buffer, Vec::new()))
+                    Ok(mem::take(&mut entry.buffer))
                 }
                 // If we fail we must respond immediately
                 Err(err) => Err(err),
