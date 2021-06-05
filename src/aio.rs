@@ -598,6 +598,31 @@ where
     }
 }
 
+impl<T> ConnectionLike for T
+where
+    T: AsRef<dyn ConnectionLike + Send + Sync> + AsMut<dyn ConnectionLike + Send + Sync>,
+{
+    fn req_packed_command<'a>(
+        &'a mut self,
+        cmd: &'a crate::Cmd,
+    ) -> crate::RedisFuture<'a, crate::Value> {
+        self.as_mut().req_packed_command(cmd)
+    }
+
+    fn req_packed_commands<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> crate::RedisFuture<'a, Vec<crate::Value>> {
+        self.as_mut().req_packed_commands(cmd, offset, count)
+    }
+
+    fn get_db(&self) -> i64 {
+        self.as_ref().get_db()
+    }
+}
+
 // Senders which the result of a single request are sent through
 type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
 
