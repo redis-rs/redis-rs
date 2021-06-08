@@ -85,7 +85,7 @@ impl Client {
             }
         };
 
-        crate::aio::Connection::new(&self.connection_info, con).await
+        crate::aio::Connection::new(&self.connection_info.redis, con).await
     }
 
     /// Returns an async connection from the client.
@@ -235,7 +235,7 @@ impl Client {
         T: crate::aio::RedisRuntime,
     {
         let con = self.get_simple_async_connection::<T>().await?;
-        crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
+        crate::aio::MultiplexedConnection::new(&self.connection_info.redis, con).await
     }
 
     async fn get_simple_async_connection<T>(
@@ -274,7 +274,7 @@ impl ConnectionLike for Client {
     }
 
     fn get_db(&self) -> i64 {
-        self.connection_info.db
+        self.connection_info.redis.db
     }
 
     fn check_connection(&mut self) -> bool {

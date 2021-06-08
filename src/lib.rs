@@ -71,7 +71,7 @@
 //! * URL objects from the redis-url crate.
 //! * `ConnectionInfo` objects.
 //!
-//! The URL format is `redis://[<username>][:<passwd>@]<hostname>[:port][/<db>]`
+//! The URL format is `redis://[<username>][:<password>@]<hostname>[:port][/<db>]`
 //!
 //! If Unix socket support is available you can use a unix URL in this format:
 //!
@@ -363,7 +363,7 @@ pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{Commands, ControlFlow, LposOptions, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub,
+    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;

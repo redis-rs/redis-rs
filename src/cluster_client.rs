@@ -91,15 +91,15 @@ impl ClusterClient {
         let mut connection_info_password = None::<String>;
 
         for (index, info) in initial_nodes.into_iter().enumerate() {
-            if let ConnectionAddr::Unix(_) = *info.addr {
+            if let ConnectionAddr::Unix(_) = info.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
             }
 
             if builder.password.is_none() {
                 if index == 0 {
-                    connection_info_password = info.passwd.clone();
-                } else if connection_info_password != info.passwd {
+                    connection_info_password = info.redis.password.clone();
+                } else if connection_info_password != info.redis.password {
                     return Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "Cannot use different password among initial nodes.",

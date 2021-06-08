@@ -33,8 +33,7 @@ use futures_util::{
 use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::Msg;
-use crate::connection::{ConnectionAddr, ConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -280,8 +279,8 @@ where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`
-    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+    /// and a `RedisConnectionInfo`
+    pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
             buf: Vec::new(),
@@ -374,24 +373,37 @@ where
     }
 }
 
+#[cfg(feature = "async-std-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+impl<C> Connection<async_std::AsyncStdWrapped<C>>
+where
+    C: Unpin + ::async_std::io::Read + ::async_std::io::Write + Send,
+{
+    /// Constructs a new `Connection` out of a `async_std::io::AsyncRead + async_std::io::AsyncWrite` object
+    /// and a `RedisConnectionInfo`
+    pub async fn new_async_std(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
+        Connection::new(connection_info, async_std::AsyncStdWrapped::new(con)).await
+    }
+}
+
 pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(connection_info, con).await
+    Connection::new(&connection_info.redis, con).await
 }
 
-async fn authenticate<C>(connection_info: &ConnectionInfo, con: &mut C) -> RedisResult<()>
+async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike,
 {
-    if let Some(passwd) = &connection_info.passwd {
+    if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
         if let Some(username) = &connection_info.username {
             command.arg(username);
         }
-        match command.arg(passwd).query_async(con).await {
+        match command.arg(password).query_async(con).await {
             Ok(Value::Okay) => (),
             Err(e) => {
                 let err_msg = e.detail().ok_or((
@@ -407,7 +419,7 @@ where
                 }
 
                 let mut command = cmd("AUTH");
-                match command.arg(passwd).query_async(con).await {
+                match command.arg(password).query_async(con).await {
                     Ok(Value::Okay) => (),
                     _ => {
                         fail!((
@@ -442,7 +454,7 @@ where
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<T> {
-    Ok(match *connection_info.addr {
+    Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;
             <T>::connect_tcp(socket_addr).await?
@@ -834,7 +846,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -1089,7 +1101,7 @@ mod connection_manager {
         }
 
         fn get_db(&self) -> i64 {
-            self.client.connection_info().db
+            self.client.connection_info().redis.db
         }
     }
 }

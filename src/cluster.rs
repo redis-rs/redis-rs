@@ -164,7 +164,7 @@ impl ClusterConnection {
         let mut connections = HashMap::with_capacity(initial_nodes.len());
 
         for info in initial_nodes.iter() {
-            let addr = match *info.addr {
+            let addr = match info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
                 _ => panic!("No reach."),
             };
@@ -652,7 +652,7 @@ where
     T: std::fmt::Debug,
 {
     let mut connection_info = info.into_connection_info()?;
-    connection_info.passwd = password;
+    connection_info.redis.password = password;
     let client = super::Client::open(connection_info)?;
 
     let mut con = client.get_connection()?;

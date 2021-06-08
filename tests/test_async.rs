@@ -426,10 +426,12 @@ async fn io_error_on_kill_issue_320() {
 async fn invalid_password_issue_343() {
     let ctx = TestContext::new();
     let coninfo = redis::ConnectionInfo {
-        addr: Box::new(ctx.server.get_client_addr().clone()),
-        db: 0,
-        username: None,
-        passwd: Some("asdcasc".to_string()),
+        addr: ctx.server.get_client_addr().clone(),
+        redis: redis::RedisConnectionInfo {
+            db: 0,
+            username: None,
+            password: Some("asdcasc".to_string()),
+        },
     };
     let client = redis::Client::open(coninfo).unwrap();
     let err = client
