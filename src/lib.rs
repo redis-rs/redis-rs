@@ -361,6 +361,8 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{Commands, ControlFlow, LposOptions, PubSubCommands};
+#[cfg(feature = "requires-redis-6-2")]
+pub use crate::commands::{ZRangeStoreOptions, ZRangeStoreOrdering};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,

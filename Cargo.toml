@@ -59,7 +59,7 @@ tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.3", optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script"]
+default = ["acl", "streams", "geospatial", "script", "requires-redis-6-2"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio"]
 geospatial = []
@@ -72,7 +72,8 @@ tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls", "tokio-native-tls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
-
+# Some commands are only available as of v6.2
+requires-redis-6-2 = []
 
 [dev-dependencies]
 rand = "0.8"
