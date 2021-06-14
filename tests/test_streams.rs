@@ -48,7 +48,7 @@ fn test_cmd_options() {
     assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
     let empty = StreamReadOptions::default();
-    assert_eq!(ToRedisArgs::to_redis_args(&&empty).len(), 0);
+    assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
     let opts = StreamClaimOptions::default()
         .idle(50)
