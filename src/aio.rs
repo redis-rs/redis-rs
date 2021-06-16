@@ -653,6 +653,10 @@ where
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
+            // No need to try reading a message if there is no message in flight
+            if self.in_flight.is_empty() {
+                return Poll::Ready(Ok(()));
+            }
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(Ok(item)) => Ok(item),
                 Some(Err(err)) => Err(err),
