@@ -55,7 +55,6 @@ jobs:
       run: make test
     - name: Check features
       run: |
-        make test
         cargo check --benches --all-features
         cargo check --no-default-features --features tokio-comp
         # Remove dev-dependencies so they do not enable features accidentally
