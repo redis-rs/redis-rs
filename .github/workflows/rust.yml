@@ -28,8 +28,13 @@ jobs:
         wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
         tar -xzvf 6.0.6.tar.gz;
         pushd redis-6.0.6 && BUILD_TLS=yes make && echo "PATH=${PWD}/src:${PATH}" >> $GITHUB_ENV && popd;
-
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
     - uses: actions/checkout@v2
+
     - name: Run tests
       run: make test
     - name: Check features
