@@ -21,7 +21,15 @@ jobs:
           - nightly
 
     steps:
+    - name: Cache redis
+      id: cache-redis
+      uses: actions/cache@v2
+      with:
+        path: redis
+        key: ${{ runner.os }}-redis
+
     - name: Install redis
+      if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install stunnel -y
