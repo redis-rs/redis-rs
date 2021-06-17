@@ -25,7 +25,7 @@ jobs:
       id: cache-redis
       uses: actions/cache@v2
       with:
-        path: /usr/local/bin/redis-server
+        path: /usr/bin/redis-server
         key: ${{ runner.os }}-redis
 
     - name: Install redis
@@ -35,7 +35,8 @@ jobs:
         sudo apt-get install stunnel -y
         wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
         tar -xzvf 6.0.6.tar.gz;
-        pushd redis-6.0.6 && BUILD_TLS=yes make && sudo mv src/redis-server /usr/local/bin/ && popd;
+        pushd redis-6.0.6 && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        echo $PATH
 
     - name: Install latest nightly
       uses: actions-rs/toolchain@v1
