@@ -204,7 +204,6 @@ mod aio_support {
         type Error = RedisError;
 
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            dbg!("decode");
             self.decode_stream(bytes, false)
         }
 
