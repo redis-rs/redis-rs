@@ -26,9 +26,9 @@ jobs:
       id: cache-redis
       uses: actions/cache@v2
       with:
-        path:
-          - /usr/bin/redis-cli
-          - /usr/bin/redis-server
+        path: |
+          /usr/bin/redis-cli
+          /usr/bin/redis-server
         key: ${{ runner.os }}-redis
 
     - name: Install redis
