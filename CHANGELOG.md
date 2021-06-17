@@ -1,3 +1,14 @@
+<a name="0.20.2"></a>
+### 0.20.2 (2021-06-17)
+
+
+#### Bug Fixes
+
+*   Return Ready(Ok(())) when we have flushed all messages ([f5d77708](https://github.com/mitsuhiko/redis-rs/commit/f5d77708855e85e0bc6a4f8ad651b184d2e8e423))
+*   Don't loop forever on shutdown of the multiplexed connection ([371f0bba](https://github.com/mitsuhiko/redis-rs/commit/371f0bba6cb9d0010fc86208e28f15dd187e65cf))
+
+
+
 <a name="0.20.1"></a>
 ### 0.20.1 (2021-05-18)
 
