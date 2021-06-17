@@ -27,7 +27,7 @@ jobs:
         sudo apt-get install stunnel -y
         wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
         tar -xzvf 6.0.6.tar.gz;
-        pushd redis-6.0.6 && BUILD_TLS=yes make && export PATH=$PWD/src:$PATH && popd;
+        pushd redis-6.0.6 && BUILD_TLS=yes make && echo "PATH=${PWD}/src:${PATH}" >> $GITHUB_ENV && popd;
 
     - uses: actions/checkout@v2
     - name: Run tests
