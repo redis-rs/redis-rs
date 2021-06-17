@@ -211,7 +211,7 @@ fn test_cluster_pipeline_ordering_with_improper_command() {
     }
     pipe.query::<()>(&mut con).unwrap_err();
 
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     pipe.clear();
     for q in &queries {
