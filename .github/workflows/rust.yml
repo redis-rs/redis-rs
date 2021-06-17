@@ -33,6 +33,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         override: true
+        components: rustfmt
     - uses: actions/checkout@v2
 
     - name: Run tests
@@ -48,4 +49,7 @@ jobs:
         cargo check --all-features
 
         cargo check --no-default-features --features async-std-comp
+    - name: Check format
+      if: ${{ matrix.rust == 'stable' }}
+      run: make style-check
 
