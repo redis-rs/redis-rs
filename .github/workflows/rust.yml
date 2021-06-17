@@ -1,0 +1,69 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+
+    steps:
+    - name: Cache redis
+      id: cache-redis
+      uses: actions/cache@v2
+      with:
+        path: |
+          /usr/bin/redis-cli
+          /usr/bin/redis-server
+        key: ${{ runner.os }}-redis
+
+    - name: Install redis
+      if: steps.cache-redis.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install stunnel -y
+        wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
+        tar -xzvf 6.0.6.tar.gz;
+        pushd redis-6.0.6 && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        echo $PATH
+
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+        components: rustfmt
+
+    - uses: Swatinem/rust-cache@v1
+    - uses: actions/checkout@v2
+
+    - name: Run tests
+      run: make test
+    - name: Check features
+      run: |
+        cargo check --benches --all-features
+        cargo check --no-default-features --features tokio-comp
+        # Remove dev-dependencies so they do not enable features accidentally
+        # https://github.com/rust-lang/cargo/issues/4664
+        sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
+        cargo check --all-features
+
+        cargo check --no-default-features --features async-std-comp
+    - name: Check format
+      if: ${{ matrix.rust == 'stable' }}
+      run: make style-check
+
