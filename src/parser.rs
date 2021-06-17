@@ -12,7 +12,7 @@ use combine::{
         range::{recognize, take},
     },
     stream::{PointerOffset, RangeStream, StreamErrorFor},
-    Parser as _,
+    ParseError, Parser as _,
 };
 
 struct ResultExtend<T, E>(Result<T, E>);
@@ -227,11 +227,15 @@ mod aio_support {
             Err(err) => Err(match err {
                 combine::stream::decoder::Error::Io { error, .. } => error.into(),
                 combine::stream::decoder::Error::Parse(err) => {
-                    let err = err
-                        .map_range(|range| format!("{:?}", range))
-                        .map_position(|pos| pos.translate_position(decoder.buffer()))
-                        .to_string();
-                    RedisError::from((ErrorKind::ResponseError, "parse error", err))
+                    if err.is_unexpected_end_of_input() {
+                        RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
+                    } else {
+                        let err = err
+                            .map_range(|range| format!("{:?}", range))
+                            .map_position(|pos| pos.translate_position(decoder.buffer()))
+                            .to_string();
+                        RedisError::from((ErrorKind::ResponseError, "parse error", err))
+                    }
                 }
             }),
             Ok(result) => result,
@@ -281,11 +285,15 @@ impl Parser {
             Err(err) => Err(match err {
                 combine::stream::decoder::Error::Io { error, .. } => error.into(),
                 combine::stream::decoder::Error::Parse(err) => {
-                    let err = err
-                        .map_range(|range| format!("{:?}", range))
-                        .map_position(|pos| pos.translate_position(decoder.buffer()))
-                        .to_string();
-                    RedisError::from((ErrorKind::ResponseError, "parse error", err))
+                    if err.is_unexpected_end_of_input() {
+                        RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
+                    } else {
+                        let err = err
+                            .map_range(|range| format!("{:?}", range))
+                            .map_position(|pos| pos.translate_position(decoder.buffer()))
+                            .to_string();
+                        RedisError::from((ErrorKind::ResponseError, "parse error", err))
+                    }
                 }
             }),
             Ok(result) => result,
