@@ -62,7 +62,10 @@ macro_rules! implement_commands {
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { Cmd::$name($($argname),*).query(self) }
+                    {
+                        #[allow(deprecated)]
+                        Cmd::$name($($argname),*).query(self)
+                    }
             )*
 
             /// Incrementally iterate the keys space.
@@ -1330,13 +1333,18 @@ implement_commands! {
         cmd("XADD").arg(key).arg(id).arg(map)
     }
 
-    /// Add a stream message while capping the stream at a maxlength.
+    /// Add a stream message while capping the stream at a maxlength or
+    /// removing all entries before some minid.
     ///
     /// ```text
     /// XADD key [MAXLEN [~|=] <count>] <ID or *> [field value] [field value] ...
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    #[deprecated(
+        since = "0.21.0",
+        note = "Use xadd_size_limited instead. Changed to match increase in API surface in Redis 6.2"
+    )]
     fn xadd_maxlen<
         K: ToRedisArgs,
         ID: ToRedisArgs,
@@ -1344,7 +1352,7 @@ implement_commands! {
         V: ToRedisArgs
     >(
         key: K,
-        maxlen: streams::StreamMaxlen,
+        maxlen: streams::StreamSizeLimit,
         id: ID,
         items: &'a [(F, V)]
     ) {
@@ -1355,17 +1363,47 @@ implement_commands! {
             .arg(items)
     }
 
-
-    /// BTreeMap variant for adding a stream message while capping the stream at a maxlength.
+    /// Add a stream message while capping the stream at a maxlength or
+    /// removing all entries before some minid.
     ///
     /// ```text
-    /// XADD key [MAXLEN [~|=] <count>] <ID or *> [rust BTreeMap] ...
+    /// XADD key [MAXLEN [~|=] <count>] <ID or *> [field value] [field value] ...
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_size_limited<
+        K: ToRedisArgs,
+        ID: ToRedisArgs,
+        F: ToRedisArgs,
+        V: ToRedisArgs
+    >(
+        key: K,
+        size_limit: streams::StreamSizeLimit,
+        id: ID,
+        items: &'a [(F, V)]
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(size_limit)
+            .arg(id)
+            .arg(items)
+    }
+
+    /// BTreeMap variant for adding a stream message while capping the stream at a maxlength or
+    /// removing all entries before some minid.
+    ///
+    /// ```text
+    /// XADD key [MAXLEN|MINID [~|=] <count|id>] <ID or *> [rust BTreeMap] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    #[deprecated(
+        since = "0.21.0",
+        note = "Use xadd_size_limited_map instead. Changed to match increase in API surface in Redis 6.2"
+    )]
     fn xadd_maxlen_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
         key: K,
-        maxlen: streams::StreamMaxlen,
+        maxlen: streams::StreamSizeLimit,
         id: ID,
         map: BTM
     ) {
@@ -1376,7 +1414,26 @@ implement_commands! {
             .arg(map)
     }
 
-
+    /// BTreeMap variant for adding a stream message while capping the stream at a maxlength or
+    /// removing all entries before some minid.
+    ///
+    /// ```text
+    /// XADD key [MAXLEN|MINID [~|=] <count|id>] <ID or *> [rust BTreeMap] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_size_limited_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
+        key: K,
+        size_limit: streams::StreamSizeLimit,
+        id: ID,
+        map: BTM
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(size_limit)
+            .arg(id)
+            .arg(map)
+    }
 
     /// Claim pending, unacked messages, after some period of time,
     /// currently checked out by another consumer.
@@ -1921,19 +1978,18 @@ implement_commands! {
             .arg(count)
     }
 
-
-    /// Trim a stream `key` to a MAXLEN count.
+    /// Trim a stream `key` to a MAXLEN count or a MINID id.
     ///
     /// ```text
-    /// XTRIM <key> MAXLEN [~|=] <count>  (Same as XADD MAXLEN option)
+    /// XTRIM <key> MAXLEN|MINID [~|=] <count|id> (Same as XADD MAXLEN|MINID option)
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xtrim<K: ToRedisArgs>(
         key: K,
-        maxlen: streams::StreamMaxlen
+        size_limit: streams::StreamSizeLimit
     ) {
-        cmd("XTRIM").arg(key).arg(maxlen)
+        cmd("XTRIM").arg(key).arg(size_limit)
     }
 }
 

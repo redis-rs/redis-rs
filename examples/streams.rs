@@ -1,6 +1,6 @@
 #![cfg(feature = "streams")]
 
-use redis::streams::{StreamId, StreamKey, StreamMaxlen, StreamReadOptions, StreamReadReply};
+use redis::streams::{StreamId, StreamKey, StreamReadOptions, StreamReadReply, StreamSizeLimit};
 
 use redis::{Commands, RedisResult, Value};
 
@@ -118,15 +118,17 @@ fn demo_group_reads(client: &redis::Client) {
 /// Generate some contrived records and add them to various
 /// streams.
 fn add_records(client: &redis::Client) -> RedisResult<()> {
+    use StreamSizeLimit::MaxlenApprox;
+
     let mut con = client.get_connection().expect("conn");
 
-    let maxlen = StreamMaxlen::Approx(1000);
+    let maxlen = 1000;
 
     // a stream whose records have two fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_size_limited(
             DOG_STREAM,
-            maxlen,
+            MaxlenApprox(maxlen),
             "*",
             &[("bark", arbitrary_value()), ("groom", arbitrary_value())],
         )?;
@@ -134,9 +136,9 @@ fn add_records(client: &redis::Client) -> RedisResult<()> {
 
     // a streams whose records have three fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_size_limited(
             CAT_STREAM,
-            maxlen,
+            MaxlenApprox(maxlen),
             "*",
             &[
                 ("meow", arbitrary_value()),
@@ -148,9 +150,9 @@ fn add_records(client: &redis::Client) -> RedisResult<()> {
 
     // a streams whose records have four fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_size_limited(
             DUCK_STREAM,
-            maxlen,
+            MaxlenApprox(maxlen),
             "*",
             &[
                 ("quack", arbitrary_value()),
@@ -260,7 +262,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<Strea
 fn clean_up(client: &redis::Client) {
     let mut con = client.get_connection().expect("con");
     for k in STREAMS {
-        let trimmed: RedisResult<()> = con.xtrim(*k, StreamMaxlen::Equals(0));
+        let trimmed: RedisResult<()> = con.xtrim(*k, StreamSizeLimit::MaxlenEquals(0));
         trimmed.expect("trim");
 
         let destroyed: RedisResult<()> = con.xgroup_destroy(*k, GROUP_NAME);

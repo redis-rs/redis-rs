@@ -35,6 +35,18 @@ fn xadd_keyrange(con: &mut Connection, key: &str, start: i32, end: i32) {
     }
 }
 
+fn xadd_keyrange_explicit_ids(
+    con: &mut Connection,
+    key: &str,
+    start: i32,
+    end: i32,
+    timestamp: i32,
+) {
+    for i in start..end {
+        let _: RedisResult<String> = con.xadd(key, format!("{}-{}", timestamp, i), &[("h", "w")]);
+    }
+}
+
 #[test]
 fn test_cmd_options() {
     // Tests the following command option builders....
@@ -69,10 +81,22 @@ fn test_cmd_options() {
         "JUSTID"
     );
 
-    // test maxlen options
+    // test maxlen/minid options
 
-    assert_args!(StreamMaxlen::Approx(10), "MAXLEN", "~", "10");
-    assert_args!(StreamMaxlen::Equals(10), "MAXLEN", "=", "10");
+    assert_args!(StreamSizeLimit::MaxlenApprox(10), "MAXLEN", "~", "10");
+    assert_args!(StreamSizeLimit::MaxlenEquals(10), "MAXLEN", "=", "10");
+    assert_args!(
+        StreamSizeLimit::MinidApprox("188".into()),
+        "MINID",
+        "~",
+        "188"
+    );
+    assert_args!(
+        StreamSizeLimit::MinidEquals("188".into()),
+        "MINID",
+        "=",
+        "188"
+    );
 
     // test read options
 
@@ -105,7 +129,7 @@ fn test_assorted_1() {
     // Tests the following commands....
     // xadd
     // xadd_map (skip this for now)
-    // xadd_maxlen
+    // xadd_size_limited
     // xread
     // xlen
 
@@ -159,9 +183,16 @@ fn test_assorted_1() {
     let result: RedisResult<usize> = con.xlen("k4");
     assert_eq!(result, Ok(100));
 
-    // test xadd_maxlen
+    // test xadd_size_limited with MAXLEN
     let _: RedisResult<String> =
-        con.xadd_maxlen("k4", StreamMaxlen::Equals(10), "*", &[("h", "w")]);
+        con.xadd_size_limited("k4", StreamSizeLimit::MaxlenEquals(10), "*", &[("h", "w")]);
+    let result: RedisResult<usize> = con.xlen("k4");
+    assert_eq!(result, Ok(10));
+
+    // TODO
+    // test xadd_size_limited with MINID
+    let _: RedisResult<String> =
+        con.xadd_size_limited("k4", StreamSizeLimit::MaxlenEquals(10), "*", &[("h", "w")]);
     let result: RedisResult<usize> = con.xlen("k4");
     assert_eq!(result, Ok(10));
 }
@@ -340,7 +371,7 @@ fn assert_stream_pending_data(data: StreamPendingData) {
 }
 
 #[test]
-fn test_xadd_maxlen_map() {
+fn test_xadd_size_limited_map() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
@@ -349,7 +380,7 @@ fn test_xadd_maxlen_map() {
         let idx = i.to_string();
         map.insert("idx", &idx);
         let _: RedisResult<String> =
-            con.xadd_maxlen_map("maxlen_map", StreamMaxlen::Equals(3), "*", map);
+            con.xadd_size_limited_map("maxlen_map", StreamSizeLimit::MaxlenEquals(3), "*", map);
     }
 
     let result: RedisResult<usize> = con.xlen("maxlen_map");
@@ -359,6 +390,8 @@ fn test_xadd_maxlen_map() {
     assert_eq!(reply.ids[0].get("idx"), Some("7".to_string()));
     assert_eq!(reply.ids[1].get("idx"), Some("8".to_string()));
     assert_eq!(reply.ids[2].get("idx"), Some("9".to_string()));
+
+    // TODO test with minid
 }
 
 #[test]
@@ -497,11 +530,24 @@ fn test_xtrim() {
     xadd_keyrange(&mut con, "k1", 0, 100);
 
     // trim key to 50
-    // returns the number of items remaining in the stream
-    let result: RedisResult<i32> = con.xtrim("k1", StreamMaxlen::Equals(50));
+    // returns the number of items deleted from the stream
+    let result: RedisResult<i32> = con.xtrim("k1", StreamSizeLimit::MaxlenEquals(50));
     assert_eq!(result, Ok(50));
     // we should end up with 40 after this call
-    let result: RedisResult<i32> = con.xtrim("k1", StreamMaxlen::Equals(10));
+    let result: RedisResult<i32> = con.xtrim("k1", StreamSizeLimit::MaxlenEquals(10));
+    assert_eq!(result, Ok(40));
+
+    // Now, test using MINID instead of MAXLEN
+
+    // add some keys to k2 with timestamp 30
+    xadd_keyrange_explicit_ids(&mut con, "k2", 0, 100, 30);
+
+    // trim all keys before 30-50
+    // returns the number of items deleted from the stream
+    let result: RedisResult<i32> = con.xtrim("k2", StreamSizeLimit::MinidEquals("30-50".into()));
+    assert_eq!(result, Ok(50));
+    // we should end up with 40 after this call
+    let result: RedisResult<i32> = con.xtrim("k2", StreamSizeLimit::MinidEquals("30-90".into()));
     assert_eq!(result, Ok(40));
 }
 
