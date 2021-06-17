@@ -46,6 +46,8 @@ jobs:
         toolchain: ${{ matrix.rust }}
         override: true
         components: rustfmt
+
+    - uses: Swatinem/rust-cache@v1
     - uses: actions/checkout@v2
 
     - name: Run tests
