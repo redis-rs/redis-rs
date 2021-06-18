@@ -1833,7 +1833,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .count(10);
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &["0"], opts);
+    ///     con.xread_options(&["k1"], &["0"], &opts);
     ///
     /// // Read all undelivered messages for a given
     /// // consumer group. Be advised: the consumer group must already
@@ -1843,7 +1843,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .group("group-1", "consumer-1");
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &[">"], opts);
+    ///     con.xread_options(&["k1"], &[">"], &opts);
     /// ```
     ///
     /// ```text
@@ -1860,7 +1860,7 @@ implement_commands! {
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID],
-        options: streams::StreamReadOptions
+        options: &'a streams::StreamReadOptions
     ) {
         cmd(if options.read_only() {
             "XREAD"
