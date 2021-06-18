@@ -797,13 +797,16 @@ fn test_nice_list_api() {
     assert_eq!(con.rpush("my_list", &[5, 6, 7, 8]), Ok(8));
     assert_eq!(con.llen("my_list"), Ok(8));
 
-    assert_eq!(con.lpop("my_list"), Ok(1));
+    assert_eq!(con.lpop("my_list", Default::default()), Ok(1));
     assert_eq!(con.llen("my_list"), Ok(7));
 
     assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
 
     assert_eq!(con.lset("my_list", 0, 4), Ok(true));
     assert_eq!(con.lrange("my_list", 0, 2), Ok((4, 3, 4)));
+
+    let my_list: Vec<u8> = con.lrange("my_list", 0, 10).expect("To get range");
+    assert_eq!(con.lpop("my_list", core::num::NonZeroUsize::new(10)), Ok(my_list));
 }
 
 #[test]
