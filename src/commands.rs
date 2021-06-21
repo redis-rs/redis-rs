@@ -584,7 +584,7 @@ implement_commands! {
         cmd("LLEN").arg(key)
     }
 
-    /// Removes and returns the up to `count` elements of the list stored at key.
+    /// Removes and returns the up to `count` first elements of the list stored at key.
     ///
     /// If `count` is not specified, then defaults to first element.
     fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
@@ -629,9 +629,11 @@ implement_commands! {
         cmd("LSET").arg(key).arg(index).arg(value)
     }
 
-    /// Removes and returns the last element of the list stored at key.
-    fn rpop<K: ToRedisArgs>(key: K) {
-        cmd("RPOP").arg(key)
+    /// Removes and returns the up to `count` last elements of the list stored at key
+    ///
+    /// If `count` is not specified, then defaults to last element.
+    fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
+        cmd("RPOP").arg(key).arg(count)
     }
 
     /// Pop a value from a list, push it to another list and return it.
