@@ -588,7 +588,7 @@ implement_commands! {
     ///
     /// If `count` is not specified, then defaults to first element.
     fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
-        cmd("LPOP").arg(key).arg(count.map(core::num::NonZeroUsize::get))
+        cmd("LPOP").arg(key).arg(count)
     }
 
     /// Returns the index of the first matching value of the list stored at key.

@@ -711,6 +711,25 @@ macro_rules! itoa_based_to_redis_impl {
     };
 }
 
+macro_rules! non_zero_itoa_based_to_redis_impl {
+    ($t:ty, $numeric:expr) => {
+        impl ToRedisArgs for $t {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                let mut buf = ::itoa::Buffer::new();
+                let s = buf.format(self.get());
+                out.write_arg(s.as_bytes())
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                $numeric
+            }
+        }
+    };
+}
+
 macro_rules! dtoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
@@ -761,6 +780,17 @@ itoa_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
+
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
 
 dtoa_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 dtoa_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
