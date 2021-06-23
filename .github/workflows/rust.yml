@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  REDIS_VERSION: '6.2.4'
 
 jobs:
   build:
@@ -36,9 +37,9 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install stunnel -y
-        wget https://github.com/redis/redis/archive/6.0.6.tar.gz;
-        tar -xzvf 6.0.6.tar.gz;
-        pushd redis-6.0.6 && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        wget https://github.com/redis/redis/archive/${{ env.REDIS_VERSION }}.tar.gz;
+        tar -xzvf ${{ env.REDIS_VERSION }}.tar.gz;
+        pushd redis-${{ env.REDIS_VERSION }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
         echo $PATH
 
     - name: Install latest nightly
