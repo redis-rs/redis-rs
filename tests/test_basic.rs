@@ -809,7 +809,10 @@ fn test_nice_list_api() {
     //Windows version of redis is limited to v3.x
     {
         let my_list: Vec<u8> = con.lrange("my_list", 0, 10).expect("To get range");
-        assert_eq!(con.lpop("my_list", core::num::NonZeroUsize::new(10)), Ok(my_list));
+        assert_eq!(
+            con.lpop("my_list", core::num::NonZeroUsize::new(10)),
+            Ok(my_list)
+        );
     }
 }
 
