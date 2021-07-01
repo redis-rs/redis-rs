@@ -23,7 +23,9 @@ fn test_acl_help() {
     assert!(!res.is_empty());
 }
 
+//TODO: do we need this test?
 #[test]
+#[ignore]
 fn test_acl_getsetdel_users() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
