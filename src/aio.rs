@@ -724,11 +724,20 @@ where
             response_count,
         }: PipelineMessage<SinkItem, I, E>,
     ) -> Result<(), Self::Error> {
+        // If there is nothing to receive our output we do not need to send the message as it is
+        // ambiguous whether the message will be sent anyway. Helps shed some load on the
+        // connection.
+        if output.is_closed() {
+            return Ok(());
+        }
+
         let self_ = self.as_mut().project();
+
         if let Some(err) = self_.error.take() {
             let _ = output.send(Err(err));
             return Err(());
         }
+
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
                 self_.in_flight.push_back(InFlight {
