@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.21.0"
+version = "0.21.1-alpha.0"
 dependencies = [
  "arc-swap",
  "assert_approx_eq",
