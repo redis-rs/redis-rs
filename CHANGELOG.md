@@ -1,10 +1,13 @@
-<a name="0.20.2"></a>
-### 0.20.2 (2021-07-16)
+<a name="0.20.3"></a>
+### 0.20.3 (2021-07-16)
 
 
 #### Performance
 
 *   Don't enqueue multiplexed commands if the receiver is dropped ([ca5019db](https://github.com/mitsuhiko/redis-rs/commit/ca5019dbe76cc56c93eaecb5721de8fcf74d1641))
+
+<a name="0.20.2"></a>
+### 0.20.2 (2021-06-17)
 
 #### Features
 
