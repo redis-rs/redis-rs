@@ -13,7 +13,7 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.20.1"
+redis = "0.20.3"
 ```
 
 Documentation on the library can be found at
