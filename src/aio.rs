@@ -24,7 +24,7 @@ use native_tls::TlsConnector;
 use tokio_util::codec::Decoder;
 
 use futures_util::{
-    future::{Future, FutureExt, TryFutureExt},
+    future::{Future, FutureExt},
     ready,
     sink::Sink,
     stream::{self, Stream, StreamExt, TryStreamExt as _},
@@ -33,8 +33,7 @@ use futures_util::{
 use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::Msg;
-use crate::connection::{ConnectionAddr, ConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -176,7 +175,7 @@ where
     ///
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
-    pub fn on_message<'a>(&'a mut self) -> impl Stream<Item = Msg> + 'a {
+    pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
             .into_stream()
@@ -219,7 +218,7 @@ where
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
-    pub fn on_message<'a, T: FromRedisValue>(&'a mut self) -> impl Stream<Item = T> + 'a {
+    pub fn on_message<T: FromRedisValue>(&mut self) -> impl Stream<Item = T> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
             .into_stream()
@@ -280,8 +279,8 @@ where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`
-    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+    /// and a `RedisConnectionInfo`
+    pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
             buf: Vec::new(),
@@ -374,24 +373,37 @@ where
     }
 }
 
+#[cfg(feature = "async-std-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+impl<C> Connection<async_std::AsyncStdWrapped<C>>
+where
+    C: Unpin + ::async_std::io::Read + ::async_std::io::Write + Send,
+{
+    /// Constructs a new `Connection` out of a `async_std::io::AsyncRead + async_std::io::AsyncWrite` object
+    /// and a `RedisConnectionInfo`
+    pub async fn new_async_std(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
+        Connection::new(connection_info, async_std::AsyncStdWrapped::new(con)).await
+    }
+}
+
 pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(connection_info, con).await
+    Connection::new(&connection_info.redis, con).await
 }
 
-async fn authenticate<C>(connection_info: &ConnectionInfo, con: &mut C) -> RedisResult<()>
+async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike,
 {
-    if let Some(passwd) = &connection_info.passwd {
+    if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
         if let Some(username) = &connection_info.username {
             command.arg(username);
         }
-        match command.arg(passwd).query_async(con).await {
+        match command.arg(password).query_async(con).await {
             Ok(Value::Okay) => (),
             Err(e) => {
                 let err_msg = e.detail().ok_or((
@@ -407,7 +419,7 @@ where
                 }
 
                 let mut command = cmd("AUTH");
-                match command.arg(passwd).query_async(con).await {
+                match command.arg(password).query_async(con).await {
                     Ok(Value::Okay) => (),
                     _ => {
                         fail!((
@@ -442,7 +454,7 @@ where
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<T> {
-    Ok(match *connection_info.addr {
+    Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addr = get_socket_addrs(host, port)?;
             <T>::connect_tcp(socket_addr).await?
@@ -481,7 +493,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 }
 
 fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
-    let mut socket_addrs = (&host[..], port).to_socket_addrs()?;
+    let mut socket_addrs = (host, port).to_socket_addrs()?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
@@ -641,9 +653,12 @@ where
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
+            // No need to try reading a message if there is no message in flight
+            if self.in_flight.is_empty() {
+                return Poll::Ready(Ok(()));
+            }
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
-                Some(Ok(item)) => Ok(item),
-                Some(Err(err)) => Err(err),
+                Some(result) => result,
                 // The redis response stream is not going to produce any more items so we `Err`
                 // to break out of the `forward` combinator and stop handling requests
                 None => return Poll::Ready(Err(())),
@@ -666,7 +681,7 @@ where
                         // Need to gather more response values
                         return;
                     }
-                    Ok(mem::replace(&mut entry.buffer, Vec::new()))
+                    Ok(mem::take(&mut entry.buffer))
                 }
                 // If we fail we must respond immediately
                 Err(err) => Err(err),
@@ -709,11 +724,20 @@ where
             response_count,
         }: PipelineMessage<SinkItem, I, E>,
     ) -> Result<(), Self::Error> {
+        // If there is nothing to receive our output we do not need to send the message as it is
+        // ambiguous whether the message will be sent anyway. Helps shed some load on the
+        // connection.
+        if output.is_closed() {
+            return Ok(());
+        }
+
         let self_ = self.as_mut().project();
+
         if let Some(err) = self_.error.take() {
             let _ = output.send(Err(err));
             return Err(());
         }
+
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
                 self_.in_flight.push_back(InFlight {
@@ -787,9 +811,9 @@ where
     // `None` means that the stream was out of items causing that poll loop to shut down.
     async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
         self.send_recv_multiple(item, 1)
-            // We can unwrap since we do a request for `1` item
-            .map_ok(|mut item| item.pop().unwrap())
             .await
+            // We can unwrap since we do a request for `1` item
+            .map(|mut item| item.pop().unwrap())
     }
 
     async fn send_recv_multiple(
@@ -805,20 +829,16 @@ where
                 response_count: count,
                 output: sender,
             })
-            .map_err(|_| None)
-            .and_then(|_| {
-                receiver.map(|result| {
-                    match result {
-                        Ok(result) => result.map_err(Some),
-                        Err(_) => {
-                            // The `sender` was dropped which likely means that the stream part
-                            // failed for one reason or another
-                            Err(None)
-                        }
-                    }
-                })
-            })
             .await
+            .map_err(|_| None)?;
+        match receiver.await {
+            Ok(result) => result.map_err(Some),
+            Err(_) => {
+                // The `sender` was dropped which likely means that the stream part
+                // failed for one reason or another
+                Err(None)
+            }
+        }
     }
 }
 
@@ -834,7 +854,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -1089,10 +1109,11 @@ mod connection_manager {
         }
 
         fn get_db(&self) -> i64 {
-            self.client.connection_info().db
+            self.client.connection_info().redis.db
         }
     }
 }
 
 #[cfg(feature = "connection-manager")]
+#[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::ConnectionManager;

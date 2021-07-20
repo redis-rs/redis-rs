@@ -146,9 +146,9 @@ fn test_assorted_1() {
     let _: RedisResult<String> = con.xadd_map("k3", "3000-0", map);
 
     let reply: StreamRangeReply = con.xrange_all("k3").unwrap();
-    assert_eq!(reply.ids[0].contains_key(&"ab"), true);
-    assert_eq!(reply.ids[0].contains_key(&"ef"), true);
-    assert_eq!(reply.ids[0].contains_key(&"ij"), true);
+    assert!(reply.ids[0].contains_key(&"ab"));
+    assert!(reply.ids[0].contains_key(&"ef"));
+    assert!(reply.ids[0].contains_key(&"ij"));
 
     // test xadd w/ maxlength below...
 
@@ -181,7 +181,7 @@ fn test_xgroup_create() {
 
     // no key exists... this call breaks the connection pipe for some reason
     let reply: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k10");
-    assert_eq!(reply.is_err(), true);
+    assert!(reply.is_err());
 
     // redo the connection because the above error
     con = ctx.connection();
@@ -194,11 +194,11 @@ fn test_xgroup_create() {
 
     // xgroup create (existing stream)
     let result: RedisResult<String> = con.xgroup_create("k1", "g1", "$");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
 
     // xinfo groups (existing stream)
     let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k1");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g1");
@@ -225,12 +225,12 @@ fn test_assorted_2() {
 
     // test xgroup create w/ mkstream @ 0
     let result: RedisResult<String> = con.xgroup_create_mkstream("k99", "g99", "0");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
 
     // Since nothing exists on this stream yet,
     // it should have the defaults returned by the client
     let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k99");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g99");
@@ -259,7 +259,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &[">"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);
@@ -278,7 +278,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &["0"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
     assert_eq!(reply.keys.len(), 1);
@@ -294,7 +294,7 @@ fn test_assorted_2() {
         .xread_options(
             &["k99"],
             &[">"],
-            StreamReadOptions::default().group("g99", "c99"),
+            &StreamReadOptions::default().group("g99", "c99"),
         )
         .unwrap();
 
@@ -379,7 +379,7 @@ fn test_xclaim() {
 
     // create the group
     let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
 
     // add some keys
     xadd_keyrange(&mut con, "k1", 0, 10);
@@ -389,7 +389,7 @@ fn test_xclaim() {
         .xread_options(
             &["k1"],
             &[">"],
-            StreamReadOptions::default().group("g1", "c1"),
+            &StreamReadOptions::default().group("g1", "c1"),
         )
         .unwrap();
     // verify we have 10 ids
@@ -517,7 +517,7 @@ fn test_xgroup() {
 
     // test xgroup create w/ mkstream @ 0
     let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "0");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
 
     // destroy this new stream group
     let result: RedisResult<i32> = con.xgroup_destroy("k1", "g1");
@@ -528,14 +528,14 @@ fn test_xgroup() {
 
     // create the group again using an existing stream
     let result: RedisResult<String> = con.xgroup_create("k1", "g1", "0");
-    assert_eq!(result.is_ok(), true);
+    assert!(result.is_ok());
 
     // read from the group so we can register the consumer
     let reply: StreamReadReply = con
         .xread_options(
             &["k1"],
             &[">"],
-            StreamReadOptions::default().group("g1", "c1"),
+            &StreamReadOptions::default().group("g1", "c1"),
         )
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);

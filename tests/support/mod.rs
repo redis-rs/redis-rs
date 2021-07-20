@@ -103,7 +103,10 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
+        RedisServer::new_with_addr(addr, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
+        })
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
@@ -259,10 +262,8 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: Box::new(server.get_client_addr().clone()),
-            db: 0,
-            username: None,
-            passwd: None,
+            addr: server.get_client_addr().clone(),
+            redis: Default::default(),
         })
         .unwrap();
         let mut con;

@@ -420,6 +420,7 @@ impl RedisError {
     pub fn is_connection_refusal(&self) -> bool {
         match self.repr {
             ErrorRepr::IoError(ref err) => {
+                #[allow(clippy::match_like_matches_macro)]
                 match err.kind() {
                     io::ErrorKind::ConnectionRefused => true,
                     // if we connect to a unix socket and the file does not
@@ -710,6 +711,25 @@ macro_rules! itoa_based_to_redis_impl {
     };
 }
 
+macro_rules! non_zero_itoa_based_to_redis_impl {
+    ($t:ty, $numeric:expr) => {
+        impl ToRedisArgs for $t {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                let mut buf = ::itoa::Buffer::new();
+                let s = buf.format(self.get());
+                out.write_arg(s.as_bytes())
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                $numeric
+            }
+        }
+    };
+}
+
 macro_rules! dtoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
@@ -761,6 +781,17 @@ itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
+
 dtoa_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 dtoa_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 
@@ -774,15 +805,6 @@ impl ToRedisArgs for bool {
 }
 
 impl ToRedisArgs for String {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        out.write_arg(self.as_bytes())
-    }
-}
-
-impl<'a> ToRedisArgs for &'a String {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -848,6 +870,15 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+impl<T: ToRedisArgs> ToRedisArgs for &T {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        (*self).write_redis_args(out)
     }
 }
 

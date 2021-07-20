@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.20.0"
+version = "0.21.1-alpha.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
@@ -30,7 +30,7 @@ url = "2.1"
 # We need this for script support
 sha1 = { version = ">= 0.2, < 0.7", optional = true }
 
-combine = { version = "4.5", default-features = false, features = ["std"] }
+combine = { version = "4.6", default-features = false, features = ["std"] }
 
 # Only needed for AIO
 bytes = { version = "1", optional = true }
@@ -121,6 +121,10 @@ required-features = ["aio"]
 
 [[example]]
 name = "async-pub-sub"
+required-features = ["aio"]
+
+[[example]]
+name = "async-scan"
 required-features = ["aio"]
 
 [[example]]

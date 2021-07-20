@@ -428,7 +428,7 @@ implement_commands! {
             "INCRBY"
         }).arg(key).arg(delta)
     }
-    
+
     /// Decrement the numeric value of a key by the given amount.
     fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
         cmd("DECRBY").arg(key).arg(delta)
@@ -584,9 +584,11 @@ implement_commands! {
         cmd("LLEN").arg(key)
     }
 
-    /// Removes and returns the first element of the list stored at key.
-    fn lpop<K: ToRedisArgs>(key: K) {
-        cmd("LPOP").arg(key)
+    /// Removes and returns the up to `count` first elements of the list stored at key.
+    ///
+    /// If `count` is not specified, then defaults to first element.
+    fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
+        cmd("LPOP").arg(key).arg(count)
     }
 
     /// Returns the index of the first matching value of the list stored at key.
@@ -627,9 +629,11 @@ implement_commands! {
         cmd("LSET").arg(key).arg(index).arg(value)
     }
 
-    /// Removes and returns the last element of the list stored at key.
-    fn rpop<K: ToRedisArgs>(key: K) {
-        cmd("RPOP").arg(key)
+    /// Removes and returns the up to `count` last elements of the list stored at key
+    ///
+    /// If `count` is not specified, then defaults to last element.
+    fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
+        cmd("RPOP").arg(key).arg(count)
     }
 
     /// Pop a value from a list, push it to another list and return it.
@@ -1833,7 +1837,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .count(10);
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &["0"], opts);
+    ///     con.xread_options(&["k1"], &["0"], &opts);
     ///
     /// // Read all undelivered messages for a given
     /// // consumer group. Be advised: the consumer group must already
@@ -1843,7 +1847,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .group("group-1", "consumer-1");
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &[">"], opts);
+    ///     con.xread_options(&["k1"], &[">"], &opts);
     /// ```
     ///
     /// ```text
@@ -1860,7 +1864,7 @@ implement_commands! {
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID],
-        options: streams::StreamReadOptions
+        options: &'a streams::StreamReadOptions
     ) {
         cmd(if options.read_only() {
             "XREAD"

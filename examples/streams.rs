@@ -212,7 +212,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
     let another_form = "0";
 
     let srr: StreamReadReply = con
-        .xread_options(STREAMS, &[starting_id, another_form, starting_id], opts)
+        .xread_options(STREAMS, &[starting_id, another_form, starting_id], &opts)
         .expect("read");
 
     for StreamKey { key, ids } in srr.keys {
@@ -250,7 +250,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<Strea
         .xread_options(
             &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
             &[">", ">", ">"],
-            opts,
+            &opts,
         )
         .expect("records");
 
