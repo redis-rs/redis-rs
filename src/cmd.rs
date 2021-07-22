@@ -1,9 +1,7 @@
 #[cfg(feature = "aio")]
-use futures_core::Stream;
-#[cfg(feature = "aio")]
 use futures_util::{
     task::{Context, Poll},
-    FutureExt,
+    FutureExt, Stream,
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
