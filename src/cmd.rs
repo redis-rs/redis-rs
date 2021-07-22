@@ -1,6 +1,7 @@
 #[cfg(feature = "aio")]
+use futures_core::Stream;
+#[cfg(feature = "aio")]
 use futures_util::{
-    stream::Stream,
     task::{Context, Poll},
     FutureExt,
 };
