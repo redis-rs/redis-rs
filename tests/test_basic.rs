@@ -23,7 +23,20 @@ fn test_parse_redis_url() {
 
 #[test]
 fn test_redis_url_fromstr() {
-    let _info: ConnectionInfo = "redis://127.0.0.1:1234/0".parse().unwrap();
+    let mut _info: ConnectionInfo = "redis://127.0.0.1:1234/0".parse().unwrap();
+    assert_eq!(_info.redis.db, 0);
+    assert_eq!(_info.redis.username, None);
+    assert_eq!(_info.redis.password, None);
+
+    _info = "redis://user:pass@127.0.0.1:1234/0".parse().unwrap();
+    assert_eq!(_info.redis.username, Some("user".to_owned()));
+    assert_eq!(_info.redis.password, Some("pass".to_owned()));
+
+    _info = "redis://:%2Fmypass%2F%2B word%3D%24+@127.0.0.1:1234/0"
+        .parse()
+        .unwrap();
+    assert_eq!(_info.redis.username, None);
+    assert_eq!(_info.redis.password, Some("/mypass/+ word=$+".to_owned()));
 }
 
 #[test]
