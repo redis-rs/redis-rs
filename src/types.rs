@@ -1266,10 +1266,11 @@ impl FromRedisValue for InfoDict {
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
-        if let Value::Nil = *v {
-            return Ok(None);
+        match v {
+            Value::Nil => Ok(None),
+            Value::Bulk(bulk) if bulk == &[Value::Nil] => Ok(None),
+            _ => Ok(Some(from_redis_value(v)?)),
         }
-        Ok(Some(from_redis_value(v)?))
     }
 }
 

@@ -227,3 +227,18 @@ fn test_types_to_redis_args() {
         .to_redis_args()
         .is_empty());
 }
+
+#[test]
+fn test_optional_types() {
+    use redis::{FromRedisValue, Value};
+
+    let i: Result<Option<i32>, _> = FromRedisValue::from_redis_value(&Value::Int(42));
+    assert_eq!(i, Ok(Some(42i32)));
+
+    let i: Result<Option<i32>, _> = FromRedisValue::from_redis_value(&Value::Nil);
+    assert_eq!(i, Ok(None));
+
+    let i: Result<Option<i32>, _> =
+        FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Nil]));
+    assert_eq!(i, Ok(None));
+}
