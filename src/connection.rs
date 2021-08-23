@@ -385,7 +385,12 @@ impl ActualConnection {
                 let tls = match timeout {
                     None => {
                         let tcp = TcpStream::connect((host, port))?;
-                        tls_connector.connect(host, tcp).unwrap()
+                        match tls_connector.connect(host, tcp) {
+                            Ok(res) => res,
+                            Err(e) => {
+                                fail!((ErrorKind::IoError, "SSL Handshake error", e.to_string()));
+                            }
+                        }
                     }
                     Some(timeout) => {
                         let mut tcp = None;
