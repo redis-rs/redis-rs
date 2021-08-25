@@ -1,3 +1,13 @@
+<a name="0.21.1"></a>
+### 0.21.1 (2021-08-25)
+
+
+#### Bug Fixes
+
+*   pin futures dependency to required version ([9be392bc](https://github.com/mitsuhiko/redis-rs/commit/9be392bc5b22326a8a0eafc7aa18cc04c5d79e0e))
+
+
+
 <a name="0.21.0"></a>
 ### 0.21.0 (2021-07-16)
 
