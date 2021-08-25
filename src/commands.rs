@@ -917,6 +917,11 @@ implement_commands! {
         cmd("ZSCORE").arg(key).arg(member)
     }
 
+    /// Get the scores associated with multiple members in a sorted set.
+    fn zscore_multiple<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: &'a [M]) {
+        cmd("ZMSCORE").arg(key).arg(members)
+    }
+
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
     fn zunionstore<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
