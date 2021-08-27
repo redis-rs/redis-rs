@@ -7,13 +7,13 @@ use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
-use std::path::PathBuf;
+use tempfile::TempDir;
 
 use super::RedisServer;
 
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
-    pub folders: Vec<PathBuf>,
+    pub folders: Vec<TempDir>,
 }
 
 impl RedisCluster {
@@ -28,19 +28,20 @@ impl RedisCluster {
             servers.push(RedisServer::new_with_addr(
                 redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
                 |cmd| {
-                    let (a, b) = rand::random::<(u64, u64)>();
-                    let path = PathBuf::from(format!("/tmp/redis-rs-cluster-test-{}-{}-dir", a, b));
-                    fs::create_dir_all(&path).unwrap();
+                    let tempdir = tempfile::Builder::new()
+                        .prefix("redis")
+                        .tempdir()
+                        .expect("failed to create tempdir");
                     cmd.arg("--cluster-enabled")
                         .arg("yes")
                         .arg("--cluster-config-file")
-                        .arg(&path.join("nodes.conf"))
+                        .arg(&tempdir.path().join("nodes.conf"))
                         .arg("--cluster-node-timeout")
                         .arg("5000")
                         .arg("--appendonly")
                         .arg("yes");
-                    cmd.current_dir(&path);
-                    folders.push(path);
+                    cmd.current_dir(&tempdir.path());
+                    folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{}", port));
                     dbg!(&cmd);
                     cmd.spawn().unwrap()
@@ -97,9 +98,6 @@ impl RedisCluster {
     pub fn stop(&mut self) {
         for server in &mut self.servers {
             server.stop();
-        }
-        for folder in &self.folders {
-            fs::remove_dir_all(&folder).unwrap();
         }
     }
 
