@@ -173,7 +173,7 @@ impl Value {
         }
     }
 
-    /// Returns an `&[Value]` if `self` is compatible with a sequence type
+    /// Returns an `Vec<Value>` if `self` is compatible with a sequence type
     pub fn as_into_sequence(self) -> Option<Vec<Value>> {
         match self {
             Value::Bulk(items) => Some(items),
