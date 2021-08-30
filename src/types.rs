@@ -8,6 +8,9 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
+use crate::types_into::MapIntoIter;
+
+pub use crate::types_into::RedisValueInto;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -166,6 +169,23 @@ impl Value {
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
             Value::Bulk(items) => Some(MapIter(items.iter())),
+            _ => None,
+        }
+    }
+
+    /// Returns an `&[Value]` if `self` is compatible with a sequence type
+    pub fn as_into_sequence(self) -> Option<Vec<Value>> {
+        match self {
+            Value::Bulk(items) => Some(items),
+            Value::Nil => Some(vec![]),
+            _ => None,
+        }
+    }
+
+    /// Returns an iterator of `(Value, Value)` if `self` is compatible with a map type
+    pub fn as_map_into_iter(self) -> Option<MapIntoIter> {
+        match self {
+            Value::Bulk(items) => Some(MapIntoIter(items.into_iter())),
             _ => None,
         }
     }

@@ -381,6 +381,7 @@ pub use crate::types::{
 
     // conversion traits
     FromRedisValue,
+    RedisValueInto,
 
     // utility types
     InfoDict,
@@ -445,3 +446,4 @@ mod connection;
 mod parser;
 mod script;
 mod types;
+mod types_into;
