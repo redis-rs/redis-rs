@@ -86,6 +86,7 @@ partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
 tokio = { version = "0.2", features = ["rt-core", "macros", "time"] }
 tempdir = "0.3"
+r2d2 = { version = "0.8.8" }
 
 [[test]]
 name = "test_async"
