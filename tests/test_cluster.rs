@@ -190,6 +190,7 @@ fn test_cluster_pipeline_command_ordering() {
 }
 
 #[test]
+#[ignore] // Flaky
 fn test_cluster_pipeline_ordering_with_improper_command() {
     let cluster = TestClusterContext::new(3, 0);
     cluster.wait_for_cluster_up();
