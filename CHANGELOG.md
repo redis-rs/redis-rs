@@ -1,3 +1,17 @@
+<a name="0.21.2"></a>
+### 0.21.2 (2021-09-02)
+
+
+#### Bug Fixes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+#### Breaking Changes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+
+
 <a name="0.21.1"></a>
 ### 0.21.1 (2021-08-25)
 
