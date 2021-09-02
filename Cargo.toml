@@ -126,3 +126,7 @@ required-features = ["connection-manager"]
 [[example]]
 name = "streams"
 required-features = ["streams"]
+
+[[example]]
+name = "r2d2"
+required-features = ["r2d2"]
