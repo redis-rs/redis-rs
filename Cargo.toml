@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.17.1-alpha.0"
+version = "0.21.3-alpha.0"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>", "Jan-Erik Rediger <janerik@fnordig.de>"]
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
@@ -8,11 +8,11 @@ homepage = "https://github.com/mitsuhiko/redis-rs"
 repository = "https://github.com/mitsuhiko/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
-readme = "README.md"
 edition = "2018"
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # These two are generally really common simple dependencies so it does not seem
@@ -30,67 +30,66 @@ url = "2.1"
 # We need this for script support
 sha1 = { version = ">= 0.2, < 0.7", optional = true }
 
-combine = { version = "4.2.1", default-features = false, features = ["std"] }
+combine = { version = "4.6", default-features = false, features = ["std"] }
 
 # Only needed for AIO
-bytes = { version = "0.5", optional = true }
-futures-util = { version = "0.3.0", default-features = false, optional = true }
-pin-project-lite = { version = "0.1", optional = true }
-tokio-util = { version = "0.3.1", optional = true }
-tokio = { version = "0.2.10", optional = true }
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3.15", default-features = false, optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+tokio-util = { version = "0.6", optional = true }
+tokio = { version = "1", features = ["rt"], optional = true }
 
 # Only needed for the connection manager
-arc-swap = { version = "0.4.4", optional = true }
+arc-swap = { version = "1.1.0", optional = true }
 futures = { version = "0.3.3", optional = true }
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.8", optional = true }
 
 # Only needed for cluster
-crc16 = { version = "0.4.0", optional = true }
-rand = { version = "0.7.0", optional = true }
+crc16 = { version = "0.4", optional = true }
+rand = { version = "0.8", optional = true }
 # Only needed for async_std support
 async-std = { version = "1.5.0", optional = true}
 async-trait = "0.1.24"
 
 # Only needed for TLS
 native-tls = { version = "0.2", optional = true }
-tokio-tls = { version = "0.3", optional = true }
+tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.3", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script"]
 acl = []
-aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio-02"]
-tokio-rt-core = ["tokio-comp", "tokio/rt-core"]
+aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio"]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1"]
 tls = ["native-tls"]
 async-std-comp = ["aio", "async-std"]
 async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
-tokio-comp = ["aio", "tokio", "tokio/tcp", "tokio/uds"]
-tokio-tls-comp = ["tls", "tokio-tls"]
+tokio-comp = ["aio", "tokio", "tokio/net"]
+tokio-native-tls-comp = ["tls", "tokio-native-tls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
 
 
 [dev-dependencies]
-rand = "0.7"
-net2 = "0.2"
+rand = "0.8"
+socket2 = "0.3"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
 criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
-tokio = { version = "0.2", features = ["rt-core", "macros", "time"] }
-tempdir = "0.3"
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
+tempdir = "3.2"
 r2d2 = { version = "0.8.8" }
 
 [[test]]
 name = "test_async"
-required-features = ["tokio-rt-core"]
+required-features = ["tokio-comp"]
 
 [[test]]
 name = "test_async_async_std"
@@ -106,11 +105,16 @@ name = "test_acl"
 [[bench]]
 name = "bench_basic"
 harness = false
-required-features = ["tokio-rt-core"]
+required-features = ["tokio-comp"]
+
+[[bench]]
+name = "bench_cluster"
+harness = false
+required-features = ["cluster"]
 
 [[example]]
 name = "async-multiplexed"
-required-features = ["tokio-rt-core"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-await"
@@ -118,6 +122,10 @@ required-features = ["aio"]
 
 [[example]]
 name = "async-pub-sub"
+required-features = ["aio"]
+
+[[example]]
+name = "async-scan"
 required-features = ["aio"]
 
 [[example]]

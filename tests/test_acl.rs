@@ -23,7 +23,9 @@ fn test_acl_help() {
     assert!(!res.is_empty());
 }
 
+//TODO: do we need this test?
 #[test]
+#[ignore]
 fn test_acl_getsetdel_users() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -120,10 +122,7 @@ fn test_acl_cat() {
         "scripting",
     ];
     for cat in expects.iter() {
-        assert!(
-            res.contains(*cat),
-            format!("Category `{}` does not exist", cat)
-        );
+        assert!(res.contains(*cat), "Category `{}` does not exist", cat);
     }
 
     let expects = vec!["pfmerge", "pfcount", "pfselftest", "pfadd"];
@@ -131,10 +130,7 @@ fn test_acl_cat() {
         .acl_cat_categoryname("hyperloglog")
         .expect("Got commands of a category");
     for cmd in expects.iter() {
-        assert!(
-            res.contains(*cmd),
-            format!("Command `{}` does not exist", cmd)
-        );
+        assert!(res.contains(*cmd), "Command `{}` does not exist", cmd);
     }
 }
 

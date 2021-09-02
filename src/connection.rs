@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
 
-use crate::cmd::{cmd, pipe, Pipeline};
+use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
+use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
 };
@@ -22,13 +23,13 @@ static DEFAULT_PORT: u16 = 6379;
 /// This function takes a redis URL string and parses it into a URL
 /// as used by rust-url.  This is necessary as the default parser does
 /// not understand how redis URLs function.
-pub fn parse_redis_url(input: &str) -> Result<url::Url, ()> {
+pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "redis+unix" | "unix" => Ok(result),
-            _ => Err(()),
+            "redis" | "rediss" | "redis+unix" | "unix" => Some(result),
+            _ => None,
         },
-        Err(_) => Err(()),
+        Err(_) => None,
     }
 }
 
@@ -91,14 +92,22 @@ impl fmt::Display for ConnectionAddr {
 /// Holds the connection information that redis should use for connecting.
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
+    /// A connection address for where to connect to.
+    pub addr: ConnectionAddr,
+
     /// A boxed connection address for where to connect to.
-    pub addr: Box<ConnectionAddr>,
+    pub redis: RedisConnectionInfo,
+}
+
+/// Redis specific/connection independent information used to establish a connection to redis.
+#[derive(Clone, Debug, Default)]
+pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub db: i64,
     /// Optionally a username that should be used for connection.
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
-    pub passwd: Option<String>,
+    pub password: Option<String>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -126,8 +135,8 @@ impl IntoConnectionInfo for ConnectionInfo {
 impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
-            Ok(u) => u.into_connection_info(),
-            Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
+            Some(u) => u.into_connection_info(),
+            None => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
@@ -138,10 +147,8 @@ where
 {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         Ok(ConnectionInfo {
-            addr: Box::new(ConnectionAddr::Tcp(self.0.into(), self.1)),
-            db: 0,
-            username: None,
-            passwd: None,
+            addr: ConnectionAddr::Tcp(self.0.into(), self.1),
+            redis: RedisConnectionInfo::default(),
         })
     }
 }
@@ -149,8 +156,8 @@ where
 impl IntoConnectionInfo for String {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(&self) {
-            Ok(u) => u.into_connection_info(),
-            Err(_) => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
+            Some(u) => u.into_connection_info(),
+            None => fail!((ErrorKind::InvalidClientConfig, "Redis URL did not parse")),
         }
     }
 }
@@ -191,54 +198,59 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         ConnectionAddr::Tcp(host, port)
     };
     Ok(ConnectionInfo {
-        addr: Box::new(addr),
-        db: match url.path().trim_matches('/') {
-            "" => 0,
-            path => unwrap_or!(
-                path.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-            ),
-        },
-        username: if url.username().is_empty() {
-            None
-        } else {
-            match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
-                Ok(decoded) => Some(decoded.into_owned()),
-                Err(_) => fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Username is not valid UTF-8 string"
-                )),
-            }
-        },
-        passwd: match url.password() {
-            Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
-                Ok(decoded) => Some(decoded.into_owned()),
-                Err(_) => fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Password is not valid UTF-8 string"
-                )),
+        addr,
+        redis: RedisConnectionInfo {
+            db: match url.path().trim_matches('/') {
+                "" => 0,
+                path => unwrap_or!(
+                    path.parse::<i64>().ok(),
+                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+                ),
             },
-            None => None,
+            username: if url.username().is_empty() {
+                None
+            } else {
+                match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
+                    Ok(decoded) => Some(decoded.into_owned()),
+                    Err(_) => fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Username is not valid UTF-8 string"
+                    )),
+                }
+            },
+            password: match url.password() {
+                Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
+                    Ok(decoded) => Some(decoded.into_owned()),
+                    Err(_) => fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Password is not valid UTF-8 string"
+                    )),
+                },
+                None => None,
+            },
         },
     })
 }
 
 #[cfg(unix)]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
-        addr: Box::new(ConnectionAddr::Unix(unwrap_or!(
+        addr: ConnectionAddr::Unix(unwrap_or!(
             url.to_file_path().ok(),
             fail!((ErrorKind::InvalidClientConfig, "Missing path"))
-        ))),
-        db: match url.query_pairs().find(|&(ref key, _)| key == "db") {
-            Some((_, db)) => unwrap_or!(
-                db.parse::<i64>().ok(),
-                fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-            ),
-            None => 0,
+        )),
+        redis: RedisConnectionInfo {
+            db: match query.get("db") {
+                Some(db) => unwrap_or!(
+                    db.parse::<i64>().ok(),
+                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
+                ),
+                None => 0,
+            },
+            username: query.get("user").map(|username| username.to_string()),
+            password: query.get("pass").map(|password| password.to_string()),
         },
-        username: Some(url.username().to_string()).filter(|user| !user.is_empty()),
-        passwd: url.password().map(|pw| pw.to_string()),
     })
 }
 
@@ -519,11 +531,56 @@ impl ActualConnection {
     }
 }
 
+fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> RedisResult<()> {
+    let mut command = cmd("AUTH");
+    if let Some(username) = &connection_info.username {
+        command.arg(username);
+    }
+    let password = connection_info.password.as_ref().unwrap();
+    let err = match command.arg(password).query::<Value>(con) {
+        Ok(Value::Okay) => return Ok(()),
+        Ok(_) => {
+            fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to authenticate, returns Ok() != Value::Okay"
+            ));
+        }
+        Err(e) => e,
+    };
+    let err_msg = err.detail().ok_or((
+        ErrorKind::AuthenticationFailed,
+        "Password authentication failed",
+    ))?;
+    if !err_msg.contains("wrong number of arguments for 'auth' command") {
+        fail!((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        ));
+    }
+
+    // fallback to AUTH version <= 5
+    let mut command = cmd("AUTH");
+    match command.arg(password).query::<Value>(con) {
+        Ok(Value::Okay) => Ok(()),
+        _ => fail!((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        )),
+    }
+}
+
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
+    setup_connection(con, &connection_info.redis)
+}
+
+fn setup_connection(
+    con: ActualConnection,
+    connection_info: &RedisConnectionInfo,
+) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
         parser: Parser::new(),
@@ -531,20 +588,8 @@ pub fn connect(
         pubsub: false,
     };
 
-    if let Some(passwd) = &connection_info.passwd {
-        let mut command = cmd("AUTH");
-        if let Some(username) = &connection_info.username {
-            command.arg(username);
-        }
-        match command.arg(passwd).query::<Value>(&mut rv) {
-            Ok(Value::Okay) => {}
-            _ => {
-                fail!((
-                    ErrorKind::AuthenticationFailed,
-                    "Password authentication failed"
-                ));
-            }
-        }
+    if connection_info.password.is_some() {
+        connect_auth(&mut rv, connection_info)?;
     }
 
     if connection_info.db != 0 {
@@ -587,6 +632,12 @@ pub trait ConnectionLike {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>>;
+
+    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        self.req_packed_command(&pcmd)
+    }
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
@@ -741,11 +792,10 @@ impl Connection {
         };
         // shutdown connection on protocol error
         if let Err(e) = &result {
-            let shutdown = e.kind() == ErrorKind::ResponseError
-                || match e.as_io_error() {
-                    Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
-                    None => false,
-                };
+            let shutdown = match e.as_io_error() {
+                Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
+                None => false,
+            };
             if shutdown {
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
@@ -790,13 +840,32 @@ impl ConnectionLike for Connection {
         }
         self.con.send_bytes(cmd)?;
         let mut rv = vec![];
+        let mut first_err = None;
         for idx in 0..(offset + count) {
-            let item = self.read_response()?;
-            if idx >= offset {
-                rv.push(item);
+            // When processing a transaction, some responses may be errors.
+            // We need to keep processing the rest of the responses in that case,
+            // so bailing early with `?` would not be correct.
+            // See: https://github.com/mitsuhiko/redis-rs/issues/436
+            let response = self.read_response();
+            match response {
+                Ok(item) => {
+                    if idx >= offset {
+                        rv.push(item);
+                    }
+                }
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
             }
         }
-        Ok(rv)
+
+        if let Some(err) = first_err {
+            Err(err)
+        } else {
+            Ok(rv)
+        }
     }
 
     fn get_db(&self) -> i64 {
@@ -840,22 +909,22 @@ impl<'a> PubSub<'a> {
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("SUBSCRIBE").arg(channel).query(self.con)?)
+        cmd("SUBSCRIBE").arg(channel).query(self.con)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PSUBSCRIBE").arg(pchannel).query(self.con)?)
+        cmd("PSUBSCRIBE").arg(pchannel).query(self.con)
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("UNSUBSCRIBE").arg(channel).query(self.con)?)
+        cmd("UNSUBSCRIBE").arg(channel).query(self.con)
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)?)
+        cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -1047,7 +1116,7 @@ mod tests {
         for (url, expected) in cases.into_iter() {
             let res = parse_redis_url(&url);
             assert_eq!(
-                res.is_ok(),
+                res.is_some(),
                 expected,
                 "Parsed result of `{}` is not expected",
                 url,
@@ -1061,34 +1130,38 @@ mod tests {
             (
                 url::Url::parse("redis://127.0.0.1").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379)),
-                    db: 0,
-                    username: None,
-                    passwd: None,
+                    addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
+                    redis: Default::default(),
                 },
             ),
             (
                 url::Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
                 ConnectionInfo {
-                    addr: Box::new(ConnectionAddr::Tcp("example.com".to_string(), 6379)),
-                    db: 2,
-                    username: Some("%johndoe%".to_string()),
-                    passwd: Some("#@<>$".to_string()),
+                    addr: ConnectionAddr::Tcp("example.com".to_string(), 6379),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("#@<>$".to_string()),
+                    },
                 },
             ),
         ];
         for (url, expected) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url.clone()).unwrap();
             assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
-            assert_eq!(res.db, expected.db, "db of {} is not expected", url);
             assert_eq!(
-                res.username, expected.username,
+                res.redis.db, expected.redis.db,
+                "db of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.redis.username, expected.redis.username,
                 "username of {} is not expected",
                 url
             );
             assert_eq!(
-                res.passwd, expected.passwd,
-                "passwd of {} is not expected",
+                res.redis.password, expected.redis.password,
+                "password of {} is not expected",
                 url
             );
         }
@@ -1128,8 +1201,85 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[test]
     #[cfg(unix)]
-    fn test_url_to_unix_connection_info() {}
+    fn test_url_to_unix_connection_info() {
+        let cases = vec![
+            (
+                url::Url::parse("unix:///var/run/redis.sock").unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 0,
+                        username: None,
+                        password: None,
+                    },
+                },
+            ),
+            (
+                url::Url::parse("redis+unix:///var/run/redis.sock?db=1").unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 1,
+                        username: None,
+                        password: None,
+                    },
+                },
+            ),
+            (
+                url::Url::parse(
+                    "unix:///example.sock?user=%25johndoe%25&pass=%23%40%3C%3E%24&db=2",
+                )
+                .unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Unix("/example.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("#@<>$".to_string()),
+                    },
+                },
+            ),
+            (
+                url::Url::parse(
+                    "redis+unix:///example.sock?pass=%26%3F%3D+%2A%2B&db=2&user=%25johndoe%25",
+                )
+                .unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Unix("/example.sock".into()),
+                    redis: RedisConnectionInfo {
+                        db: 2,
+                        username: Some("%johndoe%".to_string()),
+                        password: Some("&?= *+".to_string()),
+                    },
+                },
+            ),
+        ];
+        for (url, expected) in cases.into_iter() {
+            assert_eq!(
+                ConnectionAddr::Unix(url.to_file_path().unwrap()),
+                expected.addr,
+                "addr of {} is not expected",
+                url
+            );
+            let res = url_to_unix_connection_info(url.clone()).unwrap();
+            assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
+            assert_eq!(
+                res.redis.db, expected.redis.db,
+                "db of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.redis.username, expected.redis.username,
+                "username of {} is not expected",
+                url
+            );
+            assert_eq!(
+                res.redis.password, expected.redis.password,
+                "password of {} is not expected",
+                url
+            );
+        }
+    }
 }

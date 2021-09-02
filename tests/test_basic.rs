@@ -1,10 +1,11 @@
 #![allow(clippy::let_unit_value)]
 
-use redis::{Commands, ConnectionInfo, ConnectionLike, ControlFlow, PubSubCommands};
+use redis::{
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, PubSubCommands, RedisResult,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
-use std::io::BufReader;
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ fn test_parse_redis_url() {
     let redis_url = "redis://127.0.0.1:1234/0".to_string();
     redis::parse_redis_url(&redis_url).unwrap();
     redis::parse_redis_url("unix:/var/run/redis/redis.sock").unwrap();
-    assert!(redis::parse_redis_url("127.0.0.1").is_err());
+    assert!(redis::parse_redis_url("127.0.0.1").is_none());
 }
 
 #[test]
@@ -106,6 +107,23 @@ fn test_hash_ops() {
     assert_eq!(h.get("key_2"), Some(&2i32));
 }
 
+// Requires redis-server >= 4.0.0.
+// Not supported with the current appveyor/windows binary deployed.
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn test_unlink() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(42));
+    assert_eq!(con.unlink("foo"), Ok(1));
+
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    redis::cmd("SET").arg("bar").arg(42).execute(&mut con);
+    assert_eq!(con.unlink(&["foo", "bar"]), Ok(2));
+}
+
 #[test]
 fn test_set_ops() {
     let ctx = TestContext::new();
@@ -116,7 +134,7 @@ fn test_set_ops() {
     redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
 
     let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
 
@@ -147,7 +165,7 @@ fn test_scan() {
         .arg(0)
         .query(&mut con)
         .unwrap();
-    s.sort();
+    s.sort_unstable();
     assert_eq!(cur, 0i32);
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
@@ -252,6 +270,43 @@ fn test_pipeline() {
 }
 
 #[test]
+fn test_pipeline_with_err() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = redis::cmd("SET")
+        .arg("x")
+        .arg("x-value")
+        .query(&mut con)
+        .unwrap();
+    let _: () = redis::cmd("SET")
+        .arg("y")
+        .arg("y-value")
+        .query(&mut con)
+        .unwrap();
+
+    let _: () = redis::cmd("SLAVEOF")
+        .arg("1.1.1.1")
+        .arg("99")
+        .query(&mut con)
+        .unwrap();
+
+    let res = redis::pipe()
+        .set("x", "another-x-value")
+        .ignore()
+        .get("y")
+        .query::<()>(&mut con);
+    assert!(res.is_err() && res.unwrap_err().kind() == ErrorKind::ReadOnly);
+
+    // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
+    let res = redis::cmd("GET")
+        .arg("x")
+        .query::<String>(&mut con)
+        .unwrap();
+    assert_eq!(res, "x-value");
+}
+
+#[test]
 fn test_empty_pipeline() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -283,6 +338,34 @@ fn test_pipeline_transaction() {
 
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
+}
+
+#[test]
+fn test_pipeline_transaction_with_errors() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con.set("x", 42).unwrap();
+
+    // Make Redis a replica of a nonexistent master, thereby making it read-only.
+    let _: () = redis::cmd("slaveof")
+        .arg("1.1.1.1")
+        .arg("1")
+        .query(&mut con)
+        .unwrap();
+
+    // Ensure that a write command fails with a READONLY error
+    let err: RedisResult<()> = redis::pipe()
+        .atomic()
+        .set("x", 142)
+        .ignore()
+        .get("x")
+        .query(&mut con);
+
+    assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+
+    let x: i32 = con.get("x").unwrap();
+    assert_eq!(x, 42);
 }
 
 #[test]
@@ -701,8 +784,8 @@ fn test_nice_hash_api() {
     }
 
     assert_eq!(found.len(), 2);
-    assert_eq!(found.contains(&("f3".to_string(), 4)), true);
-    assert_eq!(found.contains(&("f4".to_string(), 8)), true);
+    assert!(found.contains(&("f3".to_string(), 4)));
+    assert!(found.contains(&("f4".to_string(), 8)));
 }
 
 #[test]
@@ -714,13 +797,23 @@ fn test_nice_list_api() {
     assert_eq!(con.rpush("my_list", &[5, 6, 7, 8]), Ok(8));
     assert_eq!(con.llen("my_list"), Ok(8));
 
-    assert_eq!(con.lpop("my_list"), Ok(1));
+    assert_eq!(con.lpop("my_list", Default::default()), Ok(1));
     assert_eq!(con.llen("my_list"), Ok(7));
 
     assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
 
     assert_eq!(con.lset("my_list", 0, 4), Ok(true));
     assert_eq!(con.lrange("my_list", 0, 2), Ok((4, 3, 4)));
+
+    #[cfg(not(windows))]
+    //Windows version of redis is limited to v3.x
+    {
+        let my_list: Vec<u8> = con.lrange("my_list", 0, 10).expect("To get range");
+        assert_eq!(
+            con.lpop("my_list", core::num::NonZeroUsize::new(10)),
+            Ok(my_list)
+        );
+    }
 }
 
 #[test]
@@ -751,42 +844,6 @@ fn test_bit_operations() {
 }
 
 #[test]
-fn test_invalid_protocol() {
-    use redis::{Parser, RedisResult};
-    use std::error::Error;
-    use std::io::Write;
-    use std::net::TcpListener;
-    use std::thread;
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-
-    let child = thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
-        let mut stream = BufReader::new(listener.incoming().next().unwrap()?);
-        // read the request and respond with garbage
-        let _: redis::Value = Parser::new().parse_value(&mut stream)?;
-        stream.get_mut().write_all(b"garbage ---!#!#\r\n\r\n\n\r")?;
-        // block until the stream is shutdown by the client
-        let _: RedisResult<redis::Value> = Parser::new().parse_value(&mut stream);
-        Ok(())
-    });
-    sleep(Duration::from_millis(100));
-    // some work here
-    let cli = redis::Client::open(&format!("redis://127.0.0.1:{}", port)[..]).unwrap();
-    let mut con = cli.get_connection().unwrap();
-
-    let mut result: redis::RedisResult<u8>;
-    // first requests returns ResponseError
-    result = con.del("my_zset");
-    assert_eq!(result.unwrap_err().kind(), redis::ErrorKind::ResponseError);
-    // from now on it's IoError due to the closed connection
-    result = con.del("my_zset");
-    assert_eq!(result.unwrap_err().kind(), redis::ErrorKind::IoError);
-
-    child.join().unwrap().unwrap();
-}
-
-#[test]
 fn test_redis_server_down() {
     let mut ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -798,7 +855,38 @@ fn test_redis_server_down() {
 
     let ping = redis::cmd("PING").query::<String>(&mut con);
 
-    assert_eq!(ping.is_err(), true);
+    assert!(ping.is_err());
     eprintln!("{}", ping.unwrap_err());
-    assert_eq!(con.is_open(), false);
+    assert!(!con.is_open());
+}
+
+#[test]
+fn test_zrembylex() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let mut c = redis::cmd("ZADD");
+    let setname = "myzset";
+    c.arg(setname)
+        .arg(0)
+        .arg("apple")
+        .arg(0)
+        .arg("banana")
+        .arg(0)
+        .arg("carrot")
+        .arg(0)
+        .arg("durian")
+        .arg(0)
+        .arg("eggplant")
+        .arg(0)
+        .arg("grapes");
+
+    c.query::<()>(&mut con).unwrap();
+
+    // Will remove "banana", "carrot", "durian" and "eggplant"
+    let num_removed: u32 = con.zrembylex(setname, "[banana", "[eggplant").unwrap();
+    assert_eq!(4, num_removed);
+
+    let remaining: Vec<String> = con.zrange(setname, 0, -1).unwrap();
+    assert_eq!(remaining, vec!["apple".to_string(), "grapes".to_string()]);
 }

@@ -39,6 +39,7 @@ pub enum NumericBehavior {
 
 /// An enum of all error kinds.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
@@ -76,6 +77,8 @@ pub enum ErrorKind {
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
     ExtensionError,
+    /// Attempt to write to a read-only server
+    ReadOnly,
 }
 
 /// Internal low-level redis value enum.
@@ -246,9 +249,13 @@ impl From<Utf8Error> for RedisError {
 
 #[cfg(feature = "tls")]
 impl From<native_tls::Error> for RedisError {
-    fn from(_: native_tls::Error) -> RedisError {
+    fn from(err: native_tls::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescription(ErrorKind::IoError, "TLS error"),
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS error",
+                err.to_string(),
+            ),
         }
     }
 }
@@ -326,8 +333,8 @@ impl RedisError {
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match self.repr {
-            ErrorRepr::WithDescription(kind, _) => kind,
-            ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
+            ErrorRepr::WithDescription(kind, _)
+            | ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
             ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
             ErrorRepr::IoError(_) => ErrorKind::IoError,
         }
@@ -336,8 +343,8 @@ impl RedisError {
     /// Returns the error detail.
     pub fn detail(&self) -> Option<&str> {
         match self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail) => Some(detail.as_str()),
-            ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
+            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail)
+            | ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
             _ => None,
         }
     }
@@ -355,6 +362,7 @@ impl RedisError {
             ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
             ErrorKind::CrossSlot => Some("CROSSSLOT"),
             ErrorKind::MasterDown => Some("MASTERDOWN"),
+            ErrorKind::ReadOnly => Some("READONLY"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(&code),
                 _ => None,
@@ -381,15 +389,13 @@ impl RedisError {
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
+            ErrorKind::ReadOnly => "read-only",
         }
     }
 
     /// Indicates that this failure is an IO failure.
     pub fn is_io_error(&self) -> bool {
-        match self.kind() {
-            ErrorKind::IoError => true,
-            _ => false,
-        }
+        self.as_io_error().is_some()
     }
 
     pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
@@ -401,12 +407,10 @@ impl RedisError {
 
     /// Indicates that this is a cluster error.
     pub fn is_cluster_error(&self) -> bool {
-        match self.kind() {
-            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self.kind(),
+            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown
+        )
     }
 
     /// Returns true if this error indicates that the connection was
@@ -416,6 +420,7 @@ impl RedisError {
     pub fn is_connection_refusal(&self) -> bool {
         match self.repr {
             ErrorRepr::IoError(ref err) => {
+                #[allow(clippy::match_like_matches_macro)]
                 match err.kind() {
                     io::ErrorKind::ConnectionRefused => true,
                     // if we connect to a unix socket and the file does not
@@ -433,11 +438,10 @@ impl RedisError {
     /// Note that this may not be accurate depending on platform.
     pub fn is_timeout(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => match err.kind() {
-                io::ErrorKind::TimedOut => true,
-                io::ErrorKind::WouldBlock => true,
-                _ => false,
-            },
+            ErrorRepr::IoError(ref err) => matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ),
             _ => false,
         }
     }
@@ -445,10 +449,10 @@ impl RedisError {
     /// Returns true if error was caused by a dropped connection.
     pub fn is_connection_dropped(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => match err.kind() {
-                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset => true,
-                _ => false,
-            },
+            ErrorRepr::IoError(ref err) => matches!(
+                err.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+            ),
             _ => false,
         }
     }
@@ -457,8 +461,9 @@ impl RedisError {
     ///
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
-        if self.kind() != ErrorKind::Ask {
-            return None;
+        match self.kind() {
+            ErrorKind::Ask | ErrorKind::Moved => (),
+            _ => return None,
         }
         let mut iter = self.detail()?.split_ascii_whitespace();
         let slot_id: u16 = iter.next()?.parse().ok()?;
@@ -706,6 +711,25 @@ macro_rules! itoa_based_to_redis_impl {
     };
 }
 
+macro_rules! non_zero_itoa_based_to_redis_impl {
+    ($t:ty, $numeric:expr) => {
+        impl ToRedisArgs for $t {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                let mut buf = ::itoa::Buffer::new();
+                let s = buf.format(self.get());
+                out.write_arg(s.as_bytes())
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                $numeric
+            }
+        }
+    };
+}
+
 macro_rules! dtoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
@@ -757,6 +781,17 @@ itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI8, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI16, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
+
 dtoa_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 dtoa_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 
@@ -765,20 +800,11 @@ impl ToRedisArgs for bool {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(if *self { b"true" } else { b"false" })
+        out.write_arg(if *self { b"1" } else { b"0" })
     }
 }
 
 impl ToRedisArgs for String {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        out.write_arg(self.as_bytes())
-    }
-}
-
-impl<'a> ToRedisArgs for &'a String {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -844,6 +870,15 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             Some(ref x) => x.is_single_arg(),
             None => false,
         }
+    }
+}
+
+impl<T: ToRedisArgs> ToRedisArgs for &T {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        (*self).write_redis_args(out)
     }
 }
 
@@ -1038,6 +1073,8 @@ from_redis_value_for_num!(i32);
 from_redis_value_for_num!(u32);
 from_redis_value_for_num!(i64);
 from_redis_value_for_num!(u64);
+from_redis_value_for_num!(i128);
+from_redis_value_for_num!(u128);
 from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
 from_redis_value_for_num!(isize);
@@ -1055,6 +1092,15 @@ impl FromRedisValue for bool {
                     Ok(false)
                 } else {
                     invalid_type_error!(v, "Response status not valid boolean");
+                }
+            }
+            Value::Data(ref bytes) => {
+                if bytes == b"1" {
+                    Ok(true)
+                } else if bytes == b"0" {
+                    Ok(false)
+                } else {
+                    invalid_type_error!(v, "Response type not bool compatible.");
                 }
             }
             Value::Okay => Ok(true),
@@ -1224,6 +1270,16 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
             return Ok(None);
         }
         Ok(Some(from_redis_value(v)?))
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl FromRedisValue for bytes::Bytes {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            _ => invalid_type_error!(v, "Not binary data"),
+        }
     }
 }
 

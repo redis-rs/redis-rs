@@ -46,7 +46,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        Ok(connect(&self.connection_info, None)?)
+        connect(&self.connection_info, None)
     }
 
     /// Instructs the client to actually connect to redis with specified
@@ -55,7 +55,12 @@ impl Client {
     /// a variety of errors (like unreachable host) so it's important
     /// that you handle those errors.
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
-        Ok(connect(&self.connection_info, Some(timeout))?)
+        connect(&self.connection_info, Some(timeout))
+    }
+
+    /// Returns a reference of client connection info object.
+    pub fn get_connection_info(&self) -> &ConnectionInfo {
+        &self.connection_info
     }
 }
 
@@ -80,7 +85,7 @@ impl Client {
             }
         };
 
-        crate::aio::Connection::new(&self.connection_info, con).await
+        crate::aio::Connection::new(&self.connection_info.redis, con).await
     }
 
     /// Returns an async connection from the client.
@@ -108,10 +113,10 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-rt-core", feature = "async-std-comp"))]
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     #[cfg_attr(
         docsrs,
-        doc(cfg(any(feature = "tokio-rt-core", feature = "async-std-comp")))
+        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
     )]
     pub async fn get_multiplexed_async_connection(
         &self,
@@ -128,7 +133,7 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
@@ -155,8 +160,8 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    #[cfg(feature = "tokio-rt-core")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt-core")))]
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn create_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<(
@@ -230,7 +235,7 @@ impl Client {
         T: crate::aio::RedisRuntime,
     {
         let con = self.get_simple_async_connection::<T>().await?;
-        crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
+        crate::aio::MultiplexedConnection::new(&self.connection_info.redis, con).await
     }
 
     async fn get_simple_async_connection<T>(
@@ -269,7 +274,7 @@ impl ConnectionLike for Client {
     }
 
     fn get_db(&self) -> i64 {
-        self.connection_info.db
+        self.connection_info.redis.db
     }
 
     fn check_connection(&mut self) -> bool {

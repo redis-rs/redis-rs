@@ -1,8 +1,12 @@
 // can't use rustfmt here because it screws up the file.
 #![cfg_attr(rustfmt, rustfmt_skip)]
-use crate::cmd::{cmd, Cmd, Iter, Pipeline};
+use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs};
+use crate::pipeline::Pipeline;
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite};
+
+#[cfg(feature = "cluster")]
+use crate::cluster_pipeline::ClusterPipeline;
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -269,6 +273,23 @@ macro_rules! implement_commands {
                 }
             )*
         }
+
+        // Implements common redis commands for cluster pipelines.  Unlike the regular
+        // commands trait, this returns the cluster pipeline rather than a result
+        // directly.  Other than that it works the same however.
+        #[cfg(feature = "cluster")]
+        impl ClusterPipeline {
+            $(
+                $(#[$attr])*
+                #[inline]
+                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                    &mut self $(, $argname: $argty)*
+                ) -> &mut Self {
+                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                }
+            )*
+        }
     )
 }
 
@@ -386,6 +407,11 @@ implement_commands! {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
+    /// Unlink one or more keys.
+    fn unlink<K: ToRedisArgs>(key: K) {
+        cmd("UNLINK").arg(key)
+    }
+
     // common string operations
 
     /// Append a value to a key.
@@ -401,6 +427,11 @@ implement_commands! {
         } else {
             "INCRBY"
         }).arg(key).arg(delta)
+    }
+
+    /// Decrement the numeric value of a key by the given amount.
+    fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
+        cmd("DECRBY").arg(key).arg(delta)
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
@@ -553,9 +584,16 @@ implement_commands! {
         cmd("LLEN").arg(key)
     }
 
-    /// Removes and returns the first element of the list stored at key.
-    fn lpop<K: ToRedisArgs>(key: K) {
-        cmd("LPOP").arg(key)
+    /// Removes and returns the up to `count` first elements of the list stored at key.
+    ///
+    /// If `count` is not specified, then defaults to first element.
+    fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
+        cmd("LPOP").arg(key).arg(count)
+    }
+
+    /// Returns the index of the first matching value of the list stored at key.
+    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: LposOptions) {
+        cmd("LPOS").arg(key).arg(value).arg(options)
     }
 
     /// Insert all the specified values at the head of the list stored at key.
@@ -591,9 +629,11 @@ implement_commands! {
         cmd("LSET").arg(key).arg(index).arg(value)
     }
 
-    /// Removes and returns the last element of the list stored at key.
-    fn rpop<K: ToRedisArgs>(key: K) {
-        cmd("RPOP").arg(key)
+    /// Removes and returns the up to `count` last elements of the list stored at key
+    ///
+    /// If `count` is not specified, then defaults to last element.
+    fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) {
+        cmd("RPOP").arg(key).arg(count)
     }
 
     /// Pop a value from a list, push it to another list and return it.
@@ -819,7 +859,7 @@ implement_commands! {
 
     /// Remove all members in a sorted set between the given lexicographical range.
     fn zrembylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
-        cmd("ZREMBYLEX").arg(key).arg(min).arg(max)
+        cmd("ZREMRANGEBYLEX").arg(key).arg(min).arg(max)
     }
 
     /// Remove all members in a sorted set within the given indexes.
@@ -875,6 +915,11 @@ implement_commands! {
     /// Get the score associated with the given member in a sorted set.
     fn zscore<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
         cmd("ZSCORE").arg(key).arg(member)
+    }
+
+    /// Get the scores associated with multiple members in a sorted set.
+    fn zscore_multiple<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: &'a [M]) {
+        cmd("ZMSCORE").arg(key).arg(members)
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
@@ -1797,7 +1842,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .count(10);
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &["0"], opts);
+    ///     con.xread_options(&["k1"], &["0"], &opts);
     ///
     /// // Read all undelivered messages for a given
     /// // consumer group. Be advised: the consumer group must already
@@ -1807,7 +1852,7 @@ implement_commands! {
     /// let opts = StreamReadOptions::default()
     ///     .group("group-1", "consumer-1");
     /// let results: RedisResult<StreamReadReply> =
-    ///     con.xread_options(&["k1"], &[">"], opts);
+    ///     con.xread_options(&["k1"], &[">"], &opts);
     /// ```
     ///
     /// ```text
@@ -1824,7 +1869,7 @@ implement_commands! {
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID],
-        options: streams::StreamReadOptions
+        options: &'a streams::StreamReadOptions
     ) {
         cmd(if options.read_only() {
             "XREAD"
@@ -2007,5 +2052,81 @@ impl PubSubCommands for Connection {
                 ControlFlow::Break(value) => return Ok(value),
             }
         }
+    }
+}
+
+/// Options for the [LPOS] command
+///
+/// https://redis.io/commands/lpos
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, LposOptions};
+/// fn fetch_list_position(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     value: &str,
+///     count: usize,
+///     rank: isize,
+///     maxlen: usize,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = LposOptions::default()
+///         .count(count)
+///         .rank(rank)
+///         .maxlen(maxlen);
+///     con.lpos(key, value, opts)
+/// }
+/// ```
+#[derive(Default)]
+pub struct LposOptions {
+    count: Option<usize>,
+    maxlen: Option<usize>,
+    rank: Option<isize>,
+}
+
+impl LposOptions {
+    /// Limit the results to the first N matching items.
+    pub fn count(mut self, n: usize) -> Self {
+        self.count = Some(n);
+        self
+    }
+
+    /// Return the value of N from the matching items.
+    pub fn rank(mut self, n: isize) -> Self {
+        self.rank = Some(n);
+        self
+    }
+
+    /// Limit the search to N items in the list.
+    pub fn maxlen(mut self, n: usize) -> Self {
+        self.maxlen = Some(n);
+        self
+    }
+}
+
+impl ToRedisArgs for LposOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(n) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg_fmt(n);
+        }
+
+        if let Some(n) = self.rank {
+            out.write_arg(b"RANK");
+            out.write_arg_fmt(n);
+        }
+
+        if let Some(n) = self.maxlen {
+            out.write_arg(b"MAXLEN");
+            out.write_arg_fmt(n);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        false
     }
 }

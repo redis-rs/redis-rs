@@ -1,0 +1,6 @@
+[clog]
+repository = "https://github.com/mitsuhiko/redis-rs"
+
+changelog = "CHANGELOG.md"
+
+from-latest-tag = true

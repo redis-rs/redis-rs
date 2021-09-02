@@ -30,10 +30,10 @@ test:
 test-single: test
 
 bench:
-	cargo bench --all-features --test-threads=1
+	cargo bench --all-features
 
-docs: build
-	@cargo doc --no-deps
+docs:
+	@RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
 
 upload-docs: docs
 	@./upload-docs.sh

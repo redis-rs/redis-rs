@@ -16,7 +16,8 @@ use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures_util::ready;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pin_project_lite::pin_project! {
     /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
@@ -25,7 +26,7 @@ pin_project_lite::pin_project! {
 }
 
 impl<T> AsyncStdWrapped<T> {
-    fn new(inner: T) -> Self {
+    pub(super) fn new(inner: T) -> Self {
         Self { inner }
     }
 }
@@ -64,9 +65,15 @@ where
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut core::task::Context,
-        buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
-        async_std::io::Read::poll_read(self.project().inner, cx, buf)
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<Result<(), tokio::io::Error>> {
+        let n = ready!(async_std::io::Read::poll_read(
+            self.project().inner,
+            cx,
+            buf.initialize_unfilled()
+        ))?;
+        buf.advance(n);
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -122,11 +129,11 @@ impl AsyncRead for AsyncStd {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "tokio-tls-comp")]
+            #[cfg(feature = "async-std-tls-comp")]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_read(cx, buf),

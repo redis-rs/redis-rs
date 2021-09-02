@@ -3,6 +3,7 @@
 use std::{
     env, fs,
     io::{self, Write},
+    net::SocketAddr,
     path::PathBuf,
     process,
     thread::sleep,
@@ -11,14 +12,15 @@ use std::{
 
 use futures::Future;
 use redis::Value;
+use socket2::{Domain, Socket, Type};
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
-    let mut builder = tokio::runtime::Builder::new();
+    let mut builder = tokio::runtime::Builder::new_current_thread();
 
     #[cfg(feature = "aio")]
     builder.enable_io();
 
-    builder.basic_scheduler().build().unwrap()
+    builder.build().unwrap()
 }
 
 pub fn block_on_all<F>(f: F) -> F::Output
@@ -50,7 +52,7 @@ enum ServerType {
 pub struct RedisServer {
     pub process: process::Child,
     stunnel_process: Option<process::Child>,
-    tempdir: Option<tempdir::TempDir>,
+    tempdir: Option<tempfile::TempDir>,
     addr: redis::ConnectionAddr,
 }
 
@@ -78,14 +80,12 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
-                let listener = net2::TcpBuilder::new_v4()
-                    .unwrap()
-                    .reuse_address(true)
-                    .unwrap()
-                    .bind("127.0.0.1:0")
-                    .unwrap()
-                    .listen(1)
-                    .unwrap();
+                let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+                let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
+                socket.set_reuse_address(true).unwrap();
+                socket.bind(addr).unwrap();
+                socket.listen(1).unwrap();
+                let listener = socket.into_tcp_listener();
                 let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
@@ -103,7 +103,10 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(addr, |cmd| cmd.spawn().unwrap())
+        RedisServer::new_with_addr(addr, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
+        })
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
@@ -114,7 +117,10 @@ impl RedisServer {
         redis_cmd
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
-        let tempdir = tempdir::TempDir::new("redis").expect("failed to create tempdir");
+        let tempdir = tempfile::Builder::new()
+            .prefix("redis")
+            .tempdir()
+            .expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -256,10 +262,8 @@ impl TestContext {
         let server = RedisServer::new();
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: Box::new(server.get_client_addr().clone()),
-            db: 0,
-            username: None,
-            passwd: None,
+            addr: server.get_client_addr().clone(),
+            redis: Default::default(),
         })
         .unwrap();
         let mut con;
@@ -308,14 +312,14 @@ impl TestContext {
         self.server.stop();
     }
 
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     pub fn multiplexed_async_connection(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
         self.multiplexed_async_connection_tokio()
     }
 
-    #[cfg(feature = "tokio-rt-core")]
+    #[cfg(feature = "tokio-comp")]
     pub fn multiplexed_async_connection_tokio(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {

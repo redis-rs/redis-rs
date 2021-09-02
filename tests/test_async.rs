@@ -97,6 +97,44 @@ fn test_pipeline_transaction() {
     .unwrap();
 }
 
+#[test]
+fn test_pipeline_transaction_with_errors() {
+    use redis::RedisError;
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+
+        let _: () = con.set("x", 42).await.unwrap();
+
+        // Make Redis a replica of a nonexistent master, thereby making it read-only.
+        let _: () = redis::cmd("slaveof")
+            .arg("1.1.1.1")
+            .arg("1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+
+        // Ensure that a write command fails with a READONLY error
+        let err: RedisResult<()> = redis::pipe()
+            .atomic()
+            .set("x", 142)
+            .ignore()
+            .get("x")
+            .query_async(&mut con)
+            .await;
+
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+
+        let x: i32 = con.get("x").await.unwrap();
+        assert_eq!(x, 42);
+
+        Ok(())
+    })
+    .map_err(|err: RedisError| err)
+    .unwrap();
+}
+
 fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let mut con = con.clone();
     async move {
@@ -377,7 +415,7 @@ async fn io_error_on_kill_issue_320() {
     let err = loop {
         match killed_client.get::<_, Option<String>>("a").await {
             // We are racing against the server being shutdown so try until we a get an io error
-            Ok(_) => tokio::time::delay_for(std::time::Duration::from_millis(50)).await,
+            Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
             Err(err) => break err,
         }
     };
@@ -388,10 +426,12 @@ async fn io_error_on_kill_issue_320() {
 async fn invalid_password_issue_343() {
     let ctx = TestContext::new();
     let coninfo = redis::ConnectionInfo {
-        addr: Box::new(ctx.server.get_client_addr().clone()),
-        db: 0,
-        username: None,
-        passwd: Some("asdcasc".to_string()),
+        addr: ctx.server.get_client_addr().clone(),
+        redis: redis::RedisConnectionInfo {
+            db: 0,
+            username: None,
+            password: Some("asdcasc".to_string()),
+        },
     };
     let client = redis::Client::open(coninfo).unwrap();
     let err = client

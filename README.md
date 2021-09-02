@@ -1,7 +1,7 @@
 # redis-rs
 
 [![Build Status](https://travis-ci.org/mitsuhiko/redis-rs.svg?branch=master)](https://travis-ci.org/mitsuhiko/redis-rs)
-[![crates.io](http://meritbadge.herokuapp.com/redis)](https://crates.io/crates/redis)
+[![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 
 Redis-rs is a high level redis library for Rust.  It provides convenient access
 to all Redis functionality through a very flexible but low-level API.  It
@@ -13,7 +13,7 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.17.0"
+redis = "0.21.2"
 ```
 
 Documentation on the library can be found at
@@ -83,8 +83,6 @@ To enable asynchronous clients a feature for the underlying feature need to be a
 ```toml
 # if you use tokio
 redis = { version = "0.17.0", features = ["tokio-comp"] }
-# for the multiplexed client
-redis = { version = "0.17.0", features = ["tokio-rt-core"] }
 
 # if you use async-std
 redis = { version = "0.17.0", features = ["async-std-comp"] }
@@ -98,16 +96,16 @@ connection pool implementation. For an asynchronous connection pool, look into [
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
 
 ```
-redis = { version = "0.17.0", features = ["tls"] }
+redis = { version = "0.19.0", features = ["tls"] }
 
 # if you use tokio
-redis = { version = "0.17.0", features = ["tls", "tokio-tls-comp"] }
+redis = { version = "0.19.0", features = ["tokio-native-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.17.0", features = ["tls", "async-std-tls-comp"] }
+redis = { version = "0.19.0", features = ["async-std-tls-comp"] }
 ```
 
-then you should be able to connect to a redis instance using the `redis://` URL scheme:
+then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/")?;
@@ -153,7 +151,7 @@ To run benchmarks:
 
     $ make bench
 
-To build the docs:
+To build the docs (require nightly compiler, see [rust-lang/rust#43781](https://github.com/rust-lang/rust/issues/43781)):
 
     $ make docs
 

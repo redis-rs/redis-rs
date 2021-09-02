@@ -9,13 +9,14 @@ fn test_is_single_arg() {
     let twobytesslice: &[_] = &[bytes, bytes][..];
     let twobytesvec = vec![bytes, bytes];
 
-    assert_eq!("foo".is_single_arg(), true);
-    assert_eq!(sslice.is_single_arg(), true);
-    assert_eq!(nestslice.is_single_arg(), true);
-    assert_eq!(nestvec.is_single_arg(), true);
-    assert_eq!(bytes.is_single_arg(), true);
-    assert_eq!(twobytesslice.is_single_arg(), false);
-    assert_eq!(twobytesvec.is_single_arg(), false);
+    assert!("foo".is_single_arg());
+    assert!(sslice.is_single_arg());
+    assert!(nestslice.is_single_arg());
+    assert!(nestvec.is_single_arg());
+    assert!(bytes.is_single_arg());
+
+    assert!(!twobytesslice.is_single_arg());
+    assert!(!twobytesvec.is_single_arg());
 }
 
 #[test]
@@ -132,6 +133,15 @@ fn test_hashmap() {
 fn test_bool() {
     use redis::{ErrorKind, FromRedisValue, Value};
 
+    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    assert_eq!(v, Ok(true));
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("0".into()));
+    assert_eq!(v, Ok(false));
+
+    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Data("garbage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
     let v = FromRedisValue::from_redis_value(&Value::Status("1".into()));
     assert_eq!(v, Ok(true));
 
@@ -152,6 +162,35 @@ fn test_bool() {
 
     let v = FromRedisValue::from_redis_value(&Value::Int(42));
     assert_eq!(v, Ok(true));
+}
+
+#[cfg(feature = "bytes")]
+#[test]
+fn test_bytes() {
+    use bytes::Bytes;
+    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let content_bytes = Bytes::from_static(content);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(content_bytes));
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Okay);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Nil);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(0));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(42));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
 #[test]

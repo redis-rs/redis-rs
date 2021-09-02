@@ -58,7 +58,7 @@
 //! * `script`: enables script support (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `cluster`: enables redis cluster support (optional)
-//! * `tokio-rt-core`: enables support for tokio-rt (optional)
+//! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //!
 //!
@@ -105,16 +105,16 @@
 //! * URL objects from the redis-url crate.
 //! * `ConnectionInfo` objects.
 //!
-//! The URL format is `redis://[<username>][:<passwd>@]<hostname>[:port][/<db>]`
+//! The URL format is `redis://[<username>][:<password>@]<hostname>[:port][/<db>]`
 //!
 //! If Unix socket support is available you can use a unix URL in this format:
 //!
-//! `redis+unix:///[:<passwd>@]<path>[?db=<db>]`
+//! `redis+unix:///<path>[?db=<db>[&pass=<password>][&user=<username>]]`
 //!
 //! For compatibility with some other redis libraries, the "unix" scheme
 //! is also supported:
 //!
-//! `unix:///[:<passwd>@]<path>[?db=<db>]`
+//! `unix:///<path>[?db=<db>][&pass=<password>][&user=<username>]]`
 //!
 //! ## Executing Low-Level Commands
 //!
@@ -132,6 +132,20 @@
 //! Upon querying the return value is a result object.  If you do not care
 //! about the actual return value (other than that it is not a failure)
 //! you can always type annotate it to the unit type `()`.
+//!
+//! Note that commands with a sub-command (like "MEMORY USAGE", "ACL WHOAMI",
+//! "LATENCY HISTORY", etc) must specify the sub-command as a separate `arg`:
+//!
+//! ```rust,no_run
+//! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<usize> {
+//!     // This will result in a server error: "unknown command `MEMORY USAGE`"
+//!     // because "USAGE" is technically a sub-command of "MEMORY".
+//!     redis::cmd("MEMORY USAGE").arg("my_key").query(con)?;
+//!
+//!     // However, this will work as you'd expect
+//!     redis::cmd("MEMORY").arg("USAGE").arg("my_key").query(con)
+//! }
+//! ```
 //!
 //! ## Executing High-Level Commands
 //!
@@ -374,16 +388,20 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, warn(broken_intra_doc_links))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // public api
 pub use crate::client::Client;
-pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter, Pipeline};
-pub use crate::commands::{Commands, ControlFlow, PubSubCommands};
+pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
+pub use crate::commands::{Commands, ControlFlow, LposOptions, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub,
+    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,
 };
 pub use crate::parser::{parse_redis_value, Parser};
+pub use crate::pipeline::Pipeline;
+
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
@@ -419,6 +437,7 @@ pub use crate::{
 };
 
 mod macros;
+mod pipeline;
 
 #[cfg(feature = "acl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
@@ -435,6 +454,15 @@ pub mod geo;
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster;
+
+#[cfg(feature = "cluster")]
+mod cluster_client;
+
+#[cfg(feature = "cluster")]
+mod cluster_pipeline;
+
+#[cfg(feature = "cluster")]
+mod cluster_routing;
 
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]

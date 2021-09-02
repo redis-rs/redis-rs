@@ -1,6 +1,109 @@
+<a name="0.21.2"></a>
+### 0.21.2 (2021-09-02)
+
+
+#### Bug Fixes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+#### Breaking Changes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+
+
+<a name="0.21.1"></a>
+### 0.21.1 (2021-08-25)
+
+
+#### Bug Fixes
+
+*   pin futures dependency to required version ([9be392bc](https://github.com/mitsuhiko/redis-rs/commit/9be392bc5b22326a8a0eafc7aa18cc04c5d79e0e))
+
+
+
+<a name="0.21.0"></a>
+### 0.21.0 (2021-07-16)
+
+
+#### Performance
+
+*   Don't enqueue multiplexed commands if the receiver is dropped ([ca5019db](https://github.com/mitsuhiko/redis-rs/commit/ca5019dbe76cc56c93eaecb5721de8fcf74d1641))
+
+#### Features
+
+*   Refactor ConnectionAddr to remove boxing and clarify fields
+
+<a name="0.20.2"></a>
+### 0.20.2 (2021-06-17)
+
+#### Features
+
+*   Provide a new_async_std function ([c3716d15](https://github.com/mitsuhiko/redis-rs/commit/c3716d154f067b71acdd5bd927e118305cd0830b))
+
+#### Bug Fixes
+
+*   Return Ready(Ok(())) when we have flushed all messages ([ca319c06](https://github.com/mitsuhiko/redis-rs/commit/ca319c06ad80fc37f1f701aecebbd5dabb0dceb0))
+*   Don't loop forever on shutdown of the multiplexed connection ([ddecce9e](https://github.com/mitsuhiko/redis-rs/commit/ddecce9e10b8ab626f41409aae289d62b4fb74be))
+
+
+
+<a name="0.20.1"></a>
+### 0.20.1 (2021-05-18)
+
+
+#### Bug Fixes
+
+*   Error properly if eof is reached in the decoder ([306797c3](https://github.com/mitsuhiko/redis-rs/commit/306797c3c55ab24e0a29b6517356af794731d326))
+
+
+
+<a name="0.20.0"></a>
+## 0.20.0 (2021-02-17)
+
+
+#### Features
+
+*   Make ErrorKind non_exhaustive for forwards compatibility ([ac5e1a60](https://github.com/mitsuhiko/redis-rs/commit/ac5e1a60d398814b18ed1b579fe3f6b337e545e9))
+* **aio:**  Allow the underlying IO stream to be customized ([6d2fc8fa](https://github.com/mitsuhiko/redis-rs/commit/6d2fc8faa707fbbbaae9fe092bbc90ce01224523))
+
+
+
+<a name="0.19.0"></a>
+## 0.19.0 (2020-12-26)
+
+
+#### Features
+
+*   Update to tokio 1.0 ([41960194](https://github.com/mitsuhiko/redis-rs/commit/4196019494aafc2bab718bafd1fdfd5e8c195ffa))
+*   use the node specified in the MOVED error ([8a53e269](https://github.com/mitsuhiko/redis-rs/commit/8a53e2699d7d7bd63f222de778ed6820b0a65665))
+
+
+
+<a name="0.18.0"></a>
+## 0.18.0 (2020-12-03)
+
+
+#### Bug Fixes
+
+*   Don't require tokio for the connection manager ([46be86f3](https://github.com/mitsuhiko/redis-rs/commit/46be86f3f07df4900559bf9a4dfd0b5138c3ac52))
+
+* Make ToRedisArgs and FromRedisValue consistent for booleans
+
+BREAKING CHANGE
+
+bool are now written as 0 and 1 instead of true and false. Parsing a bool still accept true and false so this should not break anything for most users however if you are reading something out that was stored as a bool you may see different results.
+
+#### Features
+
+*   Update tokio dependency to 0.3 ([bf5e0af3](https://github.com/mitsuhiko/redis-rs/commit/bf5e0af31c08be1785656031ffda96c355ee83c4), closes [#396](https://github.com/mitsuhiko/redis-rs/issues/396))
+*   add doc_cfg for Makefile and docs.rs config ([1bf79517](https://github.com/mitsuhiko/redis-rs/commit/1bf795174521160934f3695326897458246e4978))
+*   Impl FromRedisValue for i128 and u128
+
+
 # Changelog
 
-## [Unreleased](https://github.com/mitsuhiko/redis-rs/compare/0.17.0...HEAD) - ReleaseDate
+## [0.18.0](https://github.com/mitsuhiko/redis-rs/compare/0.17.0...0.18.0) - 2020-12-03
 
 ## [0.17.0](https://github.com/mitsuhiko/redis-rs/compare/0.16.0...0.17.0) - 2020-07-29
 

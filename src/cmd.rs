@@ -1,9 +1,15 @@
+#[cfg(feature = "aio")]
+use futures_util::{
+    task::{Context, Poll},
+    FutureExt, Stream,
+};
+#[cfg(feature = "aio")]
+use std::pin::Pin;
 use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
-use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
-};
+use crate::pipeline::Pipeline;
+use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -21,14 +27,6 @@ pub struct Cmd {
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
     cursor: Option<u64>,
-    is_ignored: bool,
-}
-
-/// Represents a redis command pipeline.
-#[derive(Clone)]
-pub struct Pipeline {
-    commands: Vec<Cmd>,
-    transaction_mode: bool,
 }
 
 /// Represents a redis iterator.
@@ -126,6 +124,17 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
     }
 }
 
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + Unpin + 'a> Stream for AsyncIter<'a, T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+        let this = self.get_mut();
+        let mut future = Box::pin(this.next_item());
+        future.poll_unpin(cx)
+    }
+}
+
 fn countdigits(mut v: usize) -> usize {
     let mut result = 1;
     loop {
@@ -166,7 +175,7 @@ where
     totlen
 }
 
-fn cmd_len(cmd: &Cmd) -> usize {
+pub(crate) fn cmd_len(cmd: &Cmd) -> usize {
     args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
 }
 
@@ -213,34 +222,6 @@ where
         cmd.write_all(b"\r\n")?;
     }
     Ok(())
-}
-
-fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
-    let mut rv = vec![];
-    write_pipeline(&mut rv, cmds, atomic);
-    rv
-}
-
-fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
-    let cmds_len = cmds.iter().map(cmd_len).sum();
-
-    if atomic {
-        let multi = cmd("MULTI");
-        let exec = cmd("EXEC");
-        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
-
-        multi.write_packed_command_preallocated(rv);
-        for cmd in cmds {
-            cmd.write_packed_command_preallocated(rv);
-        }
-        exec.write_packed_command_preallocated(rv);
-    } else {
-        rv.reserve(cmds_len);
-
-        for cmd in cmds {
-            cmd.write_packed_command_preallocated(rv);
-        }
-    }
 }
 
 impl RedisWrite for Cmd {
@@ -296,7 +277,6 @@ impl Cmd {
             data: vec![],
             args: vec![],
             cursor: None,
-            is_ignored: false,
         }
     }
 
@@ -354,7 +334,7 @@ impl Cmd {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
-    fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
+    pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
         write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
     }
 
@@ -381,8 +361,7 @@ impl Cmd {
     /// you can retrieve data.
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
-        let pcmd = self.get_packed_command();
-        match con.req_packed_command(&pcmd) {
+        match con.req_command(self) {
             Ok(val) => from_redis_value(&val),
             Err(e) => Err(e),
         }
@@ -414,12 +393,8 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<'a, T: FromRedisValue>(
-        self,
-        con: &'a mut dyn ConnectionLike,
-    ) -> RedisResult<Iter<'a, T>> {
-        let pcmd = self.get_packed_command();
-        let rv = con.req_packed_command(&pcmd)?;
+    pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
+        let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
@@ -506,280 +481,30 @@ impl Cmd {
             Arg::Cursor => Arg::Cursor,
         })
     }
-}
 
-impl Default for Pipeline {
-    fn default() -> Pipeline {
-        Pipeline::new()
-    }
-}
-
-/// A pipeline allows you to send multiple commands in one go to the
-/// redis server.  API wise it's very similar to just using a command
-/// but it allows multiple commands to be chained and some features such
-/// as iteration are not available.
-///
-/// Basic example:
-///
-/// ```rust,no_run
-/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
-/// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
-///     .cmd("SET").arg("key_1").arg(42).ignore()
-///     .cmd("SET").arg("key_2").arg(43).ignore()
-///     .cmd("MGET").arg(&["key_1", "key_2"]).query(&mut con).unwrap();
-/// ```
-///
-/// As you can see with `cmd` you can start a new command.  By default
-/// each command produces a value but for some you can ignore them by
-/// calling `ignore` on the command.  That way it will be skipped in the
-/// return value which is useful for `SET` commands and others, which
-/// do not have a useful return value.
-impl Pipeline {
-    /// Creates an empty pipeline.  For consistency with the `cmd`
-    /// api a `pipe` function is provided as alias.
-    pub fn new() -> Pipeline {
-        Self::with_capacity(0)
-    }
-
-    /// Creates an empty pipeline with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Pipeline {
-        Pipeline {
-            commands: Vec::with_capacity(capacity),
-            transaction_mode: false,
+    // Get a reference to the argument at `idx`
+    #[cfg(feature = "cluster")]
+    pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
+        if idx >= self.args.len() {
+            return None;
         }
-    }
 
-    /// Starts a new command.  Functions such as `arg` then become
-    /// available to add more arguments to that command.
-    #[inline]
-    pub fn cmd(&mut self, name: &str) -> &mut Pipeline {
-        self.commands.push(cmd(name));
-        self
-    }
-
-    /// Adds a command to the pipeline.
-    #[inline]
-    pub fn add_command(&mut self, cmd: Cmd) -> &mut Pipeline {
-        self.commands.push(cmd);
-        self
-    }
-
-    #[inline]
-    fn get_last_command(&mut self) -> &mut Cmd {
-        let idx = match self.commands.len() {
-            0 => panic!("No command on stack"),
-            x => x - 1,
-        };
-        &mut self.commands[idx]
-    }
-
-    /// Adds an argument to the last started command.  This works similar
-    /// to the `arg` method of the `Cmd` object.
-    ///
-    /// Note that this function fails the task if executed on an empty pipeline.
-    #[inline]
-    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Pipeline {
-        {
-            let cmd = self.get_last_command();
-            cmd.arg(arg);
-        }
-        self
-    }
-
-    /// Instructs the pipeline to ignore the return value of this command.
-    /// It will still be ensured that it is not an error, but any successful
-    /// result is just thrown away.  This makes result processing through
-    /// tuples much easier because you do not need to handle all the items
-    /// you do not care about.
-    ///
-    /// Note that this function fails the task if executed on an empty pipeline.
-    #[inline]
-    pub fn ignore(&mut self) -> &mut Pipeline {
-        {
-            let cmd = self.get_last_command();
-            cmd.is_ignored = true;
-        }
-        self
-    }
-
-    /// This enables atomic mode.  In atomic mode the whole pipeline is
-    /// enclosed in `MULTI`/`EXEC`.  From the user's point of view nothing
-    /// changes however.  This is easier than using `MULTI`/`EXEC` yourself
-    /// as the format does not change.
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// let (k1, k2) : (i32, i32) = redis::pipe()
-    ///     .atomic()
-    ///     .cmd("GET").arg("key_1")
-    ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
-    /// ```
-    #[inline]
-    pub fn atomic(&mut self) -> &mut Pipeline {
-        self.transaction_mode = true;
-        self
-    }
-
-    /// Returns an iterator over all the commands currently in this pipeline
-    pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
-        self.commands.iter()
-    }
-
-    fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
-        let mut rv = vec![];
-        for (idx, result) in resp.into_iter().enumerate() {
-            if !self.commands[idx].is_ignored {
-                rv.push(result);
-            }
-        }
-        Value::Bulk(rv)
-    }
-
-    /// Returns the encoded pipeline commands.
-    pub fn get_packed_pipeline(&self) -> Vec<u8> {
-        encode_pipeline(&self.commands, self.transaction_mode)
-    }
-
-    #[cfg(feature = "aio")]
-    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
-        write_pipeline(out, &self.commands, self.transaction_mode)
-    }
-
-    fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
-        Ok(self.make_pipeline_results(con.req_packed_commands(
-            &encode_pipeline(&self.commands, false),
-            0,
-            self.commands.len(),
-        )?))
-    }
-
-    fn execute_transaction(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
-        let mut resp = con.req_packed_commands(
-            &encode_pipeline(&self.commands, true),
-            self.commands.len() + 1,
-            1,
-        )?;
-        match resp.pop() {
-            Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => fail!((
-                ErrorKind::ResponseError,
-                "Invalid response when parsing multi response"
-            )),
-        }
-    }
-
-    /// Executes the pipeline and fetches the return values.  Since most
-    /// pipelines return different types it's recommended to use tuple
-    /// matching to process the results:
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// let (k1, k2) : (i32, i32) = redis::pipe()
-    ///     .cmd("SET").arg("key_1").arg(42).ignore()
-    ///     .cmd("SET").arg("key_2").arg(43).ignore()
-    ///     .cmd("GET").arg("key_1")
-    ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
-    /// ```
-    ///
-    /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
-    ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
-    ///       it is necessary to call the `clear()` before inserting new commands.
-    #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
-        if !con.supports_pipelining() {
-            fail!((
-                ErrorKind::ResponseError,
-                "This connection does not support pipelining."
-            ));
-        }
-        from_redis_value(
-            &(if self.commands.is_empty() {
-                Value::Bulk(vec![])
-            } else if self.transaction_mode {
-                self.execute_transaction(con)?
-            } else {
-                self.execute_pipelined(con)?
-            }),
-        )
-    }
-
-    /// Clear a Pipeline object internal data structure.
-    ///
-    /// This allows reusing a Pipeline object as a clear object while performing a minimal amount of
-    /// memory released/reallocated.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.commands.clear();
-    }
-
-    #[cfg(feature = "aio")]
-    async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
-    where
-        C: crate::aio::ConnectionLike,
-    {
-        let value = con
-            .req_packed_commands(self, 0, self.commands.len())
-            .await?;
-        Ok(self.make_pipeline_results(value))
-    }
-
-    #[cfg(feature = "aio")]
-    async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
-    where
-        C: crate::aio::ConnectionLike,
-    {
-        let mut resp = con
-            .req_packed_commands(self, self.commands.len() + 1, 1)
-            .await?;
-        match resp.pop() {
-            Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
-            _ => Err((
-                ErrorKind::ResponseError,
-                "Invalid response when parsing multi response",
-            )
-                .into()),
-        }
-    }
-
-    /// Async version of `query`.
-    #[inline]
-    #[cfg(feature = "aio")]
-    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
-    where
-        C: crate::aio::ConnectionLike,
-    {
-        let v = if self.commands.is_empty() {
-            return from_redis_value(&Value::Bulk(vec![]));
-        } else if self.transaction_mode {
-            self.execute_transaction_async(con).await?
+        let start = if idx == 0 {
+            0
         } else {
-            self.execute_pipelined_async(con).await?
+            match self.args[idx - 1] {
+                Arg::Simple(n) => n,
+                _ => 0,
+            }
         };
-        from_redis_value(&v)
-    }
-
-    /// This is a shortcut to `query()` that does not return a value and
-    /// will fail the task if the query of the pipeline fails.
-    ///
-    /// This is equivalent to a call of query like this:
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// let _ : () = redis::pipe().cmd("PING").query(&mut con).unwrap();
-    /// ```
-    ///
-    /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
-    ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
-    ///       it is necessary to call the `clear()` before inserting new commands.
-    #[inline]
-    pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        let end = match self.args[idx] {
+            Arg::Simple(n) => n,
+            _ => 0,
+        };
+        if start == 0 && end == 0 {
+            return None;
+        }
+        Some(&self.data[start..end])
     }
 }
 
@@ -821,4 +546,26 @@ pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
 /// Shortcut for creating a new pipeline.
 pub fn pipe() -> Pipeline {
     Pipeline::new()
+}
+
+#[cfg(test)]
+#[cfg(feature = "cluster")]
+mod tests {
+    use super::Cmd;
+
+    #[test]
+    fn test_cmd_arg_idx() {
+        let mut c = Cmd::new();
+        assert_eq!(c.arg_idx(0), None);
+
+        c.arg("SET");
+        assert_eq!(c.arg_idx(0), Some(&b"SET"[..]));
+        assert_eq!(c.arg_idx(1), None);
+
+        c.arg("foo").arg("42");
+        assert_eq!(c.arg_idx(1), Some(&b"foo"[..]));
+        assert_eq!(c.arg_idx(2), Some(&b"42"[..]));
+        assert_eq!(c.arg_idx(3), None);
+        assert_eq!(c.arg_idx(4), None);
+    }
 }
