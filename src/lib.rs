@@ -61,9 +61,9 @@
 //! * `tokio-rt-core`: enables support for tokio-rt (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //!
-
+//!
 //! ## R2D2 Support 
-
+//!
 //! Opening a new database connection every time one 
 //! is needed is both inefficient and can lead to resource exhaustion under 
 //! high traffic conditions. To prevent this, you can use a connection pool, 
@@ -83,14 +83,14 @@
 //! 
 //! Retrieving a connection from the pool is done through the `get()` method.
 //! The connection can then be used as usual:
-
+//!
 //! ```rust,no_run
 //! let mut conn = pool.get().unwrap()
-
+//!
 //! let _: () = conn.set("KEY", "VALUE").unwrap();
 //! let val: String = conn.get("KEY").unwrap();
 //! ```
-
+//!
 //! [Click here for a complete example](https://github.com/mitsuhiko/redis-rs/blob/master/examples/r2d2.rs).
 //!    
 //! ## Connection Parameters
