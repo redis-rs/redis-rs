@@ -77,15 +77,17 @@
 //! You can then use `r2d2::Pool::builder()` to create a connection pool:
 //! 
 //! ```rust,no_run
-//! let client = redis::Client::open("redis://127.0.0.1/").unwrap()
-//! let pool = r2d2::Pool::builder().build(client)
+//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! let pool = r2d2::Pool::builder().build(client);
 //! ```
 //! 
 //! Retrieving a connection from the pool is done through the `get()` method.
 //! The connection can then be used as usual:
 //!
 //! ```rust,no_run
-//! let mut conn = pool.get().unwrap()
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let pool = r2d2::Pool::builder().build(client);
+//! let mut conn = pool.get().unwrap();
 //!
 //! let _: () = conn.set("KEY", "VALUE").unwrap();
 //! let val: String = conn.get("KEY").unwrap();
