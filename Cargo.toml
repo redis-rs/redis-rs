@@ -84,7 +84,7 @@ criterion = "0.3"
 partial-io = { version = "0.3", features = ["tokio", "quickcheck"] }
 quickcheck = "0.6"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
-tempdir = "3.2"
+tempfile = "3.2"
 r2d2 = { version = "0.8.8" }
 
 [[test]]
