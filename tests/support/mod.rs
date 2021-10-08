@@ -5,6 +5,7 @@ use std::{env, fs, io, net::SocketAddr, path::PathBuf, process, thread::sleep, t
 use futures::Future;
 use redis::Value;
 use socket2::{Domain, Socket, Type};
+use tempfile::TempDir;
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
@@ -127,95 +128,7 @@ impl RedisServer {
                 }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                // Based on shell script in redis's server tests
-                // https://github.com/redis/redis/blob/8c291b97b95f2e011977b522acf77ead23e26f55/utils/gen-test-certs.sh
-                let tls_ca_crt_path = tempdir.path().join("ca.crt");
-                let tls_ca_key_path = tempdir.path().join("ca.key");
-                let tls_ca_serial_path = tempdir.path().join("ca.txt");
-                let tls_redis_crt_path = tempdir.path().join("redis.crt");
-                let tls_redis_key_path = tempdir.path().join("redis.key");
-
-                fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
-                    process::Command::new("openssl")
-                        .arg("genrsa")
-                        .arg("-out")
-                        .arg(name)
-                        .arg(&format!("{}", size))
-                        .stdout(process::Stdio::null())
-                        .stderr(process::Stdio::null())
-                        .spawn()
-                        .expect("failed to spawn openssl")
-                        .wait()
-                        .expect("failed to create key");
-                }
-
-                // Build CA Key
-                make_key(&tls_ca_key_path, 4096);
-
-                // Build redis key
-                make_key(&tls_redis_key_path, 2048);
-
-                // Build CA Cert
-                process::Command::new("openssl")
-                    .arg("req")
-                    .arg("-x509")
-                    .arg("-new")
-                    .arg("-nodes")
-                    .arg("-sha256")
-                    .arg("-key")
-                    .arg(&tls_ca_key_path)
-                    .arg("-days")
-                    .arg("3650")
-                    .arg("-subj")
-                    .arg("/O=Redis Test/CN=Certificate Authority")
-                    .arg("-out")
-                    .arg(&tls_ca_crt_path)
-                    .stdout(process::Stdio::null())
-                    .stderr(process::Stdio::null())
-                    .spawn()
-                    .expect("failed to spawn openssl")
-                    .wait()
-                    .expect("failed to create CA cert");
-
-                // Read redis key
-                let mut key_cmd = process::Command::new("openssl")
-                    .arg("req")
-                    .arg("-new")
-                    .arg("-sha256")
-                    .arg("-subj")
-                    .arg("/O=Redis Test/CN=Generic-cert")
-                    .arg("-key")
-                    .arg(&tls_redis_key_path)
-                    .stdout(process::Stdio::piped())
-                    .stderr(process::Stdio::null())
-                    .spawn()
-                    .expect("failed to spawn openssl");
-
-                // build redis cert
-                process::Command::new("openssl")
-                    .arg("x509")
-                    .arg("-req")
-                    .arg("-sha256")
-                    .arg("-CA")
-                    .arg(&tls_ca_crt_path)
-                    .arg("-CAkey")
-                    .arg(&tls_ca_key_path)
-                    .arg("-CAserial")
-                    .arg(&tls_ca_serial_path)
-                    .arg("-CAcreateserial")
-                    .arg("-days")
-                    .arg("365")
-                    .arg("-out")
-                    .arg(&tls_redis_crt_path)
-                    .stdin(key_cmd.stdout.take().expect("should have stdout"))
-                    .stdout(process::Stdio::null())
-                    .stderr(process::Stdio::null())
-                    .spawn()
-                    .expect("failed to spawn openssl")
-                    .wait()
-                    .expect("failed to create redis cert");
-
-                key_cmd.wait().expect("failed to create redis key");
+                let tls_paths = build_keys_and_certs_for_tls(&tempdir);
 
                 // prepare redis with TLS
                 redis_cmd
@@ -224,11 +137,11 @@ impl RedisServer {
                     .arg("--port")
                     .arg("0")
                     .arg("--tls-cert-file")
-                    .arg(&tls_redis_crt_path)
+                    .arg(&tls_paths.redis_crt)
                     .arg("--tls-key-file")
-                    .arg(&tls_redis_key_path)
+                    .arg(&tls_paths.redis_key)
                     .arg("--tls-ca-cert-file")
-                    .arg(&tls_ca_crt_path)
+                    .arg(&tls_paths.ca_crt)
                     .arg("--tls-auth-clients") // Make it so client doesn't have to send cert
                     .arg("no")
                     .arg("--bind")
@@ -385,5 +298,109 @@ where
         }
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{}\r\n", s),
+    }
+}
+
+struct TlsFilePaths {
+    redis_crt: PathBuf,
+    redis_key: PathBuf,
+    ca_crt: PathBuf,
+}
+
+fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
+    // Based on shell script in redis's server tests
+    // https://github.com/redis/redis/blob/8c291b97b95f2e011977b522acf77ead23e26f55/utils/gen-test-certs.sh
+    let ca_crt = tempdir.path().join("ca.crt");
+    let ca_key = tempdir.path().join("ca.key");
+    let ca_serial = tempdir.path().join("ca.txt");
+    let redis_crt = tempdir.path().join("redis.crt");
+    let redis_key = tempdir.path().join("redis.key");
+
+    fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
+        process::Command::new("openssl")
+            .arg("genrsa")
+            .arg("-out")
+            .arg(name)
+            .arg(&format!("{}", size))
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn openssl")
+            .wait()
+            .expect("failed to create key");
+    }
+
+    // Build CA Key
+    make_key(&ca_key, 4096);
+
+    // Build redis key
+    make_key(&redis_key, 2048);
+
+    // Build CA Cert
+    process::Command::new("openssl")
+        .arg("req")
+        .arg("-x509")
+        .arg("-new")
+        .arg("-nodes")
+        .arg("-sha256")
+        .arg("-key")
+        .arg(&ca_key)
+        .arg("-days")
+        .arg("3650")
+        .arg("-subj")
+        .arg("/O=Redis Test/CN=Certificate Authority")
+        .arg("-out")
+        .arg(&ca_crt)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn openssl")
+        .wait()
+        .expect("failed to create CA cert");
+
+    // Read redis key
+    let mut key_cmd = process::Command::new("openssl")
+        .arg("req")
+        .arg("-new")
+        .arg("-sha256")
+        .arg("-subj")
+        .arg("/O=Redis Test/CN=Generic-cert")
+        .arg("-key")
+        .arg(&redis_key)
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn openssl");
+
+    // build redis cert
+    process::Command::new("openssl")
+        .arg("x509")
+        .arg("-req")
+        .arg("-sha256")
+        .arg("-CA")
+        .arg(&ca_crt)
+        .arg("-CAkey")
+        .arg(&ca_key)
+        .arg("-CAserial")
+        .arg(&ca_serial)
+        .arg("-CAcreateserial")
+        .arg("-days")
+        .arg("365")
+        .arg("-out")
+        .arg(&redis_crt)
+        .stdin(key_cmd.stdout.take().expect("should have stdout"))
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn openssl")
+        .wait()
+        .expect("failed to create redis cert");
+
+    key_cmd.wait().expect("failed to create redis key");
+
+    TlsFilePaths {
+        redis_crt,
+        redis_key,
+        ca_crt,
     }
 }
