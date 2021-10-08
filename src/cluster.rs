@@ -82,6 +82,16 @@ enum TlsMode {
     Insecure,
 }
 
+impl TlsMode {
+    fn from_insecure_flag(insecure: bool) -> TlsMode {
+        if insecure {
+            TlsMode::Insecure
+        } else {
+            TlsMode::Secure
+        }
+    }
+}
+
 impl ClusterConnection {
     pub(crate) fn new(
         initial_nodes: Vec<ConnectionInfo>,
@@ -111,13 +121,7 @@ impl ClusterConnection {
                             host: _,
                             port: _,
                             insecure,
-                        } => {
-                            if *insecure {
-                                Some(TlsMode::Insecure)
-                            } else {
-                                Some(TlsMode::Secure)
-                            }
-                        }
+                        } => Some(TlsMode::from_insecure_flag(*insecure)),
                         _ => None,
                     }
                 }
@@ -203,11 +207,8 @@ impl ClusterConnection {
                     port,
                     insecure,
                 } => {
-                    if insecure {
-                        format!("rediss://{}:{}/#insecure", host, port)
-                    } else {
-                        format!("rediss://{}:{}/", host, port)
-                    }
+                    let tls_mode = TlsMode::from_insecure_flag(insecure);
+                    build_connection_string(host, Some(port), Some(tls_mode))
                 }
                 _ => panic!("No reach."),
             };
@@ -438,12 +439,9 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            // TODO: clean up this copy pasta
-                            redirected = err.redirect_node().map(|(node, _slot)| match self.tls {
-                                None => format!("redis://{}", node),
-                                Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
-                                Some(TlsMode::Secure) => format!("rediss://{}", node),
-                            });
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -451,11 +449,9 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err.redirect_node().map(|(node, _slot)| match self.tls {
-                                None => format!("redis://{}", node),
-                                Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
-                                Some(TlsMode::Secure) => format!("rediss://{}", node),
-                            });
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
@@ -780,17 +776,11 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         }
 
                         let port = if let Value::Int(port) = node[1] {
-                            port
+                            port as u16
                         } else {
                             return None;
                         };
-                        match tls_mode {
-                            None => Some(format!("redis://{}:{}", ip, port)),
-                            Some(TlsMode::Insecure) => {
-                                Some(format!("rediss://{}:{}/#insecure", ip, port))
-                            }
-                            Some(TlsMode::Secure) => Some(format!("rediss://{}:{}", ip, port)),
-                        }
+                        Some(build_connection_string(&ip, Some(port), tls_mode))
                     } else {
                         None
                     }
@@ -807,4 +797,18 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
     }
 
     Ok(result)
+}
+
+fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
+    let host_port = match port {
+        Some(port) => format!("{}:{}", host, port),
+        None => host.to_string(),
+    };
+    match tls_mode {
+        None => format!("redis://{}", host_port),
+        Some(TlsMode::Insecure) => {
+            format!("rediss://{}/#insecure", host_port)
+        }
+        Some(TlsMode::Secure) => format!("rediss://{}", host_port),
+    }
 }
