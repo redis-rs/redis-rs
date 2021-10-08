@@ -17,7 +17,7 @@ const LOCALHOST: &str = "127.0.0.1";
 
 enum ClusterType {
     Tcp,
-    TcpTls
+    TcpTls,
 }
 
 impl ClusterType {
@@ -38,7 +38,7 @@ impl ClusterType {
     fn build_addr(port: u16) -> redis::ConnectionAddr {
         match ClusterType::get_intended() {
             ClusterType::Tcp => redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
-            ClusterType::TcpTls => redis::ConnectionAddr::TcpTls{
+            ClusterType::TcpTls => redis::ConnectionAddr::TcpTls {
                 host: "127.0.0.1".into(),
                 port,
                 insecure: true,
@@ -93,11 +93,9 @@ impl RedisCluster {
                         .arg("--appendonly")
                         .arg("yes");
                     if is_tls {
-                        cmd.arg("--tls-cluster")
-                            .arg("yes");
+                        cmd.arg("--tls-cluster").arg("yes");
                         if replicas > 0 {
-                            cmd.arg("--tls-replication")
-                                .arg("yes");
+                            cmd.arg("--tls-replication").arg("yes");
                         }
                     }
                     cmd.current_dir(&tempdir.path());
@@ -121,8 +119,7 @@ impl RedisCluster {
         }
         cmd.arg("--cluster-yes");
         if is_tls {
-            cmd.arg("--tls")
-                .arg("--insecure");
+            cmd.arg("--tls").arg("--insecure");
         }
         let status = dbg!(cmd).status().unwrap();
         assert!(status.success());
@@ -140,7 +137,10 @@ impl RedisCluster {
                 addr: server.get_client_addr().clone(),
                 redis: Default::default(),
             };
-            eprintln!("waiting until {:?} knows required number of replicas", conn_info.addr);
+            eprintln!(
+                "waiting until {:?} knows required number of replicas",
+                conn_info.addr
+            );
             let client = redis::Client::open(conn_info).unwrap();
             let mut con = client.get_connection().unwrap();
 

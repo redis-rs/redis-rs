@@ -129,9 +129,7 @@ impl RedisServer {
                 }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                let tls_paths = tls_paths.unwrap_or_else(|| {
-                    build_keys_and_certs_for_tls(&tempdir)
-                });
+                let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
 
                 // prepare redis with TLS
                 redis_cmd

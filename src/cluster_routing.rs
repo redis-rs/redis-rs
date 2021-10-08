@@ -50,9 +50,9 @@ impl RoutingInfo {
     }
 
     pub fn for_key(key: &[u8]) -> Option<RoutingInfo> {
-        let key = match get_hashtag(&key) {
+        let key = match get_hashtag(key) {
             Some(tag) => tag,
-            None => &key,
+            None => key,
         };
         Some(RoutingInfo::Slot(
             crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE as u16,

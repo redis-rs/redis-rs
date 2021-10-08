@@ -1119,7 +1119,7 @@ mod tests {
             ("tcp://127.0.0.1", false),
         ];
         for (url, expected) in cases.into_iter() {
-            let res = parse_redis_url(&url);
+            let res = parse_redis_url(url);
             assert_eq!(
                 res.is_some(),
                 expected,

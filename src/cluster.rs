@@ -72,7 +72,7 @@ pub struct ClusterConnection {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     #[cfg(feature = "tls")]
-    tls: Option<TlsMode>
+    tls: Option<TlsMode>,
 }
 
 #[cfg(feature = "tls")]
@@ -107,13 +107,17 @@ impl ClusterConnection {
                     // TODO: Maybe should run through whole list and make sure they're all matching?
                     match &initial_nodes.get(0).unwrap().addr {
                         ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls { host: _, port: _, insecure } => {
+                        ConnectionAddr::TcpTls {
+                            host: _,
+                            port: _,
+                            insecure,
+                        } => {
                             if *insecure {
                                 Some(TlsMode::Insecure)
                             } else {
                                 Some(TlsMode::Secure)
                             }
-                        },
+                        }
                         _ => None,
                     }
                 }
@@ -194,13 +198,17 @@ impl ClusterConnection {
         for info in initial_nodes.iter() {
             let addr = match info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
-                ConnectionAddr::TcpTls { ref host, port, insecure } => {
+                ConnectionAddr::TcpTls {
+                    ref host,
+                    port,
+                    insecure,
+                } => {
                     if insecure {
                         format!("rediss://{}:{}/#insecure", host, port)
                     } else {
                         format!("rediss://{}:{}/", host, port)
                     }
-                },
+                }
                 _ => panic!("No reach."),
             };
 
@@ -431,12 +439,10 @@ impl ClusterConnection {
 
                         if kind == ErrorKind::Ask {
                             // TODO: clean up this copy pasta
-                            redirected = err.redirect_node().map(|(node, _slot)| {
-                                match self.tls {
-                                    None => format!("redis://{}", node),
-                                    Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
-                                    Some(TlsMode::Secure) => format!("rediss://{}", node),
-                                }
+                            redirected = err.redirect_node().map(|(node, _slot)| match self.tls {
+                                None => format!("redis://{}", node),
+                                Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
+                                Some(TlsMode::Secure) => format!("rediss://{}", node),
                             });
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
@@ -445,12 +451,10 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err.redirect_node().map(|(node, _slot)| {
-                                match self.tls {
-                                    None => format!("redis://{}", node),
-                                    Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
-                                    Some(TlsMode::Secure) => format!("rediss://{}", node),
-                                }
+                            redirected = err.redirect_node().map(|(node, _slot)| match self.tls {
+                                None => format!("redis://{}", node),
+                                Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
+                                Some(TlsMode::Secure) => format!("rediss://{}", node),
                             });
                             is_asking = false;
                             continue;
@@ -496,7 +500,7 @@ impl ClusterConnection {
         let mut results = vec![Value::Nil; cmds.len()];
 
         let to_retry = self
-            .send_all_commands(&cmds)
+            .send_all_commands(cmds)
             .and_then(|node_cmds| self.recv_all_commands(&mut results, &node_cmds))?;
 
         if to_retry.is_empty() {
@@ -553,7 +557,7 @@ impl ClusterConnection {
         let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
 
         for (idx, cmd) in cmds.iter().enumerate() {
-            let addr = self.get_addr_for_cmd(&cmd)?;
+            let addr = self.get_addr_for_cmd(cmd)?;
             let nc = cmd_map
                 .entry(addr.clone())
                 .or_insert_with(|| NodeCmd::new(addr));
@@ -782,10 +786,11 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         };
                         match tls_mode {
                             None => Some(format!("redis://{}:{}", ip, port)),
-                            Some(TlsMode::Insecure) => Some(format!("rediss://{}:{}/#insecure", ip, port)),
+                            Some(TlsMode::Insecure) => {
+                                Some(format!("rediss://{}:{}/#insecure", ip, port))
+                            }
                             Some(TlsMode::Secure) => Some(format!("rediss://{}:{}", ip, port)),
                         }
-
                     } else {
                         None
                     }
