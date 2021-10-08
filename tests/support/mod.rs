@@ -95,7 +95,7 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(addr, |cmd| {
+        RedisServer::new_with_addr(addr, None, |cmd| {
             cmd.spawn()
                 .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
         })
@@ -103,6 +103,7 @@ impl RedisServer {
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
+        tls_paths: Option<TlsFilePaths>,
         spawner: F,
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
@@ -128,7 +129,9 @@ impl RedisServer {
                 }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                let tls_paths = build_keys_and_certs_for_tls(&tempdir);
+                let tls_paths = tls_paths.unwrap_or_else(|| {
+                    build_keys_and_certs_for_tls(&tempdir)
+                });
 
                 // prepare redis with TLS
                 redis_cmd
@@ -301,13 +304,14 @@ where
     }
 }
 
-struct TlsFilePaths {
+#[derive(Clone)]
+pub struct TlsFilePaths {
     redis_crt: PathBuf,
     redis_key: PathBuf,
     ca_crt: PathBuf,
 }
 
-fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
+pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     // Based on shell script in redis's server tests
     // https://github.com/redis/redis/blob/8c291b97b95f2e011977b522acf77ead23e26f55/utils/gen-test-certs.sh
     let ca_crt = tempdir.path().join("ca.crt");
