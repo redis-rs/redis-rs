@@ -36,7 +36,6 @@ jobs:
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install stunnel -y
         wget https://github.com/redis/redis/archive/${{ env.REDIS_VERSION }}.tar.gz;
         tar -xzvf ${{ env.REDIS_VERSION }}.tar.gz;
         pushd redis-${{ env.REDIS_VERSION }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
