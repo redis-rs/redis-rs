@@ -215,7 +215,7 @@ impl ClusterConnection {
         if connections.is_empty() {
             return Err(RedisError::from((
                 ErrorKind::IoError,
-                "It is failed to check startup nodes.",
+                "It failed to check startup nodes.",
             )));
         }
         Ok(connections)
@@ -430,7 +430,14 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            redirected = err.redirect_node().map(|x| format!("redis://{}", x.0));
+                            // TODO: clean up this copy pasta
+                            redirected = err.redirect_node().map(|(node, _slot)| {
+                                match self.tls {
+                                    None => format!("redis://{}", node),
+                                    Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
+                                    Some(TlsMode::Secure) => format!("rediss://{}", node),
+                                }
+                            });
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -438,7 +445,13 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err.redirect_node().map(|x| format!("redis://{}", x.0));
+                            redirected = err.redirect_node().map(|(node, _slot)| {
+                                match self.tls {
+                                    None => format!("redis://{}", node),
+                                    Some(TlsMode::Insecure) => format!("rediss://{}/#insecure", node),
+                                    Some(TlsMode::Secure) => format!("rediss://{}", node),
+                                }
+                            });
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
