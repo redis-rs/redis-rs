@@ -71,11 +71,9 @@ pub struct ClusterConnection {
     password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    #[cfg(feature = "tls")]
     tls: Option<TlsMode>,
 }
 
-#[cfg(feature = "tls")]
 #[derive(Clone, Copy)]
 enum TlsMode {
     Secure,
@@ -126,6 +124,8 @@ impl ClusterConnection {
                     }
                 }
             },
+            #[cfg(not(feature = "tls"))]
+            tls: None,
             initial_nodes,
         };
         connection.refresh_slots()?;
