@@ -385,7 +385,12 @@ impl ActualConnection {
                 let tls = match timeout {
                     None => {
                         let tcp = TcpStream::connect((host, port))?;
-                        tls_connector.connect(host, tcp).unwrap()
+                        match tls_connector.connect(host, tcp) {
+                            Ok(res) => res,
+                            Err(e) => {
+                                fail!((ErrorKind::IoError, "SSL Handshake error", e.to_string()));
+                            }
+                        }
                     }
                     Some(timeout) => {
                         let mut tcp = None;
@@ -1114,7 +1119,7 @@ mod tests {
             ("tcp://127.0.0.1", false),
         ];
         for (url, expected) in cases.into_iter() {
-            let res = parse_redis_url(&url);
+            let res = parse_redis_url(url);
             assert_eq!(
                 res.is_some(),
                 expected,
