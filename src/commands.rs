@@ -790,6 +790,16 @@ implement_commands! {
         cmd("ZPOPMIN").arg(key).arg(count)
     }
 
+    /// Return up to count random members in a sorted set (or 1 if `count == None`)
+    fn zrandmember<K: ToRedisArgs>(key: K, count: Option<isize>) {
+        cmd("ZRANDMEMBER").arg(key).arg(count)
+    }
+
+    /// Return up to count random members in a sorted set with scores
+    fn zrandmember_withscores<K: ToRedisArgs>(key: K, count: isize) {
+        cmd("ZRANDMEMBER").arg(key).arg(count).arg("WITHSCORES")
+    }
+
     /// Return a range of members in a sorted set, by index
     fn zrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
         cmd("ZRANGE").arg(key).arg(start).arg(stop)
