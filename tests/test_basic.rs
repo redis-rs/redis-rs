@@ -890,3 +890,51 @@ fn test_zrembylex() {
     let remaining: Vec<String> = con.zrange(setname, 0, -1).unwrap();
     assert_eq!(remaining, vec!["apple".to_string(), "grapes".to_string()]);
 }
+
+// Requires redis-server >= 6.2.0.
+// Not supported with the current appveyor/windows binary deployed.
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn test_zrandmember() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let setname = "myzrandset";
+    let () = con.zadd(setname, "one", 1).unwrap();
+
+    let result: String = con.zrandmember(setname, None).unwrap();
+    assert_eq!(result, "one".to_string());
+
+    let result: Vec<String> = con.zrandmember(setname, Some(1)).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0], "one".to_string());
+
+    let result: Vec<String> = con.zrandmember(setname, Some(2)).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0], "one".to_string());
+
+    let mut c = redis::cmd("ZADD");
+    c.arg(setname)
+        .arg(2)
+        .arg("two")
+        .arg(3)
+        .arg("three")
+        .arg(4)
+        .arg("four")
+        .arg(5)
+        .arg("five");
+
+    c.query::<()>(&mut con).unwrap();
+
+    let results: Vec<String> = con.zrandmember(setname, Some(5)).unwrap();
+    assert_eq!(results.len(), 5);
+
+    let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
+    assert_eq!(results.len(), 5);
+
+    let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
+    assert_eq!(results.len(), 10);
+
+    let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
+    assert_eq!(results.len(), 10);
+}
