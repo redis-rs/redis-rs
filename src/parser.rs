@@ -165,7 +165,11 @@ mod aio_support {
     }
 
     impl ValueCodec {
-        fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+        fn decode_stream(
+            &mut self,
+            bytes: &mut BytesMut,
+            eof: bool,
+        ) -> RedisResult<Option<RedisResult<Value>>> {
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -188,7 +192,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result?)),
+                Some(result) => Ok(Some(result)),
                 None => Ok(None),
             }
         }
@@ -203,7 +207,7 @@ mod aio_support {
     }
 
     impl Decoder for ValueCodec {
-        type Item = Value;
+        type Item = RedisResult<Value>;
         type Error = RedisError;
 
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -327,7 +331,7 @@ mod tests {
         let mut bytes = bytes::BytesMut::from(&b"+GET 123\r\n"[..]);
         assert_eq!(
             codec.decode_eof(&mut bytes),
-            Ok(Some(parse_redis_value(b"+GET 123\r\n").unwrap()))
+            Ok(Some(Ok(parse_redis_value(b"+GET 123\r\n").unwrap())))
         );
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));

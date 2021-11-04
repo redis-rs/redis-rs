@@ -178,8 +178,7 @@ where
     pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
-            .into_stream()
-            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?.ok()?) }))
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions consuming it.
@@ -191,8 +190,7 @@ where
     pub fn into_on_message(self) -> impl Stream<Item = Msg> {
         ValueCodec::default()
             .framed(self.0.con)
-            .into_stream()
-            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?) }))
+            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?.ok()?) }))
     }
 
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
@@ -221,16 +219,18 @@ where
     pub fn on_message<T: FromRedisValue>(&mut self) -> impl Stream<Item = T> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
-            .into_stream()
-            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+            .filter_map(|value| {
+                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+            })
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
     pub fn into_on_message<T: FromRedisValue>(self) -> impl Stream<Item = T> {
         ValueCodec::default()
             .framed(self.0.con)
-            .into_stream()
-            .filter_map(|value| Box::pin(async move { T::from_redis_value(&value.ok()?).ok() }))
+            .filter_map(|value| {
+                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+            })
     }
 }
 
@@ -869,7 +869,9 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
-        let codec = ValueCodec::default().framed(stream);
+        let codec = ValueCodec::default()
+            .framed(stream)
+            .and_then(|msg| async move { msg });
         let (pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let mut con = MultiplexedConnection {
