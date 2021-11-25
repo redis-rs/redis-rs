@@ -171,34 +171,25 @@ impl ClusterConnection {
     }
 
     /// Check that all connections it has are available (`PING` internally).
-    pub fn check_connection(&mut self) -> bool {
+    pub fn check_connection(&mut self) -> RedisResult<()> {
         let mut connections = self.connections.borrow_mut();
         for conn in connections.values_mut() {
-            if !conn.check_connection() {
-                return false;
-            }
+            conn.check_connection()?;
         }
-        true
+        Ok(())
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
         self.send_recv_and_retry_cmds(pipe.commands())
     }
 
-    /// Returns the connection status.
-    ///
-    /// The connection is open until any `read_response` call recieved an
-    /// invalid response from the server (most likely a closed or dropped
-    /// connection, otherwise a Redis protocol error). When using unix
-    /// sockets the connection is open until writing a command failed with a
-    /// `BrokenPipe` error.
     fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         readonly: bool,
         password: Option<String>,
     ) -> RedisResult<HashMap<String, Connection>> {
         let mut connections = HashMap::with_capacity(initial_nodes.len());
-
+        let mut errors = Vec::with_capacity(initial_nodes.len());
         for info in initial_nodes.iter() {
             let addr = match info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
@@ -210,24 +201,28 @@ impl ClusterConnection {
                     let tls_mode = TlsMode::from_insecure_flag(insecure);
                     build_connection_string(host, Some(port), Some(tls_mode))
                 }
-                _ => panic!("No reach."),
+                _ => unreachable!(),
             };
 
             if let Ok(mut conn) = connect(info.clone(), readonly, password.clone()) {
-                if conn.check_connection() {
-                    connections.insert(addr, conn);
-                    break;
+                match conn.check_connection() {
+                    Ok(()) => {
+                        connections.insert(addr, conn);
+                    }
+                    Err(err) => errors.push(err),
                 }
             }
         }
 
         if connections.is_empty() {
-            return Err(RedisError::from((
+            Err(RedisError::from((
                 ErrorKind::IoError,
-                "It failed to check startup nodes.",
-            )));
+                "All of the connections failed",
+                format!("connection errors: {:#?}", errors),
+            )))
+        } else {
+            Ok(connections)
         }
-        Ok(connections)
     }
 
     // Query a node to discover slot-> master mappings.
@@ -256,7 +251,7 @@ impl ClusterConnection {
                 if !new_connections.contains_key(addr) {
                     if connections.contains_key(addr) {
                         let mut conn = connections.remove(addr).unwrap();
-                        if conn.check_connection() {
+                        if conn.check_connection().is_ok() {
                             new_connections.insert(addr.to_string(), conn);
                             continue;
                         }
@@ -265,7 +260,7 @@ impl ClusterConnection {
                     if let Ok(mut conn) =
                         connect(addr.as_ref(), self.readonly, self.password.clone())
                     {
-                        if conn.check_connection() {
+                        if conn.check_connection().is_ok() {
                             conn.set_read_timeout(*self.read_timeout.borrow())?;
                             conn.set_write_timeout(*self.write_timeout.borrow())?;
                             new_connections.insert(addr.to_string(), conn);
@@ -680,14 +675,12 @@ impl ConnectionLike for ClusterConnection {
         true
     }
 
-    fn check_connection(&mut self) -> bool {
+    fn check_connection(&mut self) -> RedisResult<()> {
         let mut connections = self.connections.borrow_mut();
         for conn in connections.values_mut() {
-            if !conn.check_connection() {
-                return false;
-            }
+            conn.check_connection()?;
         }
-        true
+        Ok(())
     }
 }
 
