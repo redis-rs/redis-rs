@@ -15,18 +15,19 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
     let mut group = c.benchmark_group("cluster_basic");
 
     group.bench_function("set", |b| {
-        b.iter(|| black_box(redis::cmd("SET").arg(key).arg(42).execute(con)))
+        b.iter(|| redis::cmd("SET").arg(key).arg(42).execute(con))
     });
 
     group.bench_function("get", |b| {
         b.iter(|| black_box(redis::cmd("GET").arg(key).query::<isize>(con).unwrap()))
     });
 
-    let mut set_and_del = || {
-        redis::cmd("SET").arg(key).arg(42).execute(con);
-        redis::cmd("DEL").arg(key).execute(con);
-    };
-    group.bench_function("set_and_del", |b| b.iter(|| black_box(set_and_del())));
+    group.bench_function("set_and_del", |b| {
+        b.iter(|| {
+            redis::cmd("SET").arg(key).arg(42).execute(con);
+            redis::cmd("DEL").arg(key).execute(con);
+        })
+    });
 
     group.finish();
 }
@@ -45,6 +46,7 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
         for q in &queries {
             pipe.set(q, "bar").ignore();
         }
+        pipe
     };
     group.bench_function("build_pipeline", |b| b.iter(|| black_box(build_pipeline())));
 
@@ -53,7 +55,7 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
         pipe.set(q, "bar").ignore();
     }
     group.bench_function("query_pipeline", |b| {
-        b.iter(|| black_box(pipe.query::<()>(con).unwrap()))
+        b.iter(|| pipe.query::<()>(con).unwrap())
     });
 
     group.finish();

@@ -289,8 +289,8 @@ impl ClusterConnection {
         let len = connections.len();
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
-        for mut conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(&mut conn, self.tls) {
+        for conn in samples.iter_mut() {
+            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
