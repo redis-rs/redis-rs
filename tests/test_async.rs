@@ -513,15 +513,22 @@ mod pub_sub {
             pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             drop(pubsub_conn);
 
-            std::thread::sleep(Duration::from_millis(50));
-
             let mut conn = ctx.async_connection().await?;
-            let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
-                .arg("NUMSUB")
-                .arg(SUBSCRIPTION_KEY)
-                .query_async(&mut conn)
-                .await?;
-            let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+            let mut subscription_count = 1;
+            // Allow for the unsubscription to occur within 5 seconds
+            for _ in 0..100 {
+                let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                    .arg("NUMSUB")
+                    .arg(SUBSCRIPTION_KEY)
+                    .query_async(&mut conn)
+                    .await?;
+                subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+                if subscription_count == 0 {
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(50));
+            }
             assert_eq!(subscription_count, 0);
 
             Ok(())
