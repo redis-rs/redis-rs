@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
@@ -883,6 +884,45 @@ impl ConnectionLike for Connection {
 
     fn check_connection(&mut self) -> bool {
         cmd("PING").query::<String>(self).is_ok()
+    }
+}
+
+impl<C, T> ConnectionLike for T
+where
+    C: ConnectionLike,
+    T: DerefMut<Target = C>,
+{
+    fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
+        self.deref_mut().req_packed_command(cmd)
+    }
+
+    fn req_packed_commands(
+        &mut self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        self.deref_mut().req_packed_commands(cmd, offset, count)
+    }
+
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        self.deref_mut().req_command(cmd)
+    }
+
+    fn get_db(&self) -> i64 {
+        self.deref().get_db()
+    }
+
+    fn supports_pipelining(&self) -> bool {
+        self.deref().supports_pipelining()
+    }
+
+    fn check_connection(&mut self) -> bool {
+        self.deref_mut().check_connection()
+    }
+
+    fn is_open(&self) -> bool {
+        self.deref().is_open()
     }
 }
 
