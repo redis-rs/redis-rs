@@ -1,11 +1,22 @@
 <a name="0.21.4"></a>
 ### 0.21.4 (2021-11-04)
 
+#### Features
+
+*   Add convenience command: zrandbember ([#556](https://github.com/mitsuhiko/redis-rs/pull/556))
 
 
 
 <a name="0.21.3"></a>
 ### 0.21.3 (2021-10-15)
+
+#### Features
+
+*   Add support for TLS with cluster mode ([#548](https://github.com/mitsuhiko/redis-rs/pull/548))
+
+#### Changes
+
+*   Remove stunnel as a dep, use redis native tls ([#542](https://github.com/mitsuhiko/redis-rs/pull/542))
 
 
 
