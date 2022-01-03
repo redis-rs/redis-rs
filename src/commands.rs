@@ -546,42 +546,16 @@ implement_commands! {
 
     // list operations
     
-    /// Pop an element from the front of a list, push it to the front of another list
+    /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
-    fn blmove_left_to_left<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
-        cmd("BLMOVE").arg(srckey).arg(dstkey).arg("LEFT").arg("LEFT").arg(timeout)
+    fn blmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction, timeout: usize) {
+        cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
-    /// Pop an element from the front of a list, push it to the end of another list
-    /// and return it; or block until one is available
-    fn blmove_left_to_right<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
-        cmd("BLMOVE").arg(srckey).arg(dstkey).arg("LEFT").arg("RIGHT").arg(timeout)
-    }
-
-    /// Pop an element from the end of a list, push it to the front of another list
-    /// and return it; or block until one is available
-    fn blmove_right_to_left<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
-        cmd("BLMOVE").arg(srckey).arg(dstkey).arg("RIGHT").arg("LEFT").arg(timeout)
-    }
-
-    /// Pop an element from the end of a list, push it to the end of another list
-    /// and return it; or block until one is available
-    fn blmove_right_to_right<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
-        cmd("BLMOVE").arg(srckey).arg(dstkey).arg("RIGHT").arg("RIGHT").arg(timeout)
-    }
-
-    /// Pops `count` elements from the start of the first non-empty list key from the list of 
-    /// provided key names - defaults to 1 element if count not defined. Or blocks
-    /// until one is available.
-    fn blmpop_left<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, count: Option<core::num::NonZeroUsize>) {
-        cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg("LEFT").arg("COUNT").arg(count)
-    }
-
-    /// Pops `count` elements from the end of the first non-empty list key from the list of 
-    /// provided key names - defaults to 1 element if count not defined. Or blocks
-    /// until one is available.
-    fn blmpop_right<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, count: Option<core::num::NonZeroUsize>) {
-        cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg("RIGHT").arg("COUNT").arg(count)
+    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// provided key names; or blocks until one is available.
+    fn blmpop<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, dir: Direction, count: usize){
+        cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
 
     /// Remove and get the first element in a list, or block until one is available.
@@ -622,40 +596,15 @@ implement_commands! {
         cmd("LLEN").arg(key)
     }
 
-    /// Pop an element from the front of a list, push it to the front of another list
-    /// and return it
-    fn lmove_left_to_left<K: ToRedisArgs>(srckey: K, dstkey: K) {
-        cmd("LMOVE").arg(srckey).arg(dstkey).arg("LEFT").arg("LEFT")
+    /// Pop an element a list, push it to another list and return it
+    fn lmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction) {
+        cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
     }
 
-    /// Pop an element from the front of a list, push it to the end of another list
-    /// and return it
-    fn lmove_left_to_right<K: ToRedisArgs>(srckey: K, dstkey: K) {
-        cmd("LMOVE").arg(srckey).arg(dstkey).arg("LEFT").arg("RIGHT")
-    }
-
-    /// Pop an element from the end of a list, push it to the front of another list
-    /// and return it
-    fn lmove_right_to_left<K: ToRedisArgs>(srckey: K, dstkey: K) {
-        cmd("LMOVE").arg(srckey).arg(dstkey).arg("RIGHT").arg("LEFT")
-    }
-
-    /// Pop an element from the end of a list, push it to the end of another list
-    /// and return it
-    fn lmove_right_to_right<K: ToRedisArgs>(srckey: K, dstkey: K) {
-        cmd("LMOVE").arg(srckey).arg(dstkey).arg("RIGHT").arg("RIGHT")
-    }
-
-    /// Pops `count` elements from the start of the first non-empty list key from the list of 
-    /// provided key names - defaults to 1 element if count not defined
-    fn lmpop_left<K: ToRedisArgs>( numkeys: usize, key: K, count: Option<core::num::NonZeroUsize>) {
-        cmd("LMPOP").arg(numkeys).arg(key).arg("LEFT").arg("COUNT").arg(count)
-    }
-
-    /// Pops `count` elements from the end of the first non-empty list key from the list of 
-    /// provided key names - defaults to 1 element if count not defined
-    fn lmpop_right<K: ToRedisArgs>( numkeys: usize, key: K, count: Option<core::num::NonZeroUsize>) {
-        cmd("LMPOP").arg(numkeys).arg(key).arg("RIGHT").arg("COUNT").arg(count)
+    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// provided key names.
+    fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) {
+        cmd("LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
 
     /// Removes and returns the up to `count` first elements of the list stored at key.
@@ -2212,5 +2161,27 @@ impl ToRedisArgs for LposOptions {
 
     fn is_single_arg(&self) -> bool {
         false
+    }
+}
+
+/// Enum for the LEFT | RIGHT args used by some commands
+pub enum Direction {
+    Left,
+    Right,
+}
+
+impl ToRedisArgs for Direction {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            Direction::Left => {
+                out.write_arg(b"LEFT")
+            },
+            Direction::Right => {
+                out.write_arg(b"RIGHT")
+            },
+        }
     }
 }
