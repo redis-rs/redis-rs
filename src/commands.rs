@@ -2175,7 +2175,7 @@ impl ToRedisArgs for Direction {
     where
         W: ?Sized + RedisWrite,
     {
-        let s = match self {
+        let s: &[u8] = match self {
             Direction::Left => b"LEFT",
             Direction::Right => b"RIGHT",
         };
