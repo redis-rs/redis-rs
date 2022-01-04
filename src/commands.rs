@@ -545,6 +545,18 @@ implement_commands! {
     }
 
     // list operations
+    
+    /// Pop an element from a list, push it to another list
+    /// and return it; or block until one is available
+    fn blmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction, timeout: usize) {
+        cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
+    }
+
+    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// provided key names; or blocks until one is available.
+    fn blmpop<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, dir: Direction, count: usize){
+        cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
+    }
 
     /// Remove and get the first element in a list, or block until one is available.
     fn blpop<K: ToRedisArgs>(key: K, timeout: usize) {
@@ -582,6 +594,17 @@ implement_commands! {
     /// Returns the length of the list stored at key.
     fn llen<K: ToRedisArgs>(key: K) {
         cmd("LLEN").arg(key)
+    }
+
+    /// Pop an element a list, push it to another list and return it
+    fn lmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction) {
+        cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
+    }
+
+    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// provided key names.
+    fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) {
+        cmd("LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
 
     /// Removes and returns the up to `count` first elements of the list stored at key.
@@ -2138,5 +2161,24 @@ impl ToRedisArgs for LposOptions {
 
     fn is_single_arg(&self) -> bool {
         false
+    }
+}
+
+/// Enum for the LEFT | RIGHT args used by some commands
+pub enum Direction {
+    Left,
+    Right,
+}
+
+impl ToRedisArgs for Direction {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        let s: &[u8] = match self {
+            Direction::Left => b"LEFT",
+            Direction::Right => b"RIGHT",
+        };
+        out.write_arg(s);
     }
 }
