@@ -306,6 +306,49 @@ fn test_async_scanning(batch_size: usize) {
     .unwrap();
 }
 
+fn test_async_scanning_stream(batch_size: usize) {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        ctx.multiplexed_async_connection()
+            .and_then(|mut con| {
+                async move {
+                    let mut unseen = std::collections::HashSet::new();
+
+                    for x in 0..batch_size {
+                        redis::cmd("SADD")
+                            .arg("foo")
+                            .arg(x)
+                            .query_async(&mut con)
+                            .await?;
+                        unseen.insert(x);
+                    }
+
+                    let mut iter = redis::cmd("SSCAN")
+                        .arg("foo")
+                        .cursor_arg(0)
+                        .clone()
+                        .iter_async(&mut con)
+                        .await
+                        .unwrap();
+                    
+                    let collection : Vec<_> = iter.collect().await;
+                    for item in collection {
+                        // type inference limitations
+                        let x: usize = x;
+                        // if this assertion fails, too many items were returned by the iterator.
+                        assert!(unseen.remove(&x));
+                    }
+
+                    assert_eq!(unseen.len(), 0);
+                    Ok(())
+                }
+            })
+            .map_err(|err| panic!("{}", err))
+            .await
+    })
+    .unwrap();
+}
+
 #[test]
 fn test_async_scanning_big_batch() {
     test_async_scanning(1000)
@@ -314,6 +357,16 @@ fn test_async_scanning_big_batch() {
 #[test]
 fn test_async_scanning_small_batch() {
     test_async_scanning(2)
+}
+
+#[test]
+fn test_async_scanning_big_batch_stream() {
+    test_async_scanning_stream(1000)
+}
+
+#[test]
+fn test_async_scanning_small_batch_stream() {
+    test_async_scanning_stream(2)
 }
 
 #[test]
