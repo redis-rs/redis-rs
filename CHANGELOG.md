@@ -1,3 +1,11 @@
+<a name="0.21.5"></a>
+### 0.21.5 (2022-01-10)
+
+#### Features
+
+*   Add new list commands ([#570](https://github.com/mitsuhiko/redis-rs/pull/570))
+
+
 <a name="0.21.4"></a>
 ### 0.21.4 (2021-11-04)
 
