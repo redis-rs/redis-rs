@@ -1,5 +1,5 @@
 #![cfg(feature = "script")]
-use sha1::Sha1;
+use sha1_smol::Sha1;
 
 use crate::cmd::cmd;
 use crate::connection::ConnectionLike;
