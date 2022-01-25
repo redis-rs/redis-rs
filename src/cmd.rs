@@ -260,7 +260,7 @@ impl Default for Cmd {
 /// redis::cmd("SET").arg("my_key").arg(42);
 /// ```
 ///
-/// Because currently rust's currently does not have an ideal system
+/// Because Rust currently does not have an ideal system
 /// for lifetimes of temporaries, sometimes you need to hold on to
 /// the initially generated command:
 ///
