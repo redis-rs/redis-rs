@@ -8,18 +8,22 @@ use super::{
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
     readonly: bool,
+    username: Option<String>,
     password: Option<String>,
 }
 
 impl ClusterClientBuilder {
     /// Generate the base configuration for new Client.
     pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
+        let initial_nodes = initial_nodes
+            .into_iter()
+            .map(|x| x.into_connection_info())
+            .collect();
+
         ClusterClientBuilder {
-            initial_nodes: initial_nodes
-                .into_iter()
-                .map(|x| x.into_connection_info())
-                .collect(),
+            initial_nodes,
             readonly: false,
+            username: None,
             password: None,
         }
     }
@@ -55,6 +59,7 @@ impl ClusterClientBuilder {
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
     readonly: bool,
+    username: Option<String>,
     password: Option<String>,
 }
 
@@ -81,6 +86,7 @@ impl ClusterClient {
         ClusterConnection::new(
             self.initial_nodes.clone(),
             self.readonly,
+            self.username.clone(),
             self.password.clone(),
         )
     }
@@ -88,12 +94,24 @@ impl ClusterClient {
     fn build(builder: ClusterClientBuilder) -> RedisResult<ClusterClient> {
         let initial_nodes = builder.initial_nodes?;
         let mut nodes = Vec::with_capacity(initial_nodes.len());
+        let mut connection_info_username = None::<String>;
         let mut connection_info_password = None::<String>;
 
         for (index, info) in initial_nodes.into_iter().enumerate() {
             if let ConnectionAddr::Unix(_) = info.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+            }
+
+            if builder.username.is_none() {
+                if index == 0 {
+                    connection_info_username = info.redis.username.clone();
+                } else if connection_info_username != info.redis.username {
+                    return Err(RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot use different username among initial nodes.",
+                    )));
+                }
             }
 
             if builder.password.is_none() {
@@ -113,6 +131,7 @@ impl ClusterClient {
         Ok(ClusterClient {
             initial_nodes: nodes,
             readonly: builder.readonly,
+            username: builder.username.or(connection_info_username),
             password: builder.password.or(connection_info_password),
         })
     }
