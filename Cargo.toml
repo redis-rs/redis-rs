@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # much of a point to optimize these, but these could in theory be removed for
 # an indirection through std::Formatter.
 dtoa = "0.4"
-itoa = "0.4.3"
+itoa = "1.0.1"
 
 # This is a dependency that already exists in url
 percent-encoding = "2.1"
