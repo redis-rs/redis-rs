@@ -204,7 +204,9 @@ where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     cmd.write_all(b"*")?;
-    ::itoa::write(&mut *cmd, args.len())?;
+    let mut buffer = ::itoa::Buffer::new();
+    let args_len = buffer.format(args.len());
+    cmd.write_all(args_len.as_bytes())?;
     cmd.write_all(b"\r\n")?;
 
     let mut cursor_bytes = itoa::Buffer::new();
@@ -215,7 +217,8 @@ where
         };
 
         cmd.write_all(b"$")?;
-        ::itoa::write(&mut *cmd, bytes.len())?;
+        let bytes_len = buffer.format(bytes.len());
+        cmd.write_all(bytes_len.as_bytes())?;
         cmd.write_all(b"\r\n")?;
 
         cmd.write_all(bytes)?;

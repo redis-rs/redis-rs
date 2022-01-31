@@ -754,9 +754,9 @@ impl ToRedisArgs for u8 {
     where
         W: ?Sized + RedisWrite,
     {
-        let mut buf = [0u8; 3];
-        let n = ::itoa::write(&mut buf[..], *self).unwrap();
-        out.write_arg(&buf[..n])
+      let mut buf = ::itoa::Buffer::new();
+      let n = buf.format(*self);
+        out.write_arg(n.as_bytes())
     }
 
     fn make_arg_vec<W>(items: &[u8], out: &mut W)
@@ -778,6 +778,8 @@ itoa_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(i128, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(u128, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 
@@ -789,6 +791,8 @@ non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::Numbe
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU128, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI128, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
 
