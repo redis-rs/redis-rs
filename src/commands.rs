@@ -397,6 +397,16 @@ implement_commands! {
         cmd("PTTL").arg(key)
     }
 
+    /// Get the value of a key and set expiration
+    fn get_ex<K: ToRedisArgs>(key: K, seconds: usize) {
+        cmd("GETEX").arg(key).arg("EX").arg(seconds)
+    }
+
+    /// Get the value of a key and delete it
+    fn get_del<K: ToRedisArgs>(key: K) {
+        cmd("GETDEL").arg(key)
+    }
+
     /// Rename a key.
     fn rename<K: ToRedisArgs>(key: K, new_key: K) {
         cmd("RENAME").arg(key).arg(new_key)
