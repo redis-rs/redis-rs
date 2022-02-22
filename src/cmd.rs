@@ -203,8 +203,11 @@ fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u6
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
+    let mut buf = ::itoa::Buffer::new();
+
     cmd.write_all(b"*")?;
-    ::itoa::write(&mut *cmd, args.len())?;
+    let s = buf.format(args.len());
+    cmd.write_all(s.as_bytes())?;
     cmd.write_all(b"\r\n")?;
 
     let mut cursor_bytes = itoa::Buffer::new();
@@ -215,7 +218,8 @@ where
         };
 
         cmd.write_all(b"$")?;
-        ::itoa::write(&mut *cmd, bytes.len())?;
+        let s = buf.format(bytes.len());
+        cmd.write_all(s.as_bytes())?;
         cmd.write_all(b"\r\n")?;
 
         cmd.write_all(bytes)?;
