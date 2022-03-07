@@ -53,10 +53,10 @@ To enable asynchronous clients a feature for the underlying feature need to be a
 
 ```
 # if you use tokio
-redis = { version = "0.17.0", features = ["tokio-comp"] }
+redis = { version = "0.21.4", features = ["tokio-comp"] }
 
 # if you use async-std
-redis = { version = "0.17.0", features = ["async-std-comp"] }
+redis = { version = "0.21.4", features = ["async-std-comp"] }
 ```
 
 ## TLS Support
@@ -64,13 +64,13 @@ redis = { version = "0.17.0", features = ["async-std-comp"] }
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
 
 ```
-redis = { version = "0.19.0", features = ["tls"] }
+redis = { version = "0.21.4", features = ["tls"] }
 
 # if you use tokio
-redis = { version = "0.19.0", features = ["tokio-native-tls-comp"] }
+redis = { version = "0.21.4", features = ["tokio-native-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.19.0", features = ["async-std-tls-comp"] }
+redis = { version = "0.21.4", features = ["async-std-tls-comp"] }
 ```
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
@@ -83,7 +83,7 @@ let client = redis::Client::open("rediss://127.0.0.1/")?;
 
 Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
 
-`redis = { version = "0.17.0", features = [ "cluster"] }`
+`redis = { version = "0.21.4", features = [ "cluster"] }`
 
 Then you can simply use the `ClusterClient` which accepts a list of available nodes.
 
