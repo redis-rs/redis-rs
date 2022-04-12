@@ -23,6 +23,39 @@ fn test_cluster_basics() {
 }
 
 #[test]
+fn test_cluster_with_username_and_password() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
+        builder
+            .username(RedisCluster::username().to_string())
+            .password(RedisCluster::password().to_string())
+    });
+    let mut con = cluster.connection();
+
+    redis::cmd("SET")
+        .arg("{x}key1")
+        .arg(b"foo")
+        .execute(&mut con);
+    redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+
+    assert_eq!(
+        redis::cmd("MGET")
+            .arg(&["{x}key1", "{x}key2"])
+            .query(&mut con),
+        Ok(("foo".to_string(), b"bar".to_vec()))
+    );
+}
+
+#[test]
+fn test_cluster_with_bad_password() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
+        builder
+            .username(RedisCluster::username().to_string())
+            .password("not the right password".to_string())
+    });
+    assert!(cluster.client.get_connection().is_err());
+}
+
+#[test]
 fn test_cluster_readonly() {
     let cluster =
         TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| builder.readonly(true));
