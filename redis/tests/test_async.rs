@@ -1,4 +1,4 @@
-use futures::{future, prelude::*};
+use futures::{future, prelude::*, StreamExt};
 use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
 
 use crate::support::*;
@@ -460,6 +460,24 @@ async fn invalid_password_issue_343() {
         ErrorKind::AuthenticationFailed,
         "Unexpected error: {err}",
     );
+}
+
+// Test issue of Stream trait blocking if we try to iterate more than 10 items
+// https://github.com/mitsuhiko/redis-rs/issues/537 and https://github.com/mitsuhiko/redis-rs/issues/583
+#[tokio::test]
+async fn test_issue_stream_blocks() {
+    let ctx = TestContext::new();
+    let mut con = ctx.multiplexed_async_connection().await.unwrap();
+    for i in 0..20usize {
+        let _: () = con.append(format!("test/{i}"), i).await.unwrap();
+    }
+    let values = con.scan_match::<&str, String>("test/*").await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_millis(100), async move {
+        let values: Vec<_> = values.collect().await;
+        assert_eq!(values.len(), 20);
+    })
+    .await
+    .unwrap();
 }
 
 mod pub_sub {
