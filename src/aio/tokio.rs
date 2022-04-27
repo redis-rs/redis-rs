@@ -35,6 +35,9 @@ use tokio_native_tls::TlsStream;
 #[cfg(unix)]
 use super::Path;
 
+// The rustls implementation of TlsStream is a larger enum, but it will only exist if the "rustls"
+// feature is enabled, and in that case, it should be the variant that is used.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Tokio {
     /// Represents a Tokio TCP connection.
     Tcp(TcpStreamTokio),
