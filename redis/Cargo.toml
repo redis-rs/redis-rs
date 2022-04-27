@@ -54,12 +54,15 @@ rand = { version = "0.8", optional = true }
 async-std = { version = "1.8.0", optional = true}
 async-trait = { version = "0.1.24", optional = true }
 
-# Only needed for TLS
+# Only needed for native tls
 native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
+
+# Only needed for rustls
 rustls = { version = "0.20.4", features = ["dangerous_configuration"], optional = true }
 webpki-roots = { version = "0.22.3", optional = true }
+tokio-rustls = { version = "0.23.3", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.82", optional = true }
@@ -84,6 +87,7 @@ async-std-comp = ["aio", "async-std"]
 async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
 tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls", "tokio-native-tls"]
+tokio-rustls-comp = ["rustls", "tokio-rustls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
