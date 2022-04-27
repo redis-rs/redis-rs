@@ -19,15 +19,11 @@ use tokio::{
 use native_tls::TlsConnector;
 
 #[cfg(feature = "rustls")]
-use crate::connection::NoCertificateVerification;
-#[cfg(feature = "rustls")]
-use rustls::{cipher_suite, kx_group, OwnedTrustAnchor, RootCertStore};
+use crate::connection::create_rustls_config;
 #[cfg(feature = "rustls")]
 use std::{convert::TryInto, sync::Arc};
 #[cfg(feature = "rustls")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
-#[cfg(feature = "rustls")]
-use webpki_roots::TLS_SERVER_ROOTS;
 
 #[cfg(feature = "tokio-native-tls-comp")]
 use tokio_native_tls::TlsStream;
@@ -134,30 +130,7 @@ impl RedisRuntime for Tokio {
         socket_addr: SocketAddr,
         insecure: bool,
     ) -> RedisResult<Self> {
-        let mut root_store = RootCertStore::empty();
-        root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
-            OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
-
-        let mut config = rustls::ClientConfig::builder()
-            .with_cipher_suites(&[cipher_suite::TLS13_CHACHA20_POLY1305_SHA256])
-            .with_kx_groups(&[&kx_group::X25519])
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        if insecure {
-            config.enable_sni = false;
-            config
-                .dangerous()
-                .set_certificate_verifier(Arc::new(NoCertificateVerification))
-        }
-
+        let config = create_rustls_config(insecure)?;
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector

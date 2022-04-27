@@ -337,7 +337,7 @@ enum ActualConnection {
 }
 
 #[cfg(feature = "rustls")]
-pub(crate) struct NoCertificateVerification;
+struct NoCertificateVerification;
 
 #[cfg(feature = "rustls")]
 impl rustls::client::ServerCertVerifier for NoCertificateVerification {
@@ -486,30 +486,7 @@ impl ActualConnection {
                 insecure,
             } => {
                 let host: &str = host;
-                let mut root_store = RootCertStore::empty();
-                root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
-                    OwnedTrustAnchor::from_subject_spki_name_constraints(
-                        ta.subject,
-                        ta.spki,
-                        ta.name_constraints,
-                    )
-                }));
-
-                let mut config = rustls::ClientConfig::builder()
-                    .with_cipher_suites(&[cipher_suite::TLS13_CHACHA20_POLY1305_SHA256])
-                    .with_kx_groups(&[&kx_group::X25519])
-                    .with_protocol_versions(&[&rustls::version::TLS13])
-                    .unwrap()
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-
-                if insecure {
-                    config.enable_sni = false;
-                    config
-                        .dangerous()
-                        .set_certificate_verifier(Arc::new(NoCertificateVerification))
-                }
-
+                let config = create_rustls_config(insecure)?;
                 let conn = rustls::ClientConnection::new(Arc::new(config), host.try_into()?)?;
                 let reader = match timeout {
                     None => {
@@ -690,6 +667,34 @@ impl ActualConnection {
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
     }
+}
+
+#[cfg(feature = "rustls")]
+pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::ClientConfig> {
+    let mut root_store = RootCertStore::empty();
+    root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
+    }));
+
+    let mut config = rustls::ClientConfig::builder()
+        .with_cipher_suites(&[cipher_suite::TLS13_CHACHA20_POLY1305_SHA256])
+        .with_kx_groups(&[&kx_group::X25519])
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    if insecure {
+        config.enable_sni = false;
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertificateVerification))
+    }
+    Ok(config)
 }
 
 fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> RedisResult<()> {
