@@ -305,6 +305,32 @@ impl From<native_tls::Error> for RedisError {
     }
 }
 
+#[cfg(feature = "rustls")]
+impl From<rustls::Error> for RedisError {
+    fn from(err: rustls::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "rustls")]
+impl From<rustls::client::InvalidDnsNameError> for RedisError {
+    fn from(err: rustls::client::InvalidDnsNameError) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS Error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
 impl From<FromUtf8Error> for RedisError {
     fn from(_: FromUtf8Error) -> RedisError {
         RedisError {
