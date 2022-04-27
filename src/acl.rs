@@ -148,7 +148,7 @@ impl FromRedisValue for AclInfo {
         {
             (Some(flags), Some(passwords), Some(commands), Some(keys)) => {
                 // Parse flags
-                // Ref: https://git.io/JfNyb
+                // Ref: https://github.com/redis/redis/blob/0cabe0cfa7290d9b14596ec38e0d0a22df65d1df/src/acl.c#L83-L90
                 let flags = flags
                     .as_sequence()
                     .ok_or_else(|| {
