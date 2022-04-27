@@ -57,6 +57,8 @@ async-trait = "0.1.24"
 native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
+rustls = { version = "0.20.4", features = ["dangerous_configuration"], optional = true }
+webpki-roots = { version = "0.22.3", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script"]
@@ -66,6 +68,7 @@ geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
 tls = ["native-tls"]
+rustls = ["dep:rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std"]
 async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
 tokio-comp = ["aio", "tokio", "tokio/net"]
