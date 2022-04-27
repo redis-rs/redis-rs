@@ -1178,6 +1178,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls",
  "tokio-util 0.7.0",
  "url",
  "webpki-roots",
@@ -1557,6 +1558,17 @@ checksum = "f7d995660bd2b7f8c1568414c1126076c13fbb725c40112dc0120b78eb9b717b"
 dependencies = [
  "native-tls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.23.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4151fda0cf2798550ad0b34bcfc9b9dcc2a9d2471c895c68f3a8818e54f2389e"
+dependencies = [
+ "rustls",
+ "tokio",
+ "webpki",
 ]
 
 [[package]]
