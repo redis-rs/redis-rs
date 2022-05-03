@@ -277,12 +277,8 @@ impl ConnectionLike for Client {
         self.connection_info.redis.db
     }
 
-    fn check_connection(&mut self) -> bool {
-        if let Ok(mut conn) = self.get_connection() {
-            conn.check_connection()
-        } else {
-            false
-        }
+    fn check_connection(&mut self) -> RedisResult<()> {
+        self.get_connection()?.check_connection()
     }
 
     fn is_open(&self) -> bool {

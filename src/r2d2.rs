@@ -1,5 +1,3 @@
-use std::io;
-
 use crate::{ConnectionLike, RedisError};
 
 macro_rules! impl_manage_connection {
@@ -13,11 +11,7 @@ macro_rules! impl_manage_connection {
             }
 
             fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-                if conn.check_connection() {
-                    Ok(())
-                } else {
-                    Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-                }
+                conn.check_connection()
             }
 
             fn has_broken(&self, conn: &mut Self::Connection) -> bool {

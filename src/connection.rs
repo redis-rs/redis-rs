@@ -657,7 +657,7 @@ pub trait ConnectionLike {
     }
 
     /// Check that all connections it has are available (`PING` internally).
-    fn check_connection(&mut self) -> bool;
+    fn check_connection(&mut self) -> RedisResult<()>;
 
     /// Returns the connection status.
     ///
@@ -881,8 +881,8 @@ impl ConnectionLike for Connection {
         self.con.is_open()
     }
 
-    fn check_connection(&mut self) -> bool {
-        cmd("PING").query::<String>(self).is_ok()
+    fn check_connection(&mut self) -> RedisResult<()> {
+        cmd("PING").query::<String>(self).map(|_| ())
     }
 }
 
