@@ -183,4 +183,34 @@ impl<'a> ScriptInvocation<'a> {
             }
         }
     }
+
+    /// Loads the script and returns the SHA1 of it.
+    #[inline]
+    pub fn load(&self, con: &mut dyn ConnectionLike) -> RedisResult<String> {
+        let hash: String = cmd("SCRIPT")
+            .arg("LOAD")
+            .arg(self.script.code.as_bytes())
+            .query(con)?;
+
+        debug_assert_eq!(hash, self.script.hash);
+
+        Ok(hash)
+    }
+
+    /// Asynchronously loads the script and returns the SHA1 of it.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn load_async<C>(&self, con: &mut C) -> RedisResult<String>
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        let hash: String = cmd("SCRIPT")
+            .arg("LOAD")
+            .arg(self.script.code.as_bytes())
+            .query_async(con).await?;
+
+        debug_assert_eq!(hash, self.script.hash);
+
+        Ok(hash)
+    }
 }
