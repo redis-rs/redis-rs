@@ -124,26 +124,26 @@ impl<'a> ScriptInvocation<'a> {
     /// Invokes the script and returns the result.
     #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
-        loop {
-            match cmd("EVALSHA")
-                .arg(self.script.hash.as_bytes())
-                .arg(self.keys.len())
-                .arg(&*self.keys)
-                .arg(&*self.args)
-                .query(con)
-            {
-                Ok(val) => {
-                    return Ok(val);
-                }
-                Err(err) => {
-                    if err.kind() == ErrorKind::NoScriptError {
-                        cmd("SCRIPT")
-                            .arg("LOAD")
-                            .arg(self.script.code.as_bytes())
-                            .query(con)?;
-                    } else {
-                        fail!(err);
-                    }
+        let mut eval_cmd = cmd("EVALSHA");
+        eval_cmd
+            .arg(self.script.hash.as_bytes())
+            .arg(self.keys.len())
+            .arg(&*self.keys)
+            .arg(&*self.args);
+
+        match eval_cmd.query(con) {
+            Ok(val) => Ok(val),
+            Err(err) => {
+                if err.kind() == ErrorKind::NoScriptError {
+                    let mut load_cmd = cmd("SCRIPT");
+                    load_cmd
+                        .arg("LOAD")
+                        .arg(self.script.code.as_bytes())
+                        .query(con)?;
+
+                    eval_cmd.query(con)
+                } else {
+                    Err(err)
                 }
             }
         }
@@ -164,8 +164,6 @@ impl<'a> ScriptInvocation<'a> {
             .arg(&*self.keys)
             .arg(&*self.args);
 
-        let mut load_cmd = cmd("SCRIPT");
-        load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
         match eval_cmd.query_async(con).await {
             Ok(val) => {
                 // Return the value from the script evaluation
@@ -174,6 +172,9 @@ impl<'a> ScriptInvocation<'a> {
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
                 if err.kind() == ErrorKind::NoScriptError {
+                    let mut load_cmd = cmd("SCRIPT");
+                    load_cmd.arg("LOAD").arg(self.script.code.as_bytes());
+
                     load_cmd.query_async(con).await?;
                     eval_cmd.query_async(con).await
                 } else {
