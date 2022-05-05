@@ -295,14 +295,11 @@ fn test_script_load() {
     let script = redis::Script::new("return 'Hello World'");
 
     block_on_all(async move {
-        let mut con = ctx.multiplexed_async_connection_async_std().await?;
+        let mut con = ctx.multiplexed_async_connection_async_std().await.unwrap();
 
-        let hash = script.prepare_invoke().load_async(&mut con);
-        assert_eq!(hash, Ok(script.get_hash().to_string()));
-
-        Ok(())
-    })
-    .unwrap();
+        let hash = script.prepare_invoke().load_async(&mut con).await.unwrap();
+        assert_eq!(hash, script.get_hash().to_string());
+    });
 }
 
 #[test]

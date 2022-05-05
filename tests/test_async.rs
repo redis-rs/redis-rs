@@ -354,19 +354,14 @@ fn test_script() {
 #[cfg(feature = "script")]
 fn test_script_load() {
     let ctx = TestContext::new();
-    let mut con = ctx.connection();
-
     let script = redis::Script::new("return 'Hello World'");
 
     block_on_all(async move {
-        let mut con = ctx.multiplexed_async_connection().await?;
+        let mut con = ctx.multiplexed_async_connection().await.unwrap();
 
-        let hash = script.prepare_invoke().load_async(&mut con);
-        assert_eq!(hash, Ok(script.get_hash().to_string()));
-
-        Ok(())
-    })
-    .unwrap();
+        let hash = script.prepare_invoke().load_async(&mut con).await.unwrap();
+        assert_eq!(hash, script.get_hash().to_string());
+    });
 }
 
 #[test]
