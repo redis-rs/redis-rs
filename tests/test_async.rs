@@ -352,6 +352,25 @@ fn test_script() {
 
 #[test]
 #[cfg(feature = "script")]
+fn test_script_load() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let script = redis::Script::new("return 'Hello World'");
+
+    block_on_all(async move {
+        let mut con = ctx.multiplexed_async_connection().await?;
+
+        let hash = script.prepare_invoke().load_async(&mut con);
+        assert_eq!(hash, Ok(script.get_hash().to_string()));
+
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+#[cfg(feature = "script")]
 fn test_script_returning_complex_type() {
     let ctx = TestContext::new();
     block_on_all(async {
