@@ -248,8 +248,8 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 ),
                 None => 0,
             },
-            username: query.get("user").map(|username| username.to_string()),
-            password: query.get("pass").map(|password| password.to_string()),
+            username: query.get("user").map(ToString::to_string),
+            password: query.get("pass").map(ToString::to_string),
         },
     })
 }
@@ -938,9 +938,7 @@ impl<'a> PubSub<'a> {
         loop {
             if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
                 return Ok(msg);
-            } else {
-                continue;
-            }
+            } 
         }
     }
 

@@ -607,7 +607,7 @@ pub trait RedisWrite {
 
     /// Accepts a serialized redis command.
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
-        self.write_arg(arg.to_string().as_bytes())
+        self.write_arg(arg.to_string().as_bytes());
     }
 }
 
@@ -617,7 +617,7 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
-        self.push(arg.to_string().into_bytes())
+        self.push(arg.to_string().into_bytes());
     }
 }
 
@@ -756,7 +756,7 @@ impl ToRedisArgs for u8 {
     {
         let mut buf = ::itoa::Buffer::new();
         let s = buf.format(*self);
-        out.write_arg(s.as_bytes())
+        out.write_arg(s.as_bytes());
     }
 
     fn make_arg_vec<W>(items: &[u8], out: &mut W)
@@ -800,7 +800,7 @@ impl ToRedisArgs for bool {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(if *self { b"1" } else { b"0" })
+        out.write_arg(if *self { b"1" } else { b"0" });
     }
 }
 
@@ -809,7 +809,7 @@ impl ToRedisArgs for String {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(self.as_bytes())
+        out.write_arg(self.as_bytes());
     }
 }
 
@@ -818,7 +818,7 @@ impl<'a> ToRedisArgs for &'a str {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(self.as_bytes())
+        out.write_arg(self.as_bytes());
     }
 }
 
@@ -827,7 +827,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(self, out)
+        ToRedisArgs::make_arg_vec(self, out);
     }
 
     fn is_single_arg(&self) -> bool {
@@ -840,7 +840,7 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(*self, out)
+        ToRedisArgs::make_arg_vec(*self, out);
     }
 
     fn is_single_arg(&self) -> bool {
@@ -878,7 +878,7 @@ impl<T: ToRedisArgs> ToRedisArgs for &T {
     where
         W: ?Sized + RedisWrite,
     {
-        (*self).write_redis_args(out)
+        (*self).write_redis_args(out);
     }
 }
 
@@ -890,7 +890,7 @@ impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for HashS
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out);
     }
 
     fn is_single_arg(&self) -> bool {
@@ -906,7 +906,7 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out);
     }
 
     fn is_single_arg(&self) -> bool {

@@ -196,7 +196,7 @@ where
 
     cmd.reserve(totlen);
 
-    write_command(cmd, args, cursor).unwrap()
+    write_command(cmd, args, cursor).unwrap();
 }
 
 fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u64) -> io::Result<()>
@@ -335,11 +335,11 @@ impl Cmd {
     }
 
     pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
-        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0));
     }
 
     pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
-        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
+        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap();
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
@@ -347,10 +347,10 @@ impl Cmd {
     /// is returned.
     #[inline]
     fn get_packed_command_with_cursor(&self, cursor: u64) -> Option<Vec<u8>> {
-        if !self.in_scan_mode() {
-            None
-        } else {
+        if self.in_scan_mode() {
             Some(encode_command(self.args_iter(), cursor))
+        } else {
+            None
         }
     }
 
