@@ -867,11 +867,7 @@ impl ConnectionLike for Connection {
             }
         }
 
-        if let Some(err) = first_err {
-            Err(err)
-        } else {
-            Ok(rv)
-        }
+        first_err.map_or(Ok(rv), Err)
     }
 
     fn get_db(&self) -> i64 {

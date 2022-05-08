@@ -190,7 +190,7 @@ impl ToRedisArgs for StreamReadOptions {
 
         if let Some(ref group) = self.group {
             // noack is only available w/ xreadgroup
-            if let Some(true) = self.noack {
+            if self.noack == Some(true){
                 out.write_arg(b"NOACK");
             }
 
