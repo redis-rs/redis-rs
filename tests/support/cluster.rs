@@ -53,12 +53,21 @@ pub struct RedisCluster {
 }
 
 impl RedisCluster {
+    pub fn username() -> &'static str {
+        "hello"
+    }
+
+    pub fn password() -> &'static str {
+        "world"
+    }
+
     pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
         let start_port = 7000;
         let mut tls_paths = None;
+
         let mut is_tls = false;
 
         if let ClusterType::TcpTls = ClusterType::get_intended() {
@@ -84,6 +93,13 @@ impl RedisCluster {
                         .prefix("redis")
                         .tempdir()
                         .expect("failed to create tempdir");
+                    let acl_path = tempdir.path().join("users.acl");
+                    let acl_content = format!(
+                        "user {} on allcommands allkeys >{}",
+                        Self::username(),
+                        Self::password()
+                    );
+                    std::fs::write(&acl_path, acl_content).expect("failed to write acl file");
                     cmd.arg("--cluster-enabled")
                         .arg("yes")
                         .arg("--cluster-config-file")
@@ -91,7 +107,9 @@ impl RedisCluster {
                         .arg("--cluster-node-timeout")
                         .arg("5000")
                         .arg("--appendonly")
-                        .arg("yes");
+                        .arg("yes")
+                        .arg("--aclfile")
+                        .arg(&acl_path);
                     if is_tls {
                         cmd.arg("--tls-cluster").arg("yes");
                         if replicas > 0 {

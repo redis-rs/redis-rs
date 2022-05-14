@@ -68,6 +68,7 @@ pub struct ClusterConnection {
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
     readonly: bool,
+    username: Option<String>,
     password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
@@ -94,16 +95,22 @@ impl ClusterConnection {
     pub(crate) fn new(
         initial_nodes: Vec<ConnectionInfo>,
         readonly: bool,
+        username: Option<String>,
         password: Option<String>,
     ) -> RedisResult<ClusterConnection> {
-        let connections =
-            Self::create_initial_connections(&initial_nodes, readonly, password.clone())?;
+        let connections = Self::create_initial_connections(
+            &initial_nodes,
+            readonly,
+            username.clone(),
+            password.clone(),
+        )?;
 
         let connection = ClusterConnection {
             connections: RefCell::new(connections),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             readonly,
+            username,
             password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
@@ -195,6 +202,7 @@ impl ClusterConnection {
     fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         readonly: bool,
+        username: Option<String>,
         password: Option<String>,
     ) -> RedisResult<HashMap<String, Connection>> {
         let mut connections = HashMap::with_capacity(initial_nodes.len());
@@ -213,7 +221,9 @@ impl ClusterConnection {
                 _ => panic!("No reach."),
             };
 
-            if let Ok(mut conn) = connect(info.clone(), readonly, password.clone()) {
+            if let Ok(mut conn) =
+                connect(info.clone(), readonly, username.clone(), password.clone())
+            {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
@@ -262,9 +272,12 @@ impl ClusterConnection {
                         }
                     }
 
-                    if let Ok(mut conn) =
-                        connect(addr.as_ref(), self.readonly, self.password.clone())
-                    {
+                    if let Ok(mut conn) = connect(
+                        addr.as_ref(),
+                        self.readonly,
+                        self.username.clone(),
+                        self.password.clone(),
+                    ) {
                         if conn.check_connection() {
                             conn.set_read_timeout(*self.read_timeout.borrow())?;
                             conn.set_write_timeout(*self.write_timeout.borrow())?;
@@ -364,7 +377,12 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = connect(addr, self.readonly, self.password.clone())?;
+            let conn = connect(
+                addr,
+                self.readonly,
+                self.username.clone(),
+                self.password.clone(),
+            )?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
     }
@@ -465,6 +483,7 @@ impl ClusterConnection {
                         let new_connections = Self::create_initial_connections(
                             &self.initial_nodes,
                             self.readonly,
+                            self.username.clone(),
                             self.password.clone(),
                         )?;
                         {
@@ -694,12 +713,14 @@ impl ConnectionLike for ClusterConnection {
 fn connect<T: IntoConnectionInfo>(
     info: T,
     readonly: bool,
+    username: Option<String>,
     password: Option<String>,
 ) -> RedisResult<Connection>
 where
     T: std::fmt::Debug,
 {
     let mut connection_info = info.into_connection_info()?;
+    connection_info.redis.username = username;
     connection_info.redis.password = password;
     let client = super::Client::open(connection_info)?;
 
