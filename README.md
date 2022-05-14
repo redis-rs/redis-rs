@@ -1,6 +1,6 @@
 # redis-rs
 
-[![Build Status](https://travis-ci.org/mitsuhiko/redis-rs.svg?branch=master)](https://travis-ci.org/mitsuhiko/redis-rs)
+[![Rust](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml)
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 
 Redis-rs is a high level redis library for Rust.  It provides convenient access
