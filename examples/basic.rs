@@ -160,11 +160,9 @@ fn main() {
     } else {
         "redis://127.0.0.1:6379/"
     };
-    match do_redis_code(url) {
-        Err(err) => {
-            println!("Could not execute example:");
-            println!("  {}: {}", err.category(), err);
-        }
-        Ok(()) => {}
+
+    if let Err(err) = do_redis_code(url) {
+        println!("Could not execute example:");
+        println!("  {}: {}", err.category(), err);
     }
 }

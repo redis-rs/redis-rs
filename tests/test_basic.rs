@@ -440,7 +440,7 @@ fn test_pipeline_reuse_query_clear() {
         .unwrap();
     pl.clear();
 
-    assert_eq!(k1, false);
+    assert!(!k1);
     assert_eq!(k2, 45);
 }
 

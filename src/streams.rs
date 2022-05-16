@@ -432,10 +432,10 @@ impl StreamId {
         let mut stream_id = StreamId::default();
         if let Value::Bulk(ref values) = *v {
             if let Some(v) = values.get(0) {
-                stream_id.id = from_redis_value(&v)?;
+                stream_id.id = from_redis_value(v)?;
             }
             if let Some(v) = values.get(1) {
-                stream_id.map = from_redis_value(&v)?;
+                stream_id.map = from_redis_value(v)?;
             }
         }
 
@@ -446,7 +446,7 @@ impl StreamId {
     /// type.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
         match self.map.get(key) {
-            Some(ref x) => from_redis_value(*x).ok(),
+            Some(x) => from_redis_value(x).ok(),
             None => None,
         }
     }

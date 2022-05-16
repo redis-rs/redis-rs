@@ -457,7 +457,7 @@ fn test_xclaim() {
             "g1",
             "c5",
             4,
-            &claim_justids,
+            claim_justids,
             StreamClaimOptions::default().with_force().with_justid(),
         )
         .unwrap();
