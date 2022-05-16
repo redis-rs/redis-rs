@@ -364,7 +364,7 @@ impl RedisError {
             ErrorKind::MasterDown => Some("MASTERDOWN"),
             ErrorKind::ReadOnly => Some("READONLY"),
             _ => match self.repr {
-                ErrorRepr::ExtensionError(ref code, _) => Some(&code),
+                ErrorRepr::ExtensionError(ref code, _) => Some(code),
                 _ => None,
             },
         }
@@ -479,7 +479,7 @@ impl RedisError {
     #[deprecated(note = "use code() instead")]
     pub fn extension_error_code(&self) -> Option<&str> {
         match self.repr {
-            ErrorRepr::ExtensionError(ref code, _) => Some(&code),
+            ErrorRepr::ExtensionError(ref code, _) => Some(code),
             _ => None,
         }
     }
@@ -574,7 +574,7 @@ impl InfoDict {
     /// Typical types are `String`, `bool` and integer types.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
         match self.find(&key) {
-            Some(ref x) => from_redis_value(*x).ok(),
+            Some(x) => from_redis_value(x).ok(),
             None => None,
         }
     }
@@ -607,7 +607,7 @@ pub trait RedisWrite {
 
     /// Accepts a serialized redis command.
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
-        self.write_arg(&arg.to_string().as_bytes())
+        self.write_arg(arg.to_string().as_bytes())
     }
 }
 
