@@ -977,3 +977,38 @@ fn test_zrandmember() {
     let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
     assert_eq!(results.len(), 10);
 }
+
+#[test]
+fn test_object_commands() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con.set("object_key_str", "object_value_str").unwrap();
+    let _: () = con.set("object_key_int", 42).unwrap();
+
+    assert_eq!(
+        con.object_encoding::<_, String>("object_key_str").unwrap(),
+        "embstr"
+    );
+
+    assert_eq!(
+        con.object_encoding::<_, String>("object_key_int").unwrap(),
+        "int"
+    );
+
+    assert_eq!(con.object_idletime::<_, i32>("object_key_str").unwrap(), 0);
+    assert_eq!(con.object_refcount::<_, i32>("object_key_str").unwrap(), 1);
+
+    // Needed for OBJECT FREQ and can't be set before object_idletime
+    // since that will break getting the idletime before idletime adjuts
+    redis::cmd("CONFIG")
+        .arg("SET")
+        .arg(b"maxmemory-policy")
+        .arg("allkeys-lfu")
+        .execute(&mut con);
+
+    let _: () = con.get("object_key_str").unwrap();
+    // since maxmemory-policy changed, freq should reset to 1 since we only called
+    // get after that
+    assert_eq!(con.object_freq::<_, i32>("object_key_str").unwrap(), 1);
+}

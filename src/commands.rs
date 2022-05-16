@@ -1026,6 +1026,28 @@ implement_commands! {
         cmd("PUBLISH").arg(channel).arg(message)
     }
 
+    // Object commands
+
+    /// Returns the encoding of a key.
+    fn object_encoding<K: ToRedisArgs>(key: K) {
+        cmd("OBJECT").arg("ENCODING").arg(key)
+    }
+
+    /// Returns the time in seconds since the last access of a key.
+    fn object_idletime<K: ToRedisArgs>(key: K) {
+        cmd("OBJECT").arg("IDLETIME").arg(key)
+    }
+
+    /// Returns the logarithmic access frequency counter of a key.
+    fn object_freq<K: ToRedisArgs>(key: K) {
+        cmd("OBJECT").arg("FREQ").arg(key)
+    }
+
+    /// Returns the reference count of a key.
+    fn object_refcount<K: ToRedisArgs>(key: K) {
+        cmd("OBJECT").arg("REFCOUNT").arg(key)
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
