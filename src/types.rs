@@ -1014,10 +1014,10 @@ pub trait FromRedisValue: Sized {
     /// from another vector of values.  This primarily exists internally
     /// to customize the behavior for vectors of tuples.
     fn from_redis_values(items: &[Value]) -> RedisResult<Vec<Self>> {
-        Ok(items
+        items
             .iter()
-            .filter_map(|item| FromRedisValue::from_redis_value(item).ok())
-            .collect())
+            .map(FromRedisValue::from_redis_value)
+            .collect()
     }
 
     /// This only exists internally as a workaround for the lack of
