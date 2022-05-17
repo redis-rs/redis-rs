@@ -235,12 +235,12 @@ fn test_filtered_scanning() {
         }
     }
 
-    let iter = con.hscan_match("foo", "key_0_*").unwrap();
+    let iter = con
+        .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
+        .unwrap();
 
-    for x in iter {
-        // type inference limitations
-        let x: usize = x;
-        unseen.remove(&x);
+    for (_field, value) in iter {
+        unseen.remove(&value);
     }
 
     assert_eq!(unseen.len(), 0);
