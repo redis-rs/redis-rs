@@ -545,14 +545,14 @@ implement_commands! {
     }
 
     // list operations
-    
+
     /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
     fn blmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction, timeout: usize) {
         cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
-    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
     fn blmpop<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, dir: Direction, count: usize){
         cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
@@ -601,7 +601,7 @@ implement_commands! {
         cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
     }
 
-    /// Pops `count` elements from the first non-empty list key from the list of 
+    /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names.
     fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) {
         cmd("LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
@@ -2088,9 +2088,7 @@ impl PubSubCommands for Connection {
     }
 }
 
-/// Options for the [LPOS] command
-///
-/// https://redis.io/commands/lpos
+/// Options for the [LPOS](https://redis.io/commands/lpos) command
 ///
 /// # Example
 ///
