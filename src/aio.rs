@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use std::io;
 use std::mem;
 use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
@@ -14,6 +13,7 @@ use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset
 
 use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    net::lookup_host,
     sync::{mpsc, oneshot},
 };
 
@@ -456,7 +456,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addr = get_socket_addrs(host, port)?;
+            let socket_addr = get_socket_addrs(host, port).await?;
             <T>::connect_tcp(socket_addr).await?
         }
 
@@ -466,7 +466,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             port,
             insecure,
         } => {
-            let socket_addr = get_socket_addrs(host, port)?;
+            let socket_addr = get_socket_addrs(host, port).await?;
             <T>::connect_tcp_tls(host, socket_addr, insecure).await?
         }
 
@@ -492,8 +492,8 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     })
 }
 
-fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
-    let mut socket_addrs = (host, port).to_socket_addrs()?;
+async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
+    let mut socket_addrs = lookup_host((host, port)).await?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
