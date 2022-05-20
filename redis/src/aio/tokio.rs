@@ -15,7 +15,7 @@ use tokio::{
     net::TcpStream as TcpStreamTokio,
 };
 
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
 use native_tls::TlsConnector;
 
 #[cfg(feature = "rustls")]
@@ -25,7 +25,7 @@ use std::{convert::TryInto, sync::Arc};
 #[cfg(feature = "rustls")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-#[cfg(feature = "tokio-native-tls-comp")]
+#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
 #[cfg(unix)]
@@ -124,7 +124,7 @@ impl RedisRuntime for Tokio {
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
 
-    #[cfg(all(feature = "rustls", not(feature = "tls")))]
+    #[cfg(feature = "rustls")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
@@ -140,17 +140,6 @@ impl RedisRuntime for Tokio {
             )
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
-    }
-    #[cfg(all(feature = "rustls", feature = "tls"))]
-    async fn connect_tcp_tls(
-        _hostname: &str,
-        _socket_addr: SocketAddr,
-        _insecure: bool,
-    ) -> RedisResult<Self> {
-        fail!((
-            ErrorKind::InvalidClientConfig,
-            "Cannot have both `tls` and `rustls` features active at the same time"
-        ));
     }
 
     #[cfg(unix)]

@@ -18,7 +18,7 @@ use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
 use native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "rustls")]
@@ -308,7 +308,7 @@ struct TcpConnection {
     open: bool,
 }
 
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
 struct TcpTlsConnection {
     reader: TlsStream<TcpStream>,
     open: bool,
@@ -328,7 +328,7 @@ struct UnixConnection {
 
 enum ActualConnection {
     Tcp(TcpConnection),
-    #[cfg(feature = "tls")]
+    #[cfg(all(feature = "tls", not(feature = "rustls")))]
     TcpTls(Box<TcpTlsConnection>),
     #[cfg(feature = "rustls")]
     TcpRustls(Box<TcpRustlsConnection>),
@@ -479,7 +479,7 @@ impl ActualConnection {
                     open: true,
                 }))
             }
-            #[cfg(all(feature = "rustls", not(feature = "tls")))]
+            #[cfg(feature = "rustls")]
             ConnectionAddr::TcpTls {
                 ref host,
                 port,
@@ -524,13 +524,6 @@ impl ActualConnection {
 
                 ActualConnection::TcpRustls(Box::new(TcpRustlsConnection { reader, open: true }))
             }
-            #[cfg(all(feature = "tls", feature = "rustls"))]
-            ConnectionAddr::TcpTls { .. } => {
-                fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Cannot have both `tls` and `rustls` features active at the same time"
-                ));
-            }
             #[cfg(not(any(feature = "tls", feature = "rustls")))]
             ConnectionAddr::TcpTls { .. } => {
                 fail!((
@@ -568,7 +561,7 @@ impl ActualConnection {
                     Ok(_) => Ok(Value::Okay),
                 }
             }
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", not(feature = "rustls")))]
             ActualConnection::TcpTls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
@@ -615,7 +608,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_write_timeout(dur)?;
             }
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", not(feature = "rustls")))]
             ActualConnection::TcpTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
@@ -638,7 +631,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_read_timeout(dur)?;
             }
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", not(feature = "rustls")))]
             ActualConnection::TcpTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
@@ -659,7 +652,7 @@ impl ActualConnection {
     pub fn is_open(&self) -> bool {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", not(feature = "rustls")))]
             ActualConnection::TcpTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(feature = "rustls")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
@@ -946,7 +939,7 @@ impl Connection {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                 self.parser.parse_value(reader)
             }
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", not(feature = "rustls")))]
             ActualConnection::TcpTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 self.parser.parse_value(reader)
@@ -973,7 +966,7 @@ impl Connection {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
                         connection.open = false;
                     }
-                    #[cfg(feature = "tls")]
+                    #[cfg(all(feature = "tls", not(feature = "rustls")))]
                     ActualConnection::TcpTls(ref mut connection) => {
                         let _ = connection.reader.shutdown();
                         connection.open = false;
