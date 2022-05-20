@@ -318,10 +318,10 @@ enum ActualConnection {
     Unix(UnixConnection),
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "rustls-insecure")]
 struct NoCertificateVerification;
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "rustls-insecure")]
 impl rustls::client::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
@@ -651,20 +651,32 @@ pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::Client
         )
     }));
 
-    let mut config = rustls::ClientConfig::builder()
+    let config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
         .with_protocol_versions(rustls::ALL_VERSIONS)?
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    if insecure {
-        config.enable_sni = false;
-        config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(NoCertificateVerification))
+    match (insecure, cfg!(feature = "rustls-insecure")) {
+        #[cfg(feature = "rustls-insecure")]
+        (true, true) => {
+            let mut config = config;
+            config.enable_sni = false;
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertificateVerification));
+
+            Ok(config)
+        }
+        (true, false) => {
+            fail!((
+                ErrorKind::InvalidClientConfig,
+                "Cannot create insecure client without rustls-insecure feature"
+            ));
+        }
+        _ => Ok(config),
     }
-    Ok(config)
 }
 
 fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> RedisResult<()> {
