@@ -461,7 +461,7 @@ impl ActualConnection {
                     open: true,
                 })
             }
-            #[cfg(all(feature = "rustls", not(feature = "tls")))]
+            #[cfg(feature = "rustls")]
             ConnectionAddr::TcpTls {
                 ref host,
                 port,
@@ -505,13 +505,6 @@ impl ActualConnection {
                 };
 
                 ActualConnection::TcpRustls(TcpRustlsConnection { reader, open: true })
-            }
-            #[cfg(all(feature = "tls", feature = "rustls"))]
-            ConnectionAddr::TcpTls { .. } => {
-                fail!((
-                    ErrorKind::InvalidClientConfig,
-                    "Cannot have both `tls` and `rustls` features active at the same time"
-                ));
             }
             #[cfg(not(any(feature = "tls", feature = "rustls")))]
             ConnectionAddr::TcpTls { .. } => {

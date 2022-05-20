@@ -127,7 +127,7 @@ impl RedisRuntime for Tokio {
             .map(Tokio::TcpTls)?)
     }
 
-    #[cfg(all(feature = "rustls", not(feature = "tls")))]
+    #[cfg(feature = "rustls")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
@@ -143,17 +143,6 @@ impl RedisRuntime for Tokio {
             )
             .await
             .map(Tokio::TcpTls)?)
-    }
-    #[cfg(all(feature = "rustls", feature = "tls"))]
-    async fn connect_tcp_tls(
-        _hostname: &str,
-        _socket_addr: SocketAddr,
-        _insecure: bool,
-    ) -> RedisResult<Self> {
-        fail!((
-            ErrorKind::InvalidClientConfig,
-            "Cannot have both `tls` and `rustls` features active at the same time"
-        ));
     }
 
     #[cfg(unix)]
