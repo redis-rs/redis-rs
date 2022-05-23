@@ -155,7 +155,7 @@ where
 mod aio_support {
     use super::*;
 
-    use bytes::{Buf, BytesMut};
+    use bytes::{Buf, Bytes, BytesMut};
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
@@ -201,6 +201,14 @@ mod aio_support {
     impl Encoder<Vec<u8>> for ValueCodec {
         type Error = RedisError;
         fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            dst.extend_from_slice(item.as_ref());
+            Ok(())
+        }
+    }
+
+    impl Encoder<Bytes> for ValueCodec {
+        type Error = RedisError;
+        fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> Result<(), Self::Error> {
             dst.extend_from_slice(item.as_ref());
             Ok(())
         }

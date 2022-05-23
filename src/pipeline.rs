@@ -3,6 +3,7 @@
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{from_redis_value, ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
+use bytes::{Bytes, BytesMut};
 use std::collections::HashSet;
 
 /// Represents a redis command pipeline.
@@ -74,9 +75,12 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
+    /// Returns the encoded pipeline commands as a Bytes.
     #[cfg(feature = "aio")]
-    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
-        write_pipeline(out, &self.commands, self.transaction_mode)
+    pub fn get_packed_pipeline_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new(); // TODO: Allocate expected length.
+        write_pipeline_bytes(&mut buf, &self.commands, self.transaction_mode);
+        buf.freeze()
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
@@ -144,9 +148,7 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
-        let value = con
-            .req_packed_commands(self, 0, self.commands.len())
-            .await?;
+        let value = con.req_pipeline(self, 0, self.commands.len()).await?;
         Ok(self.make_pipeline_results(value))
     }
 
@@ -155,9 +157,7 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
-        let mut resp = con
-            .req_packed_commands(self, self.commands.len() + 1, 1)
-            .await?;
+        let mut resp = con.req_pipeline(self, self.commands.len() + 1, 1).await?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
@@ -230,6 +230,29 @@ fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
 
         for cmd in cmds {
             cmd.write_packed_command_preallocated(rv);
+        }
+    }
+}
+
+#[cfg(feature = "aio")]
+fn write_pipeline_bytes(rv: &mut BytesMut, cmds: &[Cmd], atomic: bool) {
+    let cmds_len = cmds.iter().map(cmd_len).sum();
+
+    if atomic {
+        let multi = cmd("MULTI");
+        let exec = cmd("EXEC");
+        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
+
+        multi.write_packed_command_preallocated_bytes(rv);
+        for cmd in cmds {
+            cmd.write_packed_command_preallocated_bytes(rv);
+        }
+        exec.write_packed_command_preallocated_bytes(rv);
+    } else {
+        rv.reserve(cmds_len);
+
+        for cmd in cmds {
+            cmd.write_packed_command_preallocated_bytes(rv);
         }
     }
 }

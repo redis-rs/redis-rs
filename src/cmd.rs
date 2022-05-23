@@ -1,3 +1,4 @@
+use bytes::{BufMut, Bytes, BytesMut};
 #[cfg(feature = "aio")]
 use futures_util::{
     task::{Context, Poll},
@@ -112,10 +113,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
                 return None;
             }
 
-            let rv = unwrap_or!(
-                self.con.req_packed_command(&self.cmd).await.ok(),
-                return None
-            );
+            let rv = unwrap_or!(self.con.req_command(&self.cmd).await.ok(), return None);
             let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
 
             self.cmd.cursor = Some(cur);
@@ -334,12 +332,32 @@ impl Cmd {
         cmd
     }
 
+    /// Returns the packed command as a bytes::Bytes.
+    #[cfg(feature = "aio")]
+    #[inline]
+    pub fn get_packed_command_bytes(&self) -> Bytes {
+        let cmd = BytesMut::with_capacity(cmd_len(self));
+        let mut writer = cmd.writer();
+        write_command(&mut writer, self.args_iter(), self.cursor.unwrap_or(0)).unwrap();
+        let cmd = writer.into_inner();
+        cmd.freeze()
+    }
+
     pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
         write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
+    }
+
+    pub(crate) fn write_packed_command_preallocated_bytes(&self, cmd: &mut BytesMut) {
+        write_command(
+            &mut cmd.writer(),
+            self.args_iter(),
+            self.cursor.unwrap_or(0),
+        )
+        .unwrap()
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
@@ -378,7 +396,7 @@ impl Cmd {
     where
         C: crate::aio::ConnectionLike,
     {
-        let val = con.req_packed_command(self).await?;
+        let val = con.req_command(self).await?;
         from_redis_value(&val)
     }
 
@@ -435,7 +453,7 @@ impl Cmd {
         mut self,
         con: &'a mut (dyn AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
-        let rv = con.req_packed_command(&self).await?;
+        let rv = con.req_command(&self).await?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
