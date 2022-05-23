@@ -815,14 +815,14 @@ implement_commands! {
 
     /// Removes and returns up to count members with the highest scores, 
     /// from the first non-empty sorted set in the provided list of key names.
-    fn zmpopmax<K: ToRedisArgs>(keys: &'a [K], count: isize) {
-        cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MAX").arg(count)
+    fn zmpop_max<K: ToRedisArgs>(keys: &'a [K], count: isize) {
+        cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
 
     /// Removes and returns up to count members with the lowest scores, 
     /// from the first non-empty sorted set in the provided list of key names.
-    fn zmpopmin<K: ToRedisArgs>(keys: &'a [K], count: isize) {
-        cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MIN").arg(count)
+    fn zmpop_min<K: ToRedisArgs>(keys: &'a [K], count: isize) {
+        cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MIN").arg("COUNT").arg(count)
     }
 
     /// Return up to count random members in a sorted set (or 1 if `count == None`)
