@@ -129,22 +129,20 @@ fn test_set_ops() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1).execute(&mut con);
-    redis::cmd("SADD").arg("foo").arg(2).execute(&mut con);
-    redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
+    assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
 
-    let mut s: Vec<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
+    let mut s: Vec<i32> = con.smembers("foo").unwrap();
     s.sort_unstable();
     assert_eq!(s.len(), 3);
     assert_eq!(&s, &[1, 2, 3]);
 
-    let set: HashSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
+    let set: HashSet<i32> = con.smembers("foo").unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
     assert!(set.contains(&3i32));
 
-    let set: BTreeSet<i32> = redis::cmd("SMEMBERS").arg("foo").query(&mut con).unwrap();
+    let set: BTreeSet<i32> = con.smembers("foo").unwrap();
     assert_eq!(set.len(), 3);
     assert!(set.contains(&1i32));
     assert!(set.contains(&2i32));
@@ -156,9 +154,7 @@ fn test_scan() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    redis::cmd("SADD").arg("foo").arg(1).execute(&mut con);
-    redis::cmd("SADD").arg("foo").arg(2).execute(&mut con);
-    redis::cmd("SADD").arg("foo").arg(3).execute(&mut con);
+    assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
 
     let (cur, mut s): (i32, Vec<i32>) = redis::cmd("SSCAN")
         .arg("foo")
@@ -865,23 +861,21 @@ fn test_zrembylex() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let mut c = redis::cmd("ZADD");
     let setname = "myzset";
-    c.arg(setname)
-        .arg(0)
-        .arg("apple")
-        .arg(0)
-        .arg("banana")
-        .arg(0)
-        .arg("carrot")
-        .arg(0)
-        .arg("durian")
-        .arg(0)
-        .arg("eggplant")
-        .arg(0)
-        .arg("grapes");
-
-    c.query::<()>(&mut con).unwrap();
+    assert_eq!(
+        con.zadd_multiple(
+            setname,
+            &[
+                (0, "apple"),
+                (0, "banana"),
+                (0, "carrot"),
+                (0, "durian"),
+                (0, "eggplant"),
+                (0, "grapes"),
+            ],
+        ),
+        Ok(6)
+    );
 
     // Will remove "banana", "carrot", "durian" and "eggplant"
     let num_removed: u32 = con.zrembylex(setname, "[banana", "[eggplant").unwrap();
@@ -913,18 +907,13 @@ fn test_zrandmember() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], "one".to_string());
 
-    let mut c = redis::cmd("ZADD");
-    c.arg(setname)
-        .arg(2)
-        .arg("two")
-        .arg(3)
-        .arg("three")
-        .arg(4)
-        .arg("four")
-        .arg(5)
-        .arg("five");
-
-    c.query::<()>(&mut con).unwrap();
+    assert_eq!(
+        con.zadd_multiple(
+            setname,
+            &[(2, "two"), (3, "three"), (4, "four"), (5, "five")]
+        ),
+        Ok(4)
+    );
 
     let results: Vec<String> = con.zrandmember(setname, Some(5)).unwrap();
     assert_eq!(results.len(), 5);
