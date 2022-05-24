@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
