@@ -851,7 +851,7 @@ impl ConnectionLike for Connection {
             // When processing a transaction, some responses may be errors.
             // We need to keep processing the rest of the responses in that case,
             // so bailing early with `?` would not be correct.
-            // See: https://github.com/mitsuhiko/redis-rs/issues/436
+            // See: https://github.com/redis-rs/redis-rs/issues/436
             let response = self.read_response();
             match response {
                 Ok(item) => {

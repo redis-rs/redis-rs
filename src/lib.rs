@@ -13,7 +13,7 @@
 //!
 //! ```ini
 //! [dependencies.redis]
-//! git = "https://github.com/mitsuhiko/redis-rs.git"
+//! git = "https://github.com/redis-rs/redis-rs.git"
 //! ```
 //!
 //! # Basic Operation
