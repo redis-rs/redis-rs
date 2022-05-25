@@ -1,30 +1,28 @@
-mod support;
-
-#[macro_use]
-extern crate quickcheck;
-
 use std::{io, pin::Pin};
 
+use redis::Value;
 use {
     futures::{
         ready,
         task::{self, Poll},
     },
-    partial_io::{GenWouldBlock, PartialOp, PartialWithErrors},
+    partial_io::{quickcheck_types::GenWouldBlock, quickcheck_types::PartialWithErrors, PartialOp},
+    quickcheck::{quickcheck, Gen},
     tokio::io::{AsyncRead, ReadBuf},
 };
 
-use redis::Value;
-
+mod support;
 use crate::support::{block_on_all, encode_value};
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);
+
 impl ::quickcheck::Arbitrary for ArbitraryValue {
-    fn arbitrary<G: ::quickcheck::Gen>(g: &mut G) -> Self {
+    fn arbitrary(g: &mut Gen) -> Self {
         let size = g.size();
         ArbitraryValue(arbitrary_value(g, size))
     }
+
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         match self.0 {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
@@ -49,19 +47,19 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
     }
 }
 
-fn arbitrary_value<G: ::quickcheck::Gen>(g: &mut G, recursive_size: usize) -> Value {
+fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
     use quickcheck::Arbitrary;
     if recursive_size == 0 {
         Value::Nil
     } else {
-        match g.gen_range(0, 6) {
+        match u8::arbitrary(g) % 6 {
             0 => Value::Nil,
             1 => Value::Int(Arbitrary::arbitrary(g)),
             2 => Value::Data(Arbitrary::arbitrary(g)),
             3 => {
                 let size = {
                     let s = g.size();
-                    g.gen_range(0, s)
+                    usize::arbitrary(g) % s
                 };
                 Value::Bulk(
                     (0..size)
@@ -72,9 +70,17 @@ fn arbitrary_value<G: ::quickcheck::Gen>(g: &mut G, recursive_size: usize) -> Va
             4 => {
                 let size = {
                     let s = g.size();
-                    g.gen_range(0, s)
+                    usize::arbitrary(g) % s
                 };
-                let status = g.gen_ascii_chars().take(size).collect();
+
+                let mut status = String::with_capacity(size);
+                for _ in 0..size {
+                    let c = char::arbitrary(g);
+                    if c.is_ascii_alphabetic() {
+                        status.push(c);
+                    }
+                }
+
                 if status == "OK" {
                     Value::Okay
                 } else {
