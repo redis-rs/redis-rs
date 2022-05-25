@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use std::{env, fs, io, net::SocketAddr, path::PathBuf, process, thread::sleep, time::Duration};
+use std::{
+    env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
+    time::Duration,
+};
 
 use futures::Future;
 use redis::Value;
@@ -73,11 +76,11 @@ impl RedisServer {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
                 let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-                let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
+                let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
                 socket.set_reuse_address(true).unwrap();
                 socket.bind(addr).unwrap();
                 socket.listen(1).unwrap();
-                let listener = socket.into_tcp_listener();
+                let listener = TcpListener::from(socket);
                 let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
