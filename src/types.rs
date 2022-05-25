@@ -1263,7 +1263,7 @@ impl FromRedisValue for InfoDict {
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
-        if let Value::Nil = *v {
+        if *v == Value::Nil {
             return Ok(None);
         }
         Ok(Some(from_redis_value(v)?))
