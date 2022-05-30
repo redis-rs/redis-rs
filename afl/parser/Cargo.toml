@@ -14,4 +14,4 @@ path = "src/reproduce.rs"
 
 [dependencies]
 afl = "0.4"
-redis = { path = "../../" }
+redis = { path = "../../redis" }
