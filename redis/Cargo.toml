@@ -1,0 +1,139 @@
+[package]
+name = "redis"
+version = "0.21.5"
+keywords = ["redis", "database"]
+description = "Redis driver for Rust."
+homepage = "https://github.com/redis-rs/redis-rs"
+repository = "https://github.com/redis-rs/redis-rs"
+documentation = "https://docs.rs/redis"
+license = "BSD-3-Clause"
+edition = "2018"
+rust-version = "1.57"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# These two are generally really common simple dependencies so it does not seem
+# much of a point to optimize these, but these could in theory be removed for
+# an indirection through std::Formatter.
+ryu = "1.0"
+itoa = "1.0"
+
+# This is a dependency that already exists in url
+percent-encoding = "2.1"
+
+# We need this for redis url parsing
+url = "2.1"
+
+# We need this for script support
+sha1_smol = { version = "1.0", optional = true }
+
+combine = { version = "4.6", default-features = false, features = ["std"] }
+
+# Only needed for AIO
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3.15", default-features = false, optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+tokio-util = { version = "0.7", optional = true }
+tokio = { version = "1", features = ["rt", "net"], optional = true }
+
+# Only needed for the connection manager
+arc-swap = { version = "1.1.0", optional = true }
+futures = { version = "0.3.3", optional = true }
+
+# Only needed for the r2d2 feature
+r2d2 = { version = "0.8.8", optional = true }
+
+# Only needed for cluster
+crc16 = { version = "0.4", optional = true }
+rand = { version = "0.8", optional = true }
+# Only needed for async_std support
+async-std = { version = "1.8.0", optional = true}
+async-trait = { version = "0.1.24", optional = true }
+
+# Only needed for TLS
+native-tls = { version = "0.2", optional = true }
+tokio-native-tls = { version = "0.3", optional = true }
+async-native-tls = { version = "0.4", optional = true }
+
+# Optional aHash support
+ahash = { version = "0.7.6", optional = true }
+
+[features]
+default = ["acl", "streams", "geospatial", "script"]
+acl = []
+aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
+geospatial = []
+cluster = ["crc16", "rand"]
+script = ["sha1_smol"]
+tls = ["native-tls"]
+async-std-comp = ["aio", "async-std"]
+async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
+tokio-comp = ["aio", "tokio", "tokio/net"]
+tokio-native-tls-comp = ["tls", "tokio-native-tls"]
+connection-manager = ["arc-swap", "futures", "aio"]
+streams = []
+
+
+[dev-dependencies]
+rand = "0.8"
+socket2 = "0.4"
+assert_approx_eq = "1.0"
+fnv = "1.0.5"
+futures = "0.3"
+criterion = "0.3"
+partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
+quickcheck = "1.0.3"
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
+tempfile = "3.2"
+
+[[test]]
+name = "test_async"
+required-features = ["tokio-comp"]
+
+[[test]]
+name = "test_async_async_std"
+required-features = ["async-std-comp"]
+
+[[test]]
+name = "parser"
+required-features = ["aio"]
+
+[[test]]
+name = "test_acl"
+
+[[bench]]
+name = "bench_basic"
+harness = false
+required-features = ["tokio-comp"]
+
+[[bench]]
+name = "bench_cluster"
+harness = false
+required-features = ["cluster"]
+
+[[example]]
+name = "async-multiplexed"
+required-features = ["tokio-comp"]
+
+[[example]]
+name = "async-await"
+required-features = ["aio"]
+
+[[example]]
+name = "async-pub-sub"
+required-features = ["aio"]
+
+[[example]]
+name = "async-scan"
+required-features = ["aio"]
+
+[[example]]
+name = "async-connection-loss"
+required-features = ["connection-manager"]
+
+[[example]]
+name = "streams"
+required-features = ["streams"]
