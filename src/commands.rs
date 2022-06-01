@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
 
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
@@ -398,8 +398,16 @@ implement_commands! {
     }
 
     /// Get the value of a key and set expiration
-    fn get_ex<K: ToRedisArgs>(key: K, seconds: usize) {
-        cmd("GETEX").arg(key).arg("EX").arg(seconds)
+    fn get_ex<K: ToRedisArgs>(key: K, expire_at: Expiry) {
+        let (option, time_arg) = match expire_at {
+            Expiry::EX(sec) => ("EX", Some(sec)),
+            Expiry::PX(ms) => ("PX", Some(ms)),
+            Expiry::EXAT(timestamp_sec) => ("EXAT", Some(timestamp_sec)),
+            Expiry::PXAT(timestamp_ms) => ("PXAT", Some(timestamp_ms)),
+            Expiry::PERSIST => ("PERSIST", None),
+        };
+
+        cmd("GETEX").arg(key).arg(option).arg(time_arg)
     }
 
     /// Get the value of a key and delete it
