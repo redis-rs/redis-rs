@@ -2,6 +2,19 @@ use std::io;
 
 use crate::{ConnectionLike, RedisError};
 
+/// Implementation of Redis connections for R2D2 connection pool
+///
+/// Basic example:
+///
+/// ```rust,no_run
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// let pool = r2d2::Pool::builder().max_size(5).build(client).unwrap();
+/// let pooled_con = pool.get().unwrap();
+/// let info = redis::cmd("READONLY").query(&mut *con)?;
+///
+/// ```
+///
+
 macro_rules! impl_manage_connection {
     ($client:ty, $connection:ty) => {
         impl r2d2::ManageConnection for $client {
