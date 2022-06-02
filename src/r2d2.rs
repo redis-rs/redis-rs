@@ -10,7 +10,7 @@ use crate::{ConnectionLike, RedisError};
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// let pool = r2d2::Pool::builder().max_size(5).build(client).unwrap();
 /// let mut con = pool.get().unwrap();
-/// let info = redis::cmd("READONLY").query(&mut *con)?;
+/// let info = redis::cmd("READONLY").query(&mut *con);
 ///
 /// ```
 ///
