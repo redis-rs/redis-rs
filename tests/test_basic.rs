@@ -1,7 +1,8 @@
 #![allow(clippy::let_unit_value)]
 
 use redis::{
-    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, PubSubCommands, RedisResult,
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
+    RedisResult,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,6 +63,55 @@ fn test_incr() {
 
     redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
     assert_eq!(redis::cmd("INCR").arg("foo").query(&mut con), Ok(43usize));
+}
+
+#[test]
+fn test_getdel() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+
+    assert_eq!(con.get_del("foo"), Ok(42usize));
+
+    assert_eq!(
+        redis::cmd("GET").arg("foo").query(&mut con),
+        Ok(None::<usize>)
+    );
+}
+
+#[test]
+fn test_getex() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    redis::cmd("SET").arg("foo").arg(42usize).execute(&mut con);
+
+    // Return of get_ex must match set value
+    let ret_value = con.get_ex::<_, usize>("foo", Expiry::EX(1)).unwrap();
+    assert_eq!(ret_value, 42usize);
+
+    // Get before expiry time must also return value
+    sleep(Duration::from_millis(100));
+    let delayed_get = con.get::<_, usize>("foo").unwrap();
+    assert_eq!(delayed_get, 42usize);
+
+    // Get after expiry time mustn't return value
+    sleep(Duration::from_secs(1));
+    let after_expire_get = con.get::<_, Option<usize>>("foo").unwrap();
+    assert_eq!(after_expire_get, None);
+
+    // Persist option test prep
+    redis::cmd("SET").arg("foo").arg(420usize).execute(&mut con);
+
+    // Return of get_ex with persist option must match set value
+    let ret_value = con.get_ex::<_, usize>("foo", Expiry::PERSIST).unwrap();
+    assert_eq!(ret_value, 420usize);
+
+    // Get after persist get_ex must return value
+    sleep(Duration::from_millis(200));
+    let delayed_get = con.get::<_, usize>("foo").unwrap();
+    assert_eq!(delayed_get, 420usize);
 }
 
 #[test]

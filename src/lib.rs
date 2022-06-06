@@ -372,6 +372,8 @@ pub use crate::pipeline::Pipeline;
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
 
+// preserve grouping and order
+#[rustfmt::skip]
 pub use crate::types::{
     // utility functions
     from_redis_value,
@@ -385,6 +387,7 @@ pub use crate::types::{
     // utility types
     InfoDict,
     NumericBehavior,
+    Expiry,
 
     // error and result types
     RedisError,

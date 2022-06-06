@@ -25,6 +25,20 @@ macro_rules! invalid_type_error_inner {
     };
 }
 
+/// Helper enum that is used to define expiry time
+pub enum Expiry {
+    /// EX seconds -- Set the specified expire time, in seconds.
+    EX(usize),
+    /// PX milliseconds -- Set the specified expire time, in milliseconds.
+    PX(usize),
+    /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
+    EXAT(usize),
+    /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
+    PXAT(usize),
+    /// PERSIST -- Remove the time to live associated with the key.
+    PERSIST,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
