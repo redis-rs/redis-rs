@@ -49,7 +49,7 @@ r2d2 = { version = "0.8.8", optional = true }
 crc16 = { version = "0.4", optional = true }
 rand = { version = "0.8", optional = true }
 # Only needed for async_std support
-async-std = { version = "1.5.0", optional = true}
+async-std = { version = "= 1.8.0", optional = true}
 async-trait = { version = "0.1.24", optional = true }
 
 # Only needed for TLS
