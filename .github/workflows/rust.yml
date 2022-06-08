@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  REDIS_VERSION: '6.2.4'
 
 jobs:
   build:
@@ -17,6 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        redis:
+          - 6.2.4
+          - 7.0.0
         rust:
           - stable
           - beta
@@ -37,9 +39,9 @@ jobs:
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        wget https://github.com/redis/redis/archive/${{ env.REDIS_VERSION }}.tar.gz;
-        tar -xzvf ${{ env.REDIS_VERSION }}.tar.gz;
-        pushd redis-${{ env.REDIS_VERSION }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
+        tar -xzvf ${{ matrix.redis }}.tar.gz;
+        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
         echo $PATH
 
     - name: Install latest nightly
