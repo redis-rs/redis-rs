@@ -162,8 +162,8 @@ impl RedisCluster {
             let client = redis::Client::open(conn_info).unwrap();
             let mut con = client.get_connection().unwrap();
 
-            // retry 100 times
-            for _ in 1..100 {
+            // retry 500 times
+            for _ in 1..500 {
                 let value = redis::cmd("CLUSTER").arg("SLOTS").query(&mut con).unwrap();
                 let slots: Vec<Vec<redis::Value>> = redis::from_redis_value(&value).unwrap();
 
