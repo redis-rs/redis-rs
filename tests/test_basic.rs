@@ -724,6 +724,19 @@ fn test_script() {
 }
 
 #[test]
+#[cfg(feature = "script")]
+fn test_script_load() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let script = redis::Script::new("return 'Hello World'");
+
+    let hash = script.prepare_invoke().load(&mut con);
+
+    assert_eq!(hash, Ok(script.get_hash().to_string()));
+}
+
+#[test]
 fn test_tuple_args() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
