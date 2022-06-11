@@ -80,7 +80,7 @@ fn test_acl_getsetdel_users() {
     );
 
     // ACL SETUSER eve
-    assert_eq!(con.acl_setuser("eve"), Ok(()));
+    assert_eq!(con.acl_setuser("eve", None), Ok(()));
     assert_eq!(
         con.acl_users(),
         Ok(vec![
@@ -97,7 +97,7 @@ fn test_acl_getsetdel_users() {
 fn test_acl_cat() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let res: HashSet<String> = con.acl_cat().expect("Got categories");
+    let res: HashSet<String> = con.acl_cat(None).expect("Got categories");
     let expects = vec![
         "keyspace",
         "read",
@@ -138,10 +138,10 @@ fn test_acl_cat() {
 fn test_acl_genpass() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let pass: String = con.acl_genpass().expect("Got password");
+    let pass: String = con.acl_genpass(None).expect("Got password");
     assert_eq!(pass.len(), 64);
 
-    let pass: String = con.acl_genpass_bits(1024).expect("Got password");
+    let pass: String = con.acl_genpass(Some(1024)).expect("Got password");
     assert_eq!(pass.len(), 256);
 }
 

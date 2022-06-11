@@ -1,0 +1,14 @@
+[package]
+name = "redis-codegen"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+serde = {version = "1.0", features = ["derive"]}
+serde_json = {version = "1.0" }
+serde_path_to_error = {version = "0.1"}
+thiserror = "1.0"
+log = "0.4"
+ itertools = "0.10"
+ heck = "0.4"

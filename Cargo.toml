@@ -13,6 +13,12 @@ edition = "2018"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+
+[workspace]
+members = [
+    "redis-codegen"
+]
+
 [dependencies]
 # These two are generally really common simple dependencies so it does not seem
 # much of a point to optimize these, but these could in theory be removed for
@@ -84,6 +90,8 @@ partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
 tempfile = "3.2"
+redis-codegen = { version = "0.1.0", path = "redis-codegen" }
+walkdir = "2.3.2"
 
 [[test]]
 name = "test_async"
@@ -133,3 +141,4 @@ required-features = ["connection-manager"]
 [[example]]
 name = "streams"
 required-features = ["streams"]
+

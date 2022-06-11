@@ -3,6 +3,7 @@ use futures_util::{
     task::{Context, Poll},
     FutureExt, Stream,
 };
+use std::convert::AsMut;
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 use std::{fmt, io};
@@ -244,6 +245,12 @@ impl RedisWrite for Cmd {
 impl Default for Cmd {
     fn default() -> Cmd {
         Cmd::new()
+    }
+}
+
+impl AsMut<Cmd> for Cmd {
+    fn as_mut(&mut self) -> &mut Cmd {
+        self
     }
 }
 
