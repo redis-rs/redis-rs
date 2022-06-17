@@ -1,7 +1,8 @@
 use crate::cluster::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
-use crate::types::{from_redis_value, ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
-use std::collections::HashSet;
+use crate::types::{
+    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+};
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
     ErrorKind::ClientError,

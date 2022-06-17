@@ -14,6 +14,8 @@ use crate::types::{
 };
 
 #[cfg(unix)]
+use crate::types::HashMap;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls")]
@@ -235,7 +237,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
 #[cfg(unix)]
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
-    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    let query: HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr: ConnectionAddr::Unix(unwrap_or!(
             url.to_file_path().ok(),

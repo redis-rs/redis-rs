@@ -2,8 +2,9 @@
 
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
-use crate::types::{from_redis_value, ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
-use std::collections::HashSet;
+use crate::types::{
+    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+};
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]

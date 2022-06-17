@@ -39,7 +39,7 @@
 //!     .query(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::iter::Iterator;
 use std::thread;
 use std::time::Duration;
@@ -50,8 +50,10 @@ use rand::{
 };
 
 use super::{
-    cmd, parse_redis_value, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
+    cmd, parse_redis_value,
+    types::{HashMap, HashSet},
+    Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind, IntoConnectionInfo,
+    RedisError, RedisResult, Value,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};

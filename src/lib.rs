@@ -57,6 +57,7 @@
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
+//! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
