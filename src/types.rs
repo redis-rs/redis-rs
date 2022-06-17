@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::collections::{HashMap, HashSet};
 use std::convert::From;
 use std::default::Default;
 use std::error;
@@ -8,6 +7,11 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
+
+#[cfg(feature = "ahash")]
+pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+#[cfg(not(feature = "ahash"))]
+pub(crate) use std::collections::{HashMap, HashSet};
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -899,7 +903,26 @@ impl<T: ToRedisArgs> ToRedisArgs for &T {
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for HashSet<T, S> {
+impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
+    for std::collections::HashSet<T, S>
+{
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
+#[cfg(feature = "ahash")]
+impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for ahash::AHashSet<T, S> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1148,9 +1171,21 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
 }
 
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for HashMap<K, V, S>
+    for std::collections::HashMap<K, V, S>
 {
-    fn from_redis_value(v: &Value) -> RedisResult<HashMap<K, V, S>> {
+    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
+        v.as_map_iter()
+            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
+            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+            .collect()
+    }
+}
+
+#[cfg(feature = "ahash")]
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
+    for ahash::AHashMap<K, V, S>
+{
+    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V, S>> {
         v.as_map_iter()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
             .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
@@ -1170,8 +1205,22 @@ where
     }
 }
 
-impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue for HashSet<T, S> {
-    fn from_redis_value(v: &Value) -> RedisResult<HashSet<T, S>> {
+impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
+    for std::collections::HashSet<T, S>
+{
+    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashSet<T, S>> {
+        let items = v
+            .as_sequence()
+            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
+        items.iter().map(|item| from_redis_value(item)).collect()
+    }
+}
+
+#[cfg(feature = "ahash")]
+impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
+    for ahash::AHashSet<T, S>
+{
+    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T, S>> {
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
