@@ -141,34 +141,31 @@ where
 
     /// Subscribes to a new channel.
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("SUBSCRIBE")
-            .arg(channel)
-            .query_async(&mut self.0)
-            .await?)
+        cmd("SUBSCRIBE").arg(channel).query_async(&mut self.0).await
     }
 
     /// Subscribes to a new channel with a pattern.
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PSUBSCRIBE")
+        cmd("PSUBSCRIBE")
             .arg(pchannel)
             .query_async(&mut self.0)
-            .await?)
+            .await
     }
 
     /// Unsubscribes from a channel.
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        Ok(cmd("UNSUBSCRIBE")
+        cmd("UNSUBSCRIBE")
             .arg(channel)
             .query_async(&mut self.0)
-            .await?)
+            .await
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        Ok(cmd("PUNSUBSCRIBE")
+        cmd("PUNSUBSCRIBE")
             .arg(pchannel)
             .query_async(&mut self.0)
-            .await?)
+            .await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
@@ -212,7 +209,7 @@ where
 
     /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
     pub async fn monitor(&mut self) -> RedisResult<()> {
-        Ok(cmd("MONITOR").query_async(&mut self.0).await?)
+        cmd("MONITOR").query_async(&mut self.0).await
     }
 
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection

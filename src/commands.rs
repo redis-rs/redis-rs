@@ -831,13 +831,13 @@ implement_commands! {
         cmd("ZPOPMIN").arg(key).arg(count)
     }
 
-    /// Removes and returns up to count members with the highest scores, 
+    /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     fn zmpop_max<K: ToRedisArgs>(keys: &'a [K], count: isize) {
         cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
 
-    /// Removes and returns up to count members with the lowest scores, 
+    /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     fn zmpop_min<K: ToRedisArgs>(keys: &'a [K], count: isize) {
         cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MIN").arg("COUNT").arg(count)
@@ -2216,7 +2216,9 @@ impl ToRedisArgs for LposOptions {
 
 /// Enum for the LEFT | RIGHT args used by some commands
 pub enum Direction {
+    /// Targets the first element (head) of the list
     Left,
+    /// Targets the last element (tail) of the list
     Right,
 }
 

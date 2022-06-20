@@ -1,7 +1,8 @@
 use crate::cluster::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
-use crate::types::{from_redis_value, ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
-use std::collections::HashSet;
+use crate::types::{
+    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+};
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
     ErrorKind::ClientError,
@@ -47,7 +48,7 @@ pub struct ClusterPipeline {
     ignored_commands: HashSet<usize>,
 }
 
-/// A cluster pipeline is almost identical to a normal [Pipeline](Pipeline), with two exceptions:
+/// A cluster pipeline is almost identical to a normal [Pipeline](crate::pipeline::Pipeline), with two exceptions:
 /// * It does not support transactions
 /// * The following commands can not be used in a cluster pipeline:
 /// ```text

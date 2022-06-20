@@ -39,7 +39,7 @@
 //!     .query(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::iter::Iterator;
 use std::thread;
 use std::time::Duration;
@@ -50,8 +50,10 @@ use rand::{
 };
 
 use super::{
-    cmd, parse_redis_value, Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    ErrorKind, IntoConnectionInfo, RedisError, RedisResult, Value,
+    cmd, parse_redis_value,
+    types::{HashMap, HashSet},
+    Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind, IntoConnectionInfo,
+    RedisError, RedisResult, Value,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -302,8 +304,8 @@ impl ClusterConnection {
         let len = connections.len();
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
-        for mut conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(&mut conn, self.tls) {
+        for conn in samples.iter_mut() {
+            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -590,7 +592,7 @@ impl ClusterConnection {
     // Receive from each node, keeping track of which commands need to be retried.
     fn recv_all_commands(
         &self,
-        results: &mut Vec<Value>,
+        results: &mut [Value],
         node_cmds: &[NodeCmd],
     ) -> RedisResult<Vec<usize>> {
         let mut to_retry = Vec::new();

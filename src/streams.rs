@@ -1,8 +1,9 @@
 //! Defines types to use with the streams commands.
 
-use crate::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value};
+use crate::{
+    from_redis_value, types::HashMap, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
+};
 
-use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 
 // Stream Maxlen Enum
