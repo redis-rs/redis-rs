@@ -849,6 +849,30 @@ implement_commands! {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
 
+    /// [`Commands::zinterstore`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zinterstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
+    }
+
+    /// [`Commands::zinterstore_min`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zinterstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
+    }
+
+    /// [`Commands::zinterstore_max`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zinterstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
+    }
+
     /// Count the number of members in a sorted set between a given lexicographical range.
     fn zlexcount<K: ToRedisArgs, L: ToRedisArgs>(key: K, min: L, max: L) {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
@@ -1034,6 +1058,30 @@ implement_commands! {
     /// a new key using MAX as aggregation function.
     fn zunionstore_max<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
+    }
+
+    /// [`Commands::zunionstore`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zunionstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
+    }
+
+    /// [`Commands::zunionstore_min`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zunionstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
+    }
+
+    /// [`Commands::zunionstore_max`], but with the ability to specify a
+    /// multiplication factor for each sorted set by pairing one with each key
+    /// in a tuple.
+    fn zunionstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map( | (key, weight) | { (key, weight) } ).unzip();
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
 
     // hyperloglog commands
