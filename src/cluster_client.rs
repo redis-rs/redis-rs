@@ -54,15 +54,16 @@ impl ClusterClientBuilder {
     ///
     /// If True, then read queries will go to the replica nodes & write queries will go to the
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
-    pub fn read_from_replicas(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.read_from_replicas = read_from_replicas;
+    pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
+        self.read_from_replicas = true;
         self
     }
 
-    /// Use `read_from_replicas`.
-    #[deprecated(since = "0.22.0")]
-    pub fn readonly(self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.read_from_replicas(read_from_replicas)
+    /// Use `read_from_replicas()`.
+    #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
+    pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
+        self.read_from_replicas = read_from_replicas;
+        self
     }
 }
 

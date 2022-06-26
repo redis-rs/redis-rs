@@ -87,7 +87,7 @@ fn bench_cluster_setup(c: &mut Criterion) {
 #[allow(dead_code)]
 fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
     let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
-        builder.read_from_replicas(true)
+        builder.read_from_replicas()
     });
     cluster.wait_for_cluster_up();
 
