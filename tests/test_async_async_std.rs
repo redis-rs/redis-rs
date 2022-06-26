@@ -290,8 +290,6 @@ fn test_script() {
 #[cfg(feature = "script")]
 fn test_script_load() {
     let ctx = TestContext::new();
-    let mut con = ctx.connection();
-
     let script = redis::Script::new("return 'Hello World'");
 
     block_on_all(async move {
@@ -314,7 +312,7 @@ fn test_script_returning_complex_type() {
             .map_ok(|(i, s, b): (i32, String, bool)| {
                 assert_eq!(i, 1);
                 assert_eq!(s, "hello");
-                assert_eq!(b, true);
+                assert!(b);
             })
             .await
     })
