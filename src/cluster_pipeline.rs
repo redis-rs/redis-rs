@@ -48,7 +48,7 @@ pub struct ClusterPipeline {
     ignored_commands: HashSet<usize>,
 }
 
-/// A cluster pipeline is almost identical to a normal [Pipeline](Pipeline), with two exceptions:
+/// A cluster pipeline is almost identical to a normal [Pipeline](crate::pipeline::Pipeline), with two exceptions:
 /// * It does not support transactions
 /// * The following commands can not be used in a cluster pipeline:
 /// ```text
