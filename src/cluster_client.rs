@@ -7,7 +7,7 @@ use super::{
 /// Used to configure and build a [ClusterClient](ClusterClient).
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
-    readonly: bool,
+    read_from_replicas: bool,
     username: Option<String>,
     password: Option<String>,
 }
@@ -20,7 +20,7 @@ impl ClusterClientBuilder {
                 .into_iter()
                 .map(|x| x.into_connection_info())
                 .collect(),
-            readonly: false,
+            read_from_replicas: false,
             username: None,
             password: None,
         }
@@ -50,19 +50,26 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Set read only mode for new ClusterClient (default is false).
-    /// If readonly is true, all queries will go to replica nodes. If there are no replica nodes,
-    /// queries will be issued to the primary nodes.
-    pub fn readonly(mut self, readonly: bool) -> ClusterClientBuilder {
-        self.readonly = readonly;
+    /// Enable read from replicas for new ClusterClient (default is false).
+    ///
+    /// If True, then read queries will go to the replica nodes & write queries will go to the
+    /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
+    pub fn read_from_replicas(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
+        self.read_from_replicas = read_from_replicas;
         self
+    }
+
+    /// Use `read_from_replicas`.
+    #[deprecated(since = "0.22.0")]
+    pub fn readonly(self, read_from_replicas: bool) -> ClusterClientBuilder {
+        self.read_from_replicas(read_from_replicas)
     }
 }
 
 /// This is a Redis cluster client.
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
-    readonly: bool,
+    read_from_replicas: bool,
     username: Option<String>,
     password: Option<String>,
 }
@@ -89,7 +96,7 @@ impl ClusterClient {
     pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
         ClusterConnection::new(
             self.initial_nodes.clone(),
-            self.readonly,
+            self.read_from_replicas,
             self.username.clone(),
             self.password.clone(),
         )
@@ -134,7 +141,7 @@ impl ClusterClient {
 
         Ok(ClusterClient {
             initial_nodes: nodes,
-            readonly: builder.readonly,
+            read_from_replicas: builder.read_from_replicas,
             username: builder.username.or(connection_info_username),
             password: builder.password.or(connection_info_password),
         })

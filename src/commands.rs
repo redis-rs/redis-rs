@@ -17,6 +17,37 @@ use crate::streams;
 #[cfg(feature = "acl")]
 use crate::acl;
 
+#[cfg(feature = "cluster")]
+pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
+    matches!(
+        cmd,
+        // @admin
+        b"LASTSAVE" | b"PRIVILEGE" | b"PRIVILIDGE" | b"SETCLIENTADDR" |
+        // @bitmap
+        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"GETBIT" |
+        // @connection
+        b"CLIENT" | b"ECHO" |
+        // @geo
+        b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUS_RO" | b"GEORADIUSBYMEMBER_RO" |
+        // @hash
+        b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSCAN" | b"HSTRLEN" | b"HVALS" |
+        // @hyperloglog
+        b"PFCOUNT" |
+        // @keyspace
+        b"DBSIZE" | b"DUMP" | b"EXISTS" | b"KEYS" | b"OBJECT" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"TOUCH" | b"TTL" | b"TYPE" |
+        // @list
+        b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" |
+        // @set
+        b"SCARD" | b"SDIFF" | b"SINTER" | b"SISMEMBER" | b"SMEMBERS" | b"SRANDMEMBER" | b"SSCAN" | b"SUNION" |
+        // @sortedset
+        b"ZCARD" | b"ZCOUNT" | b"ZLEXCOUNT" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" |
+        // @stream
+        b"XINFO" | b"XLEN" | b"XPENDING" | b"XRANGE" | b"XREAD" | b"XREVRANGE" |
+        // @string
+        b"GET" | b"GETRANGE" | b"MGET" | b"STRALGO" | b"STRLEN" | b"SUBSTR"
+    )
+}
+
 macro_rules! implement_commands {
     (
         $lifetime: lifetime
@@ -831,13 +862,13 @@ implement_commands! {
         cmd("ZPOPMIN").arg(key).arg(count)
     }
 
-    /// Removes and returns up to count members with the highest scores, 
+    /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     fn zmpop_max<K: ToRedisArgs>(keys: &'a [K], count: isize) {
         cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
 
-    /// Removes and returns up to count members with the lowest scores, 
+    /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     fn zmpop_min<K: ToRedisArgs>(keys: &'a [K], count: isize) {
         cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MIN").arg("COUNT").arg(count)
