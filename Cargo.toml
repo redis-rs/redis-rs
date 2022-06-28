@@ -49,7 +49,7 @@ r2d2 = { version = "0.8.8", optional = true }
 crc16 = { version = "0.4", optional = true }
 rand = { version = "0.8", optional = true }
 # Only needed for async_std support
-async-std = { version = "= 1.8.0", optional = true}
+async-std = { version = "= 1.8.0", optional = true }
 async-trait = { version = "0.1.24", optional = true }
 
 # Only needed for TLS
@@ -57,13 +57,30 @@ native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
 
+# Only needed for JSON Support
+serde = "1.0.137"
+serde_json = "1.0.81"
+
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script"]
+json = []
 acl = []
-aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
+aio = [
+	"bytes",
+	"pin-project-lite",
+	"futures-util",
+	"futures-util/alloc",
+	"futures-util/sink",
+	"tokio/io-util",
+	"tokio-util",
+	"tokio-util/codec",
+	"tokio/sync",
+	"combine/tokio",
+	"async-trait",
+]
 geospatial = []
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
@@ -85,7 +102,12 @@ futures = "0.3"
 criterion = "0.3"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = [
+	"rt",
+	"macros",
+	"rt-multi-thread",
+	"time",
+] }
 tempfile = "3.2"
 
 [[test]]
