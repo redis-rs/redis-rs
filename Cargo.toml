@@ -66,7 +66,7 @@ ahash = { version = "0.7.6", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script"]
-json = []
+json = ["serde", "serde_json"]
 acl = []
 aio = [
 	"bytes",
