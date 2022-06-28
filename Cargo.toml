@@ -58,8 +58,8 @@ tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
 
 # Only needed for JSON Support
-serde = "1.0.137"
-serde_json = "1.0.81"
+serde = { version = "1.0.137", optiona; = true }
+serde_json = { version = "1.0.81", optional = true }
 
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
