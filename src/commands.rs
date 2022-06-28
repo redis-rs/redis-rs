@@ -12,7 +12,7 @@ use crate::cluster_pipeline::ClusterPipeline;
 use serde::ser::Serialize;
 
 #[cfg(feature = "json")]
-use serde_json::to_string as json_stringify;
+use serde_json;
 
 #[cfg(feature = "geospatial")]
 use crate::geo;
@@ -381,7 +381,7 @@ implement_commands! {
     /// Append the JSON `value` to the array at `path` after the last element in it.
     #[cfg(feature = "json")]
     fn json_arrappend<K: ToRedisArgs, V: Serialize>(key: K, path: String, value: V) {
-        cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(json_stringify(&value).unwrap())
+        cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(serde_json::to_string(&value).unwrap())
     }
 
     /// Index array at `path`, returns first occurance of `value`
@@ -397,7 +397,7 @@ implement_commands! {
     /// `index` must be withing the array's range.
     #[cfg(feature = "json")]
     fn json_arrinsert<K: ToRedisArgs, V: Serialize>(key: K, path: String, index: isize, value: V) {
-        cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(json_stringify(&value).unwrap())
+        cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(serde_json::to_string(&value).unwrap())
     }
 
    /// Reports the length of the JSON Array at `path` in `key`.
@@ -485,7 +485,7 @@ implement_commands! {
     /// Sets the JSON Value at `path` in `key`
     #[cfg(feature = "json")]
     fn json_set<K: ToRedisArgs, V:Serialize>(key: K, path: String, value: V) {
-        cmd("JSON.SET").arg(key).arg(path).arg(json_stringify(&value).unwrap())
+        cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(&value).unwrap())
     }
 
     /// Appends the `json-string` values to the string at `path`.
