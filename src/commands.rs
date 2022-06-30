@@ -380,6 +380,7 @@ implement_commands! {
 
     /// Append the JSON `value` to the array at `path` after the last element in it.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrappend<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, value: V) {
         cmd("JSON.ARRAPPEND").arg(key).arg(path.to_string()).arg(serde_json::to_string(&value).unwrap())
     }
@@ -387,6 +388,7 @@ implement_commands! {
     /// Index array at `path`, returns first occurance of `value`
     /// Pass `None` to `start_stop` to default it to `0, 0` (the redis default in this command)
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrindex<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: Option<(usize, usize)>) {
         let (start, stop) = start_stop.unwrap_or((0, 0));
 
@@ -396,12 +398,14 @@ implement_commands! {
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right)
     /// `index` must be withing the array's range.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrinsert<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, index: isize, value: V) {
         cmd("JSON.ARRINSERT").arg(key).arg(path.to_string()).arg(index).arg(serde_json::to_string(&value).unwrap())
     }
 
    /// Reports the length of the JSON Array at `path` in `key`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrlen<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.ARRLEN").arg(key).arg(path.to_string())
     }
@@ -409,6 +413,7 @@ implement_commands! {
     /// Removes and returns an element from the `index` in the array.
     /// `index` defaults to `-1` (the end of the array)
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrpop<K: ToRedisArgs, P: ToString>(key: K, path: P, index: Option<isize>) {
         cmd("JSON.ARRPOP").arg(key).arg(path.to_string()).arg(index.unwrap_or(-1))
     }
@@ -418,18 +423,21 @@ implement_commands! {
     /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error.
     /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arrtrim<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: (isize, isize)) {
         cmd("JSON.ARRTRIM").arg(key).arg(path.to_string()).arg(start_stop.0).arg(start_stop.1)
     }
 
     /// Clears container values (Arrays/Objects), and sets numeric values to 0.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_clear<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.CLEAR").arg(key).arg(path.to_string())
     }
 
     /// Deletes a value at `path`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_del<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.DEL").arg(key).arg(path.to_string())
     }
@@ -439,6 +447,7 @@ implement_commands! {
     /// It is functionally identical to JSON.DEL and is only added
     /// for legacy purposes and may be removed in the future by Redis
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     #[deprecated(note = "This is only supported by Redis for legacy reasons, if you're using a modern version of redis, please use json_del instead.")]
     fn json_forget<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.FORGET").arg(key).arg(path.to_string())
@@ -446,6 +455,7 @@ implement_commands! {
 
     /// Returns the value at `path` in JSON serialized form.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_get<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.GET").arg(key).arg(path.to_string())
     }
@@ -453,6 +463,7 @@ implement_commands! {
     /// Returns the values at `path` from multiple `key` arguments.
     /// Returns `null` for nonexistent keys and nonexistent paths.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_mget<K: ToRedisArgs, P: ToString>(keys: Vec<K>, path: P) {
         cmd("JSON.MGET").arg(keys).arg(path.to_string())
     }
@@ -465,6 +476,7 @@ implement_commands! {
 
     /// Multiplies the number value stored at `path` by `number`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     #[deprecated(note = "`JSON.NUMMULTBY` has been deprecated as of RedisJSON 2.0")]
     fn json_nummultby<K: ToRedisArgs, P: ToString>(key: K, path: P, value: isize) {
         cmd("JSON.NUMMULTBY").arg(key).arg(path.to_string()).arg(value)
@@ -472,48 +484,56 @@ implement_commands! {
 
     /// Returns the keys in the object that's referenced by `path`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_objkeys<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.OBJKEYS").arg(key).arg(path.to_string())
     }
 
     /// Reports the number of keys in the JSON Object at `path` in `key`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_objlen<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.OBJLEN").arg(key).arg(path.to_string())
     }
 
     /// Returns the JSON in `key` in Redis Serialization Protocol (RESP) form
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_resp<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.RESP").arg(key).arg(path.to_string())
     }
 
     /// Sets the JSON Value at `path` in `key`
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_set<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, value: V) {
         cmd("JSON.SET").arg(key).arg(path.to_string()).arg(serde_json::to_string(&value).unwrap())
     }
 
     /// Appends the `json-string` values to the string at `path`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_strappend<K: ToRedisArgs, P: ToString>(key: K, path: P, value: P) {
         cmd("JSON.STRAPPEND").arg(key).arg(path.to_string()).arg(value.to_string())
     }
 
     /// Reports the length of the JSON String at `path` in `key`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_strlen<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.STRLEN").arg(key).arg(path.to_string())
     }
 
     /// Toggle a `boolean` value stored at `path`.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_toggle<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.TOGGLE").arg(key).arg(path.to_string())
     }
 
     /// Reports the type of JSON value at `path`s.
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_type<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.TYPE").arg(key).arg(path.to_string())
     }

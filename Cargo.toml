@@ -106,6 +106,10 @@ name = "parser"
 required-features = ["aio"]
 
 [[test]]
+name = "test_json"
+required-features = ["json"]
+
+[[test]]
 name = "test_acl"
 
 [[bench]]
