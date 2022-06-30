@@ -1,5 +1,5 @@
 // can't use rustfmt here because it screws up the file.
-// #![cfg_attr(rustfmt, rustfmt_skip)]
+#![cfg_attr(rustfmt, rustfmt_skip)]
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
@@ -415,7 +415,8 @@ implement_commands! {
 
     /// Trims an array so that it contains only the specified inclusive range of elements.
     ///
-    /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error. There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
+    /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error.
+    /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
     #[cfg(feature = "json")]
     fn json_arrtrim<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: (isize, isize)) {
         cmd("JSON.ARRTRIM").arg(key).arg(path.to_string()).arg(start_stop.0).arg(start_stop.1)
@@ -433,8 +434,12 @@ implement_commands! {
         cmd("JSON.DEL").arg(key).arg(path.to_string())
     }
 
-    /// See [json_del](redis::commands::Commands::json_del)
+    /// This is an alias for JSON.DEL
+    ///
+    /// It is functionally identical to JSON.DEL and is only added
+    /// for legacy purposes and may be removed in the future by Redis
     #[cfg(feature = "json")]
+    #[deprecated(note = "This is only supported by Redis for legacy reasons, if you're using a modern version of redis, please use json_del instead.")]
     fn json_forget<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.FORGET").arg(key).arg(path.to_string())
     }
@@ -445,7 +450,8 @@ implement_commands! {
         cmd("JSON.GET").arg(key).arg(path.to_string())
     }
 
-    /// Returns the values at `path` from multiple `key` arguments. Returns `null` for nonexistent keys and nonexistent paths.
+    /// Returns the values at `path` from multiple `key` arguments.
+    /// Returns `null` for nonexistent keys and nonexistent paths.
     #[cfg(feature = "json")]
     fn json_mget<K: ToRedisArgs, P: ToString>(keys: Vec<K>, path: P) {
         cmd("JSON.MGET").arg(keys).arg(path.to_string())
