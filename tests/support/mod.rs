@@ -119,9 +119,19 @@ impl RedisServer {
             .expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
+                #[cfg(not(feature = "json"))]
                 redis_cmd
                     .arg("--port")
                     .arg(server_port.to_string())
+                    .arg("--bind")
+                    .arg(bind);
+
+                #[cfg(feature = "json")]
+                redis_cmd
+                    .arg("--port")
+                    .arg(server_port.to_string())
+                    .arg("--loadmodule")
+                    .arg(env::var("REDISRS_REDISJSON_PATH").unwrap())
                     .arg("--bind")
                     .arg(bind);
 
