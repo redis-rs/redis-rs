@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite, ToRedisArgs};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
 
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
