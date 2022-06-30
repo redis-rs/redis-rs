@@ -457,7 +457,7 @@ implement_commands! {
 
     /// Increments the number value stored at `path` by `number`.
     #[cfg(feature = "json")]
-    fn json_numincrby<K: ToRedisArgs, P: ToString>(key: K, path: P, value: isize) {
+    fn json_numincrby<K: ToRedisArgs, P: ToString>(key: K, path: P, value: i64) {
         cmd("JSON.NUMINCRBY").arg(key).arg(path.to_string()).arg(value)
     }   
 
@@ -473,13 +473,6 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_objlen<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.OBJLEN").arg(key).arg(path.to_string())
-    }
-
-    /// Returns the JSON in `key` in Redis Serialization Protocol (RESP) form
-    #[cfg(feature = "json")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_resp<K: ToRedisArgs, P: ToString>(key: K, path: P) {
-        cmd("JSON.RESP").arg(key).arg(path.to_string())
     }
 
     /// Sets the JSON Value at `path` in `key`
