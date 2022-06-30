@@ -389,17 +389,15 @@ implement_commands! {
     /// Pass `None` to `start_stop` to default it to `0, 0` (the redis default in this command)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arrindex<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: Option<(usize, usize)>) {
-        let (start, stop) = start_stop.unwrap_or((0, 0));
-
-        cmd("JSON.ARRINDEX").arg(key).arg(path.to_string()).arg(start).arg(stop)
+    fn json_arrindex<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, value: V) {
+        cmd("JSON.ARRINDEX").arg(key).arg(path.to_string()).arg(serde_json::to_string(&value).unwrap())
     }
 
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right)
     /// `index` must be withing the array's range.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arrinsert<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, index: isize, value: V) {
+    fn json_arrinsert<K: ToRedisArgs, P: ToString, V: Serialize>(key: K, path: P, index: i64, value: V) {
         cmd("JSON.ARRINSERT").arg(key).arg(path.to_string()).arg(index).arg(serde_json::to_string(&value).unwrap())
     }
 
@@ -414,7 +412,7 @@ implement_commands! {
     /// `index` defaults to `-1` (the end of the array)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arrpop<K: ToRedisArgs, P: ToString>(key: K, path: P, index: Option<isize>) {
+    fn json_arrpop<K: ToRedisArgs, P: ToString>(key: K, path: P, index: Option<i64>) {
         cmd("JSON.ARRPOP").arg(key).arg(path.to_string()).arg(index.unwrap_or(-1))
     }
 
@@ -424,7 +422,7 @@ implement_commands! {
     /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arrtrim<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: (isize, isize)) {
+    fn json_arrtrim<K: ToRedisArgs, P: ToString>(key: K, path: P, start_stop: (i64, i64)) {
         cmd("JSON.ARRTRIM").arg(key).arg(path.to_string()).arg(start_stop.0).arg(start_stop.1)
     }
 
@@ -440,17 +438,6 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_del<K: ToRedisArgs, P: ToString>(key: K, path: P) {
         cmd("JSON.DEL").arg(key).arg(path.to_string())
-    }
-
-    /// This is an alias for JSON.DEL
-    ///
-    /// It is functionally identical to JSON.DEL and is only added
-    /// for legacy purposes and may be removed in the future by Redis
-    #[cfg(feature = "json")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    #[deprecated(note = "This is only supported by Redis for legacy reasons, if you're using a modern version of redis, please use json_del instead.")]
-    fn json_forget<K: ToRedisArgs, P: ToString>(key: K, path: P) {
-        cmd("JSON.FORGET").arg(key).arg(path.to_string())
     }
 
     /// Returns the value at `path` in JSON serialized form.
@@ -472,15 +459,7 @@ implement_commands! {
     #[cfg(feature = "json")]
     fn json_numincrby<K: ToRedisArgs, P: ToString>(key: K, path: P, value: isize) {
         cmd("JSON.NUMINCRBY").arg(key).arg(path.to_string()).arg(value)
-    }
-
-    /// Multiplies the number value stored at `path` by `number`.
-    #[cfg(feature = "json")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    #[deprecated(note = "`JSON.NUMMULTBY` has been deprecated as of RedisJSON 2.0")]
-    fn json_nummultby<K: ToRedisArgs, P: ToString>(key: K, path: P, value: isize) {
-        cmd("JSON.NUMMULTBY").arg(key).arg(path.to_string()).arg(value)
-    }
+    }   
 
     /// Returns the keys in the object that's referenced by `path`.
     #[cfg(feature = "json")]
