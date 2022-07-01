@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  REDISRS_REDISJSON_PATH: "$GITHUB_WORKSPACE/redis-json/target/release/librejson.so"
 
 jobs:
   build:
@@ -44,7 +45,7 @@ jobs:
         pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
         echo $PATH
 
-    - name: Install latest nightly
+    - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
@@ -53,6 +54,14 @@ jobs:
 
     - uses: Swatinem/rust-cache@v1
     - uses: actions/checkout@v2
+
+    - name: Install RedisJSON
+      uses: actions/checkout
+      with:
+        repository: "RedisJSON/RedisJSON"
+        path: "$GITHUB_WORKSPACE/redis-json"
+      run: |
+        cargo build --release
 
     - name: Run tests
       run: make test
