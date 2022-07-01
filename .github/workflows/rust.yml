@@ -24,7 +24,8 @@ jobs:
           - stable
           - beta
           - nightly
-          - 1.51.0
+          # RedisJSON literally will refuse to compile in this version of rust
+          # - 1.51.0
 
     steps:
     - name: Cache redis
