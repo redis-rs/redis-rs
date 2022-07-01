@@ -55,11 +55,13 @@ jobs:
     - uses: Swatinem/rust-cache@v1
     - uses: actions/checkout@v2
 
-    - name: Install RedisJSON
+    - name: Checkout RedisJSON
       uses: actions/checkout
       with:
         repository: "RedisJSON/RedisJSON"
         path: "$GITHUB_WORKSPACE/redis-json"
+
+    - name: Compile RedisJSON
       run: |
         cargo build --release
 
