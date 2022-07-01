@@ -63,7 +63,9 @@ jobs:
 
     - name: Compile RedisJSON
       run: |
+        cd $GITHUB_WORKSPACE/redis-json
         cargo build --release
+        cd $GITHUB_WORKSPACE
 
     - name: Run tests
       run: make test
