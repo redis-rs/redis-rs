@@ -255,10 +255,7 @@ fn test_json_get() {
 
     let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, "..a $..b");
 
-    assert_eq!(
-        json_get_multi,
-        Ok("2".into())
-    );
+    assert_eq!(json_get_multi, Ok("2".into()));
 }
 
 #[test]
