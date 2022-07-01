@@ -24,8 +24,7 @@ jobs:
           - stable
           - beta
           - nightly
-          # RedisJSON literally will refuse to compile in this version of rust
-          # - 1.51.0
+          - 1.51.0
 
     steps:
     - name: Cache redis
@@ -66,7 +65,7 @@ jobs:
       run: |
         mkdir lib
         cd redis-json
-        cargo build --release
+        cargo +stable build --release
         mv ./target/release/librejson.so ../lib
         cd ..
         rm -rf ./redis-json
