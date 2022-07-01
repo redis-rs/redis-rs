@@ -264,12 +264,12 @@ fn test_json_mget() {
     let mut con = ctx.connection();
 
     let set_initial_a: RedisResult<bool> = con.json_set(
-        format!("{TEST_KEY}-a"),
+        format!("{}-a", TEST_KEY),
         "$",
         json!({"a":1i64, "b": 2i64, "nested": {"a": 3i64, "b": null}}),
     );
     let set_initial_b: RedisResult<bool> = con.json_set(
-        format!("{TEST_KEY}-b"),
+        format!("{}-b", TEST_KEY),
         "$",
         json!({"a":4i64, "b": 5i64, "nested": {"a": 6i64, "b": null}}),
     );
@@ -278,7 +278,7 @@ fn test_json_mget() {
     assert_eq!(set_initial_b, Ok(true));
 
     let json_mget: RedisResult<Value> = con.json_mget(
-        vec![format!("{TEST_KEY}-a"), format!("{TEST_KEY}-b")],
+        vec![format!("{TEST_KEY}-a"), format!("{}-b", TEST_KEY)],
         "$..a",
     );
 
