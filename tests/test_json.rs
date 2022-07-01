@@ -367,7 +367,7 @@ fn test_json_set() {
 
     let set: RedisResult<bool> = con.json_set(TEST_KEY, "$", json!({"key": "value"}));
 
-    assert_eq!(result, Ok(true));
+    assert_eq!(set, Ok(true));
 }
 
 #[test]
@@ -408,7 +408,7 @@ fn test_json_strlen() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_strlen: RedisResult<Value> = con.json_set(TEST_KEY, "$..a");
+    let json_strlen: RedisResult<Value> = con.json_strlen(TEST_KEY, "$..a");
 
     assert_eq!(json_strlen, Ok(Bulk(vec![Int(3), Int(5), Nil])));
 }
@@ -422,10 +422,10 @@ fn test_json_toggle() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_toggle_a: RedisResult<Value> = con.json_toggle(TEST_KET, "$.bool");
+    let json_toggle_a: RedisResult<Value> = con.json_toggle(TEST_KEY, "$.bool");
     assert_eq!(json_toggle_a, Ok(Bulk(vec![Int(0)])));
 
-    let json_toggle_b: RedisResult<Value> = con.json_toggle(TEST_KET, "$.bool");
+    let json_toggle_b: RedisResult<Value> = con.json_toggle(TEST_KEY, "$.bool");
     assert_eq!(json_toggle_b, Ok(Bulk(vec![Int(1)])));
 }
 
