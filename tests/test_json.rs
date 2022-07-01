@@ -278,7 +278,7 @@ fn test_json_mget() {
     assert_eq!(set_initial_b, Ok(true));
 
     let json_mget: RedisResult<Value> = con.json_mget(
-        vec![format!("{TEST_KEY}-a"), format!("{}-b", TEST_KEY)],
+        vec![format!("{}-a", TEST_KEY), format!("{}-b", TEST_KEY)],
         "$..a",
     );
 
