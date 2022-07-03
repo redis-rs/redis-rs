@@ -898,6 +898,10 @@ impl<T: ToRedisArgs> ToRedisArgs for &T {
     {
         (*self).write_redis_args(out)
     }
+
+    fn is_single_arg(&self) -> bool {
+        (*self).is_single_arg()
+    }
 }
 
 /// @note: Redis cannot store empty sets so the application has to
