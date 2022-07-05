@@ -546,6 +546,7 @@ mod pub_sub {
 
             Ok::<_, RedisError>(())
         })
+        .map_err(|err: RedisError| err)
         .unwrap();
     }
 
