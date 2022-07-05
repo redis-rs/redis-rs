@@ -104,14 +104,13 @@ fn test_pipeline_transaction_with_errors() {
 
     block_on_all(async move {
         let mut con = ctx.async_connection().await?;
-
-        let _: () = con.set("x", 42).await.unwrap();
+        con.set::<_, _, ()>("x", 42).await.unwrap();
 
         // Make Redis a replica of a nonexistent master, thereby making it read-only.
-        let _: () = redis::cmd("slaveof")
+        redis::cmd("slaveof")
             .arg("1.1.1.1")
             .arg("1")
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await
             .unwrap();
 
@@ -129,9 +128,8 @@ fn test_pipeline_transaction_with_errors() {
         let x: i32 = con.get("x").await.unwrap();
         assert_eq!(x, 42);
 
-        Ok(())
+        Ok::<_, RedisError>(())
     })
-    .map_err(|err: RedisError| err)
     .unwrap();
 }
 
@@ -344,9 +342,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");
-        Ok(())
+        Ok::<_, RedisError>(())
     })
-    .map_err(|err: RedisError| err)
     .unwrap();
 }
 
@@ -482,9 +479,8 @@ mod pub_sub {
             let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
             assert_eq!("banana".to_string(), msg_payload);
 
-            Ok(())
+            Ok::<_, RedisError>(())
         })
-        .map_err(|err: RedisError| err)
         .unwrap();
     }
 
@@ -509,9 +505,8 @@ mod pub_sub {
             let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
             assert_eq!(subscription_count, 0);
 
-            Ok(())
+            Ok::<_, RedisError>(())
         })
-        .map_err(|err: RedisError| err)
         .unwrap();
     }
 
@@ -545,9 +540,8 @@ mod pub_sub {
             }
             assert_eq!(subscription_count, 0);
 
-            Ok(())
+            Ok::<_, RedisError>(())
         })
-        .map_err(|err: RedisError| err)
         .unwrap();
     }
 
@@ -571,9 +565,8 @@ mod pub_sub {
             let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;
             assert_eq!(&res, "bar");
 
-            Ok(())
+            Ok::<_, RedisError>(())
         })
-        .map_err(|err: RedisError| err)
         .unwrap();
     }
 }

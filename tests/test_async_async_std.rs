@@ -280,9 +280,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");
-        Ok(())
+        Ok::<_, RedisError>(())
     })
-    .map_err(|err: RedisError| err)
     .unwrap();
 }
 
