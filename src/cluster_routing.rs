@@ -1,16 +1,18 @@
 use std::iter::Iterator;
 
 use crate::cmd::{Arg, Cmd};
+use crate::commands::is_readonly_cmd;
 use crate::types::Value;
 
-pub(crate) const SLOT_SIZE: usize = 16384;
+pub(crate) const SLOT_SIZE: u16 = 16384;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RoutingInfo {
     AllNodes,
     AllMasters,
     Random,
-    Slot(u16),
+    MasterSlot(u16),
+    ReplicaSlot(u16),
 }
 
 impl RoutingInfo {
@@ -18,7 +20,8 @@ impl RoutingInfo {
     where
         R: Routable + ?Sized,
     {
-        match &r.command()?[..] {
+        let cmd = &r.command()?[..];
+        match cmd {
             b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
             b"ECHO" | b"CONFIG" | b"CLIENT" | b"SLOWLOG" | b"DBSIZE" | b"LASTSAVE" | b"PING"
             | b"INFO" | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"SAVE" | b"TIME"
@@ -33,30 +36,34 @@ impl RoutingInfo {
                 if key_count == 0 {
                     Some(RoutingInfo::Random)
                 } else {
-                    r.arg_idx(3).and_then(RoutingInfo::for_key)
+                    r.arg_idx(3).and_then(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
-            b"XGROUP" | b"XINFO" => r.arg_idx(2).and_then(RoutingInfo::for_key),
+            b"XGROUP" | b"XINFO" => r.arg_idx(2).and_then(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
-                    .and_then(RoutingInfo::for_key)
+                    .and_then(|key| RoutingInfo::for_key(cmd, key))
             }
             _ => match r.arg_idx(1) {
-                Some(key) => RoutingInfo::for_key(key),
+                Some(key) => RoutingInfo::for_key(cmd, key),
                 None => Some(RoutingInfo::Random),
             },
         }
     }
 
-    pub fn for_key(key: &[u8]) -> Option<RoutingInfo> {
+    pub fn for_key(cmd: &[u8], key: &[u8]) -> Option<RoutingInfo> {
         let key = match get_hashtag(key) {
             Some(tag) => tag,
             None => key,
         };
-        Some(RoutingInfo::Slot(
-            crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE as u16,
-        ))
+
+        let slot = crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE;
+        if is_readonly_cmd(cmd) {
+            Some(RoutingInfo::ReplicaSlot(slot))
+        } else {
+            Some(RoutingInfo::MasterSlot(slot))
+        }
     }
 }
 
@@ -139,7 +146,6 @@ impl Slot {
         &self.master
     }
 
-    #[allow(dead_code)]
     pub fn replicas(&self) -> &Vec<String> {
         &self.replicas
     }

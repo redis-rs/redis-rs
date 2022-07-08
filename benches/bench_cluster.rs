@@ -16,7 +16,10 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
     let mut group = c.benchmark_group("cluster_basic");
 
     group.bench_function("set", |b| {
-        b.iter(|| black_box(redis::cmd("SET").arg(key).arg(42).execute(con)))
+        b.iter(|| {
+            redis::cmd("SET").arg(key).arg(42).execute(con);
+            black_box(())
+        })
     });
 
     group.bench_function("get", |b| {
@@ -27,7 +30,12 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
         redis::cmd("SET").arg(key).arg(42).execute(con);
         redis::cmd("DEL").arg(key).execute(con);
     };
-    group.bench_function("set_and_del", |b| b.iter(|| black_box(set_and_del())));
+    group.bench_function("set_and_del", |b| {
+        b.iter(|| {
+            set_and_del();
+            black_box(())
+        })
+    });
 
     group.finish();
 }
@@ -47,14 +55,22 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
             pipe.set(q, "bar").ignore();
         }
     };
-    group.bench_function("build_pipeline", |b| b.iter(|| black_box(build_pipeline())));
+    group.bench_function("build_pipeline", |b| {
+        b.iter(|| {
+            build_pipeline();
+            black_box(())
+        })
+    });
 
     let mut pipe = cluster_pipe();
     for q in &queries {
         pipe.set(q, "bar").ignore();
     }
     group.bench_function("query_pipeline", |b| {
-        b.iter(|| black_box(pipe.query::<()>(con).unwrap()))
+        b.iter(|| {
+            pipe.query::<()>(con).unwrap();
+            black_box(())
+        })
     });
 
     group.finish();
@@ -69,5 +85,21 @@ fn bench_cluster_setup(c: &mut Criterion) {
     bench_pipeline(c, &mut con);
 }
 
-criterion_group!(cluster_bench, bench_cluster_setup);
+#[allow(dead_code)]
+fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
+        builder.read_from_replicas()
+    });
+    cluster.wait_for_cluster_up();
+
+    let mut con = cluster.connection();
+    bench_set_get_and_del(c, &mut con);
+    bench_pipeline(c, &mut con);
+}
+
+criterion_group!(
+    cluster_bench,
+    bench_cluster_setup,
+    // bench_cluster_read_from_replicas_setup
+);
 criterion_main!(cluster_bench);

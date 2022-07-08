@@ -56,19 +56,20 @@ fn test_cluster_with_bad_password() {
 }
 
 #[test]
-fn test_cluster_readonly() {
-    let cluster =
-        TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| builder.readonly(true));
+fn test_cluster_read_from_replicas() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
+        builder.read_from_replicas()
+    });
     let mut con = cluster.connection();
 
-    // con is a READONLY replica, so we'll get the MOVED response and will be redirected
-    // to the master
+    // Write commands would go to the primary nodes
     redis::cmd("SET")
         .arg("{x}key1")
         .arg(b"foo")
         .execute(&mut con);
     redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
 
+    // Read commands would go to the replica nodes
     assert_eq!(
         redis::cmd("MGET")
             .arg(&["{x}key1", "{x}key2"])
