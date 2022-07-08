@@ -28,23 +28,25 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
         // @connection
         b"CLIENT" | b"ECHO" |
         // @geo
-        b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUS_RO" | b"GEORADIUSBYMEMBER_RO" |
+        b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUSBYMEMBER_RO" | b"GEORADIUS_RO" | b"GEOSEARCH" |
         // @hash
-        b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSCAN" | b"HSTRLEN" | b"HVALS" |
+        b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HRANDFIELD" | b"HSCAN" | b"HSTRLEN" | b"HVALS" |
         // @hyperloglog
         b"PFCOUNT" |
         // @keyspace
-        b"DBSIZE" | b"DUMP" | b"EXISTS" | b"KEYS" | b"OBJECT" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"TOUCH" | b"TTL" | b"TYPE" |
+        b"DBSIZE" | b"DUMP" | b"EXISTS" | b"EXPIRETIME" | b"KEYS" | b"OBJECT" | b"PEXPIRETIME" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"TOUCH" | b"TTL" | b"TYPE" |
         // @list
-        b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" |
+        b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"SORT_RO" |
+        // @scripting
+        b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL_RO" |
         // @set
-        b"SCARD" | b"SDIFF" | b"SINTER" | b"SISMEMBER" | b"SMEMBERS" | b"SRANDMEMBER" | b"SSCAN" | b"SUNION" |
+        b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"SRANDMEMBER" | b"SSCAN" | b"SUNION" |
         // @sortedset
-        b"ZCARD" | b"ZCOUNT" | b"ZLEXCOUNT" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" |
+        b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANDMEMBER" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" | b"ZUNION" |
         // @stream
         b"XINFO" | b"XLEN" | b"XPENDING" | b"XRANGE" | b"XREAD" | b"XREVRANGE" |
         // @string
-        b"GET" | b"GETRANGE" | b"MGET" | b"STRALGO" | b"STRLEN" | b"SUBSTR"
+        b"GET" | b"GETRANGE" | b"LCS" | b"MGET" | b"STRALGO" | b"STRLEN" | b"SUBSTR"
     )
 }
 
