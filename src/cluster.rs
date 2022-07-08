@@ -156,7 +156,7 @@ impl ClusterConnection {
     /// method.
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
-        if dur.is_some() && dur.unwrap() == Duration::default() {
+        if dur.is_some() && dur.unwrap().is_zero() {
             return Err(RedisError::from((
                 ErrorKind::InvalidClientConfig,
                 "Duration should be None or non-zero.",
@@ -179,7 +179,7 @@ impl ClusterConnection {
     /// method.
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
-        if dur.is_some() && dur.unwrap() == Duration::default() {
+        if dur.is_some() && dur.unwrap().is_zero() {
             return Err(RedisError::from((
                 ErrorKind::InvalidClientConfig,
                 "Duration should be None or non-zero.",
