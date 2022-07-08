@@ -65,6 +65,7 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 use crate::tls::Certificate;
 use crate::tls::RedisIdentity;
+type SlotMap = BTreeMap<u16, String>;
 
 /// This is a connection of Redis cluster.
 pub struct ClusterConnection {
