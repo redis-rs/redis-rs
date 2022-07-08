@@ -22,7 +22,7 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         cmd,
         // @admin
-        b"LASTSAVE" | b"PRIVILEGE" | b"PRIVILIDGE" | b"SETCLIENTADDR" |
+        b"LASTSAVE" |
         // @bitmap
         b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"GETBIT" |
         // @connection
