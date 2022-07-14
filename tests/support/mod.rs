@@ -119,7 +119,6 @@ impl RedisServer {
             .expect("failed to create tempdir");
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
-                #[cfg(not(feature = "json"))]
                 redis_cmd
                     .arg("--port")
                     .arg(server_port.to_string())
@@ -128,12 +127,8 @@ impl RedisServer {
 
                 #[cfg(feature = "json")]
                 redis_cmd
-                    .arg("--port")
-                    .arg(server_port.to_string())
                     .arg("--loadmodule")
-                    .arg(env::var("REDISRS_REDISJSON_PATH").unwrap())
-                    .arg("--bind")
-                    .arg(bind);
+                    .arg(env::var("REDISRS_REDISJSON_PATH").unwrap());
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
@@ -161,6 +156,11 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(host);
 
+                #[cfg(feature = "json")]
+                redis_cmd
+                    .arg("--loadmodule")
+                    .arg(env::var("REDISRS_REDISJSON_PATH").unwrap());
+
                 let addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
                     port,
@@ -179,6 +179,12 @@ impl RedisServer {
                     .arg("0")
                     .arg("--unixsocket")
                     .arg(&path);
+
+                #[cfg(feature = "json")]
+                redis_cmd
+                    .arg("--loadmodule")
+                    .arg(env::var("REDISRS_REDISJSON_PATH").unwrap());
+
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: Some(tempdir),

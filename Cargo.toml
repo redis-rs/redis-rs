@@ -67,6 +67,8 @@ ahash = { version = "0.7.6", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script"]
+# added to allow for separate testing of the JSON feature
+test_default = ["acl", "streams", "aio", "geospatial", "cluster", "script", "tls", "async-std-comp", "async-std-tls-comp", "tokio-comp", "tokio-native-tls-comp", "connection-manager", "streams"]
 json = ["serde", "serde_json"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]

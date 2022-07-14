@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  REDISRS_REDISJSON_PATH: "$GITHUB_WORKSPACE/lib/librejson.so"
+  REDISRS_REDISJSON_PATH: "/tmp/librejson.so"
 
 jobs:
   build:
@@ -66,12 +66,12 @@ jobs:
         mkdir lib
         cd redis-json
         cargo +stable build --release
-        mv ./target/release/librejson.so ../lib
+        mv ./target/release/librejson.so /tmp
         cd ..
         rm -rf ./redis-json
 
     - name: Run tests
-      run: make test
+      run: make test-all
     - name: Check features
       run: |
         cargo check --benches --all-features
