@@ -24,7 +24,7 @@ jobs:
           - stable
           - beta
           - nightly
-          - 1.51.0
+          - 1.57.0
 
     steps:
     - name: Cache redis
