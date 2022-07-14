@@ -373,6 +373,9 @@ pub use crate::pipeline::Pipeline;
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
 
+#[cfg(feature = "json")]
+pub use crate::commands::json;
+
 // preserve grouping and order
 #[rustfmt::skip]
 pub use crate::types::{

@@ -2,8 +2,10 @@
 
 use std::assert_eq;
 
+use redis::json::Commands;
+
 use redis::{
-    Commands, RedisResult,
+    RedisResult,
     Value::{self, *},
 };
 
