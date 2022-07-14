@@ -59,6 +59,7 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
 
 implement_commands! {
     'a
+    // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
     fn get<K: ToRedisArgs>(key: K) {
