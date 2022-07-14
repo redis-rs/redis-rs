@@ -71,7 +71,11 @@ jobs:
         rm -rf ./redis-json
 
     - name: Run tests
-      run: make test-all
+      run: make test
+      
+    - name: Run tests for the JSON Module
+      run: make test-json
+
     - name: Check features
       run: |
         cargo check --benches --all-features
