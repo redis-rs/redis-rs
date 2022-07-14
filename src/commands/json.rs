@@ -5,6 +5,9 @@ use crate::connection::{ConnectionLike};
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
 
+#[cfg(feature = "cluster")]
+use crate::cluster_pipeline::ClusterPipeline;
+
 use serde_json;
 use serde::ser::Serialize;
 
