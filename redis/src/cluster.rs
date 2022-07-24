@@ -55,6 +55,7 @@ use super::{
     Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind, IntoConnectionInfo,
     RedisError, RedisResult, Value,
 };
+use crate::cluster_client::ClusterParams;
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
@@ -95,25 +96,23 @@ impl TlsMode {
 
 impl ClusterConnection {
     pub(crate) fn new(
-        initial_nodes: Vec<ConnectionInfo>,
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
+        cluster_params: &ClusterParams,
+        initial_nodes: &[ConnectionInfo],
     ) -> RedisResult<ClusterConnection> {
         let connections = Self::create_initial_connections(
-            &initial_nodes,
-            read_from_replicas,
-            username.clone(),
-            password.clone(),
+            initial_nodes,
+            cluster_params.read_from_replicas,
+            cluster_params.username.clone(),
+            cluster_params.password.clone(),
         )?;
 
         let connection = ClusterConnection {
             connections: RefCell::new(connections),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
-            read_from_replicas,
-            username,
-            password,
+            read_from_replicas: cluster_params.read_from_replicas,
+            username: cluster_params.username.clone(),
+            password: cluster_params.password.clone(),
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             #[cfg(feature = "tls")]
@@ -135,7 +134,7 @@ impl ClusterConnection {
             },
             #[cfg(not(feature = "tls"))]
             tls: None,
-            initial_nodes,
+            initial_nodes: initial_nodes.to_vec(),
         };
         connection.refresh_slots()?;
 
