@@ -38,7 +38,6 @@
 //!     .expire(key, 60).ignore()
 //!     .query(&mut connection).unwrap();
 //! ```
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::iter::Iterator;
 use std::str::FromStr;
@@ -71,8 +70,8 @@ pub struct ClusterConnection {
     cluster_params: ClusterParams,
     initial_nodes: Vec<ConnectionInfo>,
 
-    connections: RefCell<HashMap<String, Connection>>,
-    slots: RefCell<SlotMap>,
+    connections: HashMap<String, Connection>,
+    slots: SlotMap,
 }
 
 impl ClusterConnection {
@@ -101,7 +100,7 @@ impl ClusterConnection {
         }
 
         self.cluster_params.write_timeout = dur;
-        for conn in self.connections.borrow().values() {
+        for conn in self.connections.values() {
             conn.set_write_timeout(dur)?;
         }
         Ok(())
@@ -118,7 +117,7 @@ impl ClusterConnection {
         }
 
         self.cluster_params.read_timeout = dur;
-        for conn in self.connections.borrow().values() {
+        for conn in self.connections.values() {
             conn.set_read_timeout(dur)?;
         }
         Ok(())
@@ -138,7 +137,7 @@ impl ClusterConnection {
         cluster_params: &ClusterParams,
         initial_nodes: &[ConnectionInfo],
     ) -> RedisResult<ClusterConnection> {
-        let connection = ClusterConnection {
+        let mut connection = ClusterConnection {
             cluster_params: cluster_params.clone(),
             initial_nodes: initial_nodes.to_vec(),
             ..Default::default()
@@ -159,7 +158,7 @@ impl ClusterConnection {
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
-    fn create_initial_connections(&self) -> RedisResult<()> {
+    fn create_initial_connections(&mut self) -> RedisResult<()> {
         let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
         for info in self.initial_nodes.iter() {
@@ -180,32 +179,31 @@ impl ClusterConnection {
             )));
         }
 
-        *self.connections.borrow_mut() = connections;
+        self.connections = connections;
         self.refresh_slots()?;
         Ok(())
     }
 
     // Query a node to discover slot-> master mappings.
-    fn refresh_slots(&self) -> RedisResult<()> {
-        let mut slots = self.slots.borrow_mut();
-        *slots = self.create_new_slots()?;
+    fn refresh_slots(&mut self) -> RedisResult<()> {
+        let slots = self.create_new_slots()?;
+        self.slots = slots;
 
-        let mut nodes = slots.values().flatten().collect::<Vec<_>>();
+        let mut nodes = self.slots.values().flatten().cloned().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
 
-        let mut connections = self.connections.borrow_mut();
-        *connections = nodes
+        let connections = nodes
             .into_iter()
             .filter_map(|addr| {
-                if connections.contains_key(addr) {
-                    let mut conn = connections.remove(addr).unwrap();
+                if self.connections.contains_key(&addr) {
+                    let mut conn = self.connections.remove(&addr).unwrap();
                     if conn.check_connection() {
                         return Some((addr.to_string(), conn));
                     }
                 }
 
-                if let Ok(mut conn) = self.connect(addr) {
+                if let Ok(mut conn) = self.connect(&addr) {
                     if conn.check_connection() {
                         conn.set_read_timeout(self.cluster_params.read_timeout)
                             .unwrap();
@@ -218,19 +216,19 @@ impl ClusterConnection {
                 None
             })
             .collect();
+        self.connections = connections;
 
         Ok(())
     }
 
-    fn create_new_slots(&self) -> RedisResult<SlotMap> {
+    fn create_new_slots(&mut self) -> RedisResult<SlotMap> {
         let mut cmd = Cmd::new();
         cmd.arg("CLUSTER").arg("SLOTS");
 
-        let mut connections = self.connections.borrow_mut();
         let mut new_slots = None;
         let mut rng = thread_rng();
-        let len = connections.len();
-        let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
+        let len = self.connections.len();
+        let mut samples = self.connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
             if let Ok(Value::Bulk(response)) = cmd.query(conn) {
@@ -260,50 +258,39 @@ impl ClusterConnection {
         Ok(conn)
     }
 
-    fn get_connection<'a>(
-        &self,
-        connections: &'a mut HashMap<String, Connection>,
-        route: (u16, usize),
-    ) -> RedisResult<&'a mut Connection> {
+    fn get_connection(&mut self, route: (u16, usize)) -> RedisResult<&mut Connection> {
         let (slot, idx) = route;
-        let slots = self.slots.borrow();
-        let addr = slots.range(&slot..).next().unwrap().1;
-        self.get_connection_by_addr(connections, &addr[idx])
+        let node = self.slots.range(&slot..).next().unwrap().1[idx].clone();
+        self.get_connection_by_addr(&node)
     }
 
-    fn get_connection_by_addr<'a>(
-        &self,
-        connections: &'a mut HashMap<String, Connection>,
-        addr: &str,
-    ) -> RedisResult<&'a mut Connection> {
-        if connections.contains_key(addr) {
-            Ok(connections.get_mut(addr).unwrap())
+    fn get_connection_by_addr(&mut self, addr: &str) -> RedisResult<&mut Connection> {
+        if self.connections.contains_key(addr) {
+            Ok(self.connections.get_mut(addr).unwrap())
         } else {
             // Create new connection.
             // TODO: error handling
             let conn = self.connect(addr)?;
-            Ok(connections.entry(addr.to_string()).or_insert(conn))
+            Ok(self.connections.entry(addr.to_string()).or_insert(conn))
         }
     }
 
-    fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
+    fn execute_on_all_nodes<T, F>(&mut self, mut func: F) -> RedisResult<T>
     where
         T: MergeResults,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
-        let mut connections = self.connections.borrow_mut();
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        for (addr, connection) in connections.iter_mut() {
+        for (addr, connection) in self.connections.iter_mut() {
             results.insert(addr.as_str(), func(connection)?);
         }
 
         Ok(T::merge_results(results))
     }
 
-    #[allow(clippy::unnecessary_unwrap)]
-    fn request<R, T, F>(&self, cmd: &R, mut func: F) -> RedisResult<T>
+    fn request<R, T, F>(&mut self, cmd: &R, mut func: F) -> RedisResult<T>
     where
         R: ?Sized + Routable,
         T: MergeResults + std::fmt::Debug,
@@ -325,9 +312,8 @@ impl ClusterConnection {
         loop {
             // Get target address and response.
             let rv = {
-                let mut connections = self.connections.borrow_mut();
                 let conn = if let Some(addr) = redirected.take() {
-                    let conn = self.get_connection_by_addr(&mut *connections, &addr)?;
+                    let conn = self.get_connection_by_addr(&addr)?;
                     if is_asking {
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
@@ -337,7 +323,7 @@ impl ClusterConnection {
                     }
                     conn
                 } else {
-                    self.get_connection(&mut *connections, route.unwrap())?
+                    self.get_connection(route.unwrap())?
                 };
                 func(conn)
             };
@@ -378,7 +364,7 @@ impl ClusterConnection {
         }
     }
 
-    fn send_recv_and_retry_cmds(&self, cmds: &[Cmd]) -> RedisResult<Vec<Value>> {
+    fn send_recv_and_retry_cmds(&mut self, cmds: &[Cmd]) -> RedisResult<Vec<Value>> {
         // Vector to hold the results, pre-populated with `Nil` values. This allows the original
         // cmd ordering to be re-established by inserting the response directly into the result
         // vector (e.g., results[10] = response).
@@ -406,22 +392,19 @@ impl ClusterConnection {
     }
 
     // Build up a pipeline per node, then send it
-    fn send_all_commands(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut connections = self.connections.borrow_mut();
-
+    fn send_all_commands(&mut self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
         for nc in &node_cmds {
-            self.get_connection_by_addr(&mut connections, &nc.addr)?
+            self.get_connection_by_addr(&nc.addr)?
                 .send_packed_command(&nc.pipe)?;
         }
         Ok(node_cmds)
     }
 
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
-        let slots = self.slots.borrow();
-
         let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
-            let (_, addr) = slots
+            let (_, addr) = self
+                .slots
                 .range(&slot..)
                 .next()
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
@@ -460,20 +443,16 @@ impl ClusterConnection {
 
     // Receive from each node, keeping track of which commands need to be retried.
     fn recv_all_commands(
-        &self,
+        &mut self,
         results: &mut [Value],
         node_cmds: &[NodeCmd],
     ) -> RedisResult<Vec<usize>> {
         let mut to_retry = Vec::new();
-        let mut connections = self.connections.borrow_mut();
         let mut first_err = None;
 
         for nc in node_cmds {
             for cmd_idx in &nc.indexes {
-                match self
-                    .get_connection_by_addr(&mut connections, &nc.addr)?
-                    .recv_response()
-                {
+                match self.get_connection_by_addr(&nc.addr)?.recv_response() {
                     Ok(item) => results[*cmd_idx] = item,
                     Err(err) if err.is_cluster_error() => to_retry.push(*cmd_idx),
                     Err(err) => first_err = first_err.or(Some(err)),
@@ -561,8 +540,7 @@ impl ConnectionLike for ClusterConnection {
     }
 
     fn is_open(&self) -> bool {
-        let connections = self.connections.borrow();
-        for conn in connections.values() {
+        for conn in self.connections.values() {
             if !conn.is_open() {
                 return false;
             }
@@ -571,8 +549,7 @@ impl ConnectionLike for ClusterConnection {
     }
 
     fn check_connection(&mut self) -> bool {
-        let mut connections = self.connections.borrow_mut();
-        for conn in connections.values_mut() {
+        for conn in self.connections.values_mut() {
             if !conn.check_connection() {
                 return false;
             }
