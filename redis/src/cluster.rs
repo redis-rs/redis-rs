@@ -46,12 +46,11 @@ use std::time::Duration;
 
 use rand::{
     seq::{IteratorRandom, SliceRandom},
-    thread_rng, Rng,
+    thread_rng,
 };
 
 use crate::cluster_client::ClusterParams;
-use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
+use crate::cluster_routing::{Routable, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -259,8 +258,7 @@ impl ClusterConnection {
     }
 
     fn get_connection(&mut self, route: (u16, usize)) -> RedisResult<&mut Connection> {
-        let (slot, idx) = route;
-        let node = self.slots.range(&slot..).next().unwrap().1[idx].clone();
+        let node = self.get_node_for_route(route);
         self.get_connection_by_addr(&node)
     }
 
@@ -273,6 +271,36 @@ impl ClusterConnection {
             let conn = self.connect(addr)?;
             Ok(self.connections.entry(addr.to_string()).or_insert(conn))
         }
+    }
+
+    fn get_node_for_route(&self, route: (u16, usize)) -> String {
+        let (slot, idx) = route;
+        self.slots.range(&slot..).next().unwrap().1[idx].clone()
+    }
+
+    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
+        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::with_capacity(self.slots.len());
+
+        for (idx, cmd) in cmds.iter().enumerate() {
+            let node = match cmd.route()? {
+                (Some(slot), idx) => self.get_node_for_route((slot, idx)),
+                (None, _idx) => unreachable!(),
+            };
+
+            let nc = if let Some(nc) = cmd_map.get_mut(&node) {
+                nc
+            } else {
+                cmd_map
+                    .entry(node.to_string())
+                    .or_insert_with(|| NodeCmd::new(&node))
+            };
+
+            nc.indexes.push(idx);
+            cmd.write_packed_command(&mut nc.pipe);
+        }
+
+        // Workaround for https://github.com/tkaitchuck/aHash/issues/118
+        Ok(cmd_map.into_iter().map(|(_k, v)| v).collect())
     }
 
     fn execute_on_all_nodes<T, F>(&mut self, mut func: F) -> RedisResult<T>
@@ -296,14 +324,9 @@ impl ClusterConnection {
         T: MergeResults + std::fmt::Debug,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
-        let route = match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0)),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1)),
-            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
-                return self.execute_on_all_nodes(func);
-            }
-            None => fail!(UNROUTABLE_ERROR),
+        let route = match cmd.route()? {
+            (Some(slot), idx) => (slot, idx),
+            (None, _idx) => return self.execute_on_all_nodes(func),
         };
 
         let mut is_asking = false;
@@ -323,7 +346,7 @@ impl ClusterConnection {
                     }
                     conn
                 } else {
-                    self.get_connection(route.unwrap())?
+                    self.get_connection(route)?
                 };
                 func(conn)
             };
@@ -395,50 +418,10 @@ impl ClusterConnection {
     fn send_all_commands(&mut self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
         for nc in &node_cmds {
-            self.get_connection_by_addr(&nc.addr)?
+            self.get_connection_by_addr(&nc.node)?
                 .send_packed_command(&nc.pipe)?;
         }
         Ok(node_cmds)
-    }
-
-    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
-        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
-            let (_, addr) = self
-                .slots
-                .range(&slot..)
-                .next()
-                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(addr[idx].clone())
-        };
-
-        match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => {
-                let mut rng = thread_rng();
-                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
-            }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
-            _ => fail!(UNROUTABLE_ERROR),
-        }
-    }
-
-    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
-
-        for (idx, cmd) in cmds.iter().enumerate() {
-            let addr = self.get_addr_for_cmd(cmd)?;
-            let nc = cmd_map
-                .entry(addr.clone())
-                .or_insert_with(|| NodeCmd::new(addr));
-            nc.indexes.push(idx);
-            cmd.write_packed_command(&mut nc.pipe);
-        }
-
-        let mut result = Vec::new();
-        for (_, v) in cmd_map.drain() {
-            result.push(v);
-        }
-        Ok(result)
     }
 
     // Receive from each node, keeping track of which commands need to be retried.
@@ -452,7 +435,7 @@ impl ClusterConnection {
 
         for nc in node_cmds {
             for cmd_idx in &nc.indexes {
-                match self.get_connection_by_addr(&nc.addr)?.recv_response() {
+                match self.get_connection_by_addr(&nc.node)?.recv_response() {
                     Ok(item) => results[*cmd_idx] = item,
                     Err(err) if err.is_cluster_error() => to_retry.push(*cmd_idx),
                     Err(err) => first_err = first_err.or(Some(err)),
@@ -491,20 +474,20 @@ impl MergeResults for Vec<Value> {
     }
 }
 
-#[derive(Debug)]
+// NodeCmd struct.
 struct NodeCmd {
+    node: String,
     // The original command indexes
     indexes: Vec<usize>,
     pipe: Vec<u8>,
-    addr: String,
 }
 
 impl NodeCmd {
-    fn new(a: String) -> NodeCmd {
+    fn new(node: &str) -> NodeCmd {
         NodeCmd {
+            node: node.to_string(),
             indexes: vec![],
             pipe: vec![],
-            addr: a,
         }
     }
 }
@@ -590,12 +573,12 @@ fn parse_slots_response(
                         return None;
                     }
 
-                    let ip = if let Value::Data(ref ip) = node[0] {
-                        String::from_utf8_lossy(ip)
+                    let host = if let Value::Data(ref host) = node[0] {
+                        String::from_utf8_lossy(host)
                     } else {
                         return None;
                     };
-                    if ip.is_empty() {
+                    if host.is_empty() {
                         return None;
                     }
 
@@ -605,7 +588,7 @@ fn parse_slots_response(
                         return None;
                     };
                     Some(
-                        get_connection_addr((ip.into_owned(), port), cluster_params.tls_insecure)
+                        get_connection_addr((host.into_owned(), port), cluster_params.tls_insecure)
                             .to_string(),
                     )
                 } else {

@@ -1,13 +1,20 @@
 use std::iter::Iterator;
 
+use rand::{thread_rng, Rng};
+
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
-use crate::types::Value;
+use crate::types::{ErrorKind, RedisError, RedisResult, Value};
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RoutingInfo {
+pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
+    ErrorKind::ClientError,
+    "This command cannot be safely routed in cluster mode",
+);
+
+#[derive(Debug, PartialEq)]
+enum RoutingInfo {
     AllNodes,
     AllMasters,
     Random,
@@ -16,18 +23,21 @@ pub(crate) enum RoutingInfo {
 }
 
 impl RoutingInfo {
-    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+    fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
         match cmd {
-            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
+            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF"
+            | b"SCRIPT KILL" | b"MOVE" | b"BITOP" => None,
+
             b"ECHO" | b"CONFIG" | b"CLIENT" | b"SLOWLOG" | b"DBSIZE" | b"LASTSAVE" | b"PING"
             | b"INFO" | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"SAVE" | b"TIME"
             | b"KEYS" => Some(RoutingInfo::AllNodes),
-            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF"
-            | b"SCRIPT KILL" | b"MOVE" | b"BITOP" => None,
+
+            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
+
             b"EVALSHA" | b"EVAL" => {
                 let key_count = r
                     .arg_idx(2)
@@ -45,6 +55,7 @@ impl RoutingInfo {
                 r.arg_idx(streams_position + 1)
                     .and_then(|key| RoutingInfo::for_key(cmd, key))
             }
+
             _ => match r.arg_idx(1) {
                 Some(key) => RoutingInfo::for_key(cmd, key),
                 None => Some(RoutingInfo::Random),
@@ -52,7 +63,7 @@ impl RoutingInfo {
         }
     }
 
-    pub fn for_key(cmd: &[u8], key: &[u8]) -> Option<RoutingInfo> {
+    fn for_key(cmd: &[u8], key: &[u8]) -> Option<RoutingInfo> {
         let key = match get_hashtag(key) {
             Some(tag) => tag,
             None => key,
@@ -68,6 +79,20 @@ impl RoutingInfo {
 }
 
 pub(crate) trait Routable {
+    // Returns route for this Routable.
+    fn route(&self) -> RedisResult<(Option<u16>, usize)> {
+        let route =
+            RoutingInfo::for_routable(self).ok_or_else(|| RedisError::from(UNROUTABLE_ERROR))?;
+
+        Ok(match route {
+            RoutingInfo::MasterSlot(slot) => (Some(slot), 0),
+            RoutingInfo::ReplicaSlot(slot) => (Some(slot), 1),
+            RoutingInfo::Random => (Some(thread_rng().gen_range(0..SLOT_SIZE)), 0),
+            RoutingInfo::AllMasters => (None, 0),
+            RoutingInfo::AllNodes => (None, 1),
+        })
+    }
+
     // Convenience function to return ascii uppercase version of the
     // the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
@@ -175,7 +200,8 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::{get_hashtag, RoutingInfo};
-    use crate::{cmd, parser::parse_redis_value};
+    use crate::cmd;
+    use crate::parser::parse_redis_value;
 
     #[test]
     fn test_get_hashtag() {

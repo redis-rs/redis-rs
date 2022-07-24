@@ -1,13 +1,7 @@
 use crate::cluster::ClusterConnection;
+use crate::cluster_routing::UNROUTABLE_ERROR;
 use crate::cmd::{cmd, Cmd};
-use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
-};
-
-pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
-    ErrorKind::ClientError,
-    "This command cannot be safely routed in cluster mode",
-);
+use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
 
 fn is_illegal_cmd(cmd: &str) -> bool {
     matches!(
