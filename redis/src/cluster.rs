@@ -44,10 +44,8 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use rand::{
-    seq::{IteratorRandom, SliceRandom},
-    thread_rng,
-};
+use rand::seq::{IteratorRandom, SliceRandom};
+use rand::thread_rng;
 
 use crate::cluster_client::ClusterParams;
 use crate::cluster_routing::{Routable, Slot, SLOT_SIZE};
@@ -536,7 +534,7 @@ fn parse_slots_response(
             continue;
         };
 
-        let mut nodes: Vec<String> = item
+        let mut nodes = item
             .into_iter()
             .skip(2)
             .filter_map(|node| {
@@ -559,40 +557,44 @@ fn parse_slots_response(
                     } else {
                         return None;
                     };
-                    Some(
-                        get_connection_addr((host.into_owned(), port), cluster_params.tls_insecure)
-                            .to_string(),
-                    )
+
+                    Some(get_connection_addr(
+                        (host.into_owned(), port),
+                        cluster_params.tls_insecure,
+                    ))
                 } else {
                     None
                 }
             })
-            .collect();
-
+            .collect::<Vec<_>>();
         if nodes.is_empty() {
             continue;
         }
 
         let replicas = nodes.split_off(1);
-        slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
+        slots.push(Slot {
+            start,
+            end,
+            master: nodes.pop().unwrap(),
+            replicas,
+        });
     }
 
-    slots.sort_unstable_by_key(|s| s.start());
+    slots.sort_unstable_by_key(|s| s.start);
 
     let last_slot = slots.iter().try_fold(0, |prev_end, slot_data| {
-        if prev_end != slot_data.start() {
-            return Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                format!(
-                    "Received overlapping slots {} and {}..{}",
-                    prev_end,
-                    slot_data.start(),
-                    slot_data.end()
-                ),
-            )));
+        if prev_end == slot_data.start {
+            return Ok(slot_data.end + 1);
         }
-        Ok(slot_data.end() + 1)
+
+        Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Slot refresh error.",
+            format!(
+                "Received overlapping slots {} and {}..{}",
+                prev_end, slot_data.start, slot_data.end
+            ),
+        )))
     })?;
 
     if last_slot != SLOT_SIZE {
@@ -604,24 +606,19 @@ fn parse_slots_response(
     }
 
     Ok(slots
-        .iter()
+        .into_iter()
         .map(|slot_data| {
             let nodes = {
-                let replica =
-                    if !cluster_params.read_from_replicas || slot_data.replicas().is_empty() {
-                        slot_data.master().to_string()
-                    } else {
-                        slot_data
-                            .replicas()
-                            .choose(&mut thread_rng())
-                            .unwrap()
-                            .to_string()
-                    };
+                let replica = if !cluster_params.read_from_replicas || slot_data.replicas.is_empty()
+                {
+                    &slot_data.master
+                } else {
+                    slot_data.replicas.choose(&mut thread_rng()).unwrap()
+                };
 
-                [slot_data.master().to_string(), replica]
+                [slot_data.master.to_string(), replica.to_string()]
             };
-
-            (slot_data.end(), nodes)
+            (slot_data.end, nodes)
         })
         .collect())
 }

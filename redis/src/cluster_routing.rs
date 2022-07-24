@@ -4,6 +4,7 @@ use rand::{thread_rng, Rng};
 
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
+use crate::connection::ConnectionAddr;
 use crate::types::{ErrorKind, RedisError, RedisResult, Value};
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
@@ -141,39 +142,11 @@ impl Routable for Value {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Slot {
-    start: u16,
-    end: u16,
-    master: String,
-    replicas: Vec<String>,
-}
-
-impl Slot {
-    pub fn new(s: u16, e: u16, m: String, r: Vec<String>) -> Self {
-        Self {
-            start: s,
-            end: e,
-            master: m,
-            replicas: r,
-        }
-    }
-
-    pub fn start(&self) -> u16 {
-        self.start
-    }
-
-    pub fn end(&self) -> u16 {
-        self.end
-    }
-
-    pub fn master(&self) -> &str {
-        &self.master
-    }
-
-    pub fn replicas(&self) -> &Vec<String> {
-        &self.replicas
-    }
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+    pub(crate) master: ConnectionAddr,
+    pub(crate) replicas: Vec<ConnectionAddr>,
 }
 
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
