@@ -303,16 +303,22 @@ impl ClusterConnection {
         Ok(cmd_map.into_iter().map(|(_k, v)| v).collect())
     }
 
-    fn execute_on_all_nodes<T, F>(&mut self, mut func: F) -> RedisResult<T>
+    fn execute_on_all_nodes<T, F>(&mut self, mut func: F, max_idx: usize) -> RedisResult<T>
     where
         T: MergeResults,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
-        let mut results = HashMap::new();
+        let nodes = self
+            .slots
+            .values()
+            .flat_map(|slot| slot[..max_idx].to_vec())
+            .collect::<Vec<_>>();
+        let mut results = HashMap::with_capacity(nodes.len());
 
-        // TODO: reconnect and shit
-        for (addr, connection) in self.connections.iter_mut() {
-            results.insert(addr.as_str(), func(connection)?);
+        for node in nodes {
+            // TODO: retry/reconnect
+            let conn = self.get_connection_by_addr(&node)?;
+            results.insert(node, func(conn)?);
         }
 
         Ok(T::merge_results(results))
@@ -320,13 +326,13 @@ impl ClusterConnection {
 
     fn request<R, T, F>(&mut self, cmd: &R, mut func: F) -> RedisResult<T>
     where
-        R: ?Sized + Routable,
-        T: MergeResults + std::fmt::Debug,
+        R: Routable + ?Sized,
+        T: MergeResults,
         F: FnMut(&mut Connection) -> RedisResult<T>,
     {
         let route = match cmd.route()? {
             (Some(slot), idx) => (slot, idx),
-            (None, _idx) => return self.execute_on_all_nodes(func),
+            (None, idx) => return self.execute_on_all_nodes(func, idx + 1),
         };
 
         let mut is_asking = false;
@@ -449,49 +455,6 @@ impl ClusterConnection {
     }
 }
 
-trait MergeResults {
-    fn merge_results(_values: HashMap<&str, Self>) -> Self
-    where
-        Self: Sized;
-}
-
-impl MergeResults for Value {
-    fn merge_results(values: HashMap<&str, Value>) -> Value {
-        let mut items = vec![];
-        for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
-                Value::Data(addr.as_bytes().to_vec()),
-                value,
-            ]));
-        }
-        Value::Bulk(items)
-    }
-}
-
-impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
-        unreachable!("attempted to merge a pipeline. This should not happen");
-    }
-}
-
-// NodeCmd struct.
-struct NodeCmd {
-    node: String,
-    // The original command indexes
-    indexes: Vec<usize>,
-    pipe: Vec<u8>,
-}
-
-impl NodeCmd {
-    fn new(node: &str) -> NodeCmd {
-        NodeCmd {
-            node: node.to_string(),
-            indexes: vec![],
-            pipe: vec![],
-        }
-    }
-}
-
 impl ConnectionLike for ClusterConnection {
     fn supports_pipelining(&self) -> bool {
         false
@@ -538,6 +501,50 @@ impl ConnectionLike for ClusterConnection {
             }
         }
         true
+    }
+}
+
+// MergeResults trait.
+trait MergeResults {
+    fn merge_results(values: HashMap<String, Self>) -> Self
+    where
+        Self: Sized;
+}
+
+impl MergeResults for Value {
+    fn merge_results(values: HashMap<String, Value>) -> Value {
+        Value::Bulk(
+            values
+                .into_iter()
+                .map(|(node, value)| {
+                    Value::Bulk(vec![Value::Data(node.as_bytes().to_vec()), value])
+                })
+                .collect(),
+        )
+    }
+}
+
+impl MergeResults for Vec<Value> {
+    fn merge_results(_values: HashMap<String, Vec<Value>>) -> Vec<Value> {
+        unreachable!("Attempted to merge a pipeline. This should not happen.");
+    }
+}
+
+// NodeCmd struct.
+struct NodeCmd {
+    node: String,
+    // The original command indexes
+    indexes: Vec<usize>,
+    pipe: Vec<u8>,
+}
+
+impl NodeCmd {
+    fn new(node: &str) -> NodeCmd {
+        NodeCmd {
+            node: node.to_string(),
+            indexes: vec![],
+            pipe: vec![],
+        }
     }
 }
 
