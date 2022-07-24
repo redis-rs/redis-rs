@@ -58,7 +58,7 @@ use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
-use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
+use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -264,19 +264,11 @@ impl ClusterConnection {
         &self,
         connections: &'a mut HashMap<String, Connection>,
         route: (u16, usize),
-    ) -> RedisResult<(String, &'a mut Connection)> {
+    ) -> RedisResult<&'a mut Connection> {
         let (slot, idx) = route;
         let slots = self.slots.borrow();
-        if let Some((_, addr)) = slots.range(&slot..).next() {
-            Ok((
-                addr[idx].clone(),
-                self.get_connection_by_addr(connections, &addr[idx])?,
-            ))
-        } else {
-            // try a random node next.  This is safe if slots are involved
-            // as a wrong node would reject the request.
-            Ok(get_random_connection(connections, None))
-        }
+        let addr = slots.range(&slot..).next().unwrap().1;
+        self.get_connection_by_addr(connections, &addr[idx])
     }
 
     fn get_connection_by_addr<'a>(
@@ -327,15 +319,14 @@ impl ClusterConnection {
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = self.cluster_params.retries;
-        let mut excludes = HashSet::new();
-        let mut redirected = None::<String>;
         let mut is_asking = false;
+        let mut retries = self.cluster_params.retries;
+        let mut redirected = None::<String>;
         loop {
             // Get target address and response.
-            let (addr, rv) = {
+            let rv = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if let Some(addr) = redirected.take() {
+                let conn = if let Some(addr) = redirected.take() {
                     let conn = self.get_connection_by_addr(&mut *connections, &addr)?;
                     if is_asking {
                         // if we are in asking mode we want to feed a single
@@ -344,13 +335,11 @@ impl ClusterConnection {
                         conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
                         is_asking = false;
                     }
-                    (addr.to_string(), conn)
-                } else if !excludes.is_empty() || route.is_none() {
-                    get_random_connection(&mut *connections, Some(&excludes))
+                    conn
                 } else {
                     self.get_connection(&mut *connections, route.unwrap())?
                 };
-                (addr, func(conn))
+                func(conn)
             };
 
             match rv {
@@ -370,31 +359,18 @@ impl ClusterConnection {
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
                             self.refresh_slots()?;
-                            excludes.clear();
 
                             // Request again.
                             redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = false;
-                            continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.
                             let sleep_time = 2u64.pow(16 - u32::from(retries.max(9))) * 10;
                             thread::sleep(Duration::from_millis(sleep_time));
-                            excludes.clear();
-                            continue;
                         }
                     } else if self.cluster_params.auto_reconnect && err.is_io_error() {
                         self.create_initial_connections()?;
-                        excludes.clear();
-                        continue;
                     } else {
-                        return Err(err);
-                    }
-
-                    excludes.insert(addr);
-
-                    let connections = self.connections.borrow();
-                    if excludes.len() >= connections.len() {
                         return Err(err);
                     }
                 }
@@ -603,25 +579,6 @@ impl ConnectionLike for ClusterConnection {
         }
         true
     }
-}
-
-fn get_random_connection<'a>(
-    connections: &'a mut HashMap<String, Connection>,
-    excludes: Option<&'a HashSet<String>>,
-) -> (String, &'a mut Connection) {
-    let mut rng = thread_rng();
-    let addr = match excludes {
-        Some(excludes) if excludes.len() < connections.len() => connections
-            .keys()
-            .filter(|key| !excludes.contains(*key))
-            .choose(&mut rng)
-            .unwrap()
-            .to_string(),
-        _ => connections.keys().choose(&mut rng).unwrap().to_string(),
-    };
-
-    let con = connections.get_mut(&addr).unwrap();
-    (addr, con)
 }
 
 // Parse `CLUSTER SLOTS` response into SlotMap.
