@@ -362,10 +362,7 @@ impl ClusterConnection {
         // vector (e.g., results[10] = response).
         let mut results = vec![Value::Nil; cmds.len()];
 
-        let to_retry = self
-            .send_all_commands(cmds)
-            .and_then(|node_cmds| self.recv_all_commands(&mut results, &node_cmds))?;
-
+        let to_retry = self.send_recv_cmds(cmds, &mut results)?;
         if to_retry.is_empty() {
             return Ok(results);
         }
@@ -374,7 +371,7 @@ impl ClusterConnection {
         self.refresh_slots()?;
 
         // Given that there are commands that need to be retried, it means something in the cluster
-        // topology changed. Execute each command seperately to take advantage of the existing
+        // topology changed. Execute each command separately to take advantage of the existing
         // retry logic that handles these cases.
         for retry_idx in to_retry {
             let cmd = &cmds[retry_idx];
@@ -383,37 +380,30 @@ impl ClusterConnection {
         Ok(results)
     }
 
-    // Build up a pipeline per node, then send it
-    fn send_all_commands(&mut self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
+    fn send_recv_cmds(&mut self, cmds: &[Cmd], results: &mut [Value]) -> RedisResult<Vec<usize>> {
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
+
         for nc in &node_cmds {
             self.get_connection_for_node(&nc.node)?
                 .send_packed_command(&nc.pipe)?;
         }
-        Ok(node_cmds)
-    }
 
-    // Receive from each node, keeping track of which commands need to be retried.
-    fn recv_all_commands(
-        &mut self,
-        results: &mut [Value],
-        node_cmds: &[NodeCmd],
-    ) -> RedisResult<Vec<usize>> {
-        let mut to_retry = Vec::new();
         let mut first_err = None;
-
+        let mut to_retry = Vec::new();
         for nc in node_cmds {
-            for cmd_idx in &nc.indexes {
-                match self.get_connection_for_node(&nc.node)?.recv_response() {
-                    Ok(item) => results[*cmd_idx] = item,
-                    Err(err) if err.is_cluster_error() => to_retry.push(*cmd_idx),
+            let conn = self.get_connection_for_node(&nc.node)?;
+            for cmd_idx in nc.indexes {
+                match conn.recv_response() {
+                    Ok(item) => results[cmd_idx] = item,
+                    Err(err) if err.is_cluster_error() => to_retry.push(cmd_idx),
                     Err(err) => first_err = first_err.or(Some(err)),
                 }
             }
         }
+
         match first_err {
-            Some(err) => Err(err),
             None => Ok(to_retry),
+            Some(err) => Err(err),
         }
     }
 }
