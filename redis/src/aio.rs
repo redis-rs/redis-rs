@@ -967,8 +967,7 @@ mod connection_manager {
     use std::sync::Arc;
 
     use arc_swap::{self, ArcSwap};
-    use futures::future::{self, Shared};
-    use futures_util::future::BoxFuture;
+    use futures_util::future::{self, BoxFuture, Shared};
 
     use crate::Client;
 
