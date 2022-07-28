@@ -170,6 +170,38 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
     }
 }
 
+pub(crate) fn is_illegal_cluster_pipeline_cmd(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "BGREWRITEAOF" | "BGSAVE" | "BITOP" | "BRPOPLPUSH" |
+        // All commands that start with "CLIENT"
+        "CLIENT" | "CLIENT GETNAME" | "CLIENT KILL" | "CLIENT LIST" | "CLIENT SETNAME" |
+        // All commands that start with "CONFIG"
+        "CONFIG" | "CONFIG GET" | "CONFIG RESETSTAT" | "CONFIG REWRITE" | "CONFIG SET" |
+        "DBSIZE" |
+        "ECHO" | "EVALSHA" |
+        "FLUSHALL" | "FLUSHDB" |
+        "INFO" |
+        "KEYS" |
+        "LASTSAVE" |
+        "MGET" | "MOVE" | "MSET" | "MSETNX" |
+        "PFMERGE" | "PFCOUNT" | "PING" | "PUBLISH" |
+        "RANDOMKEY" | "RENAME" | "RENAMENX" | "RPOPLPUSH" |
+        "SAVE" | "SCAN" |
+        // All commands that start with "SCRIPT"
+        "SCRIPT" | "SCRIPT EXISTS" | "SCRIPT FLUSH" | "SCRIPT KILL" | "SCRIPT LOAD" |
+        "SDIFF" | "SDIFFSTORE" |
+        // All commands that start with "SENTINEL"
+        "SENTINEL" | "SENTINEL GET MASTER ADDR BY NAME" | "SENTINEL MASTER" | "SENTINEL MASTERS" |
+        "SENTINEL MONITOR" | "SENTINEL REMOVE" | "SENTINEL SENTINELS" | "SENTINEL SET" |
+        "SENTINEL SLAVES" | "SHUTDOWN" | "SINTER" | "SINTERSTORE" | "SLAVEOF" |
+        // All commands that start with "SLOWLOG"
+        "SLOWLOG" | "SLOWLOG GET" | "SLOWLOG LEN" | "SLOWLOG RESET" |
+        "SMOVE" | "SORT" | "SUNION" | "SUNIONSTORE" |
+        "TIME"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{get_hashtag, RoutingInfo};

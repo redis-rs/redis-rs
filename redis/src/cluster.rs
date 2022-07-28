@@ -38,6 +38,29 @@
 //!     .expire(key, 60).ignore()
 //!     .query(&mut connection).unwrap();
 //! ```
+//!
+//! Pipelining works the same as in a non-clustered client, with 2 exceptions:
+//! * It does not support transactions
+//! * The following commands can not be used in a cluster pipeline:
+//! ```text
+//! BGREWRITEAOF, BGSAVE, BITOP, BRPOPLPUSH
+//! CLIENT GETNAME, CLIENT KILL, CLIENT LIST, CLIENT SETNAME, CONFIG GET,
+//! CONFIG RESETSTAT, CONFIG REWRITE, CONFIG SET
+//! DBSIZE
+//! ECHO, EVALSHA
+//! FLUSHALL, FLUSHDB
+//! INFO
+//! KEYS
+//! LASTSAVE
+//! MGET, MOVE, MSET, MSETNX
+//! PFMERGE, PFCOUNT, PING, PUBLISH
+//! RANDOMKEY, RENAME, RENAMENX, RPOPLPUSH
+//! SAVE, SCAN, SCRIPT EXISTS, SCRIPT FLUSH, SCRIPT KILL, SCRIPT LOAD, SDIFF, SDIFFSTORE,
+//! SENTINEL GET MASTER ADDR BY NAME, SENTINEL MASTER, SENTINEL MASTERS, SENTINEL MONITOR,
+//! SENTINEL REMOVE, SENTINEL SENTINELS, SENTINEL SET, SENTINEL SLAVES, SHUTDOWN, SINTER,
+//! SINTERSTORE, SLAVEOF, SLOWLOG GET, SLOWLOG LEN, SLOWLOG RESET, SMOVE, SORT, SUNION, SUNIONSTORE
+//! TIME
+//! ```
 use std::collections::BTreeMap;
 use std::iter::Iterator;
 use std::str::FromStr;
@@ -48,16 +71,22 @@ use rand::seq::{IteratorRandom, SliceRandom};
 use rand::thread_rng;
 
 use crate::cluster_client::ClusterParams;
-use crate::cluster_routing::{Routable, Slot, SLOT_SIZE};
+use crate::cluster_routing::{
+    is_illegal_cluster_pipeline_cmd, Routable, Slot, SLOT_SIZE, UNROUTABLE_ERROR,
+};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
+use crate::pipeline::Pipeline;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+#[doc(no_inline)]
+pub use crate::cmd::pipe as cluster_pipe;
+#[doc(no_inline)]
+pub use crate::pipeline::Pipeline as ClusterPipeline;
 
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
@@ -142,10 +171,6 @@ impl ClusterConnection {
         connection.create_initial_connections()?;
 
         Ok(connection)
-    }
-
-    pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
-        self.send_recv_and_retry_cmds(pipe.commands())
     }
 
     fn create_initial_connections(&mut self) -> RedisResult<()> {
@@ -409,12 +434,35 @@ impl ClusterConnection {
 }
 
 impl ConnectionLike for ClusterConnection {
-    fn supports_pipelining(&self) -> bool {
-        false
-    }
-
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         self.request(cmd, move |conn| conn.req_command(cmd))
+    }
+
+    fn req_pipeline(
+        &mut self,
+        pipeline: &Pipeline,
+        _offset: usize,
+        _count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        for cmd in pipeline.commands() {
+            let cmd_name = std::str::from_utf8(cmd.arg_idx(0).unwrap_or(b""))
+                .unwrap_or("")
+                .trim()
+                .to_ascii_uppercase();
+
+            if is_illegal_cluster_pipeline_cmd(&cmd_name) {
+                fail!((
+                    UNROUTABLE_ERROR.0,
+                    UNROUTABLE_ERROR.1,
+                    format!(
+                        "Command '{}' can't be executed in a cluster pipeline.",
+                        cmd_name
+                    )
+                ))
+            }
+        }
+
+        self.send_recv_and_retry_cmds(pipeline.commands())
     }
 
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
@@ -454,6 +502,10 @@ impl ConnectionLike for ClusterConnection {
             }
         }
         true
+    }
+
+    fn supports_transactions(&self) -> bool {
+        false
     }
 }
 

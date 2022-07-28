@@ -254,22 +254,5 @@ macro_rules! implement_commands {
                 }
             )*
         }
-
-        // Implements common redis commands for cluster pipelines.  Unlike the regular
-        // commands trait, this returns the cluster pipeline rather than a result
-        // directly.  Other than that it works the same however.
-        #[cfg(feature = "cluster")]
-        impl ClusterPipeline {
-            $(
-                $(#[$attr])*
-                #[inline]
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
-                    &mut self $(, $argname: $argty)*
-                ) -> &mut Self {
-                    self.add_command(::std::mem::replace($body, Cmd::new()))
-                }
-            )*
-        }
     )
 }

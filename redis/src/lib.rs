@@ -429,9 +429,6 @@ pub mod cluster;
 mod cluster_client;
 
 #[cfg(feature = "cluster")]
-mod cluster_pipeline;
-
-#[cfg(feature = "cluster")]
 mod cluster_routing;
 
 #[cfg(feature = "r2d2")]
