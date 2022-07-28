@@ -77,12 +77,18 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Runtime {
     #[cfg(feature = "tokio-comp")]
     Tokio,
     #[cfg(feature = "async-std-comp")]
     AsyncStd,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::locate()
+    }
 }
 
 impl Runtime {
@@ -112,8 +118,7 @@ impl Runtime {
         }
     }
 
-    #[allow(dead_code)]
-    fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
+    pub(crate) fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
         match self {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => tokio::Tokio::spawn(f),
@@ -645,22 +650,10 @@ struct InFlight<O, E> {
 }
 
 // A single message sent through the pipeline
-struct PipelineMessage<S, I, E> {
-    input: S,
-    output: PipelineOutput<I, E>,
-    response_count: usize,
-}
-
-/// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
-/// items being output by the `Stream` (the number is specified at time of sending). With the
-/// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
-/// and `Sink`.
-struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
-
-impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
-    fn clone(&self) -> Self {
-        Pipeline(self.0.clone())
-    }
+pub(crate) struct PipelineMessage<S, I, E> {
+    pub(crate) input: S,
+    pub(crate) output: PipelineOutput<I, E>,
+    pub(crate) response_count: usize,
 }
 
 impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
@@ -833,6 +826,20 @@ where
     }
 }
 
+/// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
+/// items being output by the `Stream` (the number is specified at time of sending). With the
+/// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
+/// and `Sink`.
+pub(crate) struct Pipeline<SinkItem, I, E>(
+    pub(crate) mpsc::Sender<PipelineMessage<SinkItem, I, E>>,
+);
+
+impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
+    fn clone(&self) -> Self {
+        Pipeline(self.0.clone())
+    }
+}
+
 impl<SinkItem, I, E> Pipeline<SinkItem, I, E>
 where
     SinkItem: Send + 'static,
@@ -894,7 +901,7 @@ where
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
+    pub(crate) pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
 }
 
@@ -950,6 +957,10 @@ impl MultiplexedConnection {
             }
         };
         Ok((con, driver))
+    }
+
+    pub(crate) async fn check_connection(&mut self) -> bool {
+        cmd("PING").query_async::<_, String>(self).await.is_ok()
     }
 }
 

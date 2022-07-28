@@ -82,13 +82,15 @@ use crate::parser::parse_redis_value;
 use crate::pipeline::Pipeline;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 
+#[cfg(feature = "aio")]
+pub use crate::cluster_aio::MultiplexedClusterConnection;
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 #[doc(no_inline)]
 pub use crate::cmd::pipe as cluster_pipe;
 #[doc(no_inline)]
 pub use crate::pipeline::Pipeline as ClusterPipeline;
 
-type SlotMap = BTreeMap<u16, [String; 2]>;
+pub(crate) type SlotMap = BTreeMap<u16, [String; 2]>;
 
 /// This is a connection of Redis cluster.
 #[derive(Default)]
@@ -510,7 +512,7 @@ impl ConnectionLike for ClusterConnection {
 }
 
 // MergeResults trait.
-trait MergeResults {
+pub(crate) trait MergeResults {
     fn merge_results(values: HashMap<String, Self>) -> Self
     where
         Self: Sized;
@@ -536,15 +538,15 @@ impl MergeResults for Vec<Value> {
 }
 
 // NodeCmd struct.
-struct NodeCmd {
-    node: String,
+pub(crate) struct NodeCmd {
+    pub(crate) node: String,
     // The original command indexes
-    indexes: Vec<usize>,
-    pipe: Vec<u8>,
+    pub(crate) indexes: Vec<usize>,
+    pub(crate) pipe: Vec<u8>,
 }
 
 impl NodeCmd {
-    fn new(node: &str) -> NodeCmd {
+    pub(crate) fn new(node: &str) -> NodeCmd {
         NodeCmd {
             node: node.to_string(),
             indexes: vec![],
@@ -554,7 +556,7 @@ impl NodeCmd {
 }
 
 // Parse `CLUSTER SLOTS` response into SlotMap.
-fn parse_slots_response(
+pub(crate) fn parse_slots_response(
     response: Vec<Value>,
     cluster_params: &ClusterParams,
 ) -> RedisResult<SlotMap> {
@@ -665,7 +667,7 @@ fn parse_slots_response(
         .collect())
 }
 
-fn get_connection_info(node: &str, cluster_params: &ClusterParams) -> ConnectionInfo {
+pub(crate) fn get_connection_info(node: &str, cluster_params: &ClusterParams) -> ConnectionInfo {
     ConnectionInfo {
         addr: get_connection_addr(parse_node_str(node), cluster_params.tls_insecure),
         redis: RedisConnectionInfo {

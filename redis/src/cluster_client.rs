@@ -3,6 +3,8 @@ use std::time::Duration;
 use crate::cluster::ClusterConnection;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
+#[cfg(feature = "aio")]
+use crate::{aio::Runtime, cluster_aio::MultiplexedClusterConnection};
 
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
@@ -146,6 +148,8 @@ impl ClusterClientBuilder {
     ///
     /// If the value is `None`, then `get_connection` call may block indefinitely.
     /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
     pub fn connect_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
@@ -163,6 +167,8 @@ impl ClusterClientBuilder {
     ///
     /// If the value is `None`, then `send_packed_command` call may block indefinitely.
     /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
     pub fn write_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
@@ -180,6 +186,8 @@ impl ClusterClientBuilder {
     ///
     /// If the value is `None`, then `recv_response` call may block indefinitely.
     /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
     pub fn read_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
@@ -278,6 +286,46 @@ impl ClusterClient {
         T: IntoConnectionInfo,
     {
         ClusterClient::new(initial_nodes)
+    }
+}
+
+#[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+impl ClusterClient {
+    /// Return an async multiplexed cluster connection from the client.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
+    )]
+    pub async fn get_async_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        match Runtime::locate() {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => self.get_tokio_connection().await,
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => self.get_async_std_connection().await,
+        }
+    }
+
+    /// Return a tokio multiplexed cluster connection from the client.
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+    pub async fn get_tokio_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        self.get_async_connection_inner(Runtime::Tokio).await
+    }
+
+    /// Return an async-std multiplexed cluster connection from the client.
+    #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+    pub async fn get_async_std_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        self.get_async_connection_inner(Runtime::AsyncStd).await
+    }
+
+    async fn get_async_connection_inner(
+        &self,
+        runtime: Runtime,
+    ) -> RedisResult<MultiplexedClusterConnection> {
+        MultiplexedClusterConnection::new(runtime, &self.cluster_params, &self.initial_nodes).await
     }
 }
 
