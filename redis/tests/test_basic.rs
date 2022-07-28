@@ -922,6 +922,119 @@ fn test_redis_server_down() {
 }
 
 #[test]
+fn test_zinterstore_weights() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+        .unwrap();
+    let _: () = con
+        .zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
+        .unwrap();
+
+    // zinterstore_weights
+    assert_eq!(
+        con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(2)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "5".to_string()),
+            ("two".to_string(), "10".to_string())
+        ])
+    );
+
+    // zinterstore_min_weights
+    assert_eq!(
+        con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(2)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "2".to_string()),
+            ("two".to_string(), "4".to_string()),
+        ])
+    );
+
+    // zinterstore_max_weights
+    assert_eq!(
+        con.zinterstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(2)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "3".to_string()),
+            ("two".to_string(), "6".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn test_zunionstore_weights() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con
+        .zadd_multiple("zset1", &[(1, "one"), (2, "two")])
+        .unwrap();
+    let _: () = con
+        .zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
+        .unwrap();
+
+    // zunionstore_weights
+    assert_eq!(
+        con.zunionstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(3)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "5".to_string()),
+            ("three".to_string(), "9".to_string()),
+            ("two".to_string(), "10".to_string())
+        ])
+    );
+
+    // zunionstore_min_weights
+    assert_eq!(
+        con.zunionstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(3)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "2".to_string()),
+            ("two".to_string(), "4".to_string()),
+            ("three".to_string(), "9".to_string())
+        ])
+    );
+
+    // zunionstore_max_weights
+    assert_eq!(
+        con.zunionstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
+        Ok(3)
+    );
+
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), "3".to_string()),
+            ("two".to_string(), "6".to_string()),
+            ("three".to_string(), "9".to_string())
+        ])
+    );
+}
+
+#[test]
 fn test_zrembylex() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
