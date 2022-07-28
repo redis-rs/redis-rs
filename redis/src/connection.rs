@@ -629,13 +629,32 @@ fn setup_connection(
 /// state of the TCP connection.  This is not possible with `ConnectionLike`
 /// implementors because that functionality is not exposed.
 pub trait ConnectionLike {
+    /// Executes a [Cmd](Cmd) using this connection.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        self.req_packed_command(&pcmd)
+    }
+
+    /// Executes a [Pipeline](Pipeline) using this connection.
+    fn req_pipeline(
+        &mut self,
+        pipeline: &Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        let ppipeline = pipeline.get_packed_pipeline();
+        self.req_packed_commands(&ppipeline, offset, count)
+    }
+
     /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the single response from it.
+    /// reads a single response from it.
+    /// `req_command` should be preferred.
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value>;
 
     /// Sends multiple already encoded (packed) command into the TCP socket
-    /// and reads `count` responses from it.  This is used to implement
-    /// pipelining.
+    /// and reads `count` responses from it.
+    /// The first `offset` responses are not returned.
+    /// `req_pipeline` should be preferred.
     fn req_packed_commands(
         &mut self,
         cmd: &[u8],
@@ -643,25 +662,13 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisResult<Vec<Value>>;
 
-    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
-    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let pcmd = cmd.get_packed_command();
-        self.req_packed_command(&pcmd)
-    }
-
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
 
-    /// Does this connection support pipelining?
-    #[doc(hidden)]
-    fn supports_pipelining(&self) -> bool {
-        true
-    }
-
-    /// Check that all connections it has are available (`PING` internally).
+    /// Check connection by sending `PING` command to the Redis Server.
     fn check_connection(&mut self) -> bool;
 
     /// Returns the connection status.
@@ -672,6 +679,18 @@ pub trait ConnectionLike {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
+
+    /// Returns if this connection supports pipelining.
+    #[doc(hidden)]
+    fn supports_pipelining(&self) -> bool {
+        true
+    }
+
+    /// Returns if this connection supports transactions.
+    #[doc(hidden)]
+    fn supports_transactions(&self) -> bool {
+        true
+    }
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -893,6 +912,19 @@ where
     C: ConnectionLike,
     T: DerefMut<Target = C>,
 {
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        self.deref_mut().req_command(cmd)
+    }
+
+    fn req_pipeline(
+        &mut self,
+        pipeline: &Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        self.deref_mut().req_pipeline(pipeline, offset, count)
+    }
+
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         self.deref_mut().req_packed_command(cmd)
     }
@@ -906,16 +938,8 @@ where
         self.deref_mut().req_packed_commands(cmd, offset, count)
     }
 
-    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        self.deref_mut().req_command(cmd)
-    }
-
     fn get_db(&self) -> i64 {
         self.deref().get_db()
-    }
-
-    fn supports_pipelining(&self) -> bool {
-        self.deref().supports_pipelining()
     }
 
     fn check_connection(&mut self) -> bool {
@@ -924,6 +948,14 @@ where
 
     fn is_open(&self) -> bool {
         self.deref().is_open()
+    }
+
+    fn supports_pipelining(&self) -> bool {
+        self.deref().supports_pipelining()
+    }
+
+    fn supports_transactions(&self) -> bool {
+        self.deref().supports_transactions()
     }
 }
 
