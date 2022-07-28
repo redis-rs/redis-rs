@@ -121,6 +121,103 @@ impl Runtime {
             Runtime::AsyncStd => async_std::AsyncStd::spawn(f),
         }
     }
+
+    pub(crate) async fn get_async_connection(
+        &self,
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<Connection> {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => {
+                Self::get_async_connection_inner::<tokio::Tokio>(connection_info).await
+            }
+
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => {
+                Self::get_async_connection_inner::<async_std::AsyncStd>(connection_info).await
+            }
+        }
+    }
+
+    pub(crate) async fn get_async_connection_inner<R: RedisRuntime>(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<Connection> {
+        let stream = Self::connect::<R>(connection_info).await?;
+        Connection::new(&connection_info.redis, stream).await
+    }
+
+    pub(crate) async fn get_multiplexed_connection(
+        &self,
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<MultiplexedConnection> {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => {
+                Self::get_multiplexed_connection_inner::<tokio::Tokio>(connection_info).await
+            }
+
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => {
+                Self::get_multiplexed_connection_inner::<async_std::AsyncStd>(connection_info).await
+            }
+        }
+    }
+
+    pub(crate) async fn get_multiplexed_connection_inner<R: RedisRuntime>(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<MultiplexedConnection> {
+        let (conn, driver) = Self::create_multiplexed_connection::<R>(connection_info).await?;
+        R::spawn(driver);
+        Ok(conn)
+    }
+
+    pub(crate) async fn create_multiplexed_connection<R: RedisRuntime>(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<(MultiplexedConnection, impl Future<Output = ()>)> {
+        let stream = Self::connect::<R>(connection_info).await?;
+        MultiplexedConnection::new(&connection_info.redis, stream).await
+    }
+
+    async fn connect<R: RedisRuntime>(
+        connection_info: &ConnectionInfo,
+    ) -> RedisResult<Pin<Box<dyn AsyncStream + Send + Sync>>> {
+        Ok(match connection_info.addr {
+            ConnectionAddr::Tcp(ref host, port) => {
+                let socket_addr = get_socket_addrs(host, port).await?;
+                <R>::connect_tcp(socket_addr).await?
+            }
+
+            #[cfg(feature = "tls")]
+            ConnectionAddr::TcpTls {
+                ref host,
+                port,
+                insecure,
+            } => {
+                let socket_addr = get_socket_addrs(host, port).await?;
+                <R>::connect_tcp_tls(host, socket_addr, insecure).await?
+            }
+
+            #[cfg(not(feature = "tls"))]
+            ConnectionAddr::TcpTls { .. } => {
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to TCP with TLS without the tls feature"
+                ));
+            }
+
+            #[cfg(unix)]
+            ConnectionAddr::Unix(ref path) => <R>::connect_unix(path).await?,
+
+            #[cfg(not(unix))]
+            ConnectionAddr::Unix(_) => {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to unix sockets on this platform",
+                )))
+            }
+        }
+        .boxed())
+    }
 }
 
 /// Trait for objects that implements `AsyncRead` and `AsyncWrite`
@@ -254,25 +351,6 @@ fn test() {
     assert_sync::<Connection>();
 }
 
-impl<C> Connection<C> {
-    pub(crate) fn map<D>(self, f: impl FnOnce(C) -> D) -> Connection<D> {
-        let Self {
-            con,
-            buf,
-            decoder,
-            db,
-            pubsub,
-        } = self;
-        Connection {
-            con: f(con),
-            buf,
-            decoder,
-            db,
-            pubsub,
-        }
-    }
-}
-
 impl<C> Connection<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
@@ -385,14 +463,6 @@ where
     }
 }
 
-pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
-where
-    C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
-{
-    let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(&connection_info.redis, con).await
-}
-
 async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike,
@@ -448,47 +518,6 @@ where
     }
 
     Ok(())
-}
-
-pub(crate) async fn connect_simple<T: RedisRuntime>(
-    connection_info: &ConnectionInfo,
-) -> RedisResult<T> {
-    Ok(match connection_info.addr {
-        ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp(socket_addr).await?
-        }
-
-        #[cfg(feature = "tls")]
-        ConnectionAddr::TcpTls {
-            ref host,
-            port,
-            insecure,
-        } => {
-            let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp_tls(host, socket_addr, insecure).await?
-        }
-
-        #[cfg(not(feature = "tls"))]
-        ConnectionAddr::TcpTls { .. } => {
-            fail!((
-                ErrorKind::InvalidClientConfig,
-                "Cannot connect to TCP with TLS without the tls feature"
-            ));
-        }
-
-        #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => <T>::connect_unix(path).await?,
-
-        #[cfg(not(unix))]
-        ConnectionAddr::Unix(_) => {
-            return Err(RedisError::from((
-                ErrorKind::InvalidClientConfig,
-                "Cannot connect to unix sockets \
-                 on this platform",
-            )))
-        }
-    })
 }
 
 async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {

@@ -1,8 +1,5 @@
 use std::time::Duration;
 
-#[cfg(feature = "aio")]
-use std::pin::Pin;
-
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
@@ -72,44 +69,26 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        let con = match Runtime::locate() {
-            #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
-                    .await?
-            }
-            #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
-                    .await?
-            }
-        };
-
-        crate::aio::Connection::new(&self.connection_info.redis, con).await
+        Runtime::locate()
+            .get_async_connection(&self.connection_info)
+            .await
     }
 
     /// Returns an async connection from the client.
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
-        use crate::aio::RedisRuntime;
-        Ok(
-            crate::aio::connect::<crate::aio::tokio::Tokio>(&self.connection_info)
-                .await?
-                .map(RedisRuntime::boxed),
-        )
+        Runtime::get_async_connection_inner::<crate::aio::tokio::Tokio>(&self.connection_info).await
     }
 
     /// Returns an async connection from the client.
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
-        use crate::aio::RedisRuntime;
-        Ok(
-            crate::aio::connect::<crate::aio::async_std::AsyncStd>(&self.connection_info)
-                .await?
-                .map(RedisRuntime::boxed),
+        Runtime::get_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+            &self.connection_info,
         )
+        .await
     }
 
     /// Returns an async connection from the client.
@@ -121,12 +100,9 @@ impl Client {
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        match Runtime::locate() {
-            #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => self.get_multiplexed_tokio_connection().await,
-            #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => self.get_multiplexed_async_std_connection().await,
-        }
+        Runtime::locate()
+            .get_multiplexed_connection(&self.connection_info)
+            .await
     }
 
     /// Returns an async multiplexed connection from the client.
@@ -138,7 +114,7 @@ impl Client {
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
+        Runtime::get_multiplexed_connection_inner::<crate::aio::tokio::Tokio>(&self.connection_info)
             .await
     }
 
@@ -151,8 +127,10 @@ impl Client {
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
-            .await
+        Runtime::get_multiplexed_connection_inner::<crate::aio::async_std::AsyncStd>(
+            &self.connection_info,
+        )
+        .await
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
@@ -168,7 +146,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
+        Runtime::create_multiplexed_connection::<crate::aio::tokio::Tokio>(&self.connection_info)
             .await
     }
 
@@ -185,8 +163,10 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
-            .await
+        Runtime::create_multiplexed_connection::<crate::aio::async_std::AsyncStd>(
+            &self.connection_info,
+        )
+        .await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -210,43 +190,6 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
     pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
         crate::aio::ConnectionManager::new(self.clone()).await
-    }
-
-    async fn get_multiplexed_async_connection_inner<T>(
-        &self,
-    ) -> RedisResult<crate::aio::MultiplexedConnection>
-    where
-        T: crate::aio::RedisRuntime,
-    {
-        let (connection, driver) = self
-            .create_multiplexed_async_connection_inner::<T>()
-            .await?;
-        T::spawn(driver);
-        Ok(connection)
-    }
-
-    async fn create_multiplexed_async_connection_inner<T>(
-        &self,
-    ) -> RedisResult<(
-        crate::aio::MultiplexedConnection,
-        impl std::future::Future<Output = ()>,
-    )>
-    where
-        T: crate::aio::RedisRuntime,
-    {
-        let con = self.get_simple_async_connection::<T>().await?;
-        crate::aio::MultiplexedConnection::new(&self.connection_info.redis, con).await
-    }
-
-    async fn get_simple_async_connection<T>(
-        &self,
-    ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
-    where
-        T: crate::aio::RedisRuntime,
-    {
-        Ok(crate::aio::connect_simple::<T>(&self.connection_info)
-            .await?
-            .boxed())
     }
 
     #[cfg(feature = "connection-manager")]
