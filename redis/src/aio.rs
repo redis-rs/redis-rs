@@ -532,14 +532,11 @@ async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
 }
 
 /// An async abstraction over connections.
-pub trait ConnectionLike {
-    /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the single response from it.
+pub trait ConnectionLike: Send {
+    /// Executes a [Cmd](Cmd) using this connection.
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
 
-    /// Sends multiple already encoded (packed) command into the TCP socket
-    /// and reads `count` responses from it.  This is used to implement
-    /// pipelining.
+    /// Executes a [Pipeline](crate::Pipeline) using this connection.
     fn req_packed_commands<'a>(
         &'a mut self,
         cmd: &'a crate::Pipeline,
@@ -552,6 +549,18 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+
+    /// Returns if this connection supports pipelining.
+    #[doc(hidden)]
+    fn supports_pipelining(&self) -> bool {
+        true
+    }
+
+    /// Returns if this connection supports transactions.
+    #[doc(hidden)]
+    fn supports_transactions(&self) -> bool {
+        true
+    }
 }
 
 impl<C> ConnectionLike for Connection<C>
