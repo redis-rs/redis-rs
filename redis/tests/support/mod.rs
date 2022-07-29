@@ -45,6 +45,10 @@ enum ServerType {
     Unix,
 }
 
+pub enum RedisModule {
+    RedisJson
+}
+
 pub struct RedisServer {
     pub process: process::Child,
     tempdir: Option<tempfile::TempDir>,
@@ -70,6 +74,10 @@ impl ServerType {
 
 impl RedisServer {
     pub fn new() -> RedisServer {
+        RedisServer::with_modules(&[])
+    }
+
+    pub fn with_modules(modules: &[RedisModule]) -> RedisServer {
         let server_type = ServerType::get_intended();
         let addr = match server_type {
             ServerType::Tcp { tls } => {
@@ -101,15 +109,29 @@ impl RedisServer {
         RedisServer::new_with_addr(addr, None, |cmd| {
             cmd.spawn()
                 .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
-        })
+        }, modules)
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
         tls_paths: Option<TlsFilePaths>,
         spawner: F,
+        modules: &[RedisModule]
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
+
+        // Load Redis Modules
+        for module in modules {
+            match module {
+                RedisModule::RedisJson => {
+                    redis_cmd
+                        .arg("--loadmodule")
+                        .arg(env::var("REDIS_RS_REDIS_JSON_PATH")
+                        .expect("Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?"));
+                },
+            };
+        };
+
         redis_cmd
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
@@ -204,7 +226,11 @@ pub struct TestContext {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        let server = RedisServer::new();
+        TestContext::with_modules(&[])
+    }
+
+    pub fn with_modules(modules: &[RedisModule]) -> TestContext {
+        let server = RedisServer::with_modules(modules);
 
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.get_client_addr().clone(),

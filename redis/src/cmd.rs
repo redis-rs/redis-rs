@@ -303,6 +303,16 @@ impl Cmd {
         self
     }
 
+    /// Used by the RedisJSON to allow the returning of an error when serialisation fails on some commands
+    /// **This should NOT be used by anything else**
+    #[inline]
+    #[doc(hidden)]
+    #[cfg(feature = "json")]
+    pub(crate) fn arg_take<T: ToRedisArgs>(mut self, arg: T) -> Cmd {
+        arg.write_redis_args(&mut self);
+        self
+    }
+
     /// Works similar to `arg` but adds a cursor argument.  This is always
     /// an integer and also flips the command implementation to support a
     /// different mode for the iterators where the iterator will ask for

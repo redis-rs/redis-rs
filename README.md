@@ -2,6 +2,7 @@
 
 [![Rust](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml)
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
+[![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
 Redis-rs is a high level redis library for Rust.  It provides convenient access
 to all Redis functionality through a very flexible but low-level API.  It
@@ -102,7 +103,42 @@ fn fetch_an_integer() -> String {
 }
 ```
 
+## JSON Support
+
+Support for the RedisJSON Module can be enabled by specifying "json" as a feature in your Cargo.toml.
+
+`redis = { version = "0.17.0", features = ["json"] }`
+
+Then you can simply include the `JSONCommands` which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
+
+```rust
+use redis::Client;
+use redis::JSONCommands;
+use redis::RedisResult;
+
+// Result returns Ok(true) if the value was set
+// Result returns Err(e) if there was an error with the server itself OR serde_json was unable to serialise the boolean
+fn set_json_bool<P: ToString>(key: P, path: P, b: bool) -> RedisResult<bool> {
+    let client = Client::open("redis://127.0.0.1").unwrap();
+    let connection = client.get_connection().unwrap();
+
+    // runs `JSON.SET {key} {path} {b}`
+    connection.json_set(key, path, b)?
+    
+    // you'll need to use serde_json (or some other json lib) to deserialise the results from the bytes
+    // It will always be a Vec, if no results were found at the path it'll be an empty array
+}
+
+```
+
 ## Development
+
+To test `redis` you're going to need to be able to test with the Redis Modules, to do this
+you must set the following envornment variables before running the test script
+
+- `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Usually called `librejson.so`).
+
+<!-- As support for modules are added later, it would be wise to update this list -->
 
 If you want to develop on the library there are a few commands provided
 by the makefile:

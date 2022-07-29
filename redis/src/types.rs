@@ -97,6 +97,10 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+
+    #[cfg(feature = "json")]
+    /// Error Serialising a struct to JSON form
+    Serialize
 }
 
 /// Internal low-level redis value enum.
@@ -408,6 +412,8 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            #[cfg(feature = "json")]
+            ErrorKind::Serialize => "serializing",
         }
     }
 
