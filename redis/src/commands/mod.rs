@@ -5,6 +5,8 @@ use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
 
+mod macros;
+
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
 
