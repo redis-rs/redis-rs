@@ -8,6 +8,21 @@ use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, Re
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "json")]
+#[macro_use]
+mod json_macro;
+
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+mod json;
+
+#[cfg(feature = "json")]
+pub use json::JsonCommands;
+
+#[cfg(all(feature = "json", feature = "aio"))]
+pub use json::JsonAsyncCommands;
+
+
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
 
