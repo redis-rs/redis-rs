@@ -100,7 +100,7 @@ pub enum ErrorKind {
 
     #[cfg(feature = "json")]
     /// Error Serialising a struct to JSON form
-    Serialize
+    Serialize,
 }
 
 /// Internal low-level redis value enum.

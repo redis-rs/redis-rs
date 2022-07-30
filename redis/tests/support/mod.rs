@@ -46,7 +46,7 @@ enum ServerType {
 }
 
 pub enum RedisModule {
-    RedisJson
+    RedisJson,
 }
 
 pub struct RedisServer {
@@ -106,17 +106,22 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(addr, None, |cmd| {
-            cmd.spawn()
-                .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
-        }, modules)
+        RedisServer::new_with_addr(
+            addr,
+            None,
+            |cmd| {
+                cmd.spawn()
+                    .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
+            },
+            modules,
+        )
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
         tls_paths: Option<TlsFilePaths>,
         spawner: F,
-        modules: &[RedisModule]
+        modules: &[RedisModule],
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
 
@@ -126,11 +131,12 @@ impl RedisServer {
                 RedisModule::RedisJson => {
                     redis_cmd
                         .arg("--loadmodule")
-                        .arg(env::var("REDIS_RS_REDIS_JSON_PATH")
-                        .expect("Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?"));
-                },
+                        .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
+                        "Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?",
+                    ));
+                }
             };
-        };
+        }
 
         redis_cmd
             .stdout(process::Stdio::null())
