@@ -117,9 +117,9 @@ macro_rules! implement_json_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-					if let Ok(mut command) = $body {
-						self.add_command(::std::mem::replace(&mut command, Cmd::new()));
-					}
+					if let Ok(command) = $body {
+						self.add_command(command);
+					}   
 
 					self
                 }
@@ -138,8 +138,8 @@ macro_rules! implement_json_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-					if let Ok(mut command) = $body {
-						self.add_command(::std::mem::replace(&mut command, Cmd::new()));
+					if let Ok(command) = $body {
+						self.add_command(command);
 					}
 
 					self
