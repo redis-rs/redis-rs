@@ -22,7 +22,6 @@ pub use json::JsonCommands;
 #[cfg(all(feature = "json", feature = "aio"))]
 pub use json::JsonAsyncCommands;
 
-
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
 
