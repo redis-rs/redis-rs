@@ -99,7 +99,7 @@ macro_rules! implement_json_commands {
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move { 
+                    Box::pin(async move {
                         $body?.query_async(self).await
                     })
                 }
@@ -116,12 +116,9 @@ macro_rules! implement_json_commands {
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
-                ) -> &mut Self {
-					if let Ok(command) = $body {
-						self.add_command(command);
-					}   
-
-					self
+                ) -> RedisResult<&mut Self> {
+                    self.add_command($body?);
+					Ok(self)
                 }
             )*
         }
@@ -137,12 +134,9 @@ macro_rules! implement_json_commands {
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
-                ) -> &mut Self {
-					if let Ok(command) = $body {
-						self.add_command(command);
-					}
-
-					self
+                ) -> RedisResult<&mut Self> {
+                    self.add_command($body?);
+					Ok(self)
                 }
             )*
         }

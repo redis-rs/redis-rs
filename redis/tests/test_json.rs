@@ -20,15 +20,15 @@ use serde_json::{self, json};
 const TEST_KEY: &str = "my_json";
 
 #[test]
-fn test_json_serialise_error() {
+fn test_json_serialize_error() {
     let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
     let mut con = ctx.connection();
 
     #[derive(Debug, Serialize)]
     struct InvalidSerializedStruct {
         // Maps in serde_json must have string-like keys
-        // so numbers and strings, anything else will cause the serialisation to fail
-        // this is basically the only way to make a serialisation fail at runtime
+        // so numbers and strings, anything else will cause the serialization to fail
+        // this is basically the only way to make a serialization fail at runtime
         // since rust doesnt provide the necessary ability to enforce this
         pub invalid_json: HashMap<bool, i64>,
     }
@@ -45,7 +45,7 @@ fn test_json_serialise_error() {
         set_invalid,
         Err(RedisError::from((
             ErrorKind::Serialize,
-            "Serialisation Error",
+            "Serialization Error",
             String::from("key must be string")
         )))
     );
@@ -244,7 +244,7 @@ fn test_json_clear() {
 
     let checking_value: RedisResult<String> = con.json_get(TEST_KEY, "$");
 
-    // float is set to 0 and serde_json serialises 0f64 to 0.0, which is a different string
+    // float is set to 0 and serde_json serializes 0f64 to 0.0, which is a different string
     assert_eq!(
         checking_value,
         // i found it changes the order?

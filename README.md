@@ -109,15 +109,15 @@ Support for the RedisJSON Module can be enabled by specifying "json" as a featur
 
 `redis = { version = "0.17.0", features = ["json"] }`
 
-Then you can simply include the `JSONCommands` which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
+Then you can simply include the `JsonCommands` which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
 
 ```rust
 use redis::Client;
-use redis::JSONCommands;
+use redis::JsonCommands;
 use redis::RedisResult;
 
 // Result returns Ok(true) if the value was set
-// Result returns Err(e) if there was an error with the server itself OR serde_json was unable to serialise the boolean
+// Result returns Err(e) if there was an error with the server itself OR serde_json was unable to serialize the boolean
 fn set_json_bool<P: ToString>(key: P, path: P, b: bool) -> RedisResult<bool> {
     let client = Client::open("redis://127.0.0.1").unwrap();
     let connection = client.get_connection().unwrap();
@@ -125,7 +125,7 @@ fn set_json_bool<P: ToString>(key: P, path: P, b: bool) -> RedisResult<bool> {
     // runs `JSON.SET {key} {path} {b}`
     connection.json_set(key, path, b)?
     
-    // you'll need to use serde_json (or some other json lib) to deserialise the results from the bytes
+    // you'll need to use serde_json (or some other json lib) to deserialize the results from the bytes
     // It will always be a Vec, if no results were found at the path it'll be an empty array
 }
 

@@ -99,7 +99,7 @@ pub enum ErrorKind {
     ReadOnly,
 
     #[cfg(feature = "json")]
-    /// Error Serialising a struct to JSON form
+    /// Error Serializing a struct to JSON form
     Serialize,
 }
 

@@ -303,7 +303,7 @@ impl Cmd {
         self
     }
 
-    /// Used by the RedisJSON to allow the returning of an error when serialisation fails on some commands
+    /// Used by the RedisJSON to allow the returning of an error when serialization fails on some commands
     /// **This should NOT be used by anything else**
     #[inline]
     #[doc(hidden)]
