@@ -127,7 +127,7 @@ fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> 
     connection.json_set(key, path, b)?
     
     // you'll need to use serde_json (or some other json lib) to deserialize the results from the bytes
-    // It will always be a Vec, if no results were found at the path it'll be an empty array
+    // It will always be a Vec, if no results were found at the path it'll be an empty Vec
 }
 
 ```

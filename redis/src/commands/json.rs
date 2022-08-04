@@ -35,14 +35,27 @@ implement_json_commands! {
 	}
 
 	/// Index array at `path`, returns first occurance of `value`
-	///
-	/// Pass `None` to `start_stop` to default it to `0, 0` (the Redis default in this command).
 	fn json_arr_index<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
 		Ok::<Cmd, RedisError>(
 			cmd("JSON.ARRINDEX")
 				.arg_take(key)
 				.arg_take(path)
 				.arg_take(serde_json::to_string(value)?)
+		)
+	}
+
+	/// Same as `json_arr_index` except takes a `start` and a `stop` value, setting these to `0` will mean
+	/// they make no effect on the query
+	///
+	/// The default values for `start` and `stop` are `0`, so pass those in if you want them to take no effect
+	fn json_arr_index_ss<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V, start: isize, stop: isize) {
+		Ok::<Cmd, RedisError>(
+			cmd("JSON.ARRINDEX")
+				.arg_take(key)
+				.arg_take(path)
+				.arg_take(serde_json::to_string(value)?)
+				.arg_take(start)
+				.arg_take(stop)
 		)
 	}
 
