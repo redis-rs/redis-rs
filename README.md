@@ -109,7 +109,7 @@ Support for the RedisJSON Module can be enabled by specifying "json" as a featur
 
 `redis = { version = "0.17.0", features = ["json"] }`
 
-Then you can simply include the `JsonCommands` which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
+Then you can simply import the `JsonCommands` trait which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
 
 ```rust
 use redis::Client;
