@@ -106,15 +106,10 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(
-            addr,
-            None,
-            modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
-            },
-        )
+        RedisServer::new_with_addr(addr, None, modules, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
+        })
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
