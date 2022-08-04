@@ -35,7 +35,8 @@ implement_json_commands! {
 	}
 
 	/// Index array at `path`, returns first occurance of `value`
-	/// Pass `None` to `start_stop` to default it to `0, 0` (the redis default in this command)
+	///
+	/// Pass `None` to `start_stop` to default it to `0, 0` (the Redis default in this command).
 	fn json_arr_index<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
 		Ok::<Cmd, RedisError>(
 			cmd("JSON.ARRINDEX")
