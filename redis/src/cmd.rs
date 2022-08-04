@@ -304,6 +304,11 @@ impl Cmd {
     }
 
     /// Used by the RedisJSON to allow the returning of an error when serialization fails on some commands
+    /// 
+    /// When wrapping a `Cmd` with a `RedisResult`, having `&mut Cmd` causes the value to live only until the 
+    /// `RedisResult` is unwrapped. This causes the compiler to complain about the reference not living long enough, 
+    /// A `RedisResult<Cmd>` doesn't have this issue, hense this function.
+    /// 
     /// **This should NOT be used by anything else**
     #[inline]
     #[doc(hidden)]
