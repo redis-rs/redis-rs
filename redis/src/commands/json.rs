@@ -185,7 +185,7 @@ implement_json_commands! {
 		)
 	}
 
-	/// Reports the type of JSON value at `path`s.
+	/// Reports the type of JSON value at `path`.
 	fn json_type<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
 		Ok::<Cmd, RedisError>(
 			cmd("JSON.TYPE")
