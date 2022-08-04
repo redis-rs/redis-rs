@@ -151,7 +151,7 @@ implement_json_commands! {
 		)
 	}
 
-	/// Sets the JSON Value at `path` in `key`
+	/// Sets the JSON Value at `path` in `key`.
 	fn json_set<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
 		Ok::<Cmd, RedisError>(
 			cmd("JSON.SET")
