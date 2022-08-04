@@ -46,7 +46,8 @@ implement_json_commands! {
 		)
 	}
 
-	/// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right)
+	/// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
+	///
 	/// `index` must be withing the array's range.
 	fn json_arr_insert<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, index: i64, value: &'a V) {
 		Ok::<Cmd, RedisError>(
