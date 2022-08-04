@@ -115,10 +115,11 @@ Then you can simply import the `JsonCommands` trait which will add the `json` co
 use redis::Client;
 use redis::JsonCommands;
 use redis::RedisResult;
+use redis::ToRedisArgs;
 
 // Result returns Ok(true) if the value was set
 // Result returns Err(e) if there was an error with the server itself OR serde_json was unable to serialize the boolean
-fn set_json_bool<P: ToString>(key: P, path: P, b: bool) -> RedisResult<bool> {
+fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> {
     let client = Client::open("redis://127.0.0.1").unwrap();
     let connection = client.get_connection().unwrap();
 
