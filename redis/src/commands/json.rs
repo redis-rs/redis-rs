@@ -112,8 +112,9 @@ implement_json_commands! {
 		)
 	}
 
-	/// Gets JSON Value(s) at `path`
-	/// Runs JSON.GET is key is singular, Runs JSON.MGET if there are multiple keys
+	/// Gets JSON Value(s) at `path`.
+	///
+	/// Runs `JSON.GET` is key is singular, `JSON.MGET` if there are multiple keys.
 	fn json_get<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
 		Ok::<Cmd, RedisError>(
 			cmd(if key.is_single_arg() { "JSON.GET" } else { "JSON.MGET" })
