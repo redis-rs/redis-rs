@@ -69,7 +69,8 @@ implement_json_commands! {
 	}
 
 	/// Removes and returns an element from the `index` in the array.
-	/// `index` defaults to `-1` (the end of the array)
+	///
+	/// `index` defaults to `-1` (the end of the array).
 	fn json_arr_pop<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P, index: i64) {
 		Ok::<Cmd, RedisError>(
 			cmd("JSON.ARRPOP")
