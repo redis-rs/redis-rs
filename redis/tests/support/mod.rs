@@ -109,19 +109,19 @@ impl RedisServer {
         RedisServer::new_with_addr(
             addr,
             None,
+            modules,
             |cmd| {
                 cmd.spawn()
                     .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
             },
-            modules,
         )
     }
 
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
         tls_paths: Option<TlsFilePaths>,
-        spawner: F,
         modules: &[RedisModule],
+        spawner: F,
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
 

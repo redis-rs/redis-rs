@@ -93,6 +93,7 @@ impl RedisCluster {
             servers.push(RedisServer::new_with_addr(
                 ClusterType::build_addr(port),
                 tls_paths.clone(),
+                modules,
                 |cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
@@ -127,7 +128,6 @@ impl RedisCluster {
                     dbg!(&cmd);
                     cmd.spawn().unwrap()
                 },
-                modules,
             ));
         }
 
