@@ -1099,7 +1099,7 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
-    // this hack allows us to specialize Vec<u8> to work with
+    // this hack allows us to specialize Vec<u8> to work with binary data.
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
