@@ -2,13 +2,12 @@ name: Rust
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
-  REDIS_VERSION: '6.2.4'
 
 jobs:
   build:
@@ -17,10 +16,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        redis:
+          - 6.2.4
+          - 7.0.0
         rust:
           - stable
           - beta
           - nightly
+          - 1.57.0
 
     steps:
     - name: Cache redis
@@ -36,10 +39,9 @@ jobs:
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install stunnel -y
-        wget https://github.com/redis/redis/archive/${{ env.REDIS_VERSION }}.tar.gz;
-        tar -xzvf ${{ env.REDIS_VERSION }}.tar.gz;
-        pushd redis-${{ env.REDIS_VERSION }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
+        tar -xzvf ${{ matrix.redis }}.tar.gz;
+        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
         echo $PATH
 
     - name: Install latest nightly
@@ -64,7 +66,27 @@ jobs:
         cargo check --all-features
 
         cargo check --no-default-features --features async-std-comp
-    - name: Check format
-      if: ${{ matrix.rust == 'stable' }}
-      run: make style-check
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v1
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets -- -D warnings
+      - name: doc
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -Dwarnings

@@ -1,5 +1,5 @@
 [clog]
-repository = "https://github.com/mitsuhiko/redis-rs"
+repository = "https://github.com/redis-rs/redis-rs"
 
 changelog = "CHANGELOG.md"
 

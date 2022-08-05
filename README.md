@@ -1,7 +1,8 @@
 # redis-rs
 
-[![Build Status](https://travis-ci.org/mitsuhiko/redis-rs.svg?branch=master)](https://travis-ci.org/mitsuhiko/redis-rs)
-[![crates.io](http://meritbadge.herokuapp.com/redis)](https://crates.io/crates/redis)
+[![Rust](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/redis-rs/redis-rs/actions/workflows/rust.yml)
+[![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
+[![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
 Redis-rs is a high level redis library for Rust.  It provides convenient access
 to all Redis functionality through a very flexible but low-level API.  It
@@ -13,13 +14,13 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.21.0"
+redis = "0.21.5"
 ```
 
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
 
-**Note: redis-rs requires at least Rust 1.39.**
+**Note: redis-rs requires at least Rust 1.51.**
 
 ## Basic Operation
 

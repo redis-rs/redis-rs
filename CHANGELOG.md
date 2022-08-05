@@ -1,5 +1,66 @@
+<a name="0.21.5"></a>
+### 0.21.5 (2022-01-10)
+
+
+
+
+<a name="0.21.5"></a>
+### 0.21.5 (2022-01-10)
+
+#### Features
+
+*   Add new list commands ([#570](https://github.com/mitsuhiko/redis-rs/pull/570))
+
+
+<a name="0.21.4"></a>
+### 0.21.4 (2021-11-04)
+
+#### Features
+
+*   Add convenience command: zrandbember ([#556](https://github.com/mitsuhiko/redis-rs/pull/556))
+
+
+
+<a name="0.21.3"></a>
+### 0.21.3 (2021-10-15)
+
+#### Features
+
+*   Add support for TLS with cluster mode ([#548](https://github.com/mitsuhiko/redis-rs/pull/548))
+
+#### Changes
+
+*   Remove stunnel as a dep, use redis native tls ([#542](https://github.com/mitsuhiko/redis-rs/pull/542))
+
+
+
+
+<a name="0.21.2"></a>
+### 0.21.2 (2021-09-02)
+
+
+#### Bug Fixes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+#### Breaking Changes
+
+*   Compile with tokio-comp and up-to-date dependencies ([282f997e](https://github.com/mitsuhiko/redis-rs/commit/282f997e41cc0de2a604c0f6a96d82818dacc373), closes [#531](https://github.com/mitsuhiko/redis-rs/issues/531), breaks [#](https://github.com/mitsuhiko/redis-rs/issues/))
+
+
+
+<a name="0.21.1"></a>
+### 0.21.1 (2021-08-25)
+
+
+#### Bug Fixes
+
+*   pin futures dependency to required version ([9be392bc](https://github.com/mitsuhiko/redis-rs/commit/9be392bc5b22326a8a0eafc7aa18cc04c5d79e0e))
+
+
+
 <a name="0.21.0"></a>
-### 0.20.0 (2021-07-16)
+### 0.21.0 (2021-07-16)
 
 
 #### Performance
