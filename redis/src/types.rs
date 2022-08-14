@@ -12,6 +12,7 @@ use std::string::FromUtf8Error;
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -548,7 +549,7 @@ pub type RedisResult<T> = Result<T, RedisError>;
 pub type RedisFuture<'a, T> = futures_util::future::BoxFuture<'a, RedisResult<T>>;
 
 /// An info dictionary type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InfoDict {
     map: HashMap<String, Value>,
 }
@@ -615,6 +616,14 @@ impl InfoDict {
     /// Checks if the dict is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+}
+
+impl Deref for InfoDict {
+    type Target = HashMap<String, Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
     }
 }
 
