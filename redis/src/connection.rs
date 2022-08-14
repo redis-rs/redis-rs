@@ -19,7 +19,7 @@ use crate::types::HashMap;
 use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls")]
-use native_tls::{TlsConnector, TlsStream};
+use native_tls::{TlsConnector, TlsConnectorBuilder, TlsStream};
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -330,7 +330,12 @@ pub struct Msg {
 }
 
 impl ActualConnection {
-    pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
+    pub fn new(
+        addr: &ConnectionAddr,
+        timeout: Option<Duration>,
+        #[cfg(feature = "tls")]
+        tls_connector_builder_fn: fn(&mut TlsConnectorBuilder)
+    ) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let host: &str = &*host;
@@ -375,15 +380,15 @@ impl ActualConnection {
                 port,
                 insecure,
             } => {
-                let tls_connector = if insecure {
-                    TlsConnector::builder()
+                let mut builder = TlsConnector::builder();
+                tls_connector_builder_fn(&mut builder);
+                if insecure {
+                    builder
                         .danger_accept_invalid_certs(true)
                         .danger_accept_invalid_hostnames(true)
-                        .use_sni(false)
-                        .build()?
-                } else {
-                    TlsConnector::new()?
+                        .use_sni(false);
                 };
+                let tls_connector = builder.build()?;
                 let host: &str = &*host;
                 let tls = match timeout {
                     None => {
@@ -580,8 +585,10 @@ fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> 
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
+    #[cfg(feature = "tls")]
+    tls_connector_builder_fn: fn(&mut TlsConnectorBuilder)
 ) -> RedisResult<Connection> {
-    let con = ActualConnection::new(&connection_info.addr, timeout)?;
+    let con = ActualConnection::new(&connection_info.addr, timeout, #[cfg(feature = "tls")] tls_connector_builder_fn)?;
     setup_connection(con, &connection_info.redis)
 }
 
