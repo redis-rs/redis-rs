@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::From;
 use std::default::Default;
 use std::error;
+use std::ffi::{CString, NulError};
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
@@ -261,6 +262,18 @@ impl From<Utf8Error> for RedisError {
     fn from(_: Utf8Error) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8"),
+        }
+    }
+}
+
+impl From<NulError> for RedisError {
+    fn from(err: NulError) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::TypeError,
+                "Value contains interior nul terminator",
+                err.to_string(),
+            ),
         }
     }
 }
@@ -1143,6 +1156,17 @@ impl FromRedisValue for bool {
             }
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
+        }
+    }
+}
+
+impl FromRedisValue for CString {
+    fn from_redis_value(v: &Value) -> RedisResult<CString> {
+        match *v {
+            Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
+            Value::Okay => Ok(CString::new("OK")?),
+            Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
+            _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
 }
