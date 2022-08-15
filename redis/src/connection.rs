@@ -41,7 +41,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 /// Not all connection addresses are supported on all platforms.  For instance
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
@@ -333,13 +333,13 @@ impl ActualConnection {
     pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
-                let host: &str = &*host;
+                let addr = (host.as_str(), *port);
                 let tcp = match timeout {
-                    None => TcpStream::connect((host, *port))?,
+                    None => TcpStream::connect(addr)?,
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in (host, *port).to_socket_addrs()? {
+                        for addr in addr.to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
