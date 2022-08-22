@@ -29,7 +29,7 @@ pub(crate) enum Tokio {
     Tcp(TcpStreamTokio),
     /// Represents a Tokio TLS encrypted TCP connection
     #[cfg(feature = "tokio-native-tls-comp")]
-    TcpTls(TlsStream<TcpStreamTokio>),
+    TcpTls(Box<TlsStream<TcpStreamTokio>>),
     /// Represents a Tokio Unix connection.
     #[cfg(unix)]
     Unix(UnixStreamTokio),
@@ -114,7 +114,7 @@ impl RedisRuntime for Tokio {
         Ok(tls_connector
             .connect(hostname, TcpStreamTokio::connect(&socket_addr).await?)
             .await
-            .map(Tokio::TcpTls)?)
+            .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
 
     #[cfg(unix)]

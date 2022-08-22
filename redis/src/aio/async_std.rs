@@ -83,7 +83,7 @@ pub enum AsyncStd {
     Tcp(AsyncStdWrapped<TcpStream>),
     /// Represents an Async_std TLS encrypted TCP connection.
     #[cfg(feature = "async-std-tls-comp")]
-    TcpTls(AsyncStdWrapped<TlsStream<TcpStream>>),
+    TcpTls(AsyncStdWrapped<Box<TlsStream<TcpStream>>>),
     /// Represents an Async_std Unix connection.
     #[cfg(unix)]
     Unix(AsyncStdWrapped<UnixStream>),
@@ -167,7 +167,7 @@ impl RedisRuntime for AsyncStd {
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
-            .map(|con| Self::TcpTls(AsyncStdWrapped::new(con)))?)
+            .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }
 
     #[cfg(unix)]
