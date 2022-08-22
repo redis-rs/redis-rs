@@ -384,10 +384,10 @@ impl ActualConnection {
                 } else {
                     TlsConnector::new()?
                 };
-                let host: &str = &*host;
+                let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = TcpStream::connect((host, port))?;
+                        let tcp = TcpStream::connect(addr)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
@@ -398,7 +398,7 @@ impl ActualConnection {
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in (host, port).to_socket_addrs()? {
+                        for addr in (host.as_str(), port).to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
