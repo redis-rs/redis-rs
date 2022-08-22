@@ -1,7 +1,11 @@
+use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+
+#[cfg(feature = "tls")]
+use native_tls::TlsConnectorBuilder;
 
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
@@ -9,9 +13,19 @@ use crate::{
 };
 
 /// The client type.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     connection_info: ConnectionInfo,
+    #[cfg(feature = "tls")]
+    tls_connector_builder_fn: fn(&mut TlsConnectorBuilder)
+}
+
+impl Debug for Client {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("connection_info", &self.connection_info)
+            .finish()
+    }
 }
 
 /// The client acts as connector to the redis server.  By itself it does not
@@ -37,6 +51,19 @@ impl Client {
     pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
         Ok(Client {
             connection_info: params.into_connection_info()?,
+            #[cfg(feature = "tls")]
+            tls_connector_builder_fn: |_| {}
+        })
+    }
+
+    /// Connects to a redis server and returns a client.  This does not
+    /// actually open a connection yet but it does perform some basic
+    /// checks on the URL that might make the operation fail.
+    #[cfg(feature = "tls")]
+    pub fn open_with_tls_builder<T: IntoConnectionInfo>(params: T, tls_connector_builder_fn: fn(&mut TlsConnectorBuilder)) -> RedisResult<Client> {
+        Ok(Client {
+            connection_info: params.into_connection_info()?,
+            tls_connector_builder_fn,
         })
     }
 
@@ -46,7 +73,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        connect(&self.connection_info, None)
+        connect(&self.connection_info, None, #[cfg(feature = "tls")] self.tls_connector_builder_fn)
     }
 
     /// Instructs the client to actually connect to redis with specified
@@ -55,7 +82,7 @@ impl Client {
     /// a variety of errors (like unreachable host) so it's important
     /// that you handle those errors.
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
-        connect(&self.connection_info, Some(timeout))
+        connect(&self.connection_info, Some(timeout), #[cfg(feature = "tls")] self.tls_connector_builder_fn)
     }
 
     /// Returns a reference of client connection info object.
