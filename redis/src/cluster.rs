@@ -97,6 +97,8 @@ impl ClusterConnection {
     }
 
     /// Set the write timeout for this connection.
+    ///
+    /// See [ClusterClientBuilder](ClusterClientBuilder::write_timeout).
     pub fn set_write_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
         ClusterParams::validate_duration(&dur)?;
@@ -109,6 +111,8 @@ impl ClusterConnection {
     }
 
     /// Set the read timeout for this connection.
+    ///
+    /// See [ClusterClientBuilder](ClusterClientBuilder::read_timeout).
     pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
         ClusterParams::validate_duration(&dur)?;
