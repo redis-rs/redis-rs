@@ -135,6 +135,11 @@ impl ClusterConnection {
         Ok(())
     }
 
+    /// Set the retries parameter for this connection.
+    pub fn set_retries(&mut self, value: u8) {
+        self.cluster_params.retries = value;
+    }
+
     /// Set the auto reconnect parameter for this connection.
     pub fn set_auto_reconnect(&mut self, value: bool) {
         self.cluster_params.auto_reconnect = value;
@@ -403,7 +408,7 @@ impl ClusterConnection {
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = 16;
+        let mut retries = self.cluster_params.retries;
         let mut excludes = HashSet::new();
         let mut redirected = None::<String>;
         let mut is_asking = false;
@@ -454,7 +459,7 @@ impl ClusterConnection {
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
                             // Sleep and retry.
-                            let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
+                            let sleep_time = 2u64.pow(16 - u32::from(retries.max(9))) * 10;
                             thread::sleep(Duration::from_millis(sleep_time));
                             excludes.clear();
                             continue;
