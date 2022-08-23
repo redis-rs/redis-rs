@@ -137,6 +137,40 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets the default write timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `send_packed_command` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    pub fn write_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.write_timeout = dur;
+        Ok(self)
+    }
+
+    /// Sets the default read timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `recv_response` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    pub fn read_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.read_timeout = dur;
+        Ok(self)
+    }
+
     /// Use `build()`.
     #[deprecated(since = "0.22.0", note = "Use build()")]
     pub fn open(self) -> RedisResult<ClusterClient> {
