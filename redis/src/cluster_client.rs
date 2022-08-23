@@ -11,6 +11,7 @@ pub(crate) struct ClusterParams {
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
     pub(crate) tls_insecure: Option<bool>,
+    pub(crate) connect_timeout: Option<Duration>,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) read_timeout: Option<Duration>,
     pub(crate) auto_reconnect: bool,
@@ -135,6 +136,23 @@ impl ClusterClientBuilder {
     pub fn tls_insecure(mut self, tls_insecure: bool) -> ClusterClientBuilder {
         self.cluster_params.tls_insecure = Some(tls_insecure);
         self
+    }
+
+    /// Sets the default timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `get_connection` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    pub fn connect_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.connect_timeout = dur;
+        Ok(self)
     }
 
     /// Sets the default write timeout for all new connections (default is None).

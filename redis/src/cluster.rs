@@ -76,6 +76,20 @@ pub struct ClusterConnection {
 }
 
 impl ClusterConnection {
+    /// Set the timeout for connecting to new nodes.
+    pub fn set_connect_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.connect_timeout = dur;
+        Ok(())
+    }
+
     /// Set the write timeout for this connection.
     pub fn set_write_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
@@ -276,7 +290,7 @@ impl ClusterConnection {
     fn connect(&self, node: &str) -> RedisResult<Connection> {
         let info = get_connection_info(node, &self.cluster_params);
 
-        let mut conn = connect(&info, None)?;
+        let mut conn = connect(&info, self.cluster_params.connect_timeout)?;
         if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
