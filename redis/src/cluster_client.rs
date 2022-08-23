@@ -1,5 +1,8 @@
+use std::str::FromStr;
+use std::time::Duration;
+
 use crate::cluster::{ClusterConnection, TlsMode};
-use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo, RedisConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 
 /// Redis cluster specific parameters.
@@ -12,6 +15,52 @@ pub(crate) struct ClusterParams {
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
+    pub(crate) write_timeout: Option<Duration>,
+    pub(crate) read_timeout: Option<Duration>,
+    pub(crate) auto_reconnect: bool,
+}
+
+impl ClusterParams {
+    pub(crate) fn validate_duration(dur: &Option<Duration>) -> RedisResult<()> {
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        };
+        Ok(())
+    }
+
+    pub(crate) fn get_connection_info(&self, node: &str) -> ConnectionInfo {
+        let mut split = node.split(':');
+        let host = split.next().unwrap().to_string();
+        let port = u16::from_str(split.next().unwrap()).unwrap();
+
+        ConnectionInfo {
+            addr: self.get_connection_addr(host, port),
+            redis: RedisConnectionInfo {
+                password: self.password.clone(),
+                username: self.username.clone(),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn get_connection_addr(&self, host: String, port: u16) -> ConnectionAddr {
+        match self.tls {
+            Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
+                host,
+                port,
+                insecure: false,
+            },
+            Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
+                host,
+                port,
+                insecure: true,
+            },
+            _ => ConnectionAddr::Tcp(host, port),
+        }
+    }
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -30,7 +79,10 @@ impl ClusterClientBuilder {
                 .into_iter()
                 .map(|x| x.into_connection_info())
                 .collect(),
-            cluster_params: ClusterParams::default(),
+            cluster_params: ClusterParams {
+                auto_reconnect: true,
+                ..Default::default()
+            },
         }
     }
 
