@@ -75,23 +75,7 @@ pub struct ClusterConnection {
     password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
-}
-
-#[derive(Clone, Copy)]
-enum TlsMode {
-    Secure,
-    Insecure,
-}
-
-impl TlsMode {
-    fn from_insecure_flag(insecure: bool) -> TlsMode {
-        if insecure {
-            TlsMode::Insecure
-        } else {
-            TlsMode::Secure
-        }
-    }
+    tls_insecure: Option<bool>,
 }
 
 impl ClusterConnection {
@@ -115,25 +99,7 @@ impl ClusterConnection {
             password: cluster_params.password.clone(),
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            #[cfg(feature = "tls")]
-            tls: {
-                if initial_nodes.is_empty() {
-                    None
-                } else {
-                    // TODO: Maybe should run through whole list and make sure they're all matching?
-                    match &initial_nodes.get(0).unwrap().addr {
-                        ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls {
-                            host: _,
-                            port: _,
-                            insecure,
-                        } => Some(TlsMode::from_insecure_flag(*insecure)),
-                        _ => None,
-                    }
-                }
-            },
-            #[cfg(not(feature = "tls"))]
-            tls: None,
+            tls_insecure: cluster_params.tls_insecure,
             initial_nodes: initial_nodes.to_vec(),
         };
         connection.refresh_slots()?;
@@ -225,18 +191,7 @@ impl ClusterConnection {
         let mut connections = HashMap::with_capacity(initial_nodes.len());
 
         for info in initial_nodes.iter() {
-            let addr = match info.addr {
-                ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
-                ConnectionAddr::TcpTls {
-                    ref host,
-                    port,
-                    insecure,
-                } => {
-                    let tls_mode = TlsMode::from_insecure_flag(insecure);
-                    build_connection_string(host, Some(port), Some(tls_mode))
-                }
-                _ => panic!("No reach."),
-            };
+            let addr = info.addr.to_string();
 
             if let Ok(mut conn) = connect(
                 info.clone(),
@@ -324,7 +279,7 @@ impl ClusterConnection {
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
+            if let Ok(mut slots_data) = get_slots(conn, self.tls_insecure) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -480,9 +435,7 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -490,9 +443,7 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
@@ -776,7 +727,7 @@ fn get_random_connection<'a>(
 }
 
 // Get slot data from connection.
-fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
+fn get_slots(connection: &mut Connection, tls_insecure: Option<bool>) -> RedisResult<Vec<Slot>> {
     let mut cmd = Cmd::new();
     cmd.arg("CLUSTER").arg("SLOTS");
     let value = connection.req_command(&cmd)?;
@@ -826,7 +777,7 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         } else {
                             return None;
                         };
-                        Some(build_connection_string(&ip, Some(port), tls_mode))
+                        Some(get_connection_addr((ip.into_owned(), port), tls_insecure).to_string())
                     } else {
                         None
                     }
@@ -845,16 +796,14 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
     Ok(result)
 }
 
-fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
-    let host_port = match port {
-        Some(port) => format!("{}:{}", host, port),
-        None => host.to_string(),
-    };
-    match tls_mode {
-        None => format!("redis://{}", host_port),
-        Some(TlsMode::Insecure) => {
-            format!("rediss://{}/#insecure", host_port)
-        }
-        Some(TlsMode::Secure) => format!("rediss://{}", host_port),
+fn get_connection_addr(node: (String, u16), tls_insecure: Option<bool>) -> ConnectionAddr {
+    let (host, port) = node;
+    match tls_insecure {
+        Some(insecure) => ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure,
+        },
+        _ => ConnectionAddr::Tcp(host, port),
     }
 }

@@ -8,6 +8,7 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
+    pub(crate) tls_insecure: Option<bool>,
 }
 
 /// Used to configure and build a [ClusterClient](ClusterClient).
@@ -58,6 +59,16 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
+        if cluster_params.tls_insecure.is_none() {
+            cluster_params.tls_insecure = match initial_nodes[0].addr {
+                ConnectionAddr::TcpTls {
+                    host: _,
+                    port: _,
+                    insecure,
+                } => Some(insecure),
+                _ => None,
+            };
+        }
 
         initial_nodes = initial_nodes
             .into_iter()
@@ -109,6 +120,15 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.cluster_params.read_from_replicas = true;
+        self
+    }
+
+    /// Sets TLS insecure for new ClusterClient (default is false).
+    ///
+    /// See [ConnectionAddr](ConnectionAddr::TcpTls::insecure).
+    #[cfg(feature = "tls")]
+    pub fn tls_insecure(mut self, tls_insecure: bool) -> ClusterClientBuilder {
+        self.cluster_params.tls_insecure = Some(tls_insecure);
         self
     }
 
