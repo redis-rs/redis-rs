@@ -225,6 +225,15 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Disables auto reconnect for all new connections (default is enabled).
+    ///
+    /// If enabled, `ClusterConnection` will attempt to reconnect in case of
+    /// [IoError](ErrorKind::IoError).
+    pub fn disable_auto_reconnect(mut self) -> ClusterClientBuilder {
+        self.cluster_params.auto_reconnect = false;
+        self
+    }
+
     /// Use `build()`.
     #[deprecated(since = "0.22.0", note = "Use build()")]
     pub fn open(self) -> RedisResult<ClusterClient> {
