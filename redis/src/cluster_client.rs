@@ -186,6 +186,36 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets the default write timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `send_packed_command` call may block indefinitely.
+    ///
+    /// # Errors
+    ///
+    /// Passing Some(Duration::ZERO)
+    pub fn write_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        ClusterParams::validate_duration(&dur)?;
+
+        self.cluster_params.write_timeout = dur;
+        Ok(self)
+    }
+
+    /// Sets the default read timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `recv_response` call may block indefinitely.
+    ///
+    /// # Errors
+    ///
+    /// Passing Some(Duration::ZERO)
+    pub fn read_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        ClusterParams::validate_duration(&dur)?;
+
+        self.cluster_params.read_timeout = dur;
+        Ok(self)
+    }
+
     /// Enables reading from replicas for all new connections (default is disabled).
     ///
     /// If enabled, then read queries will go to the replica nodes & write queries will go to the
