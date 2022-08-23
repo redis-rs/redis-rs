@@ -12,6 +12,7 @@ pub(crate) struct ClusterParams {
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
     pub(crate) tls_mode: Option<TlsMode>,
+    pub(crate) connect_timeout: Option<Duration>,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) read_timeout: Option<Duration>,
     pub(crate) auto_reconnect: bool,
@@ -181,6 +182,21 @@ impl ClusterClientBuilder {
     pub fn tls_mode(mut self, tls_mode: TlsMode) -> ClusterClientBuilder {
         self.cluster_params.tls_mode = Some(tls_mode);
         self
+    }
+
+    /// Sets the default timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `get_connection` call may block indefinitely.
+    ///
+    /// # Errors
+    ///
+    /// Passing Some(Duration::ZERO)
+    pub fn connect_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        ClusterParams::validate_duration(&dur)?;
+
+        self.cluster_params.connect_timeout = dur;
+        Ok(self)
     }
 
     /// Sets the default write timeout for all new connections (default is None).
