@@ -66,54 +66,18 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
 /// This is a connection of Redis cluster.
+#[derive(Default)]
 pub struct ClusterConnection {
+    cluster_params: ClusterParams,
     initial_nodes: Vec<ConnectionInfo>,
+
     connections: RefCell<HashMap<String, Connection>>,
     slots: RefCell<SlotMap>,
-    auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-    read_timeout: RefCell<Option<Duration>>,
-    write_timeout: RefCell<Option<Duration>>,
-    tls_insecure: Option<bool>,
 }
 
 impl ClusterConnection {
-    pub(crate) fn new(
-        cluster_params: &ClusterParams,
-        initial_nodes: &[ConnectionInfo],
-    ) -> RedisResult<ClusterConnection> {
-        let connection = ClusterConnection {
-            connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new()),
-            auto_reconnect: RefCell::new(true),
-            read_from_replicas: cluster_params.read_from_replicas,
-            username: cluster_params.username.clone(),
-            password: cluster_params.password.clone(),
-            read_timeout: RefCell::new(None),
-            write_timeout: RefCell::new(None),
-            tls_insecure: cluster_params.tls_insecure,
-            initial_nodes: initial_nodes.to_vec(),
-        };
-        connection.create_initial_connections()?;
-
-        Ok(connection)
-    }
-
-    /// Set an auto reconnect attribute.
-    /// Default value is true;
-    pub fn set_auto_reconnect(&self, value: bool) {
-        let mut auto_reconnect = self.auto_reconnect.borrow_mut();
-        *auto_reconnect = value;
-    }
-
-    /// Sets the write timeout for the connection.
-    ///
-    /// If the provided value is `None`, then `send_packed_command` call will
-    /// block indefinitely. It is an error to pass the zero `Duration` to this
-    /// method.
-    pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+    /// Set the write timeout for this connection.
+    pub fn set_write_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
             return Err(RedisError::from((
@@ -122,21 +86,15 @@ impl ClusterConnection {
             )));
         }
 
-        let mut t = self.write_timeout.borrow_mut();
-        *t = dur;
-        let connections = self.connections.borrow();
-        for conn in connections.values() {
+        self.cluster_params.write_timeout = dur;
+        for conn in self.connections.borrow().values() {
             conn.set_write_timeout(dur)?;
         }
         Ok(())
     }
 
-    /// Sets the read timeout for the connection.
-    ///
-    /// If the provided value is `None`, then `recv_response` call will
-    /// block indefinitely. It is an error to pass the zero `Duration` to this
-    /// method.
-    pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+    /// Set the read timeout for this connection.
+    pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
             return Err(RedisError::from((
@@ -145,24 +103,30 @@ impl ClusterConnection {
             )));
         }
 
-        let mut t = self.read_timeout.borrow_mut();
-        *t = dur;
-        let connections = self.connections.borrow();
-        for conn in connections.values() {
+        self.cluster_params.read_timeout = dur;
+        for conn in self.connections.borrow().values() {
             conn.set_read_timeout(dur)?;
         }
         Ok(())
     }
 
-    /// Check that all connections it has are available (`PING` internally).
-    pub fn check_connection(&mut self) -> bool {
-        let mut connections = self.connections.borrow_mut();
-        for conn in connections.values_mut() {
-            if !conn.check_connection() {
-                return false;
-            }
-        }
-        true
+    /// Set the auto reconnect parameter for this connection.
+    pub fn set_auto_reconnect(&mut self, value: bool) {
+        self.cluster_params.auto_reconnect = value;
+    }
+
+    pub(crate) fn new(
+        cluster_params: &ClusterParams,
+        initial_nodes: &[ConnectionInfo],
+    ) -> RedisResult<ClusterConnection> {
+        let connection = ClusterConnection {
+            cluster_params: cluster_params.clone(),
+            initial_nodes: initial_nodes.to_vec(),
+            ..Default::default()
+        };
+        connection.create_initial_connections()?;
+
+        Ok(connection)
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
@@ -206,15 +170,16 @@ impl ClusterConnection {
     fn refresh_slots(&self) -> RedisResult<()> {
         let mut slots = self.slots.borrow_mut();
         *slots = self.create_new_slots(|slot_data| {
-            let replica = if !self.read_from_replicas || slot_data.replicas().is_empty() {
-                slot_data.master().to_string()
-            } else {
-                slot_data
-                    .replicas()
-                    .choose(&mut thread_rng())
-                    .unwrap()
-                    .to_string()
-            };
+            let replica =
+                if !self.cluster_params.read_from_replicas || slot_data.replicas().is_empty() {
+                    slot_data.master().to_string()
+                } else {
+                    slot_data
+                        .replicas()
+                        .choose(&mut thread_rng())
+                        .unwrap()
+                        .to_string()
+                };
 
             [slot_data.master().to_string(), replica]
         })?;
@@ -236,8 +201,9 @@ impl ClusterConnection {
 
                 if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
-                        conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
-                        conn.set_write_timeout(*self.write_timeout.borrow())
+                        conn.set_read_timeout(self.cluster_params.read_timeout)
+                            .unwrap();
+                        conn.set_write_timeout(self.cluster_params.write_timeout)
                             .unwrap();
                         return Some((addr.to_string(), conn));
                     }
@@ -261,7 +227,7 @@ impl ClusterConnection {
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(conn, self.tls_insecure) {
+            if let Ok(mut slots_data) = get_slots(conn, &self.cluster_params) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -308,16 +274,10 @@ impl ClusterConnection {
     }
 
     fn connect(&self, node: &str) -> RedisResult<Connection> {
-        let params = ClusterParams {
-            password: self.password.clone(),
-            username: self.username.clone(),
-            tls_insecure: self.tls_insecure,
-            ..Default::default()
-        };
-        let info = get_connection_info(node, &params);
+        let info = get_connection_info(node, &self.cluster_params);
 
         let mut conn = connect(&info, None)?;
-        if self.read_from_replicas {
+        if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
@@ -447,7 +407,7 @@ impl ClusterConnection {
                             excludes.clear();
                             continue;
                         }
-                    } else if *self.auto_reconnect.borrow() && err.is_io_error() {
+                    } else if self.cluster_params.auto_reconnect && err.is_io_error() {
                         self.create_initial_connections()?;
                         excludes.clear();
                         continue;
@@ -689,7 +649,10 @@ fn get_random_connection<'a>(
 }
 
 // Get slot data from connection.
-fn get_slots(connection: &mut Connection, tls_insecure: Option<bool>) -> RedisResult<Vec<Slot>> {
+fn get_slots(
+    connection: &mut Connection,
+    cluster_params: &ClusterParams,
+) -> RedisResult<Vec<Slot>> {
     let mut cmd = Cmd::new();
     cmd.arg("CLUSTER").arg("SLOTS");
     let value = connection.req_command(&cmd)?;
@@ -739,7 +702,13 @@ fn get_slots(connection: &mut Connection, tls_insecure: Option<bool>) -> RedisRe
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr((ip.into_owned(), port), tls_insecure).to_string())
+                        Some(
+                            get_connection_addr(
+                                (ip.into_owned(), port),
+                                cluster_params.tls_insecure,
+                            )
+                            .to_string(),
+                        )
                     } else {
                         None
                     }

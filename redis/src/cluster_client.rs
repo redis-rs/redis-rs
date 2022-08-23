@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::cluster::ClusterConnection;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
@@ -9,6 +11,9 @@ pub(crate) struct ClusterParams {
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
     pub(crate) tls_insecure: Option<bool>,
+    pub(crate) write_timeout: Option<Duration>,
+    pub(crate) read_timeout: Option<Duration>,
+    pub(crate) auto_reconnect: bool,
 }
 
 /// Used to configure and build a [ClusterClient](ClusterClient).
