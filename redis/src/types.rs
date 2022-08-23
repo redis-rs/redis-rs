@@ -227,6 +227,17 @@ pub struct RedisError {
     repr: ErrorRepr,
 }
 
+#[cfg(feature = "json")]
+impl From<serde_json::Error> for RedisError {
+    fn from(serde_err: serde_json::Error) -> RedisError {
+        RedisError::from((
+            ErrorKind::Serialize,
+            "Serialization Error",
+            format!("{}", serde_err),
+        ))
+    }
+}
+
 #[derive(Debug)]
 enum ErrorRepr {
     WithDescription(ErrorKind, &'static str),

@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
 
-use super::RedisModule;
+use super::Module;
 use super::RedisServer;
 
 const LOCALHOST: &str = "127.0.0.1";
@@ -66,7 +66,7 @@ impl RedisCluster {
         RedisCluster::with_modules(nodes, replicas, &[])
     }
 
-    pub fn with_modules(nodes: u16, replicas: u16, modules: &[RedisModule]) -> RedisCluster {
+    pub fn with_modules(nodes: u16, replicas: u16, modules: &[Module]) -> RedisCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];

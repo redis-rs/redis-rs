@@ -45,8 +45,8 @@ enum ServerType {
     Unix,
 }
 
-pub enum RedisModule {
-    RedisJson,
+pub enum Module {
+    Json,
 }
 
 pub struct RedisServer {
@@ -77,7 +77,7 @@ impl RedisServer {
         RedisServer::with_modules(&[])
     }
 
-    pub fn with_modules(modules: &[RedisModule]) -> RedisServer {
+    pub fn with_modules(modules: &[Module]) -> RedisServer {
         let server_type = ServerType::get_intended();
         let addr = match server_type {
             ServerType::Tcp { tls } => {
@@ -115,7 +115,7 @@ impl RedisServer {
     pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
         addr: redis::ConnectionAddr,
         tls_paths: Option<TlsFilePaths>,
-        modules: &[RedisModule],
+        modules: &[Module],
         spawner: F,
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
@@ -123,7 +123,7 @@ impl RedisServer {
         // Load Redis Modules
         for module in modules {
             match module {
-                RedisModule::RedisJson => {
+                Module::Json => {
                     redis_cmd
                         .arg("--loadmodule")
                         .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
@@ -230,7 +230,7 @@ impl TestContext {
         TestContext::with_modules(&[])
     }
 
-    pub fn with_modules(modules: &[RedisModule]) -> TestContext {
+    pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
 
         let client = redis::Client::open(redis::ConnectionInfo {

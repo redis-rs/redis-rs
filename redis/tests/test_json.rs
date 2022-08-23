@@ -21,7 +21,7 @@ const TEST_KEY: &str = "my_json";
 
 #[test]
 fn test_json_serialize_error() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     #[derive(Debug, Serialize)]
@@ -53,7 +53,7 @@ fn test_json_serialize_error() {
 
 #[test]
 fn test_json_arr_append() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -71,7 +71,7 @@ fn test_json_arr_append() {
 
 #[test]
 fn test_json_arr_index() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -101,7 +101,7 @@ fn test_json_arr_index() {
 
 #[test]
 fn test_json_arr_insert() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -131,7 +131,7 @@ fn test_json_arr_insert() {
 
 #[test]
 fn test_json_arr_len() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -161,7 +161,7 @@ fn test_json_arr_len() {
 
 #[test]
 fn test_json_arr_pop() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -201,7 +201,7 @@ fn test_json_arr_pop() {
 
 #[test]
 fn test_json_arr_trim() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -231,7 +231,7 @@ fn test_json_arr_trim() {
 
 #[test]
 fn test_json_clear() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"obj": {"a": 1i64, "b": 2i64}, "arr": [1i64, 2i64, 3i64], "str": "foo", "bool": true, "int": 42i64, "float": std::f64::consts::PI}));
@@ -256,7 +256,7 @@ fn test_json_clear() {
 
 #[test]
 fn test_json_del() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -274,7 +274,7 @@ fn test_json_del() {
 
 #[test]
 fn test_json_get() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -296,7 +296,7 @@ fn test_json_get() {
 
 #[test]
 fn test_json_mget() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial_a: RedisResult<bool> = con.json_set(
@@ -329,7 +329,7 @@ fn test_json_mget() {
 
 #[test]
 fn test_json_numincrby() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -353,7 +353,7 @@ fn test_json_numincrby() {
 
 #[test]
 fn test_json_objkeys() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -380,7 +380,7 @@ fn test_json_objkeys() {
 
 #[test]
 fn test_json_objlen() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -398,7 +398,7 @@ fn test_json_objlen() {
 
 #[test]
 fn test_json_set() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
@@ -408,7 +408,7 @@ fn test_json_set() {
 
 #[test]
 fn test_json_strappend() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -433,7 +433,7 @@ fn test_json_strappend() {
 
 #[test]
 fn test_json_strlen() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -451,7 +451,7 @@ fn test_json_strlen() {
 
 #[test]
 fn test_json_toggle() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"bool": true}));
@@ -467,7 +467,7 @@ fn test_json_toggle() {
 
 #[test]
 fn test_json_type() {
-    let ctx = TestContext::with_modules(&[RedisModule::RedisJson]);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(

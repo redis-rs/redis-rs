@@ -9,10 +9,6 @@ use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, Re
 mod macros;
 
 #[cfg(feature = "json")]
-#[macro_use]
-mod json_macro;
-
-#[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 mod json;
 
