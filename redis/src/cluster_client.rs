@@ -1,164 +1,337 @@
-use crate::cluster::ClusterConnection;
+use std::time::Duration;
 
-use super::{
-    ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisResult,
-};
+use crate::cluster::ClusterConnection;
+use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::types::{ErrorKind, RedisError, RedisResult};
+#[cfg(feature = "aio")]
+use crate::{aio::Runtime, cluster_aio::MultiplexedClusterConnection};
+
+/// Redis cluster specific parameters.
+#[derive(Default, Clone)]
+pub(crate) struct ClusterParams {
+    pub(crate) password: Option<String>,
+    pub(crate) username: Option<String>,
+    pub(crate) read_from_replicas: bool,
+    pub(crate) tls_insecure: Option<bool>,
+    pub(crate) connect_timeout: Option<Duration>,
+    pub(crate) write_timeout: Option<Duration>,
+    pub(crate) read_timeout: Option<Duration>,
+    pub(crate) retries: u8,
+    pub(crate) auto_reconnect: bool,
+}
 
 /// Used to configure and build a [ClusterClient](ClusterClient).
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
+    cluster_params: ClusterParams,
 }
 
 impl ClusterClientBuilder {
-    /// Generate the base configuration for new Client.
-    pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
+    /// Creates a new `ClusterClientBuilder` with the the provided initial_nodes.
+    ///
+    /// This is the same as `ClusterClient::builder(initial_nodes)`.
+    pub fn new<T>(initial_nodes: Vec<T>) -> ClusterClientBuilder
+    where
+        T: IntoConnectionInfo,
+    {
         ClusterClientBuilder {
             initial_nodes: initial_nodes
                 .into_iter()
                 .map(|x| x.into_connection_info())
                 .collect(),
-            read_from_replicas: false,
-            username: None,
-            password: None,
+            cluster_params: ClusterParams {
+                retries: 16,
+                ..Default::default()
+            },
         }
     }
 
-    /// Builds a [ClusterClient](ClusterClient). Despite the name, this does not actually open
-    /// a connection to Redis Cluster, but will perform some basic checks of the initial
-    /// nodes' URLs and passwords.
+    /// Creates a new `ClusterClient` with the parameters.
+    ///
+    /// This does not create connections to the Redis Cluster, but only performs some basic checks
+    /// on the initial nodes' URLs and passwords/usernames.
     ///
     /// # Errors
     ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
-    pub fn open(self) -> RedisResult<ClusterClient> {
-        ClusterClient::build(self)
-    }
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
+    /// usernames, an error is returned.
+    pub fn build(self) -> RedisResult<ClusterClient> {
+        let mut initial_nodes = self.initial_nodes?;
 
-    /// Set password for new ClusterClient.
-    pub fn password(mut self, password: String) -> ClusterClientBuilder {
-        self.password = Some(password);
-        self
-    }
+        let mut cluster_params = self.cluster_params;
+        let password = if cluster_params.password.is_none() {
+            cluster_params.password = initial_nodes[0].redis.password.clone();
+            &cluster_params.password
+        } else {
+            &None
+        };
+        let username = if cluster_params.username.is_none() {
+            cluster_params.username = initial_nodes[0].redis.username.clone();
+            &cluster_params.username
+        } else {
+            &None
+        };
+        if cluster_params.tls_insecure.is_none() {
+            cluster_params.tls_insecure = match initial_nodes[0].addr {
+                ConnectionAddr::TcpTls {
+                    host: _,
+                    port: _,
+                    insecure,
+                } => Some(insecure),
+                _ => None,
+            };
+        }
 
-    /// Set username for new ClusterClient.
-    pub fn username(mut self, username: String) -> ClusterClientBuilder {
-        self.username = Some(username);
-        self
-    }
+        initial_nodes = initial_nodes
+            .into_iter()
+            .map(|node| {
+                if let ConnectionAddr::Unix(_) = node.addr {
+                    return Err(RedisError::from((ErrorKind::InvalidClientConfig,
+                                                 "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+                }
 
-    /// Enable read from replicas for new ClusterClient (default is false).
-    ///
-    /// If True, then read queries will go to the replica nodes & write queries will go to the
-    /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
-    pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.read_from_replicas = true;
-        self
-    }
-
-    /// Use `read_from_replicas()`.
-    #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
-    pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.read_from_replicas = read_from_replicas;
-        self
-    }
-}
-
-/// This is a Redis cluster client.
-pub struct ClusterClient {
-    initial_nodes: Vec<ConnectionInfo>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-}
-
-impl ClusterClient {
-    /// Create a [ClusterClient](ClusterClient) with the default configuration. Despite the name,
-    /// this does not actually open a connection to Redis Cluster, but only performs some basic
-    /// checks of the initial nodes' URLs and passwords.
-    ///
-    /// # Errors
-    ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).open()
-    }
-
-    /// Opens connections to Redis Cluster nodes and returns a
-    /// [ClusterConnection](ClusterConnection).
-    ///
-    /// # Errors
-    ///
-    /// An error is returned if there is a failure to open connections or to create slots.
-    pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
-        ClusterConnection::new(
-            self.initial_nodes.clone(),
-            self.read_from_replicas,
-            self.username.clone(),
-            self.password.clone(),
-        )
-    }
-
-    fn build(builder: ClusterClientBuilder) -> RedisResult<ClusterClient> {
-        let initial_nodes = builder.initial_nodes?;
-        let mut nodes = Vec::with_capacity(initial_nodes.len());
-        let mut connection_info_password = None::<String>;
-        let mut connection_info_username = None::<String>;
-
-        for (index, info) in initial_nodes.into_iter().enumerate() {
-            if let ConnectionAddr::Unix(_) = info.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
-            }
-
-            if builder.password.is_none() {
-                if index == 0 {
-                    connection_info_password = info.redis.password.clone();
-                } else if connection_info_password != info.redis.password {
+                if password.is_some() && node.redis.password != *password {
                     return Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "Cannot use different password among initial nodes.",
                     )));
                 }
-            }
 
-            if builder.username.is_none() {
-                if index == 0 {
-                    connection_info_username = info.redis.username.clone();
-                } else if connection_info_username != info.redis.username {
+                if username.is_some() && node.redis.username != *username {
                     return Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "Cannot use different username among initial nodes.",
                     )));
                 }
-            }
 
-            nodes.push(info);
-        }
+                Ok(node)
+            })
+            .collect::<Result<_, _>>()?;
 
         Ok(ClusterClient {
-            initial_nodes: nodes,
-            read_from_replicas: builder.read_from_replicas,
-            username: builder.username.or(connection_info_username),
-            password: builder.password.or(connection_info_password),
+            initial_nodes,
+            cluster_params,
         })
+    }
+
+    /// Sets password for new ClusterClient.
+    pub fn password(mut self, password: String) -> ClusterClientBuilder {
+        self.cluster_params.password = Some(password);
+        self
+    }
+
+    /// Sets username for new ClusterClient.
+    pub fn username(mut self, username: String) -> ClusterClientBuilder {
+        self.cluster_params.username = Some(username);
+        self
+    }
+
+    /// Enables read from replicas for new ClusterClient (default is false).
+    ///
+    /// If True, then read queries will go to the replica nodes & write queries will go to the
+    /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
+    pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
+        self.cluster_params.read_from_replicas = true;
+        self
+    }
+
+    /// Sets TLS insecure for new ClusterClient (default is false).
+    ///
+    /// See [ConnectionAddr](ConnectionAddr::TcpTls::insecure).
+    #[cfg(feature = "tls")]
+    pub fn tls_insecure(mut self, tls_insecure: bool) -> ClusterClientBuilder {
+        self.cluster_params.tls_insecure = Some(tls_insecure);
+        self
+    }
+
+    /// Sets the default timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `get_connection` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
+    pub fn connect_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.connect_timeout = dur;
+        Ok(self)
+    }
+
+    /// Sets the default write timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `send_packed_command` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
+    pub fn write_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.write_timeout = dur;
+        Ok(self)
+    }
+
+    /// Sets the default read timeout for all new connections (default is None).
+    ///
+    /// If the value is `None`, then `recv_response` call may block indefinitely.
+    /// Passing Some(Duration::ZERO) to this method will result in an error.
+    ///
+    /// Note: this param isn't used for async connections.
+    pub fn read_timeout(mut self, dur: Option<Duration>) -> RedisResult<ClusterClientBuilder> {
+        // Check if duration is valid before updating local value.
+        if dur.is_some() && dur.unwrap().is_zero() {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Duration should be None or non-zero.",
+            )));
+        }
+
+        self.cluster_params.read_timeout = dur;
+        Ok(self)
+    }
+
+    /// Sets the default retries parameter for all new connections (default is 16).
+    ///
+    /// Commands are retried in case of the following errors:
+    ///
+    /// * [Ask](ErrorKind::Ask)
+    /// * [Moved](ErrorKind::Moved)
+    /// * [TryAgain](ErrorKind::TryAgain)
+    /// * [ClusterDown](ErrorKind::ClusterDown)
+    /// * [IoError](ErrorKind::IoError)
+    pub fn retries(mut self, value: u8) -> ClusterClientBuilder {
+        self.cluster_params.retries = value;
+        self
+    }
+
+    /// Sets the default auto reconnect parameter for all new connections (default is true).
+    ///
+    /// `ClusterConnection` will attempt to reconnect in case of [IoError](ErrorKind::IoError).
+    pub fn auto_reconnect(mut self, value: bool) -> ClusterClientBuilder {
+        self.cluster_params.auto_reconnect = value;
+        self
+    }
+
+    /// Use `build()`.
+    #[deprecated(since = "0.22.0", note = "Use build()")]
+    pub fn open(self) -> RedisResult<ClusterClient> {
+        self.build()
+    }
+
+    /// Use `read_from_replicas()`.
+    #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
+    pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
+        self.cluster_params.read_from_replicas = read_from_replicas;
+        self
     }
 }
 
-impl Clone for ClusterClient {
-    fn clone(&self) -> ClusterClient {
-        ClusterClient::open(self.initial_nodes.clone()).unwrap()
+/// This is a Redis cluster client.
+#[derive(Clone)]
+pub struct ClusterClient {
+    initial_nodes: Vec<ConnectionInfo>,
+    cluster_params: ClusterParams,
+}
+
+impl ClusterClient {
+    /// Creates a `ClusterClient` with the default parameters.
+    ///
+    /// This does not create connections to the Redis Cluster, but only performs some basic checks
+    /// on the initial nodes' URLs and passwords/usernames.
+    ///
+    /// # Errors
+    ///
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
+    /// usernames, an error is returned.
+    pub fn new<T>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient>
+    where
+        T: IntoConnectionInfo,
+    {
+        ClusterClientBuilder::new(initial_nodes).build()
+    }
+
+    /// Creates a [ClusterClientBuilder](ClusterClientBuilder) with the the provided initial_nodes.
+    pub fn builder<T>(initial_nodes: Vec<T>) -> ClusterClientBuilder
+    where
+        T: IntoConnectionInfo,
+    {
+        ClusterClientBuilder::new(initial_nodes)
+    }
+
+    /// Creates new connections to Redis Cluster nodes and return a
+    /// [ClusterConnection](ClusterConnection).
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if there is a failure while creating connections or slots.
+    pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
+        ClusterConnection::new(&self.cluster_params, &self.initial_nodes)
+    }
+
+    /// Use `new()`.
+    #[deprecated(since = "0.22.0", note = "Use new()")]
+    pub fn open<T>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient>
+    where
+        T: IntoConnectionInfo,
+    {
+        ClusterClient::new(initial_nodes)
+    }
+}
+
+#[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+impl ClusterClient {
+    /// Return an async multiplexed cluster connection from the client.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
+    )]
+    pub async fn get_async_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        match Runtime::locate() {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => self.get_tokio_connection().await,
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => self.get_async_std_connection().await,
+        }
+    }
+
+    /// Return a tokio multiplexed cluster connection from the client.
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+    pub async fn get_tokio_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        self.get_async_connection_inner(Runtime::Tokio).await
+    }
+
+    /// Return an async-std multiplexed cluster connection from the client.
+    #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+    pub async fn get_async_std_connection(&self) -> RedisResult<MultiplexedClusterConnection> {
+        self.get_async_connection_inner(Runtime::AsyncStd).await
+    }
+
+    async fn get_async_connection_inner(
+        &self,
+        runtime: Runtime,
+    ) -> RedisResult<MultiplexedClusterConnection> {
+        MultiplexedClusterConnection::new(runtime, &self.cluster_params, &self.initial_nodes).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterClient, ClusterClientBuilder};
-    use super::{ConnectionInfo, IntoConnectionInfo};
+    use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
@@ -198,26 +371,26 @@ mod tests {
 
     #[test]
     fn give_no_password() {
-        let client = ClusterClient::open(get_connection_data()).unwrap();
-        assert_eq!(client.password, None);
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.password, None);
     }
 
     #[test]
     fn give_password_by_initial_nodes() {
-        let client = ClusterClient::open(get_connection_data_with_password()).unwrap();
-        assert_eq!(client.password, Some("password".to_string()));
+        let client = ClusterClient::new(get_connection_data_with_password()).unwrap();
+        assert_eq!(client.cluster_params.password, Some("password".to_string()));
     }
 
     #[test]
     fn give_username_and_password_by_initial_nodes() {
-        let client = ClusterClient::open(get_connection_data_with_username_and_password()).unwrap();
-        assert_eq!(client.password, Some("password".to_string()));
-        assert_eq!(client.username, Some("user1".to_string()));
+        let client = ClusterClient::new(get_connection_data_with_username_and_password()).unwrap();
+        assert_eq!(client.cluster_params.password, Some("password".to_string()));
+        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
     }
 
     #[test]
     fn give_different_password_by_initial_nodes() {
-        let result = ClusterClient::open(vec![
+        let result = ClusterClient::new(vec![
             "redis://:password1@127.0.0.1:6379",
             "redis://:password2@127.0.0.1:6378",
             "redis://:password3@127.0.0.1:6377",
@@ -227,7 +400,7 @@ mod tests {
 
     #[test]
     fn give_different_username_by_initial_nodes() {
-        let result = ClusterClient::open(vec![
+        let result = ClusterClient::new(vec![
             "redis://user1:password@127.0.0.1:6379",
             "redis://user2:password@127.0.0.1:6378",
             "redis://user1:password@127.0.0.1:6377",
@@ -240,9 +413,9 @@ mod tests {
         let client = ClusterClientBuilder::new(get_connection_data_with_password())
             .password("pass".to_string())
             .username("user1".to_string())
-            .open()
+            .build()
             .unwrap();
-        assert_eq!(client.password, Some("pass".to_string()));
-        assert_eq!(client.username, Some("user1".to_string()));
+        assert_eq!(client.cluster_params.password, Some("pass".to_string()));
+        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
     }
 }
