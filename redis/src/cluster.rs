@@ -41,6 +41,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::iter::Iterator;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -54,7 +55,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
@@ -92,15 +93,8 @@ impl ClusterConnection {
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
     ) -> RedisResult<ClusterConnection> {
-        let connections = Self::create_initial_connections(
-            &initial_nodes,
-            cluster_params.read_from_replicas,
-            cluster_params.username.clone(),
-            cluster_params.password.clone(),
-        )?;
-
         let connection = ClusterConnection {
-            connections: RefCell::new(connections),
+            connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             read_from_replicas: cluster_params.read_from_replicas,
@@ -111,7 +105,7 @@ impl ClusterConnection {
             tls_mode: cluster_params.tls_mode,
             initial_nodes: initial_nodes.to_vec(),
         };
-        connection.refresh_slots()?;
+        connection.create_initial_connections()?;
 
         Ok(connection)
     }
@@ -180,23 +174,13 @@ impl ClusterConnection {
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
-    fn create_initial_connections(
-        initial_nodes: &[ConnectionInfo],
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<HashMap<String, Connection>> {
-        let mut connections = HashMap::with_capacity(initial_nodes.len());
+    fn create_initial_connections(&self) -> RedisResult<()> {
+        let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
-        for info in initial_nodes.iter() {
+        for info in self.initial_nodes.iter() {
             let addr = info.addr.to_string();
 
-            if let Ok(mut conn) = Self::connect(
-                info.clone(),
-                read_from_replicas,
-                username.clone(),
-                password.clone(),
-            ) {
+            if let Ok(mut conn) = self.connect(&addr) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
@@ -210,7 +194,10 @@ impl ClusterConnection {
                 "It failed to check startup nodes.",
             )));
         }
-        Ok(connections)
+
+        *self.connections.borrow_mut() = connections;
+        self.refresh_slots()?;
+        Ok(())
     }
 
     // Query a node to discover slot-> master mappings.
@@ -245,12 +232,7 @@ impl ClusterConnection {
                     }
                 }
 
-                if let Ok(mut conn) = Self::connect(
-                    addr.as_ref(),
-                    self.read_from_replicas,
-                    self.username.clone(),
-                    self.password.clone(),
-                ) {
+                if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
                         conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
                         conn.set_write_timeout(*self.write_timeout.borrow())
@@ -323,22 +305,17 @@ impl ClusterConnection {
         }
     }
 
-    fn connect<T: IntoConnectionInfo>(
-        info: T,
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<Connection>
-    where
-        T: std::fmt::Debug,
-    {
-        let mut connection_info = info.into_connection_info()?;
-        connection_info.redis.username = username;
-        connection_info.redis.password = password;
-        let client = super::Client::open(connection_info)?;
+    fn connect(&self, node: &str) -> RedisResult<Connection> {
+        let params = ClusterParams {
+            password: self.password.clone(),
+            username: self.username.clone(),
+            tls_mode: self.tls_mode,
+            ..Default::default()
+        };
+        let info = get_connection_info(node, &params);
 
-        let mut conn = client.get_connection()?;
-        if read_from_replicas {
+        let mut conn = connect(&info, None)?;
+        if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
@@ -374,12 +351,7 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = Self::connect(
-                addr,
-                self.read_from_replicas,
-                self.username.clone(),
-                self.password.clone(),
-            )?;
+            let conn = self.connect(addr)?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
     }
@@ -515,17 +487,7 @@ impl ClusterConnection {
                             continue;
                         }
                     } else if *self.auto_reconnect.borrow() && err.is_io_error() {
-                        let new_connections = Self::create_initial_connections(
-                            &self.initial_nodes,
-                            self.read_from_replicas,
-                            self.username.clone(),
-                            self.password.clone(),
-                        )?;
-                        {
-                            let mut connections = self.connections.borrow_mut();
-                            *connections = new_connections;
-                        }
-                        self.refresh_slots()?;
+                        self.create_initial_connections()?;
                         excludes.clear();
                         continue;
                     } else {
@@ -775,7 +737,7 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr((ip.into_owned(), port), tls_mode).to_string())
+                        Some(get_connection_addr(ip.into_owned(), port, tls_mode).to_string())
                     } else {
                         None
                     }
@@ -794,8 +756,22 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
     Ok(result)
 }
 
-fn get_connection_addr(node: (String, u16), tls_mode: Option<TlsMode>) -> ConnectionAddr {
-    let (host, port) = node;
+fn get_connection_info(node: &str, cluster_params: &ClusterParams) -> ConnectionInfo {
+    let mut split = node.split(':');
+    let host = split.next().unwrap().to_string();
+    let port = u16::from_str(split.next().unwrap()).unwrap();
+
+    ConnectionInfo {
+        addr: get_connection_addr(host, port, cluster_params.tls_mode),
+        redis: RedisConnectionInfo {
+            password: cluster_params.password.clone(),
+            username: cluster_params.username.clone(),
+            ..Default::default()
+        },
+    }
+}
+
+fn get_connection_addr(host: String, port: u16, tls_mode: Option<TlsMode>) -> ConnectionAddr {
     match tls_mode {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
