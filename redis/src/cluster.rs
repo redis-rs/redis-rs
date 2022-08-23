@@ -49,18 +49,18 @@ use rand::{
     thread_rng, Rng,
 };
 
-use super::{
-    cmd, parse_redis_value,
-    types::{HashMap, HashSet},
-    Cmd, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, ErrorKind, IntoConnectionInfo,
-    RedisError, RedisResult, Value,
-};
 use crate::cluster_client::ClusterParams;
+use crate::cluster_pipeline::UNROUTABLE_ERROR;
+use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
+use crate::cmd::{cmd, Cmd};
+use crate::connection::{
+    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+};
+use crate::parser::parse_redis_value;
+use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-use crate::cluster_pipeline::UNROUTABLE_ERROR;
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
-use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
