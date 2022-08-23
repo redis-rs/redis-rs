@@ -8,9 +8,6 @@ use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, Re
 #[macro_use]
 mod macros;
 
-#[cfg(feature = "cluster")]
-use crate::cluster_pipeline::ClusterPipeline;
-
 #[cfg(feature = "geospatial")]
 use crate::geo;
 
