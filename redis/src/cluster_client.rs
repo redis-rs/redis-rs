@@ -14,6 +14,7 @@ pub(crate) struct ClusterParams {
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) read_timeout: Option<Duration>,
+    pub(crate) retries: u8,
     pub(crate) auto_reconnect: bool,
 }
 
@@ -36,7 +37,10 @@ impl ClusterClientBuilder {
                 .into_iter()
                 .map(|x| x.into_connection_info())
                 .collect(),
-            cluster_params: ClusterParams::default(),
+            cluster_params: ClusterParams {
+                retries: 16,
+                ..Default::default()
+            },
         }
     }
 
@@ -187,6 +191,20 @@ impl ClusterClientBuilder {
 
         self.cluster_params.read_timeout = dur;
         Ok(self)
+    }
+
+    /// Sets the default retries parameter for all new connections (default is 16).
+    ///
+    /// Commands are retried in case of the following errors:
+    ///
+    /// * [Ask](ErrorKind::Ask)
+    /// * [Moved](ErrorKind::Moved)
+    /// * [TryAgain](ErrorKind::TryAgain)
+    /// * [ClusterDown](ErrorKind::ClusterDown)
+    /// * [IoError](ErrorKind::IoError)
+    pub fn retries(mut self, value: u8) -> ClusterClientBuilder {
+        self.cluster_params.retries = value;
+        self
     }
 
     /// Sets the default auto reconnect parameter for all new connections (default is true).
