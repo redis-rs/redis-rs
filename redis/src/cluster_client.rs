@@ -42,15 +42,25 @@ impl ClusterClientBuilder {
     pub fn build(self) -> RedisResult<ClusterClient> {
         let initial_nodes = self.initial_nodes?;
 
+        let first_node = match initial_nodes.first() {
+            Some(node) => node,
+            None => {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Initial nodes can't be empty.",
+                )))
+            }
+        };
+
         let mut cluster_params = self.cluster_params;
         let password = if cluster_params.password.is_none() {
-            cluster_params.password = initial_nodes[0].redis.password.clone();
+            cluster_params.password = first_node.redis.password.clone();
             &cluster_params.password
         } else {
             &None
         };
         let username = if cluster_params.username.is_none() {
-            cluster_params.username = initial_nodes[0].redis.username.clone();
+            cluster_params.username = first_node.redis.username.clone();
             &cluster_params.username
         } else {
             &None
@@ -252,5 +262,11 @@ mod tests {
             .unwrap();
         assert_eq!(client.cluster_params.password, Some("pass".to_string()));
         assert_eq!(client.cluster_params.username, Some("user1".to_string()));
+    }
+
+    #[test]
+    fn give_empty_initial_nodes() {
+        let client = ClusterClient::new(Vec::<String>::new());
+        assert!(client.is_err())
     }
 }
