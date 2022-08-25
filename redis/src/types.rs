@@ -98,6 +98,10 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+
+    #[cfg(feature = "json")]
+    /// Error Serializing a struct to JSON form
+    Serialize,
 }
 
 /// Internal low-level redis value enum.
@@ -222,6 +226,17 @@ impl fmt::Debug for Value {
 /// struct.
 pub struct RedisError {
     repr: ErrorRepr,
+}
+
+#[cfg(feature = "json")]
+impl From<serde_json::Error> for RedisError {
+    fn from(serde_err: serde_json::Error) -> RedisError {
+        RedisError::from((
+            ErrorKind::Serialize,
+            "Serialization Error",
+            format!("{}", serde_err),
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -421,6 +436,8 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            #[cfg(feature = "json")]
+            ErrorKind::Serialize => "serializing",
         }
     }
 

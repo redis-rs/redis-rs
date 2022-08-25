@@ -417,6 +417,12 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
 
+#[cfg(feature = "json")]
+pub use crate::commands::JsonCommands;
+
+#[cfg(all(feature = "json", feature = "aio"))]
+pub use crate::commands::JsonAsyncCommands;
+
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
