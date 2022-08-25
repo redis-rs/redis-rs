@@ -298,7 +298,7 @@ struct UnixConnection {
 enum ActualConnection {
     Tcp(TcpConnection),
     #[cfg(feature = "tls")]
-    TcpTls(TcpTlsConnection),
+    TcpTls(Box<TcpTlsConnection>),
     #[cfg(unix)]
     Unix(UnixConnection),
 }
@@ -384,10 +384,10 @@ impl ActualConnection {
                 } else {
                     TlsConnector::new()?
                 };
-                let host: &str = &*host;
+                let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = TcpStream::connect((host, port))?;
+                        let tcp = TcpStream::connect(addr)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
@@ -398,7 +398,7 @@ impl ActualConnection {
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in (host, port).to_socket_addrs()? {
+                        for addr in (host.as_str(), port).to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
@@ -423,10 +423,10 @@ impl ActualConnection {
                         }
                     }
                 };
-                ActualConnection::TcpTls(TcpTlsConnection {
+                ActualConnection::TcpTls(Box::new(TcpTlsConnection {
                     reader: tls,
                     open: true,
-                })
+                }))
             }
             #[cfg(not(feature = "tls"))]
             ConnectionAddr::TcpTls { .. } => {
@@ -500,7 +500,8 @@ impl ActualConnection {
                 reader.set_write_timeout(dur)?;
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+                let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
             }
             #[cfg(unix)]
@@ -517,7 +518,8 @@ impl ActualConnection {
                 reader.set_read_timeout(dur)?;
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+                let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
             }
             #[cfg(unix)]
@@ -532,7 +534,7 @@ impl ActualConnection {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { open, .. }) => open,
+            ActualConnection::TcpTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
@@ -790,7 +792,8 @@ impl Connection {
                 self.parser.parse_value(reader)
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref mut reader, .. }) => {
+            ActualConnection::TcpTls(ref mut boxed_tls_connection) => {
+                let reader = &mut boxed_tls_connection.reader;
                 self.parser.parse_value(reader)
             }
             #[cfg(unix)]

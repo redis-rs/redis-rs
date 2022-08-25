@@ -1,6 +1,8 @@
 //! Adds experimental async IO support to redis.
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::fmt;
+use std::fmt::Debug;
 use std::io;
 use std::mem;
 use std::net::SocketAddr;
@@ -623,6 +625,17 @@ impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
     }
 }
 
+impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
+where
+    SinkItem: Debug,
+    I: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Pipeline").field(&self.0).finish()
+    }
+}
+
 pin_project! {
     struct PipelineSink<T, I, E> {
         #[pin]
@@ -845,6 +858,15 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
+}
+
+impl Debug for MultiplexedConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiplexedConnection")
+            .field("pipeline", &self.pipeline)
+            .field("db", &self.db)
+            .finish()
+    }
 }
 
 impl MultiplexedConnection {
