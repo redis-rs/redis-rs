@@ -4,7 +4,7 @@ use super::{
     ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisResult,
 };
 
-/// Used to configure and build a [ClusterClient](ClusterClient).
+/// Used to configure and build a [`ClusterClient`].
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
     read_from_replicas: bool,
@@ -26,16 +26,49 @@ impl ClusterClientBuilder {
         }
     }
 
-    /// Builds a [ClusterClient](ClusterClient). Despite the name, this does not actually open
-    /// a connection to Redis Cluster, but will perform some basic checks of the initial
-    /// nodes' URLs and passwords.
-    ///
-    /// # Errors
-    ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
-    pub fn open(self) -> RedisResult<ClusterClient> {
-        ClusterClient::build(self)
+    fn build(self) -> RedisResult<ClusterClient> {
+        let initial_nodes = self.initial_nodes?;
+        let mut nodes = Vec::with_capacity(initial_nodes.len());
+        let mut connection_info_password = None::<String>;
+        let mut connection_info_username = None::<String>;
+
+        for (index, info) in initial_nodes.into_iter().enumerate() {
+            if let ConnectionAddr::Unix(_) = info.addr {
+                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
+                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+            }
+
+            if self.password.is_none() {
+                if index == 0 {
+                    connection_info_password = info.redis.password.clone();
+                } else if connection_info_password != info.redis.password {
+                    return Err(RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot use different password among initial nodes.",
+                    )));
+                }
+            }
+
+            if self.username.is_none() {
+                if index == 0 {
+                    connection_info_username = info.redis.username.clone();
+                } else if connection_info_username != info.redis.username {
+                    return Err(RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot use different username among initial nodes.",
+                    )));
+                }
+            }
+
+            nodes.push(info);
+        }
+
+        Ok(ClusterClient {
+            initial_nodes: nodes,
+            read_from_replicas: self.read_from_replicas,
+            username: self.username.or(connection_info_username),
+            password: self.password.or(connection_info_password),
+        })
     }
 
     /// Set password for new ClusterClient.
@@ -59,6 +92,18 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Builds a [`ClusterClient`]. Despite the name, this does not actually open
+    /// a connection to Redis Cluster, but will perform some basic checks of the initial
+    /// nodes' URLs and passwords.
+    ///
+    /// # Errors
+    ///
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
+    /// an error is returned.
+    pub fn open(self) -> RedisResult<ClusterClient> {
+        self.build()
+    }
+
     /// Use `read_from_replicas()`.
     #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
     pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
@@ -76,20 +121,8 @@ pub struct ClusterClient {
 }
 
 impl ClusterClient {
-    /// Create a [ClusterClient](ClusterClient) with the default configuration. Despite the name,
-    /// this does not actually open a connection to Redis Cluster, but only performs some basic
-    /// checks of the initial nodes' URLs and passwords.
-    ///
-    /// # Errors
-    ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).open()
-    }
-
     /// Opens connections to Redis Cluster nodes and returns a
-    /// [ClusterConnection](ClusterConnection).
+    /// [`ClusterConnection`].
     ///
     /// # Errors
     ///
@@ -103,49 +136,16 @@ impl ClusterClient {
         )
     }
 
-    fn build(builder: ClusterClientBuilder) -> RedisResult<ClusterClient> {
-        let initial_nodes = builder.initial_nodes?;
-        let mut nodes = Vec::with_capacity(initial_nodes.len());
-        let mut connection_info_password = None::<String>;
-        let mut connection_info_username = None::<String>;
-
-        for (index, info) in initial_nodes.into_iter().enumerate() {
-            if let ConnectionAddr::Unix(_) = info.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
-            }
-
-            if builder.password.is_none() {
-                if index == 0 {
-                    connection_info_password = info.redis.password.clone();
-                } else if connection_info_password != info.redis.password {
-                    return Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "Cannot use different password among initial nodes.",
-                    )));
-                }
-            }
-
-            if builder.username.is_none() {
-                if index == 0 {
-                    connection_info_username = info.redis.username.clone();
-                } else if connection_info_username != info.redis.username {
-                    return Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "Cannot use different username among initial nodes.",
-                    )));
-                }
-            }
-
-            nodes.push(info);
-        }
-
-        Ok(ClusterClient {
-            initial_nodes: nodes,
-            read_from_replicas: builder.read_from_replicas,
-            username: builder.username.or(connection_info_username),
-            password: builder.password.or(connection_info_password),
-        })
+    /// Create a [`ClusterClient`] with the default configuration. Despite the name,
+    /// this does not actually open a connection to Redis Cluster, but only performs some basic
+    /// checks of the initial nodes' URLs and passwords.
+    ///
+    /// # Errors
+    ///
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
+    /// an error is returned.
+    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
+        ClusterClientBuilder::new(initial_nodes).open()
     }
 }
 
