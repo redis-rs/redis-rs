@@ -13,7 +13,9 @@ pub struct ClusterClientBuilder {
 }
 
 impl ClusterClientBuilder {
-    /// Generate the base configuration for new Client.
+    /// Creates a new `ClusterClientBuilder` with the the provided initial_nodes.
+    ///
+    /// This is the same as `ClusterClient::builder(initial_nodes)`.
     pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
         ClusterClientBuilder {
             initial_nodes: initial_nodes
@@ -26,8 +28,18 @@ impl ClusterClientBuilder {
         }
     }
 
-    fn build(self) -> RedisResult<ClusterClient> {
+    /// Creates a new [`ClusterClient`] with the parameters.
+    ///
+    /// This does not create connections to the Redis Cluster, but only performs some basic checks
+    /// on the initial nodes' URLs and passwords/usernames.
+    ///
+    /// # Errors
+    ///
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
+    /// usernames, an error is returned.
+    pub fn build(self) -> RedisResult<ClusterClient> {
         let initial_nodes = self.initial_nodes?;
+
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         let mut connection_info_password = None::<String>;
         let mut connection_info_username = None::<String>;
@@ -35,7 +47,7 @@ impl ClusterClientBuilder {
         for (index, info) in initial_nodes.into_iter().enumerate() {
             if let ConnectionAddr::Unix(_) = info.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+                                         "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
             }
 
             if self.password.is_none() {
@@ -92,14 +104,8 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Builds a [`ClusterClient`]. Despite the name, this does not actually open
-    /// a connection to Redis Cluster, but will perform some basic checks of the initial
-    /// nodes' URLs and passwords.
-    ///
-    /// # Errors
-    ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
+    /// Use `build()`.
+    #[deprecated(since = "0.22.0", note = "Use build()")]
     pub fn open(self) -> RedisResult<ClusterClient> {
         self.build()
     }
@@ -121,6 +127,24 @@ pub struct ClusterClient {
 }
 
 impl ClusterClient {
+    /// Creates a `ClusterClient` with the default parameters.
+    ///
+    /// This does not create connections to the Redis Cluster, but only performs some basic checks
+    /// on the initial nodes' URLs and passwords/usernames.
+    ///
+    /// # Errors
+    ///
+    /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
+    /// usernames, an error is returned.
+    pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
+        ClusterClientBuilder::new(initial_nodes).build()
+    }
+
+    /// Creates a [`ClusterClientBuilder`] with the the provided initial_nodes.
+    pub fn builder<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
+        ClusterClientBuilder::new(initial_nodes)
+    }
+
     /// Opens connections to Redis Cluster nodes and returns a
     /// [`ClusterConnection`].
     ///
@@ -136,22 +160,16 @@ impl ClusterClient {
         )
     }
 
-    /// Create a [`ClusterClient`] with the default configuration. Despite the name,
-    /// this does not actually open a connection to Redis Cluster, but only performs some basic
-    /// checks of the initial nodes' URLs and passwords.
-    ///
-    /// # Errors
-    ///
-    /// Upon failure to parse initial nodes or if the initial nodes have different passwords,
-    /// an error is returned.
+    /// Use `new()`.
+    #[deprecated(since = "0.22.0", note = "Use new()")]
     pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).open()
+        ClusterClient::new(initial_nodes)
     }
 }
 
 impl Clone for ClusterClient {
     fn clone(&self) -> ClusterClient {
-        ClusterClient::open(self.initial_nodes.clone()).unwrap()
+        ClusterClient::new(self.initial_nodes.clone()).unwrap()
     }
 }
 
@@ -198,26 +216,26 @@ mod tests {
 
     #[test]
     fn give_no_password() {
-        let client = ClusterClient::open(get_connection_data()).unwrap();
+        let client = ClusterClient::new(get_connection_data()).unwrap();
         assert_eq!(client.password, None);
     }
 
     #[test]
     fn give_password_by_initial_nodes() {
-        let client = ClusterClient::open(get_connection_data_with_password()).unwrap();
+        let client = ClusterClient::new(get_connection_data_with_password()).unwrap();
         assert_eq!(client.password, Some("password".to_string()));
     }
 
     #[test]
     fn give_username_and_password_by_initial_nodes() {
-        let client = ClusterClient::open(get_connection_data_with_username_and_password()).unwrap();
+        let client = ClusterClient::new(get_connection_data_with_username_and_password()).unwrap();
         assert_eq!(client.password, Some("password".to_string()));
         assert_eq!(client.username, Some("user1".to_string()));
     }
 
     #[test]
     fn give_different_password_by_initial_nodes() {
-        let result = ClusterClient::open(vec![
+        let result = ClusterClient::new(vec![
             "redis://:password1@127.0.0.1:6379",
             "redis://:password2@127.0.0.1:6378",
             "redis://:password3@127.0.0.1:6377",
@@ -227,7 +245,7 @@ mod tests {
 
     #[test]
     fn give_different_username_by_initial_nodes() {
-        let result = ClusterClient::open(vec![
+        let result = ClusterClient::new(vec![
             "redis://user1:password@127.0.0.1:6379",
             "redis://user2:password@127.0.0.1:6378",
             "redis://user1:password@127.0.0.1:6377",
@@ -240,7 +258,7 @@ mod tests {
         let client = ClusterClientBuilder::new(get_connection_data_with_password())
             .password("pass".to_string())
             .username("user1".to_string())
-            .open()
+            .build()
             .unwrap();
         assert_eq!(client.password, Some("pass".to_string()));
         assert_eq!(client.username, Some("user1".to_string()));
