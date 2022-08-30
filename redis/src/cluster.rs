@@ -12,7 +12,7 @@
 //! use redis::cluster::ClusterClient;
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//! let client = ClusterClient::open(nodes).unwrap();
+//! let client = ClusterClient::new(nodes).unwrap();
 //! let mut connection = client.get_connection().unwrap();
 //!
 //! let _: () = connection.set("test", "test_data").unwrap();
@@ -27,7 +27,7 @@
 //! use redis::cluster::{cluster_pipe, ClusterClient};
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//! let client = ClusterClient::open(nodes).unwrap();
+//! let client = ClusterClient::new(nodes).unwrap();
 //! let mut connection = client.get_connection().unwrap();
 //!
 //! let key = "test";
