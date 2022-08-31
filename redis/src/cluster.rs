@@ -194,17 +194,6 @@ impl ClusterConnection {
         Ok(())
     }
 
-    /// Check that all connections it has are available (`PING` internally).
-    pub fn check_connection(&mut self) -> bool {
-        let mut connections = self.connections.borrow_mut();
-        for conn in connections.values_mut() {
-            if !conn.check_connection() {
-                return false;
-            }
-        }
-        true
-    }
-
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
         self.send_recv_and_retry_cmds(pipe.commands())
     }
