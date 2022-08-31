@@ -64,20 +64,6 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
-/// This is a connection of Redis cluster.
-pub struct ClusterConnection {
-    initial_nodes: Vec<ConnectionInfo>,
-    connections: RefCell<HashMap<String, Connection>>,
-    slots: RefCell<SlotMap>,
-    auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-    read_timeout: RefCell<Option<Duration>>,
-    write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
-}
-
 #[derive(Clone, Copy)]
 enum TlsMode {
     Secure,
@@ -92,6 +78,20 @@ impl TlsMode {
             TlsMode::Secure
         }
     }
+}
+
+/// This is a connection of Redis cluster.
+pub struct ClusterConnection {
+    initial_nodes: Vec<ConnectionInfo>,
+    connections: RefCell<HashMap<String, Connection>>,
+    slots: RefCell<SlotMap>,
+    auto_reconnect: RefCell<bool>,
+    read_from_replicas: bool,
+    username: Option<String>,
+    password: Option<String>,
+    read_timeout: RefCell<Option<Duration>>,
+    write_timeout: RefCell<Option<Duration>>,
+    tls: Option<TlsMode>,
 }
 
 impl ClusterConnection {
@@ -141,13 +141,6 @@ impl ClusterConnection {
         Ok(connection)
     }
 
-    /// Set an auto reconnect attribute.
-    /// Default value is true;
-    pub fn set_auto_reconnect(&self, value: bool) {
-        let mut auto_reconnect = self.auto_reconnect.borrow_mut();
-        *auto_reconnect = value;
-    }
-
     /// Sets the write timeout for the connection.
     ///
     /// If the provided value is `None`, then `send_packed_command` call will
@@ -194,15 +187,11 @@ impl ClusterConnection {
         Ok(())
     }
 
-    /// Check that all connections it has are available (`PING` internally).
-    pub fn check_connection(&mut self) -> bool {
-        let mut connections = self.connections.borrow_mut();
-        for conn in connections.values_mut() {
-            if !conn.check_connection() {
-                return false;
-            }
-        }
-        true
+    /// Set an auto reconnect attribute.
+    /// Default value is true;
+    pub fn set_auto_reconnect(&self, value: bool) {
+        let mut auto_reconnect = self.auto_reconnect.borrow_mut();
+        *auto_reconnect = value;
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
@@ -238,7 +227,7 @@ impl ClusterConnection {
                 _ => panic!("No reach."),
             };
 
-            if let Ok(mut conn) = connect(
+            if let Ok(mut conn) = Self::connect(
                 info.clone(),
                 read_from_replicas,
                 username.clone(),
@@ -292,7 +281,7 @@ impl ClusterConnection {
                     }
                 }
 
-                if let Ok(mut conn) = connect(
+                if let Ok(mut conn) = Self::connect(
                     addr.as_ref(),
                     self.read_from_replicas,
                     self.username.clone(),
@@ -370,6 +359,28 @@ impl ClusterConnection {
         }
     }
 
+    fn connect<T: IntoConnectionInfo>(
+        info: T,
+        read_from_replicas: bool,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> RedisResult<Connection>
+    where
+        T: std::fmt::Debug,
+    {
+        let mut connection_info = info.into_connection_info()?;
+        connection_info.redis.username = username;
+        connection_info.redis.password = password;
+        let client = super::Client::open(connection_info)?;
+
+        let mut conn = client.get_connection()?;
+        if read_from_replicas {
+            // If READONLY is sent to primary nodes, it will have no effect
+            cmd("READONLY").query(&mut conn)?;
+        }
+        Ok(conn)
+    }
+
     fn get_connection<'a>(
         &self,
         connections: &'a mut HashMap<String, Connection>,
@@ -399,7 +410,7 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = connect(
+            let conn = Self::connect(
                 addr,
                 self.read_from_replicas,
                 self.username.clone(),
@@ -407,6 +418,47 @@ impl ClusterConnection {
             )?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
+    }
+
+    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
+        let slots = self.slots.borrow();
+
+        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
+            let (_, addr) = slots
+                .range(&slot..)
+                .next()
+                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
+            Ok(addr[idx].clone())
+        };
+
+        match RoutingInfo::for_routable(cmd) {
+            Some(RoutingInfo::Random) => {
+                let mut rng = thread_rng();
+                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
+            }
+            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
+            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
+            _ => fail!(UNROUTABLE_ERROR),
+        }
+    }
+
+    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
+        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
+
+        for (idx, cmd) in cmds.iter().enumerate() {
+            let addr = self.get_addr_for_cmd(cmd)?;
+            let nc = cmd_map
+                .entry(addr.clone())
+                .or_insert_with(|| NodeCmd::new(addr));
+            nc.indexes.push(idx);
+            cmd.write_packed_command(&mut nc.pipe);
+        }
+
+        let mut result = Vec::new();
+        for (_, v) in cmd_map.drain() {
+            result.push(v);
+        }
+        Ok(result)
     }
 
     fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
@@ -570,47 +622,6 @@ impl ClusterConnection {
         Ok(node_cmds)
     }
 
-    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
-        let slots = self.slots.borrow();
-
-        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
-            let (_, addr) = slots
-                .range(&slot..)
-                .next()
-                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(addr[idx].clone())
-        };
-
-        match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => {
-                let mut rng = thread_rng();
-                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
-            }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
-            _ => fail!(UNROUTABLE_ERROR),
-        }
-    }
-
-    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
-
-        for (idx, cmd) in cmds.iter().enumerate() {
-            let addr = self.get_addr_for_cmd(cmd)?;
-            let nc = cmd_map
-                .entry(addr.clone())
-                .or_insert_with(|| NodeCmd::new(addr));
-            nc.indexes.push(idx);
-            cmd.write_packed_command(&mut nc.pipe);
-        }
-
-        let mut result = Vec::new();
-        for (_, v) in cmd_map.drain() {
-            result.push(v);
-        }
-        Ok(result)
-    }
-
     // Receive from each node, keeping track of which commands need to be retried.
     fn recv_all_commands(
         &self,
@@ -636,49 +647,6 @@ impl ClusterConnection {
         match first_err {
             Some(err) => Err(err),
             None => Ok(to_retry),
-        }
-    }
-}
-
-trait MergeResults {
-    fn merge_results(_values: HashMap<&str, Self>) -> Self
-    where
-        Self: Sized;
-}
-
-impl MergeResults for Value {
-    fn merge_results(values: HashMap<&str, Value>) -> Value {
-        let mut items = vec![];
-        for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
-                Value::Data(addr.as_bytes().to_vec()),
-                value,
-            ]));
-        }
-        Value::Bulk(items)
-    }
-}
-
-impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
-        unreachable!("attempted to merge a pipeline. This should not happen");
-    }
-}
-
-#[derive(Debug)]
-struct NodeCmd {
-    // The original command indexes
-    indexes: Vec<usize>,
-    pipe: Vec<u8>,
-    addr: String,
-}
-
-impl NodeCmd {
-    fn new(a: String) -> NodeCmd {
-        NodeCmd {
-            indexes: vec![],
-            pipe: vec![],
-            addr: a,
         }
     }
 }
@@ -734,26 +702,47 @@ impl ConnectionLike for ClusterConnection {
     }
 }
 
-fn connect<T: IntoConnectionInfo>(
-    info: T,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-) -> RedisResult<Connection>
-where
-    T: std::fmt::Debug,
-{
-    let mut connection_info = info.into_connection_info()?;
-    connection_info.redis.username = username;
-    connection_info.redis.password = password;
-    let client = super::Client::open(connection_info)?;
+trait MergeResults {
+    fn merge_results(_values: HashMap<&str, Self>) -> Self
+    where
+        Self: Sized;
+}
 
-    let mut con = client.get_connection()?;
-    if read_from_replicas {
-        // If READONLY is sent to primary nodes, it will have no effect
-        cmd("READONLY").query(&mut con)?;
+impl MergeResults for Value {
+    fn merge_results(values: HashMap<&str, Value>) -> Value {
+        let mut items = vec![];
+        for (addr, value) in values.into_iter() {
+            items.push(Value::Bulk(vec![
+                Value::Data(addr.as_bytes().to_vec()),
+                value,
+            ]));
+        }
+        Value::Bulk(items)
     }
-    Ok(con)
+}
+
+impl MergeResults for Vec<Value> {
+    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+        unreachable!("attempted to merge a pipeline. This should not happen");
+    }
+}
+
+#[derive(Debug)]
+struct NodeCmd {
+    // The original command indexes
+    indexes: Vec<usize>,
+    pipe: Vec<u8>,
+    addr: String,
+}
+
+impl NodeCmd {
+    fn new(a: String) -> NodeCmd {
+        NodeCmd {
+            indexes: vec![],
+            pipe: vec![],
+            addr: a,
+        }
+    }
 }
 
 fn get_random_connection<'a>(
