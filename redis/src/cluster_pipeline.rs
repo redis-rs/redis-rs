@@ -1,13 +1,7 @@
 use crate::cluster::ClusterConnection;
+use crate::cluster_routing::UNROUTABLE_ERROR;
 use crate::cmd::{cmd, Cmd};
-use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
-};
-
-pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
-    ErrorKind::ClientError,
-    "This command cannot be safely routed in cluster mode",
-);
+use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
 
 fn is_illegal_cmd(cmd: &str) -> bool {
     matches!(
@@ -92,7 +86,7 @@ impl ClusterPipeline {
     ///
     /// ```rust,no_run
     /// # let nodes = vec!["redis://127.0.0.1:6379/"];
-    /// # let client = redis::cluster::ClusterClient::open(nodes).unwrap();
+    /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
     /// # let mut con = client.get_connection().unwrap();
     /// let mut pipe = redis::cluster::cluster_pipe();
     /// let (k1, k2) : (i32, i32) = pipe
@@ -137,7 +131,7 @@ impl ClusterPipeline {
     ///
     /// ```rust,no_run
     /// # let nodes = vec!["redis://127.0.0.1:6379/"];
-    /// # let client = redis::cluster::ClusterClient::open(nodes).unwrap();
+    /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
     /// # let mut con = client.get_connection().unwrap();
     /// let mut pipe = redis::cluster::cluster_pipe();
     /// let _ : () = pipe.cmd("SET").arg("key_1").arg(42).ignore().query(&mut con).unwrap();

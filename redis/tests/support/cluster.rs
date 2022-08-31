@@ -232,7 +232,7 @@ impl TestClusterContext {
                 .collect(),
         );
         builder = initializer(builder);
-        let client = builder.open().unwrap();
+        let client = builder.build().unwrap();
         TestClusterContext { cluster, client }
     }
 
