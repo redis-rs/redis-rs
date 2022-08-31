@@ -24,7 +24,7 @@ jobs:
           - stable
           - beta
           - nightly
-          - 1.57.0
+          - 1.59.0
 
     steps:
     - name: Cache redis
@@ -66,14 +66,14 @@ jobs:
       # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
       #
       #   1. Copy the untouched file (into Cargo.toml.actual)
-      #   2. Exclude ./__ci/redis-json from the workspace 
+      #   2. Exclude ./__ci/redis-json from the workspace
       #      (preventing it from being compiled as a workspace module)
       #   3. Build RedisJSON
       #   4. Move the built RedisJSON Module (librejson.so) to /tmp
       #   5. Restore Cargo.toml to its untouched state
       #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
       #
-      # This shouldn't cause issues in the future so long as no profiles or patches 
+      # This shouldn't cause issues in the future so long as no profiles or patches
       # are applied to the workspace Cargo.toml file
     - name: Compile RedisJSON
       run: |
