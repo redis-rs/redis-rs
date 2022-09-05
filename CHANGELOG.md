@@ -1,7 +1,7 @@
 <a name="0.21.5"></a>
 ### 0.21.5 (2022-01-10)
 
-
+*   Update dependencies ([#588](https://github.com/mitsuhiko/redis-rs/pull/588))
 
 
 <a name="0.21.5"></a>
