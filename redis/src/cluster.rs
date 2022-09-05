@@ -135,6 +135,11 @@ impl ClusterConnection {
         Ok(())
     }
 
+    /// Set the read from replicas parameter for this connection.
+    pub fn set_read_from_replicas(&mut self, value: bool) {
+        self.cluster_params.read_from_replicas = value;
+    }
+
     /// Set the retries parameter for this connection.
     pub fn set_retries(&mut self, value: u8) {
         self.cluster_params.retries = value;
