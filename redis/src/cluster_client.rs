@@ -222,11 +222,12 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Sets the default auto reconnect parameter for all new connections (default is true).
+    /// Disables auto reconnect for all new connections (default is enabled).
     ///
-    /// `ClusterConnection` will attempt to reconnect in case of [IoError](ErrorKind::IoError).
-    pub fn auto_reconnect(mut self, value: bool) -> ClusterClientBuilder {
-        self.cluster_params.auto_reconnect = value;
+    /// If enabled, `ClusterConnection` will attempt to reconnect in case of
+    /// [IoError](ErrorKind::IoError).
+    pub fn disable_auto_reconnect(mut self) -> ClusterClientBuilder {
+        self.cluster_params.auto_reconnect = false;
         self
     }
 
