@@ -190,20 +190,7 @@ impl ClusterConnection {
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&self) -> RedisResult<()> {
         let mut slots = self.slots.borrow_mut();
-        *slots = self.create_new_slots(|slot_data| {
-            let replica =
-                if !self.cluster_params.read_from_replicas || slot_data.replicas().is_empty() {
-                    slot_data.master().to_string()
-                } else {
-                    slot_data
-                        .replicas()
-                        .choose(&mut thread_rng())
-                        .unwrap()
-                        .to_string()
-                };
-
-            [slot_data.master().to_string(), replica]
-        })?;
+        *slots = self.create_new_slots()?;
 
         let mut nodes = slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
@@ -237,10 +224,7 @@ impl ClusterConnection {
         Ok(())
     }
 
-    fn create_new_slots<F>(&self, mut get_addr: F) -> RedisResult<SlotMap>
-    where
-        F: FnMut(&Slot) -> [String; 2],
-    {
+    fn create_new_slots(&self) -> RedisResult<SlotMap> {
         let mut cmd = Cmd::new();
         cmd.arg("CLUSTER").arg("SLOTS");
 
@@ -252,15 +236,8 @@ impl ClusterConnection {
 
         for conn in samples.iter_mut() {
             if let Ok(Value::Bulk(response)) = cmd.query(conn) {
-                if let Ok(slots) = parse_slots_response(response, &self.cluster_params) {
-                    new_slots = Some(
-                        slots
-                            .iter()
-                            .map(|slot_data| (slot_data.end(), get_addr(slot_data)))
-                            .collect(),
-                    );
-                    break;
-                }
+                new_slots = Some(parse_slots_response(response, &self.cluster_params)?);
+                break;
             }
         }
 
@@ -649,11 +626,11 @@ fn get_random_connection<'a>(
     (addr, con)
 }
 
-// Parse `CLUSTER SLOTS` response into Vec<Slot>.
+// Parse `CLUSTER SLOTS` response into SlotMap.
 fn parse_slots_response(
     response: Vec<Value>,
     cluster_params: &ClusterParams,
-) -> RedisResult<Vec<Slot>> {
+) -> RedisResult<SlotMap> {
     let mut slots = Vec::with_capacity(2);
     let mut items = response.into_iter();
     while let Some(Value::Bulk(item)) = items.next() {
@@ -740,5 +717,25 @@ fn parse_slots_response(
         )));
     }
 
-    Ok(slots)
+    Ok(slots
+        .iter()
+        .map(|slot_data| {
+            let nodes = {
+                let replica =
+                    if !cluster_params.read_from_replicas || slot_data.replicas().is_empty() {
+                        slot_data.master().to_string()
+                    } else {
+                        slot_data
+                            .replicas()
+                            .choose(&mut thread_rng())
+                            .unwrap()
+                            .to_string()
+                    };
+
+                [slot_data.master().to_string(), replica]
+            };
+
+            (slot_data.end(), nodes)
+        })
+        .collect())
 }
