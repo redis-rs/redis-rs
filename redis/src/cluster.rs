@@ -252,34 +252,9 @@ impl ClusterConnection {
 
         for conn in samples.iter_mut() {
             if let Ok(Value::Bulk(response)) = cmd.query(conn) {
-                if let Ok(mut slots_data) = parse_slots_response(response, &self.cluster_params) {
-                    slots_data.sort_by_key(|s| s.start());
-                    let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
-                        if prev_end != slot_data.start() {
-                            return Err(RedisError::from((
-                                ErrorKind::ResponseError,
-                                "Slot refresh error.",
-                                format!(
-                                    "Received overlapping slots {} and {}..{}",
-                                    prev_end,
-                                    slot_data.start(),
-                                    slot_data.end()
-                                ),
-                            )));
-                        }
-                        Ok(slot_data.end() + 1)
-                    })?;
-
-                    if last_slot != SLOT_SIZE {
-                        return Err(RedisError::from((
-                            ErrorKind::ResponseError,
-                            "Slot refresh error.",
-                            format!("Lacks the slots >= {}", last_slot),
-                        )));
-                    }
-
+                if let Ok(slots) = parse_slots_response(response, &self.cluster_params) {
                     new_slots = Some(
-                        slots_data
+                        slots
                             .iter()
                             .map(|slot_data| (slot_data.end(), get_addr(slot_data)))
                             .collect(),
@@ -737,6 +712,32 @@ fn parse_slots_response(
 
         let replicas = nodes.split_off(1);
         slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
+    }
+
+    slots.sort_unstable_by_key(|s| s.start());
+
+    let last_slot = slots.iter().try_fold(0, |prev_end, slot_data| {
+        if prev_end != slot_data.start() {
+            return Err(RedisError::from((
+                ErrorKind::ResponseError,
+                "Slot refresh error.",
+                format!(
+                    "Received overlapping slots {} and {}..{}",
+                    prev_end,
+                    slot_data.start(),
+                    slot_data.end()
+                ),
+            )));
+        }
+        Ok(slot_data.end() + 1)
+    })?;
+
+    if last_slot != SLOT_SIZE {
+        return Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Slot refresh error.",
+            format!("Lacks the slots >= {}", last_slot),
+        )));
     }
 
     Ok(slots)
