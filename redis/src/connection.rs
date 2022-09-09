@@ -167,7 +167,24 @@ impl IntoConnectionInfo for String {
 
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let host = match url.host() {
-        Some(host) => host.to_string(),
+        Some(host) => {
+            // Here we manually match host's enum arms and call their to_string().
+            // Because url.host().to_string() will add `[` and `]` for ipv6:
+            // https://docs.rs/url/latest/src/url/host.rs.html#170
+            // And these brackets will break host.parse::<Ipv6Addr>() when
+            // `client.open()` - `ActualConnection::new()` - `addr.to_socket_addrs()`:
+            // https://doc.rust-lang.org/src/std/net/addr.rs.html#963
+            // https://doc.rust-lang.org/src/std/net/parser.rs.html#158
+            // IpAddr string with brackets can ONLY parse to SocketAddrV6:
+            // https://doc.rust-lang.org/src/std/net/parser.rs.html#255
+            // But if we call Ipv6Addr.to_string directly, it follows rfc5952 without brackets:
+            // https://doc.rust-lang.org/src/std/net/ip.rs.html#1755
+            match host {
+                url::Host::Domain(path) => path.to_string(),
+                url::Host::Ipv4(v4) => v4.to_string(),
+                url::Host::Ipv6(v6) => v6.to_string(),
+            }
+        }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
@@ -1154,6 +1171,7 @@ mod tests {
     fn test_parse_redis_url() {
         let cases = vec![
             ("redis://127.0.0.1", true),
+            ("redis://[::1]", true),
             ("redis+unix:///run/redis.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
@@ -1177,6 +1195,13 @@ mod tests {
                 url::Url::parse("redis://127.0.0.1").unwrap(),
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
+                    redis: Default::default(),
+                },
+            ),
+            (
+                url::Url::parse("redis://[::1]").unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
                 },
             ),
