@@ -63,6 +63,10 @@ pub enum Rule {
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
     /// The user returns to the same state it has immediately after its creation.
     Reset,
+
+    /// Raw text of ACL rule that not enumerated above.
+    /// Ref: https://redis.io/docs/manual/security/acl
+    Other(String),
 }
 
 impl ToRedisArgs for Rule {
@@ -95,6 +99,8 @@ impl ToRedisArgs for Rule {
             ResetKeys => out.write_arg(b"resetkeys"),
 
             Reset => out.write_arg(b"reset"),
+
+            Other(rule) => out.write_arg_fmt(format_args!("{}", rule)),
         };
     }
 }
@@ -162,7 +168,7 @@ impl FromRedisValue for AclInfo {
                             b"allkeys" => Ok(Rule::AllKeys),
                             b"allcommands" => Ok(Rule::AllCommands),
                             b"nopass" => Ok(Rule::NoPass),
-                            _ => Err(not_convertible_error!(flag, "Expect a valid ACL flag")),
+                            other => Ok(Rule::Other(String::from_utf8_lossy(other).to_string())),
                         },
                         _ => Err(not_convertible_error!(
                             flag,
@@ -269,13 +275,14 @@ mod tests {
         assert_args!(AllKeys, b"allkeys");
         assert_args!(ResetKeys, b"resetkeys");
         assert_args!(Reset, b"reset");
+        assert_args!(Other("resetchannels".to_owned()), b"resetchannels");
     }
 
     #[test]
     fn test_from_redis_value() {
         let redis_value = Value::Bulk(vec![
             Value::Data("flags".into()),
-            Value::Bulk(vec![Value::Data("on".into())]),
+            Value::Bulk(vec![Value::Data("on".into()), Value::Data("allchannels".into())]),
             Value::Data("passwords".into()),
             Value::Bulk(vec![]),
             Value::Data("commands".into()),
@@ -288,7 +295,7 @@ mod tests {
         assert_eq!(
             acl_info,
             AclInfo {
-                flags: vec![Rule::On],
+                flags: vec![Rule::On, Rule::Other("allchannels".into())],
                 passwords: vec![],
                 commands: vec![
                     Rule::RemoveCategory("all".to_owned()),
