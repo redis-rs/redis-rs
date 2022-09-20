@@ -282,7 +282,10 @@ mod tests {
     fn test_from_redis_value() {
         let redis_value = Value::Bulk(vec![
             Value::Data("flags".into()),
-            Value::Bulk(vec![Value::Data("on".into()), Value::Data("allchannels".into())]),
+            Value::Bulk(vec![
+                Value::Data("on".into()),
+                Value::Data("allchannels".into()),
+            ]),
             Value::Data("passwords".into()),
             Value::Bulk(vec![]),
             Value::Data("commands".into()),
