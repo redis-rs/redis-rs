@@ -101,7 +101,7 @@ impl ToRedisArgs for Rule {
 
             Reset => out.write_arg(b"reset"),
 
-            Other(rule) => out.write_arg_fmt(format_args!("{}", rule)),
+            Other(rule) => out.write_arg(rule.as_bytes()),
         };
     }
 }
@@ -169,7 +169,7 @@ impl FromRedisValue for AclInfo {
                             b"allkeys" => Ok(Rule::AllKeys),
                             b"allcommands" => Ok(Rule::AllCommands),
                             b"nopass" => Ok(Rule::NoPass),
-                            other => Ok(Rule::Other(String::from_utf8_lossy(other).to_string())),
+                            other => Ok(Rule::Other(String::from_utf8_lossy(other).into_owned())),
                         },
                         _ => Err(not_convertible_error!(
                             flag,
