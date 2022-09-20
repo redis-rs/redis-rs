@@ -65,7 +65,7 @@ pub enum Rule {
     Reset,
 
     /// Raw text of [`ACL rule`][1]  that not enumerated above.
-    /// 
+    ///
     /// [1]: https://redis.io/docs/manual/security/acl
     Other(String),
 }
