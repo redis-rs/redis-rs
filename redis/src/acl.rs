@@ -64,8 +64,9 @@ pub enum Rule {
     /// The user returns to the same state it has immediately after its creation.
     Reset,
 
-    /// Raw text of ACL rule that not enumerated above.
-    /// Ref: https://redis.io/docs/manual/security/acl
+    /// Raw text of [`ACL rule`][1]  that not enumerated above.
+    /// 
+    /// [1]: https://redis.io/docs/manual/security/acl
     Other(String),
 }
 
