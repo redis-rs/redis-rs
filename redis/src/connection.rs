@@ -62,7 +62,7 @@ pub enum ConnectionAddr {
         insecure: bool,
 
         /// CA cert
-        ca_cert: Option<String>,
+        ca_cert: Option<Vec<u8>>,
     },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),
@@ -407,7 +407,7 @@ impl ActualConnection {
                 } else {
                     let mut builder = TlsConnector::builder();
                     if let Some(ca_cert) = ca_cert {
-                        let cert = Certificate::from_pem(ca_cert.as_bytes())?;
+                        let cert = Certificate::from_pem(ca_cert)?;
                         builder.add_root_certificate(cert);
                     }
                     builder.build()?

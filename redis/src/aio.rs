@@ -64,7 +64,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        ca_cert: &Option<String>,
+        ca_cert: Option<&[u8]>,
     ) -> RedisResult<Self>;
 
     /// Performs a UNIX connection
@@ -468,7 +468,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref ca_cert,
         } => {
             let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert).await?
+            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert.as_deref()).await?
         }
 
         #[cfg(not(feature = "tls"))]
