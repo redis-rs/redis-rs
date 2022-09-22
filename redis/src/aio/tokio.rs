@@ -100,6 +100,7 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        ca_cert: &Option<String>,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -108,7 +109,12 @@ impl RedisRuntime for Tokio {
                 .use_sni(false)
                 .build()?
         } else {
-            TlsConnector::new()?
+            let mut builder = TlsConnector::builder();
+            if let Some(ca_cert) = ca_cert {
+                let cert = native_tls::Certificate::from_pem(ca_cert.as_bytes())?;
+                builder.add_root_certificate(cert);
+            }
+            builder.build()?
         }
         .into();
         Ok(tls_connector
