@@ -123,11 +123,9 @@ impl ClusterConnection {
                     // TODO: Maybe should run through whole list and make sure they're all matching?
                     match &initial_nodes.get(0).unwrap().addr {
                         ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls {
-                            host: _,
-                            port: _,
-                            insecure,
-                        } => Some(TlsMode::from_insecure_flag(*insecure)),
+                        ConnectionAddr::TcpTls { insecure, .. } => {
+                            Some(TlsMode::from_insecure_flag(*insecure))
+                        }
                         _ => None,
                     }
                 }
@@ -231,6 +229,7 @@ impl ClusterConnection {
                     ref host,
                     port,
                     insecure,
+                    ..
                 } => {
                     let tls_mode = TlsMode::from_insecure_flag(insecure);
                     build_connection_string(host, Some(port), Some(tls_mode))
