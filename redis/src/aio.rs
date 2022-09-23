@@ -20,6 +20,8 @@ use ::tokio::{
 };
 
 #[cfg(feature = "tls")]
+use crate::tls::Certificate;
+#[cfg(feature = "tls")]
 use native_tls::TlsConnector;
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -64,7 +66,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        ca_cert: Option<&[u8]>,
+        ca_cert: Option<Certificate>,
     ) -> RedisResult<Self>;
 
     /// Performs a UNIX connection
@@ -468,7 +470,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref ca_cert,
         } => {
             let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert.as_deref()).await?
+            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert.clone()).await?
         }
 
         #[cfg(not(feature = "tls"))]

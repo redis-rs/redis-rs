@@ -19,7 +19,9 @@ use crate::types::HashMap;
 use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls")]
-use native_tls::{Certificate, TlsConnector, TlsStream};
+use crate::tls::Certificate;
+#[cfg(feature = "tls")]
+use native_tls::{TlsConnector, TlsStream};
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -61,8 +63,11 @@ pub enum ConnectionAddr {
         /// vulnerability to man-in-the-middle attacks.
         insecure: bool,
 
-        /// CA cert
-        ca_cert: Option<Vec<u8>>,
+        /// CA certificate
+        ///
+        /// Added to the root certificates. Used if the CA is not public
+        #[cfg(feature = "tls")]
+        ca_cert: Option<Certificate>,
     },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),
@@ -407,8 +412,7 @@ impl ActualConnection {
                 } else {
                     let mut builder = TlsConnector::builder();
                     if let Some(ca_cert) = ca_cert {
-                        let cert = Certificate::from_pem(ca_cert)?;
-                        builder.add_root_certificate(cert);
+                        builder.add_root_certificate(ca_cert.0.clone());
                     }
                     builder.build()?
                 };

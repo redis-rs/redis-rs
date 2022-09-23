@@ -17,6 +17,8 @@ use tokio::{
 
 #[cfg(feature = "tls")]
 use super::TlsConnector;
+#[cfg(feature = "tls")]
+use crate::tls::Certificate;
 
 #[cfg(feature = "tokio-native-tls-comp")]
 use tokio_native_tls::TlsStream;
@@ -100,7 +102,7 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        ca_cert: Option<&[u8]>,
+        ca_cert: Option<Certificate>,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -111,8 +113,7 @@ impl RedisRuntime for Tokio {
         } else {
             let mut builder = TlsConnector::builder();
             if let Some(ca_cert) = ca_cert {
-                let cert = native_tls::Certificate::from_der(ca_cert)?;
-                builder.add_root_certificate(cert);
+                builder.add_root_certificate(ca_cert.0);
             }
             builder.build()?
         }
