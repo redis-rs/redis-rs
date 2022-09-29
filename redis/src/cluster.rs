@@ -41,6 +41,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::iter::Iterator;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -54,7 +55,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
@@ -65,19 +66,12 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
 #[derive(Clone, Copy)]
-enum TlsMode {
+/// See [ConnectionAddr](ConnectionAddr::TcpTls::insecure).
+pub enum TlsMode {
+    /// Tls Secure mode
     Secure,
+    /// Tls Insecure mode
     Insecure,
-}
-
-impl TlsMode {
-    fn from_insecure_flag(insecure: bool) -> TlsMode {
-        if insecure {
-            TlsMode::Insecure
-        } else {
-            TlsMode::Secure
-        }
-    }
 }
 
 /// This is a connection of Redis cluster.
@@ -91,7 +85,7 @@ pub struct ClusterConnection {
     password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
+    tls_mode: Option<TlsMode>,
 }
 
 impl ClusterConnection {
@@ -108,25 +102,7 @@ impl ClusterConnection {
             password: cluster_params.password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            #[cfg(feature = "tls")]
-            tls: {
-                if initial_nodes.is_empty() {
-                    None
-                } else {
-                    // TODO: Maybe should run through whole list and make sure they're all matching?
-                    match &initial_nodes.get(0).unwrap().addr {
-                        ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls {
-                            host: _,
-                            port: _,
-                            insecure,
-                        } => Some(TlsMode::from_insecure_flag(*insecure)),
-                        _ => None,
-                    }
-                }
-            },
-            #[cfg(not(feature = "tls"))]
-            tls: None,
+            tls_mode: cluster_params.tls_mode,
             initial_nodes: initial_nodes.to_vec(),
         };
         connection.create_initial_connections()?;
@@ -202,20 +178,9 @@ impl ClusterConnection {
         let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
         for info in self.initial_nodes.iter() {
-            let addr = match info.addr {
-                ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
-                ConnectionAddr::TcpTls {
-                    ref host,
-                    port,
-                    insecure,
-                } => {
-                    let tls_mode = TlsMode::from_insecure_flag(insecure);
-                    build_connection_string(host, Some(port), Some(tls_mode))
-                }
-                _ => panic!("No reach."),
-            };
+            let addr = info.addr.to_string();
 
-            if let Ok(mut conn) = self.connect(info.clone()) {
+            if let Ok(mut conn) = self.connect(&addr) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
@@ -294,7 +259,7 @@ impl ClusterConnection {
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
+            if let Ok(mut slots_data) = get_slots(conn, self.tls_mode) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -340,12 +305,16 @@ impl ClusterConnection {
         }
     }
 
-    fn connect<T: IntoConnectionInfo>(&self, info: T) -> RedisResult<Connection> {
-        let mut connection_info = info.into_connection_info()?;
-        connection_info.redis.username = self.username.clone();
-        connection_info.redis.password = self.password.clone();
+    fn connect(&self, node: &str) -> RedisResult<Connection> {
+        let params = ClusterParams {
+            password: self.password.clone(),
+            username: self.username.clone(),
+            tls_mode: self.tls_mode,
+            ..Default::default()
+        };
+        let info = get_connection_info(node, params)?;
 
-        let mut conn = connect(&connection_info, None)?;
+        let mut conn = connect(&info, None)?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
@@ -499,9 +468,7 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -509,9 +476,7 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls));
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
@@ -772,7 +737,7 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         } else {
                             return None;
                         };
-                        Some(build_connection_string(&ip, Some(port), tls_mode))
+                        Some(get_connection_addr(ip.into_owned(), port, tls_mode).to_string())
                     } else {
                         None
                     }
@@ -791,16 +756,46 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
     Ok(result)
 }
 
-fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
-    let host_port = match port {
-        Some(port) => format!("{}:{}", host, port),
-        None => host.to_string(),
+// The node string passed to this function will always be in the format host:port as it is either:
+// - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
+// - Returned from redis via the ASK/MOVED response
+fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult<ConnectionInfo> {
+    let mut split = node.split(':');
+    let host = match split.next() {
+        Some(val) => val,
+        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
     };
+    let port_parse = match split.next() {
+        Some(val) => u16::from_str(val),
+        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
+    };
+    let port = match port_parse {
+        Ok(val) => val,
+        Err(_) => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
+    };
+
+    Ok(ConnectionInfo {
+        addr: get_connection_addr(host.to_string(), port, cluster_params.tls_mode),
+        redis: RedisConnectionInfo {
+            password: cluster_params.password,
+            username: cluster_params.username,
+            ..Default::default()
+        },
+    })
+}
+
+fn get_connection_addr(host: String, port: u16, tls_mode: Option<TlsMode>) -> ConnectionAddr {
     match tls_mode {
-        None => format!("redis://{}", host_port),
-        Some(TlsMode::Insecure) => {
-            format!("rediss://{}/#insecure", host_port)
-        }
-        Some(TlsMode::Secure) => format!("rediss://{}", host_port),
+        Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure: false,
+        },
+        Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure: true,
+        },
+        _ => ConnectionAddr::Tcp(host, port),
     }
 }
