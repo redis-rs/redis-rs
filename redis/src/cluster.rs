@@ -54,7 +54,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
@@ -350,22 +350,13 @@ impl ClusterConnection {
         }
     }
 
-    fn connect<T: IntoConnectionInfo>(
-        info: T,
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<Connection>
-    where
-        T: std::fmt::Debug,
-    {
+    fn connect<T: IntoConnectionInfo>(&self, info: T) -> RedisResult<Connection> {
         let mut connection_info = info.into_connection_info()?;
-        connection_info.redis.username = username;
-        connection_info.redis.password = password;
-        let client = super::Client::open(connection_info)?;
+        connection_info.redis.username = self.username.clone();
+        connection_info.redis.password = self.password.clone();
 
-        let mut conn = client.get_connection()?;
-        if read_from_replicas {
+        let mut conn = connect(&connection_info, None)?;
+        if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
