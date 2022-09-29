@@ -54,7 +54,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
@@ -197,12 +197,7 @@ impl ClusterConnection {
                 _ => panic!("No reach."),
             };
 
-            if let Ok(mut conn) = Self::connect(
-                info.clone(),
-                self.read_from_replicas,
-                self.username.clone(),
-                self.password.clone(),
-            ) {
+            if let Ok(mut conn) = self.connect(info.clone()) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
@@ -254,12 +249,7 @@ impl ClusterConnection {
                     }
                 }
 
-                if let Ok(mut conn) = Self::connect(
-                    addr.as_ref(),
-                    self.read_from_replicas,
-                    self.username.clone(),
-                    self.password.clone(),
-                ) {
+                if let Ok(mut conn) = self.connect(addr.as_ref()) {
                     if conn.check_connection() {
                         conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
                         conn.set_write_timeout(*self.write_timeout.borrow())
@@ -332,22 +322,13 @@ impl ClusterConnection {
         }
     }
 
-    fn connect<T: IntoConnectionInfo>(
-        info: T,
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<Connection>
-    where
-        T: std::fmt::Debug,
-    {
+    fn connect<T: IntoConnectionInfo>(&self, info: T) -> RedisResult<Connection> {
         let mut connection_info = info.into_connection_info()?;
-        connection_info.redis.username = username;
-        connection_info.redis.password = password;
-        let client = super::Client::open(connection_info)?;
+        connection_info.redis.username = self.username.clone();
+        connection_info.redis.password = self.password.clone();
 
-        let mut conn = client.get_connection()?;
-        if read_from_replicas {
+        let mut conn = connect(&connection_info, None)?;
+        if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
@@ -383,12 +364,7 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = Self::connect(
-                addr,
-                self.read_from_replicas,
-                self.username.clone(),
-                self.password.clone(),
-            )?;
+            let conn = self.connect(addr)?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
     }
