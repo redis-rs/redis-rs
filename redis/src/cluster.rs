@@ -692,9 +692,13 @@ impl NodeCmd {
     }
 }
 
+/// TlsMode indicates use or do not use verification of certification.
+/// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
 #[derive(Clone, Copy)]
-enum TlsMode {
+pub enum TlsMode {
+    /// Secure verify certification.
     Secure,
+    /// Insecure do not verify certification.
     Insecure,
 }
 
