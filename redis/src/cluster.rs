@@ -81,15 +81,8 @@ impl ClusterConnection {
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
     ) -> RedisResult<ClusterConnection> {
-        let connections = Self::create_initial_connections(
-            &initial_nodes,
-            cluster_params.read_from_replicas,
-            cluster_params.username.clone(),
-            cluster_params.password.clone(),
-        )?;
-
         let connection = ClusterConnection {
-            connections: RefCell::new(connections),
+            connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             read_from_replicas: cluster_params.read_from_replicas,
@@ -118,6 +111,7 @@ impl ClusterConnection {
             tls: None,
             initial_nodes: initial_nodes.to_vec(),
         };
+        connection.create_initial_connections()?;
         connection.refresh_slots()?;
 
         Ok(connection)
@@ -187,15 +181,10 @@ impl ClusterConnection {
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
-    fn create_initial_connections(
-        initial_nodes: &[ConnectionInfo],
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<HashMap<String, Connection>> {
-        let mut connections = HashMap::with_capacity(initial_nodes.len());
+    fn create_initial_connections(&self) -> RedisResult<()> {
+        let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
-        for info in initial_nodes.iter() {
+        for info in self.initial_nodes.iter() {
             let addr = match info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
                 ConnectionAddr::TcpTls {
@@ -211,9 +200,9 @@ impl ClusterConnection {
 
             if let Ok(mut conn) = Self::connect(
                 info.clone(),
-                read_from_replicas,
-                username.clone(),
-                password.clone(),
+                self.read_from_replicas,
+                self.username.clone(),
+                self.password.clone(),
             ) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
@@ -228,7 +217,9 @@ impl ClusterConnection {
                 "It failed to check startup nodes.",
             )));
         }
-        Ok(connections)
+
+        *self.connections.borrow_mut() = connections;
+        Ok(())
     }
 
     // Query a node to discover slot-> master mappings.
@@ -537,16 +528,7 @@ impl ClusterConnection {
                             continue;
                         }
                     } else if *self.auto_reconnect.borrow() && err.is_io_error() {
-                        let new_connections = Self::create_initial_connections(
-                            &self.initial_nodes,
-                            self.read_from_replicas,
-                            self.username.clone(),
-                            self.password.clone(),
-                        )?;
-                        {
-                            let mut connections = self.connections.borrow_mut();
-                            *connections = new_connections;
-                        }
+                        self.create_initial_connections()?;
                         self.refresh_slots()?;
                         excludes.clear();
                         continue;
