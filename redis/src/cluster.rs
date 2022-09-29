@@ -686,9 +686,12 @@ impl NodeCmd {
     }
 }
 
+/// TlsMode indicate tls mode of every connections of ClusterConnection.
 #[derive(Clone, Copy)]
-enum TlsMode {
+pub enum TlsMode {
+    /// Secure means every connections of ClusterConnection are connected over tls.
     Secure,
+    /// Insecure means every connections of ClusterConnection are not connected over tls.
     Insecure,
 }
 

@@ -1,4 +1,4 @@
-use crate::cluster::ClusterConnection;
+use crate::cluster::{ClusterConnection, TlsMode};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 
@@ -8,6 +8,7 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
+    pub(crate) tls_mode: Option<TlsMode>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -65,6 +66,19 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
+        if cluster_params.tls_mode.is_none() {
+            cluster_params.tls_mode = match first_node.addr {
+                ConnectionAddr::TcpTls {
+                    host: _,
+                    port: _,
+                    insecure,
+                } => Some(match insecure {
+                    false => TlsMode::Secure,
+                    true => TlsMode::Insecure,
+                }),
+                _ => None,
+            };
+        }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for node in initial_nodes {
@@ -105,6 +119,15 @@ impl ClusterClientBuilder {
     /// Sets username for the new ClusterClient.
     pub fn username(mut self, username: String) -> ClusterClientBuilder {
         self.cluster_params.username = Some(username);
+        self
+    }
+
+    /// Sets TLS mode for the new ClusterClient.
+    ///
+    /// It is extracted from the first node of initial_nodes if not set.
+    #[cfg(feature = "tls")]
+    pub fn tls_mode(mut self, tls_mode: TlsMode) -> ClusterClientBuilder {
+        self.cluster_params.tls_mode = Some(tls_mode);
         self
     }
 
