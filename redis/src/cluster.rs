@@ -205,15 +205,10 @@ impl ClusterConnection {
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
-    fn create_initial_connections(
-        initial_nodes: &[ConnectionInfo],
-        read_from_replicas: bool,
-        username: Option<String>,
-        password: Option<String>,
-    ) -> RedisResult<HashMap<String, Connection>> {
-        let mut connections = HashMap::with_capacity(initial_nodes.len());
+    fn create_initial_connections(&self) -> RedisResult<()> {
+        let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
-        for info in initial_nodes.iter() {
+        for info in self.initial_nodes.iter() {
             let addr = match info.addr {
                 ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
                 ConnectionAddr::TcpTls {
@@ -229,9 +224,9 @@ impl ClusterConnection {
 
             if let Ok(mut conn) = Self::connect(
                 info.clone(),
-                read_from_replicas,
-                username.clone(),
-                password.clone(),
+                self.read_from_replicas,
+                self.username.clone(),
+                self.password.clone(),
             ) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
@@ -246,7 +241,9 @@ impl ClusterConnection {
                 "It failed to check startup nodes.",
             )));
         }
-        Ok(connections)
+
+        *self.connections.borrow_mut() = connections;
+        Ok(())
     }
 
     // Query a node to discover slot-> master mappings.
