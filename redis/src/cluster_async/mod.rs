@@ -9,10 +9,10 @@
 //!
 //! # Example
 //! ```rust
-//! use redis_cluster_async::{Client, redis::{Commands, cmd}};
+//! use redis_cluster_async::{Client, {Commands, cmd}};
 //!
 //! #[tokio::main]
-//! async fn main() -> redis::RedisResult<()> {
+//! async fn main() -> RedisResult<()> {
 //! #   let _ = env_logger::try_init();
 //!     let nodes = vec!["redis://127.0.0.1:7000/", "redis://127.0.0.1:7001/", "redis://127.0.0.1:7002/"];
 //!
@@ -27,10 +27,10 @@
 //!
 //! # Pipelining
 //! ```rust
-//! use redis_cluster_async::{Client, redis::pipe};
+//! use redis_cluster_async::{Client, pipe};
 //!
 //! #[tokio::main]
-//! async fn main() -> redis::RedisResult<()> {
+//! async fn main() -> RedisResult<()> {
 //! #   let _ = env_logger::try_init();
 //!     let nodes = vec!["redis://127.0.0.1:7000/", "redis://127.0.0.1:7001/", "redis://127.0.0.1:7002/"];
 //!
@@ -48,8 +48,6 @@
 //! }
 //! ```
 
-pub use redis;
-
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt, io,
@@ -62,6 +60,11 @@ use std::{
     time::Duration,
 };
 
+use crate::{
+    aio::{ConnectionLike, MultiplexedConnection},
+    parse_redis_url, Arg, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
+    RedisError, RedisFuture, RedisResult, Value,
+};
 use crc16::*;
 use futures::{
     future::{self, BoxFuture},
@@ -72,10 +75,6 @@ use log::trace;
 use pin_project_lite::pin_project;
 use rand::seq::IteratorRandom;
 use rand::thread_rng;
-use redis::{
-    aio::ConnectionLike, Arg, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
-    RedisError, RedisFuture, RedisResult, Value,
-};
 use tokio::sync::{mpsc, oneshot};
 
 const SLOT_SIZE: usize = 16384;
@@ -139,7 +138,7 @@ impl Client {
 
 /// This is a connection of Redis cluster.
 #[derive(Clone)]
-pub struct Connection<C = redis::aio::MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct Connection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
 impl<C> Connection<C>
 where
@@ -184,14 +183,14 @@ struct Pipeline<C> {
 #[derive(Clone)]
 enum CmdArg<C> {
     Cmd {
-        cmd: Arc<redis::Cmd>,
-        func: fn(C, Arc<redis::Cmd>) -> RedisFuture<'static, Response>,
+        cmd: Arc<Cmd>,
+        func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
     },
     Pipeline {
-        pipeline: Arc<redis::Pipeline>,
+        pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        func: fn(C, Arc<redis::Pipeline>, usize, usize) -> RedisFuture<'static, Response>,
+        func: fn(C, Arc<crate::Pipeline>, usize, usize) -> RedisFuture<'static, Response>,
     },
 }
 
@@ -211,8 +210,8 @@ impl<C> CmdArg<C> {
     fn slot(&self) -> Option<u16> {
         fn get_cmd_arg(cmd: &Cmd, arg_num: usize) -> Option<&[u8]> {
             cmd.args_iter().nth(arg_num).and_then(|arg| match arg {
-                redis::Arg::Simple(arg) => Some(arg),
-                redis::Arg::Cursor => None,
+                Arg::Simple(arg) => Some(arg),
+                Arg::Cursor => None,
             })
         }
 
@@ -479,8 +478,14 @@ where
                         Some(pw) => format!("redis://:{}@{}:{}", pw, host, port),
                         None => format!("redis://{}:{}", host, port),
                     },
-                    ConnectionAddr::TcpTls { ref host, port, insecure } => match &info.redis.password {
-                        Some(pw) if insecure => format!("rediss://:{}@{}:{}/#insecure", pw, host, port),
+                    ConnectionAddr::TcpTls {
+                        ref host,
+                        port,
+                        insecure,
+                    } => match &info.redis.password {
+                        Some(pw) if insecure => {
+                            format!("rediss://:{}@{}:{}/#insecure", pw, host, port)
+                        }
                         Some(pw) => format!("rediss://:{}@{}:{}", pw, host, port),
                         None if insecure => format!("rediss://{}:{}/#insecure", host, port),
                         None => format!("rediss://{}:{}", host, port),
@@ -494,7 +499,7 @@ where
                     Err(e) => {
                         trace!("Failed to connect to initial node: {:?}", e);
                         None
-                    },
+                    }
                 }
             })
             .buffer_unordered(initial_nodes.len())
@@ -921,7 +926,7 @@ where
 
     fn req_packed_commands<'a>(
         &'a mut self,
-        pipeline: &'a redis::Pipeline,
+        pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
@@ -969,20 +974,23 @@ impl Clone for Client {
     }
 }
 
+/// Implements the process of connecting to a redis server
+/// and obtaining a connection handle.
 pub trait Connect: Sized {
+    /// Connect to a node, returning handle for command execution. 
     fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
 
-impl Connect for redis::aio::MultiplexedConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, redis::aio::MultiplexedConnection>
+impl Connect for MultiplexedConnection {
+    fn connect<'a, T>(info: T) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         async move {
             let connection_info = info.into_connection_info()?;
-            let client = redis::Client::open(connection_info)?;
+            let client = crate::Client::open(connection_info)?;
             client.get_multiplexed_tokio_connection().await
         }
         .boxed()
@@ -1166,11 +1174,13 @@ where
 }
 
 fn get_password(addr: &str) -> Option<String> {
-    redis::parse_redis_url(addr).and_then(|url| url.password().map(|s| s.into()))
+    parse_redis_url(addr).and_then(|url| url.password().map(|s| s.into()))
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::parse_redis_value;
+
     use super::*;
 
     fn slot_for_packed_command(cmd: &[u8]) -> Option<u16> {
@@ -1181,21 +1191,19 @@ mod tests {
     }
 
     fn command_key(cmd: &[u8]) -> Option<Vec<u8>> {
-        redis::parse_redis_value(cmd)
-            .ok()
-            .and_then(|value| match value {
-                Value::Bulk(mut args) => {
-                    if args.len() >= 2 {
-                        match args.swap_remove(1) {
-                            Value::Data(key) => Some(key),
-                            _ => None,
-                        }
-                    } else {
-                        None
+        parse_redis_value(cmd).ok().and_then(|value| match value {
+            Value::Bulk(mut args) => {
+                if args.len() >= 2 {
+                    match args.swap_remove(1) {
+                        Value::Data(key) => Some(key),
+                        _ => None,
                     }
+                } else {
+                    None
                 }
-                _ => None,
-            })
+            }
+            _ => None,
+        })
     }
 
     #[test]
