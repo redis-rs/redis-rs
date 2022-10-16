@@ -66,6 +66,8 @@ serde_json = { version = "1.0.82", optional = true }
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
 
+log = { version = "0.4", optional = true }
+
 [features]
 default = ["acl", "streams", "geospatial", "script"]
 acl = []
@@ -81,7 +83,7 @@ tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls", "tokio-native-tls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
-
+cluster-async = ["cluster", "futures", "futures-util", "tokio/time", "log"]
 
 [dev-dependencies]
 rand = "0.8"
