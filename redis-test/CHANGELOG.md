@@ -1,3 +1,11 @@
+<a name="0.1.1"></a>
+### 0.1.1 (2022-10-18)
+
+#### Changes
+* Add README
+* Update LICENSE file / symlink from parent directory
+
+
 <a name="0.1.0"></a>
 ### 0.1.0 (2022-10-05)
 

@@ -1,3 +1,10 @@
+<a name="0.22.1"></a>
+### 0.22.1 (2022-10-18)
+
+#### Changes
+* Add README attribute to Cargo.toml
+* Update LICENSE file / symlink from parent directory
+
 <a name="0.22.0"></a>
 ### 0.22.0 (2022-10-05)
 
