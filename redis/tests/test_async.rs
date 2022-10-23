@@ -569,4 +569,31 @@ mod pub_sub {
         })
         .unwrap();
     }
+
+    #[test]
+    fn pipe_errors_do_not_affect_subsequent_commands() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+
+            conn.lpush::<&str, &str, ()>("key", "value").await?;
+
+            let res: Result<(String, usize), redis::RedisError> = redis::pipe()
+                .get("key") // WRONGTYPE
+                .llen("key")
+                .query_async(&mut conn)
+                .await;
+
+            assert!(res.is_err());
+
+            let list: Vec<String> = conn.lrange("key", 0, -1).await?;
+
+            assert_eq!(list, vec!["value".to_owned()]);
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }
