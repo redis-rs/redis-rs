@@ -1228,10 +1228,16 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for std::collections::HashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
+        match *v {
+            Value::Nil => Ok(Default::default()),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
     }
 }
 
