@@ -13,9 +13,10 @@ use std::task::{self, Poll};
 
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 
+#[cfg(feature = "tokio-comp")]
+use ::tokio::net::lookup_host;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::lookup_host,
     sync::{mpsc, oneshot},
 };
 
@@ -46,6 +47,9 @@ use crate::{from_redis_value, ToRedisArgs};
 #[cfg(feature = "async-std-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
+
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use ::async_std::net::ToSocketAddrs;
 
 /// Enables the tokio compatibility
 #[cfg(feature = "tokio-comp")]
@@ -492,7 +496,10 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 }
 
 async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
+    #[cfg(feature = "tokio-comp")]
     let mut socket_addrs = lookup_host((host, port)).await?;
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    let mut socket_addrs = (host, port).to_socket_addrs().await?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
