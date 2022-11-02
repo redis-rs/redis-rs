@@ -463,9 +463,7 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            redirected = err.redirect_node().map(|(node, _slot)| {
-                                build_connection_string(node, None, self.tls_mode)
-                            });
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -473,9 +471,7 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err.redirect_node().map(|(node, _slot)| {
-                                build_connection_string(node, None, self.tls_mode)
-                            });
+                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
@@ -748,7 +744,7 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         } else {
                             return None;
                         };
-                        Some(build_connection_string(&ip, Some(port), tls_mode))
+                        Some(get_connection_addr(ip.into_owned(), port, tls_mode).to_string())
                     } else {
                         None
                     }
@@ -808,19 +804,5 @@ fn get_connection_addr(host: String, port: u16, tls_mode: Option<TlsMode>) -> Co
             insecure: true,
         },
         _ => ConnectionAddr::Tcp(host, port),
-    }
-}
-
-fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
-    let host_port = match port {
-        Some(port) => format!("{host}:{port}"),
-        None => host.to_string(),
-    };
-    match tls_mode {
-        None => format!("redis://{host_port}"),
-        Some(TlsMode::Insecure) => {
-            format!("rediss://{host_port}/#insecure")
-        }
-        Some(TlsMode::Secure) => format!("rediss://{host_port}"),
     }
 }
