@@ -91,25 +91,7 @@ impl ClusterConnection {
             password: cluster_params.password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            #[cfg(feature = "tls")]
-            tls_mode: {
-                if initial_nodes.is_empty() {
-                    None
-                } else {
-                    // TODO: Maybe should run through whole list and make sure they're all matching?
-                    match &initial_nodes.get(0).unwrap().addr {
-                        ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls {
-                            host: _,
-                            port: _,
-                            insecure,
-                        } => Some(TlsMode::from_insecure_flag(*insecure)),
-                        _ => None,
-                    }
-                }
-            },
-            #[cfg(not(feature = "tls"))]
-            tls_mode: None,
+            tls_mode: cluster_params.tls_mode,
             initial_nodes: initial_nodes.to_vec(),
         };
         connection.create_initial_connections()?;
@@ -687,16 +669,6 @@ pub enum TlsMode {
     Secure,
     /// Insecure means every connections of ClusterConnection are not connected over tls.
     Insecure,
-}
-
-impl TlsMode {
-    fn from_insecure_flag(insecure: bool) -> TlsMode {
-        if insecure {
-            TlsMode::Insecure
-        } else {
-            TlsMode::Secure
-        }
-    }
 }
 
 fn get_random_connection<'a>(
