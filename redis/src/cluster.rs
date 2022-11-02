@@ -64,20 +64,6 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 type SlotMap = BTreeMap<u16, [String; 2]>;
 
-/// This is a connection of Redis cluster.
-pub struct ClusterConnection {
-    initial_nodes: Vec<ConnectionInfo>,
-    connections: RefCell<HashMap<String, Connection>>,
-    slots: RefCell<SlotMap>,
-    auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-    read_timeout: RefCell<Option<Duration>>,
-    write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
-}
-
 #[derive(Clone, Copy)]
 enum TlsMode {
     Secure,
@@ -92,6 +78,20 @@ impl TlsMode {
             TlsMode::Secure
         }
     }
+}
+
+/// This is a connection of Redis cluster.
+pub struct ClusterConnection {
+    initial_nodes: Vec<ConnectionInfo>,
+    connections: RefCell<HashMap<String, Connection>>,
+    slots: RefCell<SlotMap>,
+    auto_reconnect: RefCell<bool>,
+    read_from_replicas: bool,
+    username: Option<String>,
+    password: Option<String>,
+    read_timeout: RefCell<Option<Duration>>,
+    write_timeout: RefCell<Option<Duration>>,
+    tls: Option<TlsMode>,
 }
 
 impl ClusterConnection {
