@@ -41,6 +41,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::iter::Iterator;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -54,7 +55,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo,
+    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
@@ -799,6 +800,50 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
     }
 
     Ok(result)
+}
+
+// The node string passed to this function will always be in the format host:port as it is either:
+// - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
+// - Returned from redis via the ASK/MOVED response
+fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult<ConnectionInfo> {
+    let mut split = node.split(':');
+    let host = match split.next() {
+        Some(val) => val,
+        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
+    };
+    let port_parse = match split.next() {
+        Some(val) => u16::from_str(val),
+        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
+    };
+    let port = match port_parse {
+        Ok(val) => val,
+        Err(_) => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
+    };
+
+    Ok(ConnectionInfo {
+        addr: get_connection_addr(host.to_string(), port, cluster_params.tls_mode),
+        redis: RedisConnectionInfo {
+            password: cluster_params.password,
+            username: cluster_params.username,
+            ..Default::default()
+        },
+    })
+}
+
+fn get_connection_addr(host: String, port: u16, tls_mode: Option<TlsMode>) -> ConnectionAddr {
+    match tls_mode {
+        Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure: false,
+        },
+        Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure: true,
+        },
+        _ => ConnectionAddr::Tcp(host, port),
+    }
 }
 
 fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
