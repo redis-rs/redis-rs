@@ -398,6 +398,47 @@ impl ClusterConnection {
         }
     }
 
+    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
+        let slots = self.slots.borrow();
+
+        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
+            let (_, addr) = slots
+                .range(&slot..)
+                .next()
+                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
+            Ok(addr[idx].clone())
+        };
+
+        match RoutingInfo::for_routable(cmd) {
+            Some(RoutingInfo::Random) => {
+                let mut rng = thread_rng();
+                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
+            }
+            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
+            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
+            _ => fail!(UNROUTABLE_ERROR),
+        }
+    }
+
+    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
+        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
+
+        for (idx, cmd) in cmds.iter().enumerate() {
+            let addr = self.get_addr_for_cmd(cmd)?;
+            let nc = cmd_map
+                .entry(addr.clone())
+                .or_insert_with(|| NodeCmd::new(addr));
+            nc.indexes.push(idx);
+            cmd.write_packed_command(&mut nc.pipe);
+        }
+
+        let mut result = Vec::new();
+        for (_, v) in cmd_map.drain() {
+            result.push(v);
+        }
+        Ok(result)
+    }
+
     fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
     where
         T: MergeResults,
@@ -557,47 +598,6 @@ impl ClusterConnection {
                 .send_packed_command(&nc.pipe)?;
         }
         Ok(node_cmds)
-    }
-
-    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
-        let slots = self.slots.borrow();
-
-        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
-            let (_, addr) = slots
-                .range(&slot..)
-                .next()
-                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(addr[idx].clone())
-        };
-
-        match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => {
-                let mut rng = thread_rng();
-                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
-            }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
-            _ => fail!(UNROUTABLE_ERROR),
-        }
-    }
-
-    fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
-
-        for (idx, cmd) in cmds.iter().enumerate() {
-            let addr = self.get_addr_for_cmd(cmd)?;
-            let nc = cmd_map
-                .entry(addr.clone())
-                .or_insert_with(|| NodeCmd::new(addr));
-            nc.indexes.push(idx);
-            cmd.write_packed_command(&mut nc.pipe);
-        }
-
-        let mut result = Vec::new();
-        for (_, v) in cmd_map.drain() {
-            result.push(v);
-        }
-        Ok(result)
     }
 
     // Receive from each node, keeping track of which commands need to be retried.
