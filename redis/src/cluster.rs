@@ -141,13 +141,6 @@ impl ClusterConnection {
         Ok(connection)
     }
 
-    /// Set an auto reconnect attribute.
-    /// Default value is true;
-    pub fn set_auto_reconnect(&self, value: bool) {
-        let mut auto_reconnect = self.auto_reconnect.borrow_mut();
-        *auto_reconnect = value;
-    }
-
     /// Sets the write timeout for the connection.
     ///
     /// If the provided value is `None`, then `send_packed_command` call will
@@ -192,6 +185,13 @@ impl ClusterConnection {
             conn.set_read_timeout(dur)?;
         }
         Ok(())
+    }
+
+    /// Set an auto reconnect attribute.
+    /// Default value is true;
+    pub fn set_auto_reconnect(&self, value: bool) {
+        let mut auto_reconnect = self.auto_reconnect.borrow_mut();
+        *auto_reconnect = value;
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
