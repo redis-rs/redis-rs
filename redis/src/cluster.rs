@@ -112,7 +112,6 @@ impl ClusterConnection {
             initial_nodes: initial_nodes.to_vec(),
         };
         connection.create_initial_connections()?;
-        connection.refresh_slots()?;
 
         Ok(connection)
     }
@@ -219,6 +218,7 @@ impl ClusterConnection {
         }
 
         *self.connections.borrow_mut() = connections;
+        self.refresh_slots()?;
         Ok(())
     }
 
@@ -529,7 +529,6 @@ impl ClusterConnection {
                         }
                     } else if *self.auto_reconnect.borrow() && err.is_io_error() {
                         self.create_initial_connections()?;
-                        self.refresh_slots()?;
                         excludes.clear();
                         continue;
                     } else {
