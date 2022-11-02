@@ -359,6 +359,28 @@ impl ClusterConnection {
         }
     }
 
+    fn connect<T: IntoConnectionInfo>(
+        info: T,
+        read_from_replicas: bool,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> RedisResult<Connection>
+    where
+        T: std::fmt::Debug,
+    {
+        let mut connection_info = info.into_connection_info()?;
+        connection_info.redis.username = username;
+        connection_info.redis.password = password;
+        let client = super::Client::open(connection_info)?;
+
+        let mut conn = client.get_connection()?;
+        if read_from_replicas {
+            // If READONLY is sent to primary nodes, it will have no effect
+            cmd("READONLY").query(&mut conn)?;
+        }
+        Ok(conn)
+    }
+
     fn get_connection<'a>(
         &self,
         connections: &'a mut HashMap<String, Connection>,
@@ -721,28 +743,6 @@ impl ConnectionLike for ClusterConnection {
         }
         true
     }
-}
-
-fn connect<T: IntoConnectionInfo>(
-    info: T,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
-) -> RedisResult<Connection>
-where
-    T: std::fmt::Debug,
-{
-    let mut connection_info = info.into_connection_info()?;
-    connection_info.redis.username = username;
-    connection_info.redis.password = password;
-    let client = super::Client::open(connection_info)?;
-
-    let mut con = client.get_connection()?;
-    if read_from_replicas {
-        // If READONLY is sent to primary nodes, it will have no effect
-        cmd("READONLY").query(&mut con)?;
-    }
-    Ok(con)
 }
 
 fn get_random_connection<'a>(
