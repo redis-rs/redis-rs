@@ -323,12 +323,16 @@ impl ClusterConnection {
         }
     }
 
-    fn connect<T: IntoConnectionInfo>(&self, info: T) -> RedisResult<Connection> {
-        let mut connection_info = info.into_connection_info()?;
-        connection_info.redis.username = self.username.clone();
-        connection_info.redis.password = self.password.clone();
+    fn connect(&self, node: &str) -> RedisResult<Connection> {
+        let params = ClusterParams {
+            password: self.password.clone(),
+            username: self.username.clone(),
+            tls_mode: self.tls_mode,
+            ..Default::default()
+        };
+        let info = get_connection_info(node, params)?;
 
-        let mut conn = connect(&connection_info, None)?;
+        let mut conn = connect(&info, None)?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
