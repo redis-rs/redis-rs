@@ -99,15 +99,8 @@ impl ClusterConnection {
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
     ) -> RedisResult<ClusterConnection> {
-        let connections = Self::create_initial_connections(
-            &initial_nodes,
-            cluster_params.read_from_replicas,
-            cluster_params.username.clone(),
-            cluster_params.password.clone(),
-        )?;
-
         let connection = ClusterConnection {
-            connections: RefCell::new(connections),
+            connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             read_from_replicas: cluster_params.read_from_replicas,
@@ -136,6 +129,7 @@ impl ClusterConnection {
             tls: None,
             initial_nodes: initial_nodes.to_vec(),
         };
+        connection.create_initial_connections()?;
         connection.refresh_slots()?;
 
         Ok(connection)
@@ -552,16 +546,7 @@ impl ClusterConnection {
                             continue;
                         }
                     } else if *self.auto_reconnect.borrow() && err.is_io_error() {
-                        let new_connections = Self::create_initial_connections(
-                            &self.initial_nodes,
-                            self.read_from_replicas,
-                            self.username.clone(),
-                            self.password.clone(),
-                        )?;
-                        {
-                            let mut connections = self.connections.borrow_mut();
-                            *connections = new_connections;
-                        }
+                        self.create_initial_connections()?;
                         self.refresh_slots()?;
                         excludes.clear();
                         continue;
