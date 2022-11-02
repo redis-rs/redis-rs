@@ -149,7 +149,7 @@ impl ClusterClient {
     /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
     /// usernames, an error is returned.
     pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).build()
+        Self::builder(initial_nodes).build()
     }
 
     /// Creates a [`ClusterClientBuilder`] with the the provided initial_nodes.
@@ -170,7 +170,7 @@ impl ClusterClient {
     /// Use `new()`.
     #[deprecated(since = "0.22.0", note = "Use new()")]
     pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClient::new(initial_nodes)
+        Self::new(initial_nodes)
     }
 }
 
