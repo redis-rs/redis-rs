@@ -191,20 +191,9 @@ impl ClusterConnection {
         let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
         for info in self.initial_nodes.iter() {
-            let addr = match info.addr {
-                ConnectionAddr::Tcp(ref host, port) => format!("redis://{host}:{port}"),
-                ConnectionAddr::TcpTls {
-                    ref host,
-                    port,
-                    insecure,
-                } => {
-                    let tls_mode = TlsMode::from_insecure_flag(insecure);
-                    build_connection_string(host, Some(port), Some(tls_mode))
-                }
-                _ => panic!("No reach."),
-            };
+            let addr = info.addr.to_string();
 
-            if let Ok(mut conn) = self.connect(info.clone()) {
+            if let Ok(mut conn) = self.connect(&addr) {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
                     break;
@@ -256,7 +245,7 @@ impl ClusterConnection {
                     }
                 }
 
-                if let Ok(mut conn) = self.connect(addr.as_ref()) {
+                if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
                         conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
                         conn.set_write_timeout(*self.write_timeout.borrow())
