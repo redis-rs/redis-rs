@@ -227,7 +227,7 @@ impl ClusterConnection {
                 _ => panic!("No reach."),
             };
 
-            if let Ok(mut conn) = connect(
+            if let Ok(mut conn) = Self::connect(
                 info.clone(),
                 read_from_replicas,
                 username.clone(),
@@ -281,7 +281,7 @@ impl ClusterConnection {
                     }
                 }
 
-                if let Ok(mut conn) = connect(
+                if let Ok(mut conn) = Self::connect(
                     addr.as_ref(),
                     self.read_from_replicas,
                     self.username.clone(),
@@ -410,7 +410,7 @@ impl ClusterConnection {
         } else {
             // Create new connection.
             // TODO: error handling
-            let conn = connect(
+            let conn = Self::connect(
                 addr,
                 self.read_from_replicas,
                 self.username.clone(),
