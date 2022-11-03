@@ -122,7 +122,7 @@ impl RedisCluster {
                             cmd.arg("--tls-replication").arg("yes");
                         }
                     }
-                    cmd.current_dir(&tempdir.path());
+                    cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{}", port));
                     dbg!(&cmd);
