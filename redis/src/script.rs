@@ -86,6 +86,23 @@ impl Script {
         }
         .invoke(con)
     }
+
+    /// Asynchronously invokes the script without arguments.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn invoke_async<C, T>(&self, con: &mut C) -> RedisResult<T>
+    where
+        C: crate::aio::ConnectionLike,
+        T: FromRedisValue,
+    {
+        ScriptInvocation {
+            script: self,
+            args: vec![],
+            keys: vec![],
+        }
+        .invoke_async(con)
+        .await
+    }
 }
 
 /// Represents a prepared script call.
