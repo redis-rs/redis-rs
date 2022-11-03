@@ -1,4 +1,4 @@
-use crate::cluster::ClusterConnection;
+use crate::cluster::{ClusterConnection, TlsMode};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 
@@ -8,6 +8,7 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
+    pub(crate) tls_mode: Option<TlsMode>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -17,7 +18,7 @@ pub struct ClusterClientBuilder {
 }
 
 impl ClusterClientBuilder {
-    /// Creates a new `ClusterClientBuilder` with the the provided initial_nodes.
+    /// Creates a new `ClusterClientBuilder` with the provided initial_nodes.
     ///
     /// This is the same as `ClusterClient::builder(initial_nodes)`.
     pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
@@ -30,7 +31,7 @@ impl ClusterClientBuilder {
         }
     }
 
-    /// Creates a new [`ClusterClient`] with the parameters.
+    /// Creates a new [`ClusterClient`] from the parameters.
     ///
     /// This does not create connections to the Redis Cluster, but only performs some basic checks
     /// on the initial nodes' URLs and passwords/usernames.
@@ -65,6 +66,19 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
+        if cluster_params.tls_mode.is_none() {
+            cluster_params.tls_mode = match first_node.addr {
+                ConnectionAddr::TcpTls {
+                    host: _,
+                    port: _,
+                    insecure,
+                } => Some(match insecure {
+                    false => TlsMode::Secure,
+                    true => TlsMode::Insecure,
+                }),
+                _ => None,
+            };
+        }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for node in initial_nodes {
@@ -96,21 +110,30 @@ impl ClusterClientBuilder {
         })
     }
 
-    /// Sets password for new ClusterClient.
+    /// Sets password for the new ClusterClient.
     pub fn password(mut self, password: String) -> ClusterClientBuilder {
         self.cluster_params.password = Some(password);
         self
     }
 
-    /// Sets username for new ClusterClient.
+    /// Sets username for the new ClusterClient.
     pub fn username(mut self, username: String) -> ClusterClientBuilder {
         self.cluster_params.username = Some(username);
         self
     }
 
-    /// Enables read from replicas for new ClusterClient (default is false).
+    /// Sets TLS mode for the new ClusterClient.
     ///
-    /// If True, then read queries will go to the replica nodes & write queries will go to the
+    /// It is extracted from the first node of initial_nodes if not set.
+    #[cfg(feature = "tls")]
+    pub fn tls_mode(mut self, tls_mode: TlsMode) -> ClusterClientBuilder {
+        self.cluster_params.tls_mode = Some(tls_mode);
+        self
+    }
+
+    /// Enables reading from replicas for all new connections (default is disabled).
+    ///
+    /// If enabled, then read queries will go to the replica nodes & write queries will go to the
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.cluster_params.read_from_replicas = true;
@@ -149,7 +172,7 @@ impl ClusterClient {
     /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
     /// usernames, an error is returned.
     pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClientBuilder::new(initial_nodes).build()
+        Self::builder(initial_nodes).build()
     }
 
     /// Creates a [`ClusterClientBuilder`] with the the provided initial_nodes.
@@ -170,7 +193,7 @@ impl ClusterClient {
     /// Use `new()`.
     #[deprecated(since = "0.22.0", note = "Use new()")]
     pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        ClusterClient::new(initial_nodes)
+        Self::new(initial_nodes)
     }
 }
 
