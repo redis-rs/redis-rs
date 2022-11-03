@@ -191,7 +191,7 @@ impl RedisServer {
                     .arg("--port")
                     .arg("0")
                     .arg("--unixsocket")
-                    .arg(&path);
+                    .arg(path);
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: Some(tempdir),
@@ -209,7 +209,7 @@ impl RedisServer {
         let _ = self.process.kill();
         let _ = self.process.wait();
         if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
-            fs::remove_file(&path).ok();
+            fs::remove_file(path).ok();
         }
     }
 }
