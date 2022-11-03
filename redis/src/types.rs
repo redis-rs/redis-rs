@@ -897,11 +897,11 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(*self, out)
+        ToRedisArgs::make_arg_vec(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(*self)
+        ToRedisArgs::is_single_vec_arg(self)
     }
 }
 
