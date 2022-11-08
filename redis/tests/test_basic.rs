@@ -1124,7 +1124,7 @@ fn test_object_commands() {
         "int"
     );
 
-    assert_eq!(con.object_idletime::<_, i32>("object_key_str").unwrap(), 0);
+    assert!(con.object_idletime::<_, i32>("object_key_str").unwrap() <= 1);
     assert_eq!(con.object_refcount::<_, i32>("object_key_str").unwrap(), 1);
 
     // Needed for OBJECT FREQ and can't be set before object_idletime
