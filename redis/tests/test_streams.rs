@@ -362,6 +362,42 @@ fn test_xadd_maxlen_map() {
 }
 
 #[test]
+fn test_xread_options_deleted_pel_entry() {
+    // Test xread_options behaviour with deleted entry
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    assert!(result.is_ok());
+    let _: RedisResult<String> =
+        con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h1", "w1")]);
+    // read the pending items for this key & group
+    let result: StreamReadReply = con
+        .xread_options(
+            &["k1"],
+            &[">"],
+            &StreamReadOptions::default().group("g1", "c1"),
+        )
+        .unwrap();
+
+    let _: RedisResult<String> =
+        con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h2", "w2")]);
+    let result_deleted_entry: StreamReadReply = con
+        .xread_options(
+            &["k1"],
+            &["0"],
+            &StreamReadOptions::default().group("g1", "c1"),
+        )
+        .unwrap();
+    assert_eq!(
+        result.keys[0].ids.len(),
+        result_deleted_entry.keys[0].ids.len()
+    );
+    assert_eq!(
+        result.keys[0].ids[0].id,
+        result_deleted_entry.keys[0].ids[0].id
+    );
+}
+#[test]
 fn test_xclaim() {
     // Tests the following commands....
     // xclaim
