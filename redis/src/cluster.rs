@@ -62,8 +62,6 @@ use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-type SlotMap = BTreeMap<u16, [String; 2]>;
-
 /// This is a connection of Redis cluster.
 pub struct ClusterConnection {
     initial_nodes: Vec<ConnectionInfo>,
@@ -76,22 +74,6 @@ pub struct ClusterConnection {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
-}
-
-#[derive(Clone, Copy)]
-enum TlsMode {
-    Secure,
-    Insecure,
-}
-
-impl TlsMode {
-    fn from_insecure_flag(insecure: bool) -> TlsMode {
-        if insecure {
-            TlsMode::Insecure
-        } else {
-            TlsMode::Secure
-        }
-    }
 }
 
 impl ClusterConnection {
@@ -651,49 +633,6 @@ impl ClusterConnection {
     }
 }
 
-trait MergeResults {
-    fn merge_results(_values: HashMap<&str, Self>) -> Self
-    where
-        Self: Sized;
-}
-
-impl MergeResults for Value {
-    fn merge_results(values: HashMap<&str, Value>) -> Value {
-        let mut items = vec![];
-        for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
-                Value::Data(addr.as_bytes().to_vec()),
-                value,
-            ]));
-        }
-        Value::Bulk(items)
-    }
-}
-
-impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
-        unreachable!("attempted to merge a pipeline. This should not happen");
-    }
-}
-
-#[derive(Debug)]
-struct NodeCmd {
-    // The original command indexes
-    indexes: Vec<usize>,
-    pipe: Vec<u8>,
-    addr: String,
-}
-
-impl NodeCmd {
-    fn new(a: String) -> NodeCmd {
-        NodeCmd {
-            indexes: vec![],
-            pipe: vec![],
-            addr: a,
-        }
-    }
-}
-
 impl ConnectionLike for ClusterConnection {
     fn supports_pipelining(&self) -> bool {
         false
@@ -742,6 +681,67 @@ impl ConnectionLike for ClusterConnection {
             }
         }
         true
+    }
+}
+
+trait MergeResults {
+    fn merge_results(_values: HashMap<&str, Self>) -> Self
+    where
+        Self: Sized;
+}
+
+impl MergeResults for Value {
+    fn merge_results(values: HashMap<&str, Value>) -> Value {
+        let mut items = vec![];
+        for (addr, value) in values.into_iter() {
+            items.push(Value::Bulk(vec![
+                Value::Data(addr.as_bytes().to_vec()),
+                value,
+            ]));
+        }
+        Value::Bulk(items)
+    }
+}
+
+impl MergeResults for Vec<Value> {
+    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+        unreachable!("attempted to merge a pipeline. This should not happen");
+    }
+}
+
+type SlotMap = BTreeMap<u16, [String; 2]>;
+
+#[derive(Debug)]
+struct NodeCmd {
+    // The original command indexes
+    indexes: Vec<usize>,
+    pipe: Vec<u8>,
+    addr: String,
+}
+
+impl NodeCmd {
+    fn new(a: String) -> NodeCmd {
+        NodeCmd {
+            indexes: vec![],
+            pipe: vec![],
+            addr: a,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TlsMode {
+    Secure,
+    Insecure,
+}
+
+impl TlsMode {
+    fn from_insecure_flag(insecure: bool) -> TlsMode {
+        if insecure {
+            TlsMode::Insecure
+        } else {
+            TlsMode::Secure
+        }
     }
 }
 
