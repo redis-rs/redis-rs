@@ -457,9 +457,9 @@ impl ClusterConnection {
                         let kind = err.kind();
 
                         if kind == ErrorKind::Ask {
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls_mode));
+                            redirected = err.redirect_node().map(|(node, _slot)| {
+                                build_connection_string(node, None, self.tls_mode)
+                            });
                             is_asking = true;
                         } else if kind == ErrorKind::Moved {
                             // Refresh slots.
@@ -467,9 +467,9 @@ impl ClusterConnection {
                             excludes.clear();
 
                             // Request again.
-                            redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| build_connection_string(node, None, self.tls_mode));
+                            redirected = err.redirect_node().map(|(node, _slot)| {
+                                build_connection_string(node, None, self.tls_mode)
+                            });
                             is_asking = false;
                             continue;
                         } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
