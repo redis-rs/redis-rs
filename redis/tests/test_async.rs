@@ -323,6 +323,7 @@ fn test_script() {
     // into Redis and when they need to be loaded in
     let script1 = redis::Script::new("return redis.call('SET', KEYS[1], ARGV[1])");
     let script2 = redis::Script::new("return redis.call('GET', KEYS[1])");
+    let script3 = redis::Script::new("return redis.call('KEYS', '*')");
 
     let ctx = TestContext::new();
 
@@ -335,6 +336,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "foo");
+        let keys: Vec<String> = script3.invoke_async(&mut con).await?;
+        assert_eq!(keys, ["key1"]);
         script1
             .key("key1")
             .arg("bar")
@@ -342,6 +345,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");
+        let keys: Vec<String> = script3.invoke_async(&mut con).await?;
+        assert_eq!(keys, ["key1"]);
         Ok::<_, RedisError>(())
     })
     .unwrap();
