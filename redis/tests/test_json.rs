@@ -235,7 +235,21 @@ fn test_json_clear() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"obj": {"a": 1i64, "b": 2i64}, "arr": [1i64, 2i64, 3i64], "str": "foo", "bool": true, "int": 42i64, "float": std::f64::consts::PI}));
+    let set_initial: RedisResult<bool> = con.json_set(
+        TEST_KEY,
+        "$",
+        &json!({
+            "obj": {
+                "a": 1i64,
+                "b": 2i64
+            },
+            "arr": [1i64, 2i64, 3i64],
+            "str": "foo",
+            "bool": true,
+            "int": 42i64,
+            "float": std::f64::consts::PI
+        }),
+    );
 
     assert_eq!(set_initial, Ok(true));
 
@@ -290,9 +304,17 @@ fn test_json_get() {
 
     assert_eq!(json_get, Ok("[3,null]".into()));
 
-    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, "..a $..b");
+    // This works but it is inconsistent in ordering
+    // multi-get return in an arbitrary order
+    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, vec!["..a", "$..b"]);
 
-    assert_eq!(json_get_multi, Ok("2".into()));
+    // assert_eq!(json_get_multi, Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into()));
+
+    if json_get_multi != Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into())
+        && json_get_multi != Ok("{\"..a\":[2,4],\"$..b\":[3,null]}".into())
+    {
+        panic!("test_error: incorrect response from json_get_multi");
+    }
 }
 
 #[test]
