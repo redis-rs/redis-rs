@@ -94,7 +94,8 @@ fn test_json_arr_index() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrindex_2: RedisResult<Value> = con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
+    let json_arrindex_2: RedisResult<Value> =
+        con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
 
     assert_eq!(json_arrindex_2, Ok(Bulk(vec![Int(1i64), Nil])));
 }
