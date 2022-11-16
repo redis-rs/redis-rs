@@ -325,6 +325,30 @@ implement_json_commands! {
         Ok::<_, RedisError>(cmd)
     }
 
+    /// Sets the JSON Value at `path` in `key` only if it is *NOT* already set
+    fn json_set_nx<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+        let mut cmd = cmd("JSON.SET");
+
+        cmd.arg(key)
+           .arg(path)
+           .arg(serde_json::to_string(value)?)
+           .arg("NX");
+
+        Ok::<_, RedisError>(cmd)
+    }
+
+        /// Sets the JSON Value at `path` in `key` only if it is already set
+        fn json_set_xx<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+            let mut cmd = cmd("JSON.SET");
+    
+            cmd.arg(key)
+               .arg(path)
+               .arg(serde_json::to_string(value)?)
+               .arg("XX");
+    
+            Ok::<_, RedisError>(cmd)
+        }
+
     /// Appends the `json-string` values to the string at `path`.
     fn json_str_append<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(key: K, path: P, value: V) {
         let mut cmd = cmd("JSON.STRAPPEND");

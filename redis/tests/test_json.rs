@@ -3,7 +3,7 @@
 use std::assert_eq;
 use std::collections::HashMap;
 
-use redis::JsonCommands;
+use redis::{JsonCommands, RedisResult};
 
 use redis::{
     ErrorKind, RedisError, RedisResult,
@@ -404,6 +404,62 @@ fn test_json_set() {
     let set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
 
     assert_eq!(set, Ok(true));
+}
+
+#[test]
+fn test_json_set_nx() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
+    let mut con = ctx.connection();
+
+    let initial_set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
+
+    // assert that the initial set succeeded
+    assert_eq!(initial_set, Ok(true));
+
+    let attempt_set: RedisResult<bool> = con.json_set_nx(TEST_KEY, "$", &json!({"key": "value2"}));
+
+    // assert that the second set didn't
+    // happen since the key is already set
+    assert_eq!(attempt_set, Ok(false));
+
+    let attempt_delete: RedisResult<bool> = con.del(TEST_KEY);
+
+    // assert that deletion succeeded
+    assert_eq!(attempt_delete, Ok(true));
+
+    let attempt_set_should_work: RedisResult<bool> =
+        con.json_set_nx(TEST_KEY, "$", &json!({"key": "value2"}));
+
+    // assert that the set attempt worked
+    // since the key is no longer set
+    assert_eq!(attempt_set_should_work, Ok(true));
+}
+
+#[test]
+fn test_json_set_xx() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
+    let mut con = ctx.connection();
+
+    let initial_set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
+
+    // assert that the initial set succeeded
+    assert_eq!(initial_set, Ok(true));
+
+    let attempt_set: RedisResult<bool> = con.json_set_xx(TEST_KEY, "$", &json!({"key": "value2"}));
+
+    // assert that the second set happens since it is already set
+    assert_eq!(attempt_set, Ok(true));
+
+    let attempt_delete: RedisResult<bool> = con.del(TEST_KEY);
+
+    // assert that deletion succeeded
+    assert_eq!(attempt_delete, Ok(true));
+
+    let attempt_set_should_work: RedisResult<bool> =
+        con.json_set_xx(TEST_KEY, "$", &json!({"key": "value2"}));
+
+    // assert that this set shouldn't happen since the key no longer exists
+    assert_eq!(attempt_set_should_work, Ok(false));
 }
 
 #[test]
