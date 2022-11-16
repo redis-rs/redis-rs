@@ -230,6 +230,7 @@ fn test_types_to_redis_args() {
     use redis::ToRedisArgs;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::collections::HashMap;
     use std::collections::HashSet;
 
     assert!(!5i32.to_redis_args().is_empty());
@@ -256,6 +257,14 @@ fn test_types_to_redis_args() {
         .iter()
         .cloned()
         .collect::<BTreeMap<_, _>>()
+        .to_redis_args()
+        .is_empty());
+
+    // this can also be used on something HMSET
+    assert!(![("a", 5), ("b", 6), ("C", 7)]
+        .iter()
+        .cloned()
+        .collect::<HashMap<_, _>>()
         .to_redis_args()
         .is_empty());
 }
