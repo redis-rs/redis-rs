@@ -1025,7 +1025,6 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
         W: ?Sized + RedisWrite,
     {
         for (key, value) in self.iter() {
-            // otherwise things like HMSET will simply NOT work
             assert!(key.is_single_arg() && value.is_single_arg());
 
             key.write_redis_args(out);
