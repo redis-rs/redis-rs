@@ -53,14 +53,26 @@ where
     }
 }
 
+const MAX_RECURSE_DEPTH: usize = 100;
+
 fn value<'a, I>(
+    count: Option<usize>,
 ) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
+    let count = count.unwrap_or(1);
+
     opaque!(any_send_sync_partial_state(any().then_partial(
         move |&mut b| {
+            if b == b'*' && count > MAX_RECURSE_DEPTH {
+                combine::unexpected_any("Maximum recursion depth exceeded").left()
+            } else {
+                combine::value(b).right()
+            }
+        })
+        .then_partial(move |&mut b| {
             let line = || {
                 recognize(take_until_bytes(&b"\r\n"[..]).with(take(2).map(|_| ()))).and_then(
                     |line: &[u8]| {
@@ -102,12 +114,12 @@ where
             };
 
             let bulk = || {
-                int().then_partial(|&mut length| {
+                int().then_partial(move |&mut length| {
                     if length < 0 {
                         combine::value(Value::Nil).map(Ok).left()
                     } else {
                         let length = length as usize;
-                        combine::count_min_max(length, length, value())
+                        combine::count_min_max(length, length, value(Some(count + 1)))
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
                             .right()
                     }
@@ -147,8 +159,8 @@ where
                 b'-' => error().map(Err),
                 b => combine::unexpected_any(combine::error::Token(b))
             )
-        }
-    )))
+        })
+    ))
 }
 
 #[cfg(feature = "aio")]
@@ -174,7 +186,7 @@ mod aio_support {
                 let buffer = &bytes[..];
                 let mut stream =
                     combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
-                match combine::stream::decode_tokio(value(), &mut stream, &mut self.state) {
+                match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
                         let err = err
@@ -227,7 +239,7 @@ mod aio_support {
     where
         R: AsyncRead + std::marker::Unpin,
     {
-        let result = combine::decode_tokio!(*decoder, *read, value(), |input, _| {
+        let result = combine::decode_tokio!(*decoder, *read, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)
         });
         match result {
@@ -285,7 +297,7 @@ impl Parser {
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
         let mut decoder = &mut self.decoder;
-        let result = combine::decode!(decoder, reader, value(), |input, _| {
+        let result = combine::decode!(decoder, reader, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)
         });
         match result {
