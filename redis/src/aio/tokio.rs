@@ -15,14 +15,14 @@ use tokio::{
     net::TcpStream as TcpStreamTokio,
 };
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::TlsConnector;
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "tls-rustls")]
 use crate::connection::create_rustls_config;
-#[cfg(feature = "rustls")]
+#[cfg(feature = "tls-rustls")]
 use std::{convert::TryInto, sync::Arc};
-#[cfg(feature = "rustls")]
+#[cfg(feature = "tls-rustls")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
@@ -102,7 +102,7 @@ impl RedisRuntime for Tokio {
             .map(Tokio::Tcp)?)
     }
 
-    #[cfg(all(feature = "tls", not(feature = "rustls")))]
+    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
@@ -124,7 +124,7 @@ impl RedisRuntime for Tokio {
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
 
-    #[cfg(feature = "rustls")]
+    #[cfg(feature = "tls-rustls")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
