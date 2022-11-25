@@ -331,6 +331,19 @@ impl From<rustls::client::InvalidDnsNameError> for RedisError {
     }
 }
 
+#[cfg(feature = "tls-rustls-native-roots")]
+impl From<webpki::Error> for RedisError {
+    fn from(err: webpki::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
 impl From<FromUtf8Error> for RedisError {
     fn from(_: FromUtf8Error) -> RedisError {
         RedisError {

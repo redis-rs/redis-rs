@@ -22,11 +22,17 @@ use std::os::unix::net::UnixStream;
 use native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "tls-rustls")]
-use rustls::{OwnedTrustAnchor, RootCertStore, StreamOwned};
+use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
 use std::{convert::TryInto, sync::Arc};
-#[cfg(feature = "tls-rustls")]
+
+#[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-native-roots")))]
+use rustls::OwnedTrustAnchor;
+#[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-native-roots")))]
 use webpki_roots::TLS_SERVER_ROOTS;
+
+#[cfg(feature = "tls-rustls-native-roots")]
+use rustls_native_certs::load_native_certs;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -667,6 +673,7 @@ impl ActualConnection {
 #[cfg(feature = "tls-rustls")]
 pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::ClientConfig> {
     let mut root_store = RootCertStore::empty();
+    #[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-native-roots")))]
     root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
             ta.subject,
@@ -674,6 +681,10 @@ pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::Client
             ta.name_constraints,
         )
     }));
+    #[cfg(feature = "tls-rustls-native-roots")]
+    for cert in load_native_certs()? {
+        root_store.add(&rustls::Certificate(cert.0))?;
+    }
 
     let config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()

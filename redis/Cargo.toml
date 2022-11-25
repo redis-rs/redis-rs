@@ -61,7 +61,9 @@ async-native-tls = { version = "0.4", optional = true }
 
 # Only needed for rustls
 rustls = { version = "0.20.4", optional = true }
+webpki = { version = "0.22.0", optional = true }
 webpki-roots = { version = "0.22.3", optional = true }
+rustls-native-certs = { version = "0.6.2", optional = true }
 tokio-rustls = { version = "0.23.3", optional = true }
 futures-rustls = { version = "0.22.2", optional = true }
 
@@ -85,6 +87,7 @@ script = ["sha1_smol"]
 tls-native-tls = ["native-tls"]
 tls-rustls = ["rustls", "webpki-roots"]
 tls-rustls-insecure = ["tls-rustls", "rustls/dangerous_configuration"]
+tls-rustls-native-roots = ["tls-rustls", "rustls-native-certs", "webpki"]
 async-std-comp = ["aio", "async-std"]
 async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
 async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
