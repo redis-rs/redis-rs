@@ -358,6 +358,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     let ca_serial = tempdir.path().join("ca.txt");
     let redis_crt = tempdir.path().join("redis.crt");
     let redis_key = tempdir.path().join("redis.key");
+    let ext_file = tempdir.path().join("openssl.cnf");
 
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         process::Command::new("openssl")
@@ -401,6 +402,10 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .wait()
         .expect("failed to create CA cert");
 
+    // Build x509v3 extensions file
+    fs::write(&ext_file, b"keyUsage = digitalSignature, keyEncipherment")
+        .expect("failed to create x509v3 extensions file");
+
     // Read redis key
     let mut key_cmd = process::Command::new("openssl")
         .arg("req")
@@ -429,6 +434,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg("-CAcreateserial")
         .arg("-days")
         .arg("365")
+        .arg("-extfile")
+        .arg(&ext_file)
         .arg("-out")
         .arg(&redis_crt)
         .stdin(key_cmd.stdout.take().expect("should have stdout"))
