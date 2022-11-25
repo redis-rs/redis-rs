@@ -3,9 +3,8 @@
 use std::assert_eq;
 use std::collections::HashMap;
 
-use redis::JsonCommands;
-
 use redis::{
+    JsonCommands,
     ErrorKind, RedisError, RedisResult,
     Value::{self, *},
 };
@@ -82,9 +81,9 @@ fn test_json_arr_index() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_arrindex: RedisResult<Value> = con.json_arr_index(TEST_KEY, "$..a", &2i64);
+    let json_arr_index: RedisResult<Value> = con.json_arr_index(TEST_KEY, "$..a", &2i64);
 
-    assert_eq!(json_arrindex, Ok(Bulk(vec![Int(1i64), Int(-1i64)])));
+    assert_eq!(json_arr_index, Ok(Bulk(vec![Int(1i64), Int(-1i64)])));
 
     let update_initial: RedisResult<bool> = con.json_set(
         TEST_KEY,
@@ -94,9 +93,9 @@ fn test_json_arr_index() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrindex_2: RedisResult<Value> = con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, 0, 0);
+    let json_arr_index_2: RedisResult<Value> = con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
 
-    assert_eq!(json_arrindex_2, Ok(Bulk(vec![Int(1i64), Nil])));
+    assert_eq!(json_arr_index_2, Ok(Bulk(vec![Int(1i64), Nil])));
 }
 
 #[test]
@@ -112,9 +111,9 @@ fn test_json_arr_insert() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_arrinsert: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
+    let json_arr_insert: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
 
-    assert_eq!(json_arrinsert, Ok(Bulk(vec![Int(2), Int(3)])));
+    assert_eq!(json_arr_insert, Ok(Bulk(vec![Int(2), Int(3)])));
 
     let update_initial: RedisResult<bool> = con.json_set(
         TEST_KEY,
@@ -124,9 +123,9 @@ fn test_json_arr_insert() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrinsert_2: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
+    let json_arr_insert_2: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
 
-    assert_eq!(json_arrinsert_2, Ok(Bulk(vec![Int(5), Nil])));
+    assert_eq!(json_arr_insert_2, Ok(Bulk(vec![Int(5), Nil])));
 }
 
 #[test]
@@ -142,9 +141,9 @@ fn test_json_arr_len() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_arrlen: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
+    let json_arr_len: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
 
-    assert_eq!(json_arrlen, Ok(Bulk(vec![Int(1), Int(2)])));
+    assert_eq!(json_arr_len, Ok(Bulk(vec![Int(1), Int(2)])));
 
     let update_initial: RedisResult<bool> = con.json_set(
         TEST_KEY,
@@ -154,9 +153,9 @@ fn test_json_arr_len() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrlen_2: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
+    let json_arr_len_2: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
 
-    assert_eq!(json_arrlen_2, Ok(Bulk(vec![Int(4), Nil])));
+    assert_eq!(json_arr_len_2, Ok(Bulk(vec![Int(4), Nil])));
 }
 
 #[test]
@@ -172,10 +171,10 @@ fn test_json_arr_pop() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_arrpop: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
+    let json_arr_pop: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
 
     assert_eq!(
-        json_arrpop,
+        json_arr_pop,
         Ok(Bulk(vec![
             // convert string 3 to its ascii value as bytes
             Data(Vec::from("3".as_bytes())),
@@ -191,10 +190,10 @@ fn test_json_arr_pop() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrpop_2: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
+    let json_arr_pop_2: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
 
     assert_eq!(
-        json_arrpop_2,
+        json_arr_pop_2,
         Ok(Bulk(vec![Data(Vec::from("\"bar\"".as_bytes())), Nil, Nil]))
     );
 }
@@ -212,9 +211,9 @@ fn test_json_arr_trim() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_arrtrim: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
+    let json_arr_trim: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
 
-    assert_eq!(json_arrtrim, Ok(Bulk(vec![Int(0), Int(1)])));
+    assert_eq!(json_arr_trim, Ok(Bulk(vec![Int(0), Int(1)])));
 
     let update_initial: RedisResult<bool> = con.json_set(
         TEST_KEY,
@@ -224,9 +223,9 @@ fn test_json_arr_trim() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrtrim_2: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
+    let json_arr_trim_2: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
 
-    assert_eq!(json_arrtrim_2, Ok(Bulk(vec![Int(1), Nil])));
+    assert_eq!(json_arr_trim_2, Ok(Bulk(vec![Int(1), Nil])));
 }
 
 #[test]
@@ -313,7 +312,7 @@ fn test_json_mget() {
     assert_eq!(set_initial_a, Ok(true));
     assert_eq!(set_initial_b, Ok(true));
 
-    let json_mget: RedisResult<Value> = con.json_mget(
+    let json_mget: RedisResult<Value> = con.json_get(
         vec![format!("{}-a", TEST_KEY), format!("{}-b", TEST_KEY)],
         "$..a",
     );
@@ -328,7 +327,7 @@ fn test_json_mget() {
 }
 
 #[test]
-fn test_json_numincrby() {
+fn test_json_num_incr_by() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -340,19 +339,19 @@ fn test_json_numincrby() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_numincrby_a: RedisResult<String> = con.json_numincrby(TEST_KEY, "$.a", 2);
+    let json_num_incr_by_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
 
     // cannot increment a string
-    assert_eq!(json_numincrby_a, Ok("[null]".into()));
+    assert_eq!(json_num_incr_by_a, Ok("[null]".into()));
 
-    let json_numincrby_b: RedisResult<String> = con.json_numincrby(TEST_KEY, "$..a", 2);
+    let json_num_incr_by_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
 
     // however numbers can be incremented
-    assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+    assert_eq!(json_num_incr_by_b, Ok("[null,4,7,null]".into()));
 }
 
 #[test]
-fn test_json_objkeys() {
+fn test_json_obj_keys() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -364,10 +363,10 @@ fn test_json_objkeys() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_objkeys: RedisResult<Value> = con.json_objkeys(TEST_KEY, "$..a");
+    let json_obj_keys: RedisResult<Value> = con.json_obj_keys(TEST_KEY, "$..a");
 
     assert_eq!(
-        json_objkeys,
+        json_obj_keys,
         Ok(Bulk(vec![
             Nil,
             Bulk(vec![
@@ -379,7 +378,7 @@ fn test_json_objkeys() {
 }
 
 #[test]
-fn test_json_objlen() {
+fn test_json_obj_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -391,9 +390,9 @@ fn test_json_objlen() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_objlen: RedisResult<Value> = con.json_objlen(TEST_KEY, "$..a");
+    let json_obj_len: RedisResult<Value> = con.json_obj_len(TEST_KEY, "$..a");
 
-    assert_eq!(json_objlen, Ok(Bulk(vec![Nil, Int(2)])));
+    assert_eq!(json_obj_len, Ok(Bulk(vec![Nil, Int(2)])));
 }
 
 #[test]
@@ -407,7 +406,7 @@ fn test_json_set() {
 }
 
 #[test]
-fn test_json_strappend() {
+fn test_json_str_append() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -419,9 +418,9 @@ fn test_json_strappend() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_strappend: RedisResult<Value> = con.json_strappend(TEST_KEY, "$..a", "\"baz\"");
+    let json_str_append: RedisResult<Value> = con.json_str_append(TEST_KEY, "$..a", "\"baz\"");
 
-    assert_eq!(json_strappend, Ok(Bulk(vec![Int(6), Int(8), Nil])));
+    assert_eq!(json_str_append, Ok(Bulk(vec![Int(6), Int(8), Nil])));
 
     let json_get_check: RedisResult<String> = con.json_get(TEST_KEY, "$");
 
@@ -432,7 +431,7 @@ fn test_json_strappend() {
 }
 
 #[test]
-fn test_json_strlen() {
+fn test_json_str_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -444,9 +443,9 @@ fn test_json_strlen() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_strlen: RedisResult<Value> = con.json_strlen(TEST_KEY, "$..a");
+    let json_str_len: RedisResult<Value> = con.json_str_len(TEST_KEY, "$..a");
 
-    assert_eq!(json_strlen, Ok(Bulk(vec![Int(3), Int(5), Nil])));
+    assert_eq!(json_str_len, Ok(Bulk(vec![Int(3), Int(5), Nil])));
 }
 
 #[test]

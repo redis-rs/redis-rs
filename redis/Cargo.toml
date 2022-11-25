@@ -94,6 +94,7 @@ partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
 tempfile = "3.2"
+serde = { version = "1.0.82", features = ["derive"] }
 
 [[test]]
 name = "test_async"
