@@ -63,6 +63,7 @@ async-native-tls = { version = "0.4", optional = true }
 rustls = { version = "0.20.4", optional = true }
 webpki-roots = { version = "0.22.3", optional = true }
 tokio-rustls = { version = "0.23.3", optional = true }
+futures-rustls = { version = "0.22.2", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.82", optional = true }
@@ -86,6 +87,7 @@ tls-rustls = ["rustls", "webpki-roots"]
 tls-rustls-insecure = ["tls-rustls", "rustls/dangerous_configuration"]
 async-std-comp = ["aio", "async-std"]
 async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
+async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls-native-tls", "tokio-native-tls"]
 tokio-rustls-comp = ["tls-rustls", "tokio-rustls"]
