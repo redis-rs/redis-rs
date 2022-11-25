@@ -289,7 +289,7 @@ fn test_json_get() {
     assert_eq!(json_get, Ok("[3,null]".into()));
 
     let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, vec!["..a", "$..b"]);
-    
+
     if json_get_multi != Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into())
         && json_get_multi != Ok("{\"..a\":[2,4],\"$..b\":[3,null]}".into())
     {
