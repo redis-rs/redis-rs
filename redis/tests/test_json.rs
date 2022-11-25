@@ -4,8 +4,7 @@ use std::assert_eq;
 use std::collections::HashMap;
 
 use redis::{
-    JsonCommands,
-    ErrorKind, RedisError, RedisResult,
+    ErrorKind, JsonCommands, RedisError, RedisResult,
     Value::{self, *},
 };
 
@@ -93,7 +92,8 @@ fn test_json_arr_index() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arr_index_2: RedisResult<Value> = con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
+    let json_arr_index_2: RedisResult<Value> =
+        con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
 
     assert_eq!(json_arr_index_2, Ok(Bulk(vec![Int(1i64), Nil])));
 }
