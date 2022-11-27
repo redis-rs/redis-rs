@@ -135,7 +135,7 @@ fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> 
 ## Development
 
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
-you must set the following envornment variables before running the test script
+you must set the following environment variables before running the test script
 
 - `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Usually called `librejson.so`).
 
