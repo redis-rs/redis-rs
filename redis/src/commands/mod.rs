@@ -1289,6 +1289,38 @@ implement_commands! {
     }
 
 
+    /// Add a stream message by `key`, with options. Use `*` as the `id` for the current timestamp.
+    ///
+    /// ```text
+    /// XADD key [NOMKSTREAM] [<MAXLEN | MINID> [= | ~] threshold <ID or *> [field value] [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_options<K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(
+        key: K,
+        id: ID,
+        items: &'a [(F, V)],
+        options: streams::StreamAddOptions
+    ) {
+        cmd("XADD").arg(key).arg(options).arg(id).arg(items)
+    }
+
+    /// BTreeMap variant for adding a stream message by `key`, with options.
+    /// Use `*` as the `id` for the current timestamp.
+    ///
+    /// ```text
+    /// XADD key [NOMKSTREAM] [<MAXLEN | MINID> [= | ~] threshold <ID or *> [rust BTreeMap] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_map_options<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
+        key: K,
+        id: ID,
+        map: BTM,
+        options: streams::StreamAddOptions
+    ) {
+        cmd("XADD").arg(key).arg(options).arg(id).arg(map)
+    }
 
     /// Claim pending, unacked messages, after some period of time,
     /// currently checked out by another consumer.
