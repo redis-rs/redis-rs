@@ -317,7 +317,7 @@ struct TcpConnection {
 }
 
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-struct TcpTlsConnection {
+struct TcpNativeTlsConnection {
     reader: TlsStream<TcpStream>,
     open: bool,
 }
@@ -337,7 +337,7 @@ struct UnixConnection {
 enum ActualConnection {
     Tcp(TcpConnection),
     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-    TcpTls(Box<TcpTlsConnection>),
+    TcpNativeTls(Box<TcpNativeTlsConnection>),
     #[cfg(feature = "tls-rustls")]
     TcpRustls(Box<TcpRustlsConnection>),
     #[cfg(unix)]
@@ -482,7 +482,7 @@ impl ActualConnection {
                         }
                     }
                 };
-                ActualConnection::TcpTls(Box::new(TcpTlsConnection {
+                ActualConnection::TcpNativeTls(Box::new(TcpNativeTlsConnection {
                     reader: tls,
                     open: true,
                 }))
@@ -570,7 +570,7 @@ impl ActualConnection {
                 }
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpTls(ref mut connection) => {
+            ActualConnection::TcpNativeTls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
@@ -617,7 +617,7 @@ impl ActualConnection {
                 reader.set_write_timeout(dur)?;
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+            ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
             }
@@ -640,7 +640,7 @@ impl ActualConnection {
                 reader.set_read_timeout(dur)?;
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+            ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
             }
@@ -661,7 +661,7 @@ impl ActualConnection {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpTls(ref boxed_tls_connection) => boxed_tls_connection.open,
+            ActualConnection::TcpNativeTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(unix)]
@@ -965,7 +965,7 @@ impl Connection {
                 self.parser.parse_value(reader)
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpTls(ref mut boxed_tls_connection) => {
+            ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 self.parser.parse_value(reader)
             }
@@ -992,7 +992,7 @@ impl Connection {
                         connection.open = false;
                     }
                     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-                    ActualConnection::TcpTls(ref mut connection) => {
+                    ActualConnection::TcpNativeTls(ref mut connection) => {
                         let _ = connection.reader.shutdown();
                         connection.open = false;
                     }
