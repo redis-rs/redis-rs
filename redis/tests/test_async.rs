@@ -602,3 +602,66 @@ mod pub_sub {
         .unwrap();
     }
 }
+
+#[test]
+fn aborted_requests_are_discoverable() {
+    use redis::RedisError;
+
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut conn = ctx.async_connection().await?;
+        assert!(!conn.is_busy());
+
+        conn.set("pong", "this is not a pong").await?;
+        assert!(!conn.is_busy());
+
+        {
+            let pinned_future = Box::pin(conn.get::<&str, ()>("pong"));
+            // Now move the request 1 state forward
+            let _poll_result = futures::poll!(pinned_future);
+            // And drop this request to get pong
+        }
+        // Connection was left busy reading. While it could handle this
+        // by tracking the things it still needs to consume across
+        // subsequent uses, this lets bb8 decide to eagerly drop abandoned
+        // connections rather than reusing them.
+        assert!(conn.is_busy());
+
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn dirty_connections_block_illegal_reuse() {
+    use redis::RedisError;
+
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut conn = ctx.async_connection().await?;
+        assert!(!conn.is_busy());
+
+        conn.set("pong", "this is pong").await?;
+        conn.set("not pong", "this is not pong").await?;
+        assert!(!conn.is_busy());
+
+        {
+            let pinned_future = Box::pin(conn.get::<&str, ()>("not pong"));
+            // Now move the request 1 state forward
+            let _poll_result = futures::poll!(pinned_future);
+            // And drop this request to get pong
+        }
+        assert!(conn.is_busy());
+        match conn.get::<&str, String>("pong").await {
+            Ok(bad) => {
+                panic!("This connection is busy. It cannot return, but it returned: {bad}")
+            },
+            Err(e) => {
+                assert_eq!(ErrorKind::IoError, e.kind())
+            }
+        };
+
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}

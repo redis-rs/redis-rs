@@ -469,7 +469,10 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        match self.query::<()>(con) {
+            Ok(_) => (),
+            Err(e) => panic!("Error during execute: {e:?}")
+        }
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)

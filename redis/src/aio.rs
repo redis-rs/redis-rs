@@ -248,6 +248,25 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     // This flag is checked when attempting to send a command, and if it's raised, we attempt to
     // exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    // A description of this connection's state.
+    //
+    // This is important for aborted Futures, which can leave the connection in a Sending
+    // or Receiving state. If you reuse a connection in such a state you may receive responses
+    // from previous interactions!
+    send_state: ConnectionSendState,
+}
+
+#[derive(PartialEq)]
+enum ConnectionSendState {
+    /// It's not doing anything of note. You can make requests to Redis with it.
+    Quiescent,
+    /// It's busy sending to Redis. You should let it completely drain before interacting with it.
+    /// Note that after sending, Redis is likely to reply, so draining a send queue is insufficient
+    /// to return this connection to a quiescent state.
+    Sending,
+    /// It's busy receiving responses from Redis. You should let it completely drain before interacting with it.
+    Receiving,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -265,6 +284,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            send_state,
         } = self;
         Connection {
             con: f(con),
@@ -272,7 +292,20 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            send_state,
         }
+    }
+
+    /// Is this connection currently locked in an exchange with Redis?
+    ///
+    /// When a Future surrounding a Connection is dropped before completion,
+    /// the Connection may still be busy. If you are reading some large reply
+    /// and time out, the connection is not immediately reusable.
+    /// This is intended to help facilitate connection managers like bb8 know
+    /// when it is safe to reuse a connection and when it is better to
+    /// reconnect.
+    pub fn is_busy(&self) -> bool {
+        self.send_state != ConnectionSendState::Quiescent
     }
 }
 
@@ -289,6 +322,7 @@ where
             decoder: combine::stream::Decoder::new(),
             db: connection_info.db,
             pubsub: false,
+            send_state: ConnectionSendState::Quiescent,
         };
         authenticate(connection_info, &mut rv).await?;
         Ok(rv)
@@ -540,10 +574,25 @@ where
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
+
+            if self.send_state != ConnectionSendState::Quiescent {
+                return Err(RedisError::from((ErrorKind::IoError, "Your connection was leaked. You might read previous commands' output.")))
+            }
+
+
             self.buf.clear();
+            self.send_state = ConnectionSendState::Sending;
             cmd.write_packed_command(&mut self.buf);
+
+            // If this fails, we don't know whether Redis is going to send a
+            // reply. All we know is that the request may have been partially
+            // or fully sent. We can't say it is Quiescent.
             self.con.write_all(&self.buf).await?;
-            self.read_response().await
+            self.send_state = ConnectionSendState::Receiving;
+
+            let response = self.read_response().await;
+            self.send_state = ConnectionSendState::Quiescent;
+            response
         })
         .boxed()
     }
@@ -559,9 +608,15 @@ where
                 self.exit_pubsub().await?;
             }
 
+            if self.send_state != ConnectionSendState::Quiescent {
+                return Err(RedisError::from((ErrorKind::IoError, "Your connection was leaked. You might read previous commands' output.")))
+            }
+
             self.buf.clear();
+            self.send_state = ConnectionSendState::Sending;
             cmd.write_packed_pipeline(&mut self.buf);
             self.con.write_all(&self.buf).await?;
+            self.send_state = ConnectionSendState::Receiving;
 
             let mut first_err = None;
 
@@ -588,6 +643,7 @@ where
                     }
                 }
             }
+            self.send_state = ConnectionSendState::Quiescent;
 
             if let Some(err) = first_err {
                 Err(err)
