@@ -471,7 +471,7 @@ impl Cmd {
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
         match self.query::<()>(con) {
             Ok(_) => (),
-            Err(e) => panic!("Error during execute: {e:?}")
+            Err(e) => panic!("Error during execute: {e:?}"),
         }
     }
 

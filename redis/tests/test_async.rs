@@ -655,7 +655,7 @@ fn dirty_connections_block_illegal_reuse() {
         match conn.get::<&str, String>("pong").await {
             Ok(bad) => {
                 panic!("This connection is busy. It cannot return, but it returned: {bad}")
-            },
+            }
             Err(e) => {
                 assert_eq!(ErrorKind::IoError, e.kind())
             }

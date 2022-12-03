@@ -576,9 +576,11 @@ where
             }
 
             if self.send_state != ConnectionSendState::Quiescent {
-                return Err(RedisError::from((ErrorKind::IoError, "Your connection was leaked. You might read previous commands' output.")))
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Your connection was leaked. You might read previous commands' output.",
+                )));
             }
-
 
             self.buf.clear();
             self.send_state = ConnectionSendState::Sending;
@@ -609,7 +611,10 @@ where
             }
 
             if self.send_state != ConnectionSendState::Quiescent {
-                return Err(RedisError::from((ErrorKind::IoError, "Your connection was leaked. You might read previous commands' output.")))
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Your connection was leaked. You might read previous commands' output.",
+                )));
             }
 
             self.buf.clear();
