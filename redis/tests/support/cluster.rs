@@ -7,6 +7,9 @@ use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
+use redis::aio::ConnectionLike;
+use redis::cluster_async::Connect;
+use redis::ConnectionInfo;
 use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
@@ -228,6 +231,7 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
+    pub async_client: redis::cluster_async::Client,
 }
 
 impl TestClusterContext {
@@ -244,19 +248,40 @@ impl TestClusterContext {
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
         let cluster = RedisCluster::new(nodes, replicas);
-        let mut builder = redis::cluster::ClusterClientBuilder::new(
-            cluster
-                .iter_servers()
-                .map(RedisServer::connection_info)
-                .collect(),
-        );
+        let initial_nodes: Vec<ConnectionInfo> = cluster
+            .iter_servers()
+            .map(RedisServer::connection_info)
+            .collect();
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
         builder = initializer(builder);
+
         let client = builder.build().unwrap();
-        TestClusterContext { cluster, client }
+        let async_client = redis::cluster_async::Client::open(initial_nodes).unwrap();
+
+        TestClusterContext {
+            cluster,
+            client,
+            async_client,
+        }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
         self.client.get_connection().unwrap()
+    }
+
+    pub async fn async_connection(&self) -> redis::cluster_async::Connection {
+        self.async_client.get_connection().await.unwrap()
+    }
+
+    pub async fn async_generic_connection<
+        C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
+    >(
+        &self,
+    ) -> redis::cluster_async::Connection<C> {
+        self.async_client
+            .get_generic_connection::<C>()
+            .await
+            .unwrap()
     }
 
     pub fn wait_for_cluster_up(&self) {

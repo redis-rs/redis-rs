@@ -96,6 +96,10 @@ partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
 tempfile = "3.2"
+env_logger = "0.8"
+proptest = "0.10"
+once_cell = "1"
+anyhow = "1"
 
 [[test]]
 name = "test_async"
@@ -115,6 +119,14 @@ name = "test_acl"
 [[test]]
 name = "test_module_json"
 required-features = ["json", "serde/derive"]
+
+[[test]]
+name = "test_cluster_async"
+required-features = ["cluster-async", "tokio-comp"]
+
+[[test]]
+name = "mock_cluster_async"
+required-features = ["cluster-async", "tokio-comp"]
 
 [[bench]]
 name = "bench_basic"
