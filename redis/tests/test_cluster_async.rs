@@ -1,46 +1,24 @@
+#![cfg(feature = "cluster-async")]
+mod support;
 use std::{
     cell::Cell,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex, MutexGuard,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
-use {
-    futures::{prelude::*, stream},
-    once_cell::sync::Lazy,
-    proptest::proptest,
-    tokio::runtime::Runtime,
+use futures::prelude::*;
+use futures::stream;
+use once_cell::sync::Lazy;
+use proptest::proptest;
+use redis::{
+    aio::{ConnectionLike, MultiplexedConnection},
+    cluster_async::Connect,
+    cmd, AsyncCommands, Cmd, IntoConnectionInfo, RedisError, RedisFuture, RedisResult, Script,
+    Value,
 };
 
-use redis_cluster_async::{
-    redis::{
-        aio::{ConnectionLike, MultiplexedConnection},
-        cmd, AsyncCommands, Cmd, IntoConnectionInfo, RedisError, RedisFuture, RedisResult, Script,
-        Value,
-    },
-    Client, Connect,
-};
+use tokio::runtime::Runtime;
 
-const REDIS_URL: &str = "redis://127.0.0.1:7000/";
-
-pub struct RedisProcess;
-pub struct RedisLock(MutexGuard<'static, RedisProcess>);
-
-impl RedisProcess {
-    // Blocks until we have sole access.
-    pub fn lock() -> RedisLock {
-        static REDIS: Lazy<Mutex<RedisProcess>> = Lazy::new(|| Mutex::new(RedisProcess {}));
-
-        // If we panic in a test we don't want subsequent to fail because of a poisoned error
-        let redis_lock = REDIS
-            .lock()
-            .unwrap_or_else(|poison_error| poison_error.into_inner());
-        RedisLock(redis_lock)
-    }
-}
-
-// ----------------------------------------------------------------------------
+use crate::support::*;
 
 pub struct RuntimeEnv {
     pub redis: RedisEnv,
@@ -55,23 +33,37 @@ impl RuntimeEnv {
             .build()
             .unwrap();
         let redis = runtime.block_on(RedisEnv::new());
+
         Self { runtime, redis }
     }
 }
 pub struct RedisEnv {
-    _redis_lock: RedisLock,
     pub client: Client,
     nodes: Vec<redis::aio::MultiplexedConnection>,
+    // needed to ensure cluster doesn't shut down before tests
+    // have completed:
+    _context: TestClusterContext,
 }
 
 impl RedisEnv {
     pub async fn new() -> Self {
         let _ = env_logger::try_init();
 
-        let redis_lock = RedisProcess::lock();
+        let cluster_context = TestClusterContext::new(6, 1);
 
-        let redis_client = redis::Client::open(REDIS_URL)
-            .unwrap_or_else(|_| panic!("Failed to connect to '{}'", REDIS_URL));
+        let redis_url = format!(
+            "redis://{}",
+            cluster_context
+                .cluster
+                .iter_servers()
+                .collect::<Vec<_>>()
+                .get(0)
+                .unwrap()
+                .client_addr()
+        );
+
+        let redis_client = redis::Client::open(redis_url.clone())
+            .unwrap_or_else(|e| panic!("Failed to connect to '{}': {}", redis_url, e));
 
         let mut master_urls = Vec::new();
         let mut nodes = Vec::new();
@@ -128,7 +120,7 @@ impl RedisEnv {
         RedisEnv {
             client,
             nodes,
-            _redis_lock: redis_lock,
+            _context: cluster_context,
         }
     }
 
@@ -164,12 +156,12 @@ impl RedisEnv {
     }
 }
 
-#[tokio::test]
-async fn basic_cmd() {
-    let env = RedisEnv::new().await;
-    let client = env.client;
-    async {
-        let mut connection = client.get_connection().await?;
+#[test]
+fn basic_cmd() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
         let () = cmd("SET")
             .arg("test")
             .arg("test_data")
@@ -182,18 +174,17 @@ async fn basic_cmd() {
             .await?;
         assert_eq!(res, "test_data");
         Ok(())
-    }
-    .await
+    })
     .map_err(|err: RedisError| err)
-    .unwrap()
+    .unwrap();
 }
 
-#[tokio::test]
-async fn basic_eval() {
-    let env = RedisEnv::new().await;
-    let client = env.client;
-    async {
-        let mut connection = client.get_connection().await?;
+#[test]
+fn basic_eval() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
         let res: String = cmd("EVAL")
             .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
             .arg(1)
@@ -203,19 +194,18 @@ async fn basic_eval() {
             .await?;
         assert_eq!(res, "test");
         Ok(())
-    }
-    .await
+    })
     .map_err(|err: RedisError| err)
-    .unwrap()
+    .unwrap();
 }
 
 #[ignore] // TODO Handle running SCRIPT LOAD on all masters
-#[tokio::test]
-async fn basic_script() {
-    let env = RedisEnv::new().await;
-    let client = env.client;
-    async {
-        let mut connection = client.get_connection().await?;
+#[test]
+fn basic_script() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
         let res: String = Script::new(
             r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
         )
@@ -225,19 +215,18 @@ async fn basic_script() {
         .await?;
         assert_eq!(res, "test");
         Ok(())
-    }
-    .await
+    })
     .map_err(|err: RedisError| err)
-    .unwrap()
+    .unwrap();
 }
 
 #[ignore] // TODO Handle pipe where the keys do not all go to the same node
-#[tokio::test]
-async fn basic_pipe() {
-    let env = RedisEnv::new().await;
-    let client = env.client;
-    async {
-        let mut connection = client.get_connection().await?;
+#[test]
+fn basic_pipe() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
         let mut pipe = redis::pipe();
         pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
         pipe.add_command(cmd("SET").arg("test3").arg("test_data3").clone());
@@ -247,8 +236,7 @@ async fn basic_pipe() {
         let res: String = connection.get("test3").await?;
         assert_eq!(res, "test_data3");
         Ok(())
-    }
-    .await
+    })
     .map_err(|err: RedisError| err)
     .unwrap()
 }
@@ -272,7 +260,7 @@ fn basic_failover() {
 
 struct FailoverEnv {
     env: RuntimeEnv,
-    connection: redis_cluster_async::Connection,
+    connection: cluster_async::Connection,
 }
 
 impl FailoverEnv {
@@ -390,27 +378,27 @@ impl ConnectionLike for ErrorConnection {
     }
 }
 
-#[tokio::test]
-async fn error_in_inner_connection() -> Result<(), anyhow::Error> {
-    let _ = env_logger::try_init();
+#[test]
+fn error_in_inner_connection() {
+    let cluster = TestClusterContext::new(3, 0);
 
-    let env = RedisEnv::new().await;
-    let mut con = env
-        .client
-        .get_generic_connection::<ErrorConnection>()
-        .await?;
+    block_on_all(async move {
+        let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
 
-    ERROR.store(false, Ordering::SeqCst);
-    let r: Option<i32> = con.get("test").await?;
-    assert_eq!(r, None::<i32>);
+        ERROR.store(false, Ordering::SeqCst);
+        let r: Option<i32> = con.get("test").await?;
+        assert_eq!(r, None::<i32>);
 
-    ERROR.store(true, Ordering::SeqCst);
+        ERROR.store(true, Ordering::SeqCst);
 
-    let result: RedisResult<()> = con.get("test").await;
-    assert_eq!(
-        result,
-        Err(RedisError::from((redis::ErrorKind::Moved, "ERROR")))
-    );
+        let result: RedisResult<()> = con.get("test").await;
+        assert_eq!(
+            result,
+            Err(RedisError::from((redis::ErrorKind::Moved, "ERROR")))
+        );
 
-    Ok(())
+        Ok(())
+    })
+    .map_err(|err: RedisError| err)
+    .unwrap();
 }

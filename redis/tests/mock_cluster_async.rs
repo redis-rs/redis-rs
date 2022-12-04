@@ -6,12 +6,10 @@ use std::{
 use {
     futures::future,
     once_cell::sync::Lazy,
-    redis_cluster_async::{
-        redis::{
-            aio::ConnectionLike, cmd, parse_redis_value, IntoConnectionInfo, RedisFuture,
-            RedisResult, Value,
-        },
-        Client, Connect,
+    redis::{
+        aio::ConnectionLike,
+        cluster_async::{Client, Connect},
+        cmd, parse_redis_value, IntoConnectionInfo, RedisFuture, RedisResult, Value,
     },
     tokio::runtime::Runtime,
 };
@@ -98,8 +96,8 @@ impl ConnectionLike for MockConnection {
 
 pub struct MockEnv {
     runtime: Runtime,
-    client: redis_cluster_async::Client,
-    connection: redis_cluster_async::Connection<MockConnection>,
+    client: redis::cluster_async::Client,
+    connection: redis::cluster_async::Connection<MockConnection>,
     #[allow(unused)]
     handler: RemoveHandler,
 }
