@@ -68,52 +68,7 @@ impl RedisEnv {
         let mut master_urls = Vec::new();
         let mut nodes = Vec::new();
 
-        'outer: loop {
-            let node_infos = async {
-                let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
-                Self::cluster_info(&mut conn).await
-            }
-            .await
-            .expect("Unable to query nodes for information");
-            // Wait for the cluster to stabilize
-            if node_infos.iter().filter(|(_, master)| *master).count() == 3 {
-                let cleared_nodes = async {
-                    master_urls.clear();
-                    nodes.clear();
-                    // Clear databases:
-                    for (url, master) in node_infos {
-                        let redis_client = redis::Client::open(&url[..])
-                            .unwrap_or_else(|_| panic!("Failed to connect to '{}'", url));
-                        let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
 
-                        if master {
-                            master_urls.push(url.to_string());
-                            let () =
-                                tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                                    Ok(redis::Cmd::new()
-                                        .arg("FLUSHALL")
-                                        .query_async(&mut conn)
-                                        .await?)
-                                })
-                                .await
-                                .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
-                        }
-
-                        nodes.push(conn);
-                    }
-                    Ok::<_, anyhow::Error>(())
-                }
-                .await;
-                match cleared_nodes {
-                    Ok(()) => break 'outer,
-                    Err(err) => {
-                        // Failed to clear the databases, retry
-                        log::warn!("{}", err);
-                    }
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
 
         let client = Client::open(master_urls.iter().map(|s| &s[..]).collect()).unwrap();
 
@@ -287,6 +242,53 @@ fn test_failover(env: &mut FailoverEnv, requests: i32, value: i32) {
     let FailoverEnv { env, connection } = env;
 
     let nodes = env.redis.nodes.clone();
+
+    'outer: loop {
+        let node_infos = async {
+            let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
+            Self::cluster_info(&mut conn).await
+        }
+        .await
+        .expect("Unable to query nodes for information");
+        // Wait for the cluster to stabilize
+        if node_infos.iter().filter(|(_, master)| *master).count() == 3 {
+            let cleared_nodes = async {
+                master_urls.clear();
+                nodes.clear();
+                // Clear databases:
+                for (url, master) in node_infos {
+                    let redis_client = redis::Client::open(&url[..])
+                        .unwrap_or_else(|_| panic!("Failed to connect to '{}'", url));
+                    let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
+
+                    if master {
+                        master_urls.push(url.to_string());
+                        let () =
+                            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                                Ok(redis::Cmd::new()
+                                    .arg("FLUSHALL")
+                                    .query_async(&mut conn)
+                                    .await?)
+                            })
+                            .await
+                            .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
+                    }
+
+                    nodes.push(conn);
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            match cleared_nodes {
+                Ok(()) => break 'outer,
+                Err(err) => {
+                    // Failed to clear the databases, retry
+                    log::warn!("{}", err);
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 
     let test_future = async {
         (0..requests + 1)
