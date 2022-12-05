@@ -8,6 +8,16 @@ use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, Re
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+mod json;
+
+#[cfg(feature = "json")]
+pub use json::JsonCommands;
+
+#[cfg(all(feature = "json", feature = "aio"))]
+pub use json::JsonAsyncCommands;
+
 #[cfg(feature = "cluster")]
 use crate::cluster_pipeline::ClusterPipeline;
 
@@ -60,6 +70,11 @@ implement_commands! {
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
     fn get<K: ToRedisArgs>(key: K) {
         cmd(if key.is_single_arg() { "GET" } else { "MGET" }).arg(key)
+    }
+
+    /// Get values of keys
+    fn mget<K: ToRedisArgs>(key: K){
+        cmd("MGET").arg(key)
     }
 
     /// Gets all keys matching pattern
@@ -214,7 +229,7 @@ implement_commands! {
 
     /// Sets or clears the bit at offset in the string value stored at key.
     fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) {
-        cmd("SETBIT").arg(key).arg(offset).arg(if value {1} else {0})
+        cmd("SETBIT").arg(key).arg(offset).arg(i32::from(value))
     }
 
     /// Returns the bit value at offset in the string value stored at key.

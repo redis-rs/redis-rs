@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
+use std::vec;
 
 use crate::support::*;
 
@@ -1124,7 +1125,7 @@ fn test_object_commands() {
         "int"
     );
 
-    assert_eq!(con.object_idletime::<_, i32>("object_key_str").unwrap(), 0);
+    assert!(con.object_idletime::<_, i32>("object_key_str").unwrap() <= 1);
     assert_eq!(con.object_refcount::<_, i32>("object_key_str").unwrap(), 1);
 
     // Needed for OBJECT FREQ and can't be set before object_idletime
@@ -1139,4 +1140,24 @@ fn test_object_commands() {
     // since maxmemory-policy changed, freq should reset to 1 since we only called
     // get after that
     assert_eq!(con.object_freq::<_, i32>("object_key_str").unwrap(), 1);
+}
+
+#[test]
+fn test_mget() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con.set(1, "1").unwrap();
+    let data: Vec<String> = con.mget(&[1]).unwrap();
+    assert_eq!(data, vec!["1"]);
+
+    let _: () = con.set(2, "2").unwrap();
+    let data: Vec<String> = con.mget(&[1, 2]).unwrap();
+    assert_eq!(data, vec!["1", "2"]);
+
+    let data: Vec<Option<String>> = con.mget(&[4]).unwrap();
+    assert_eq!(data, vec![None]);
+
+    let data: Vec<Option<String>> = con.mget(&[2, 4]).unwrap();
+    assert_eq!(data, vec![Some("2".to_string()), None]);
 }

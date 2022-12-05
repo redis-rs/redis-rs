@@ -230,6 +230,38 @@ fn test_bytes() {
 }
 
 #[test]
+fn test_cstring() {
+    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+    use std::ffi::CString;
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(CString::new(content).unwrap()));
+
+    let v: RedisResult<CString> =
+        FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    assert_eq!(v, Ok(CString::new("garbage").unwrap()));
+
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Okay);
+    assert_eq!(v, Ok(CString::new("OK").unwrap()));
+
+    let v: RedisResult<CString> =
+        FromRedisValue::from_redis_value(&Value::Status("gar\0bage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Nil);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Int(0));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Int(42));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+}
+
+#[test]
 fn test_types_to_redis_args() {
     use redis::ToRedisArgs;
     use std::collections::BTreeMap;

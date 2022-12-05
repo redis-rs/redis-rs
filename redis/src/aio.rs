@@ -1,8 +1,9 @@
 //! Adds experimental async IO support to redis.
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::fmt;
+use std::fmt::Debug;
 use std::io;
-use std::mem;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
@@ -11,9 +12,10 @@ use std::task::{self, Poll};
 
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 
+#[cfg(feature = "tokio-comp")]
+use ::tokio::net::lookup_host;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::lookup_host,
     sync::{mpsc, oneshot},
 };
 
@@ -44,6 +46,9 @@ use crate::{from_redis_value, ToRedisArgs};
 #[cfg(feature = "async-std-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
+
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use ::async_std::net::ToSocketAddrs;
 
 /// Enables the tokio compatibility
 #[cfg(feature = "tokio-comp")]
@@ -490,7 +495,10 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 }
 
 async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
+    #[cfg(feature = "tokio-comp")]
     let mut socket_addrs = lookup_host((host, port)).await?;
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    let mut socket_addrs = (host, port).to_socket_addrs().await?;
     match socket_addrs.next() {
         Some(socket_addr) => Ok(socket_addr),
         None => Err(RedisError::from((
@@ -600,8 +608,22 @@ type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
 
 struct InFlight<O, E> {
     output: PipelineOutput<O, E>,
-    response_count: usize,
+    expected_response_count: usize,
+    current_response_count: usize,
     buffer: Vec<O>,
+    first_err: Option<E>,
+}
+
+impl<O, E> InFlight<O, E> {
+    fn new(output: PipelineOutput<O, E>, expected_response_count: usize) -> Self {
+        Self {
+            output,
+            expected_response_count,
+            current_response_count: 0,
+            buffer: Vec::new(),
+            first_err: None,
+        }
+    }
 }
 
 // A single message sent through the pipeline
@@ -620,6 +642,17 @@ struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
 impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
     fn clone(&self) -> Self {
         Pipeline(self.0.clone())
+    }
+}
+
+impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
+where
+    SinkItem: Debug,
+    I: Debug,
+    E: Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Pipeline").field(&self.0).finish()
     }
 }
 
@@ -666,26 +699,37 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
         let self_ = self.project();
-        let response = {
+
+        {
             let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
+
             match result {
                 Ok(item) => {
                     entry.buffer.push(item);
-                    if entry.response_count > entry.buffer.len() {
-                        // Need to gather more response values
-                        return;
-                    }
-                    Ok(mem::take(&mut entry.buffer))
                 }
-                // If we fail we must respond immediately
-                Err(err) => Err(err),
+                Err(err) => {
+                    if entry.first_err.is_none() {
+                        entry.first_err = Some(err);
+                    }
+                }
             }
-        };
+
+            entry.current_response_count += 1;
+            if entry.current_response_count < entry.expected_response_count {
+                // Need to gather more response values
+                return;
+            }
+        }
 
         let entry = self_.in_flight.pop_front().unwrap();
+        let response = match entry.first_err {
+            Some(err) => Err(err),
+            None => Ok(entry.buffer),
+        };
+
         // `Err` means that the receiver was dropped in which case it does not
         // care about the output and we can continue by just dropping the value
         // and sender
@@ -737,11 +781,9 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
-                self_.in_flight.push_back(InFlight {
-                    output,
-                    response_count,
-                    buffer: Vec::new(),
-                });
+                self_
+                    .in_flight
+                    .push_back(InFlight::new(output, response_count));
                 Ok(())
             }
             Err(err) => {
@@ -845,6 +887,15 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
+}
+
+impl Debug for MultiplexedConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiplexedConnection")
+            .field("pipeline", &self.pipeline)
+            .field("db", &self.db)
+            .finish()
+    }
 }
 
 impl MultiplexedConnection {

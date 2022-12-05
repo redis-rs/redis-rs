@@ -1,14 +1,15 @@
 [package]
 name = "redis"
-version = "0.21.5"
+version = "0.22.1"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
-edition = "2018"
-rust-version = "1.57"
+edition = "2021"
+rust-version = "1.59"
+readme = "../README.md"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -58,6 +59,10 @@ native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
 
+# Only needed for RedisJSON Support
+serde = { version = "1.0.82", optional = true }
+serde_json = { version = "1.0.82", optional = true }
+
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
 
@@ -66,6 +71,7 @@ default = ["acl", "streams", "geospatial", "script"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
 geospatial = []
+json = ["serde", "serde_json"]
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
 tls = ["native-tls"]
@@ -103,6 +109,10 @@ required-features = ["aio"]
 
 [[test]]
 name = "test_acl"
+
+[[test]]
+name = "test_json"
+required-features = ["json", "serde/derive"]
 
 [[bench]]
 name = "bench_basic"

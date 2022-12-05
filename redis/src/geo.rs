@@ -52,6 +52,7 @@ impl ToRedisArgs for Unit {
 ///
 /// * You may want to use either `f64` or `f32` if you want to perform mathematical operations.
 /// * To keep the raw value from Redis, use `String`.
+#[allow(clippy::derive_partial_eq_without_eq)] // allow f32/f64 here, which don't implement Eq
 #[derive(Debug, PartialEq)]
 pub struct Coord<T> {
     /// Longitude

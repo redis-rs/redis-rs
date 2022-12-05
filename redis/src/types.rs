@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::From;
 use std::default::Default;
 use std::error;
+use std::ffi::{CString, NulError};
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
@@ -12,6 +13,7 @@ use std::string::FromUtf8Error;
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -97,6 +99,10 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+
+    #[cfg(feature = "json")]
+    /// Error Serializing a struct to JSON form
+    Serialize,
 }
 
 /// Internal low-level redis value enum.
@@ -223,6 +229,17 @@ pub struct RedisError {
     repr: ErrorRepr,
 }
 
+#[cfg(feature = "json")]
+impl From<serde_json::Error> for RedisError {
+    fn from(serde_err: serde_json::Error) -> RedisError {
+        RedisError::from((
+            ErrorKind::Serialize,
+            "Serialization Error",
+            format!("{}", serde_err),
+        ))
+    }
+}
+
 #[derive(Debug)]
 enum ErrorRepr {
     WithDescription(ErrorKind, &'static str),
@@ -261,6 +278,18 @@ impl From<Utf8Error> for RedisError {
     fn from(_: Utf8Error) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescription(ErrorKind::TypeError, "Invalid UTF-8"),
+        }
+    }
+}
+
+impl From<NulError> for RedisError {
+    fn from(err: NulError) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::TypeError,
+                "Value contains interior nul terminator",
+                err.to_string(),
+            ),
         }
     }
 }
@@ -408,6 +437,8 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            #[cfg(feature = "json")]
+            ErrorKind::Serialize => "serializing",
         }
     }
 
@@ -548,7 +579,7 @@ pub type RedisResult<T> = Result<T, RedisError>;
 pub type RedisFuture<'a, T> = futures_util::future::BoxFuture<'a, RedisResult<T>>;
 
 /// An info dictionary type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InfoDict {
     map: HashMap<String, Value>,
 }
@@ -615,6 +646,14 @@ impl InfoDict {
     /// Checks if the dict is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+}
+
+impl Deref for InfoDict {
+    type Target = HashMap<String, Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
     }
 }
 
@@ -858,11 +897,11 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(*self, out)
+        ToRedisArgs::make_arg_vec(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(*self)
+        ToRedisArgs::is_single_vec_arg(self)
     }
 }
 
@@ -1144,6 +1183,17 @@ impl FromRedisValue for bool {
             }
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
+        }
+    }
+}
+
+impl FromRedisValue for CString {
+    fn from_redis_value(v: &Value) -> RedisResult<CString> {
+        match *v {
+            Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
+            Value::Okay => Ok(CString::new("OK")?),
+            Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
+            _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
 }

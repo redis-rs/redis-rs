@@ -11,6 +11,7 @@ use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
 
+use super::Module;
 use super::RedisServer;
 
 const LOCALHOST: &str = "127.0.0.1";
@@ -62,6 +63,10 @@ impl RedisCluster {
     }
 
     pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
+        RedisCluster::with_modules(nodes, replicas, &[])
+    }
+
+    pub fn with_modules(nodes: u16, replicas: u16, modules: &[Module]) -> RedisCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -88,6 +93,7 @@ impl RedisCluster {
             servers.push(RedisServer::new_with_addr(
                 ClusterType::build_addr(port),
                 tls_paths.clone(),
+                modules,
                 |cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
@@ -116,7 +122,7 @@ impl RedisCluster {
                             cmd.arg("--tls-replication").arg("yes");
                         }
                     }
-                    cmd.current_dir(&tempdir.path());
+                    cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{}", port));
                     dbg!(&cmd);
@@ -226,7 +232,7 @@ impl TestClusterContext {
                 .collect(),
         );
         builder = initializer(builder);
-        let client = builder.open().unwrap();
+        let client = builder.build().unwrap();
         TestClusterContext { cluster, client }
     }
 

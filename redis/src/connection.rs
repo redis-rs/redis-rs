@@ -41,7 +41,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 /// Not all connection addresses are supported on all platforms.  For instance
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
@@ -167,7 +167,24 @@ impl IntoConnectionInfo for String {
 
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let host = match url.host() {
-        Some(host) => host.to_string(),
+        Some(host) => {
+            // Here we manually match host's enum arms and call their to_string().
+            // Because url.host().to_string() will add `[` and `]` for ipv6:
+            // https://docs.rs/url/latest/src/url/host.rs.html#170
+            // And these brackets will break host.parse::<Ipv6Addr>() when
+            // `client.open()` - `ActualConnection::new()` - `addr.to_socket_addrs()`:
+            // https://doc.rust-lang.org/src/std/net/addr.rs.html#963
+            // https://doc.rust-lang.org/src/std/net/parser.rs.html#158
+            // IpAddr string with brackets can ONLY parse to SocketAddrV6:
+            // https://doc.rust-lang.org/src/std/net/parser.rs.html#255
+            // But if we call Ipv6Addr.to_string directly, it follows rfc5952 without brackets:
+            // https://doc.rust-lang.org/src/std/net/ip.rs.html#1755
+            match host {
+                url::Host::Domain(path) => path.to_string(),
+                url::Host::Ipv4(v4) => v4.to_string(),
+                url::Host::Ipv6(v6) => v6.to_string(),
+            }
+        }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
@@ -298,7 +315,7 @@ struct UnixConnection {
 enum ActualConnection {
     Tcp(TcpConnection),
     #[cfg(feature = "tls")]
-    TcpTls(TcpTlsConnection),
+    TcpTls(Box<TcpTlsConnection>),
     #[cfg(unix)]
     Unix(UnixConnection),
 }
@@ -333,13 +350,13 @@ impl ActualConnection {
     pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
-                let host: &str = &*host;
+                let addr = (host.as_str(), *port);
                 let tcp = match timeout {
-                    None => TcpStream::connect((host, *port))?,
+                    None => TcpStream::connect(addr)?,
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in (host, *port).to_socket_addrs()? {
+                        for addr in addr.to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
@@ -384,10 +401,10 @@ impl ActualConnection {
                 } else {
                     TlsConnector::new()?
                 };
-                let host: &str = &*host;
+                let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = TcpStream::connect((host, port))?;
+                        let tcp = TcpStream::connect(addr)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
@@ -398,7 +415,7 @@ impl ActualConnection {
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
-                        for addr in (host, port).to_socket_addrs()? {
+                        for addr in (host.as_str(), port).to_socket_addrs()? {
                             match TcpStream::connect_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
@@ -423,10 +440,10 @@ impl ActualConnection {
                         }
                     }
                 };
-                ActualConnection::TcpTls(TcpTlsConnection {
+                ActualConnection::TcpTls(Box::new(TcpTlsConnection {
                     reader: tls,
                     open: true,
-                })
+                }))
             }
             #[cfg(not(feature = "tls"))]
             ConnectionAddr::TcpTls { .. } => {
@@ -500,7 +517,8 @@ impl ActualConnection {
                 reader.set_write_timeout(dur)?;
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+                let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
             }
             #[cfg(unix)]
@@ -517,7 +535,8 @@ impl ActualConnection {
                 reader.set_read_timeout(dur)?;
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref reader, .. }) => {
+            ActualConnection::TcpTls(ref boxed_tls_connection) => {
+                let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
             }
             #[cfg(unix)]
@@ -532,7 +551,7 @@ impl ActualConnection {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { open, .. }) => open,
+            ActualConnection::TcpTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
@@ -790,7 +809,8 @@ impl Connection {
                 self.parser.parse_value(reader)
             }
             #[cfg(feature = "tls")]
-            ActualConnection::TcpTls(TcpTlsConnection { ref mut reader, .. }) => {
+            ActualConnection::TcpTls(ref mut boxed_tls_connection) => {
+                let reader = &mut boxed_tls_connection.reader;
                 self.parser.parse_value(reader)
             }
             #[cfg(unix)]
@@ -1151,6 +1171,7 @@ mod tests {
     fn test_parse_redis_url() {
         let cases = vec![
             ("redis://127.0.0.1", true),
+            ("redis://[::1]", true),
             ("redis+unix:///run/redis.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
@@ -1174,6 +1195,13 @@ mod tests {
                 url::Url::parse("redis://127.0.0.1").unwrap(),
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
+                    redis: Default::default(),
+                },
+            ),
+            (
+                url::Url::parse("redis://[::1]").unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
                 },
             ),
