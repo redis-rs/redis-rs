@@ -57,9 +57,9 @@ fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
 }
 
 fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    if contains_slice(&cmd, b"PING") {
+    if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
-    } else if contains_slice(&cmd, b"CLUSTER") && contains_slice(&cmd, b"SLOTS") {
+    } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
             Value::Int(0),
             Value::Int(16383),
@@ -76,7 +76,7 @@ fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
 impl ConnectionLike for MockConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a redis::Cmd) -> RedisFuture<'a, Value> {
         Box::pin(future::ready(
-            (self.handler)(&cmd, self.port).expect_err("Handler did not specify a response"),
+            (self.handler)(cmd, self.port).expect_err("Handler did not specify a response"),
         ))
     }
 
@@ -227,7 +227,7 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
         }
         started.store(true, atomic::Ordering::SeqCst);
 
-        if contains_slice(&cmd, b"PING") {
+        if contains_slice(cmd, b"PING") {
             return Err(Ok(Value::Status("OK".into())));
         }
 

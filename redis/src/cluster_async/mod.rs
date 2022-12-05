@@ -177,6 +177,7 @@ struct Pipeline<C> {
     connections: ConnectionMap<C>,
     slots: SlotMap,
     state: ConnectionState<C>,
+    #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<
         Pin<Box<Request<BoxFuture<'static, (String, RedisResult<Response>)>, Response, C>>>,
     >,
@@ -237,7 +238,7 @@ impl<C> CmdArg<C> {
                             .and_then(|key_count_str| key_count_str.parse::<usize>().ok());
                         key_count_res.and_then(|key_count| {
                             if key_count > 0 {
-                                get_cmd_arg(cmd, 3).map(|key| slot_for_key(key))
+                                get_cmd_arg(cmd, 3).map(slot_for_key)
                             } else {
                                 // TODO need to handle sending to all masters
                                 None
@@ -245,7 +246,7 @@ impl<C> CmdArg<C> {
                         })
                     })
                 }
-                Some(b"XGROUP") => get_cmd_arg(cmd, 2).map(|key| slot_for_key(key)),
+                Some(b"XGROUP") => get_cmd_arg(cmd, 2).map(slot_for_key),
                 Some(b"XREAD") | Some(b"XREADGROUP") => {
                     let pos = position(cmd, b"STREAMS")?;
                     get_cmd_arg(cmd, pos + 1).map(slot_for_key)
@@ -254,7 +255,7 @@ impl<C> CmdArg<C> {
                     // TODO need to handle sending to all masters
                     None
                 }
-                _ => get_cmd_arg(cmd, 1).map(|key| slot_for_key(key)),
+                _ => get_cmd_arg(cmd, 1).map(slot_for_key),
             }
         }
         match self {
@@ -368,11 +369,10 @@ where
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,
             RequestStateProj::Sleep { sleep } => {
-                return match ready!(sleep.poll(cx)) {
-                    () => Next::TryNewConnection {
-                        request: self.project().request.take().unwrap(),
-                        error: None,
-                    },
+                ready!(sleep.poll(cx));
+                return Next::TryNewConnection {
+                    request: self.project().request.take().unwrap(),
+                    error: None,
                 }
                 .into();
             }
@@ -453,10 +453,9 @@ where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
     async fn new(initial_nodes: &[ConnectionInfo], retries: Option<u32>) -> RedisResult<Self> {
-        let tls = initial_nodes.iter().all(|c| match c.addr {
-            ConnectionAddr::TcpTls { .. } => true,
-            _ => false,
-        });
+        let tls = initial_nodes
+            .iter()
+            .all(|c| matches!(c.addr, ConnectionAddr::TcpTls { .. }));
         let connections = Self::create_initial_connections(initial_nodes).await?;
         let mut connection = Pipeline {
             connections,
@@ -517,7 +516,7 @@ where
                 },
             )
             .await;
-        if connections.len() == 0 {
+        if connections.is_empty() {
             return Err(RedisError::from((
                 ErrorKind::IoError,
                 "Failed to create initial connections",
@@ -531,7 +530,7 @@ where
         &mut self,
     ) -> impl Future<Output = Result<(SlotMap, ConnectionMap<C>), (RedisError, ConnectionMap<C>)>>
     {
-        let mut connections = mem::replace(&mut self.connections, Default::default());
+        let mut connections = mem::take(&mut self.connections);
         let use_tls = self.tls;
 
         async move {
@@ -656,7 +655,7 @@ where
     ) -> impl Future<Output = (String, RedisResult<Response>)> {
         // TODO remove clone by changing the ConnectionLike trait
         let cmd = info.cmd.clone();
-        let (addr, conn) = if info.excludes.len() > 0 || info.slot.is_none() {
+        let (addr, conn) = if !info.excludes.is_empty() || info.slot.is_none() {
             get_random_connection(&self.connections, Some(&info.excludes))
         } else {
             self.get_connection(info.slot.unwrap())
@@ -827,7 +826,7 @@ where
             sender,
             info,
         });
-        Ok(()).into()
+        Ok(())
     }
 
     fn poll_flush(
@@ -1046,8 +1045,8 @@ where
 }
 
 fn slot_for_key(key: &[u8]) -> u16 {
-    let key = sub_key(&key);
-    State::<XMODEM>::calculate(&key) % SLOT_SIZE as u16
+    let key = sub_key(key);
+    State::<XMODEM>::calculate(key) % SLOT_SIZE as u16
 }
 
 // If a key contains `{` and `}`, everything between the first occurence is the only thing that
@@ -1162,7 +1161,7 @@ where
                 })
                 .collect();
 
-            if nodes.len() < 1 {
+            if nodes.is_empty() {
                 continue;
             }
 
@@ -1192,7 +1191,7 @@ mod tests {
     fn slot_for_packed_command(cmd: &[u8]) -> Option<u16> {
         command_key(cmd).map(|key| {
             let key = sub_key(&key);
-            State::<XMODEM>::calculate(&key) % SLOT_SIZE as u16
+            State::<XMODEM>::calculate(key) % SLOT_SIZE as u16
         })
     }
 
