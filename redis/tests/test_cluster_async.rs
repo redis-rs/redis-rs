@@ -2,7 +2,10 @@
 mod support;
 use std::{
     cell::Cell,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use futures::prelude::*;
@@ -12,107 +15,14 @@ use proptest::proptest;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster_async::Connect,
-    cmd, AsyncCommands, Cmd, IntoConnectionInfo, RedisError, RedisFuture, RedisResult, Script,
-    Value,
+    cmd, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
+    Script, Value,
 };
-
-use tokio::runtime::Runtime;
 
 use crate::support::*;
 
-pub struct RuntimeEnv {
-    pub redis: RedisEnv,
-    pub runtime: Runtime,
-}
-
-impl RuntimeEnv {
-    pub fn new() -> Self {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
-        let redis = runtime.block_on(RedisEnv::new());
-
-        Self { runtime, redis }
-    }
-}
-pub struct RedisEnv {
-    pub client: Client,
-    nodes: Vec<redis::aio::MultiplexedConnection>,
-    // needed to ensure cluster doesn't shut down before tests
-    // have completed:
-    _context: TestClusterContext,
-}
-
-impl RedisEnv {
-    pub async fn new() -> Self {
-        let _ = env_logger::try_init();
-
-        let cluster_context = TestClusterContext::new(6, 1);
-
-        let redis_url = format!(
-            "redis://{}",
-            cluster_context
-                .cluster
-                .iter_servers()
-                .collect::<Vec<_>>()
-                .get(0)
-                .unwrap()
-                .client_addr()
-        );
-
-        let redis_client = redis::Client::open(redis_url.clone())
-            .unwrap_or_else(|e| panic!("Failed to connect to '{}': {}", redis_url, e));
-
-        let mut master_urls = Vec::new();
-        let mut nodes = Vec::new();
-
-
-
-        let client = Client::open(master_urls.iter().map(|s| &s[..]).collect()).unwrap();
-
-        RedisEnv {
-            client,
-            nodes,
-            _context: cluster_context,
-        }
-    }
-
-    async fn cluster_info<T>(redis_client: &mut T) -> RedisResult<Vec<(String, bool)>>
-    where
-        T: Clone + redis::aio::ConnectionLike + Send + 'static,
-    {
-        redis::cmd("CLUSTER")
-            .arg("NODES")
-            .query_async(redis_client)
-            .await
-            .map(|s: String| {
-                s.lines()
-                    .map(|line| {
-                        let mut iter = line.split(' ');
-                        let port = iter
-                            .by_ref()
-                            .nth(1)
-                            .expect("Node ip")
-                            .splitn(2, '@')
-                            .next()
-                            .unwrap()
-                            .splitn(2, ':')
-                            .nth(1)
-                            .unwrap();
-                        (
-                            format!("redis://localhost:{}", port),
-                            iter.next().expect("master").contains("master"),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-    }
-}
-
 #[test]
-fn basic_cmd() {
+fn test_async_cluster_basic_cmd() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {
@@ -135,7 +45,7 @@ fn basic_cmd() {
 }
 
 #[test]
-fn basic_eval() {
+fn test_async_cluster_basic_eval() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {
@@ -156,7 +66,7 @@ fn basic_eval() {
 
 #[ignore] // TODO Handle running SCRIPT LOAD on all masters
 #[test]
-fn basic_script() {
+fn test_async_cluster_basic_script() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {
@@ -177,7 +87,7 @@ fn basic_script() {
 
 #[ignore] // TODO Handle pipe where the keys do not all go to the same node
 #[test]
-fn basic_pipe() {
+fn test_async_cluster_basic_pipe() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {
@@ -197,37 +107,26 @@ fn basic_pipe() {
 }
 
 #[test]
-fn proptests() {
-    let env = std::cell::RefCell::new(FailoverEnv::new());
+fn test_async_cluster_proptests() {
+    let cluster = Arc::new(TestClusterContext::new(6, 1));
 
     proptest!(
         proptest::prelude::ProptestConfig { cases: 30, failure_persistence: None, .. Default::default() },
-        |(requests in 0..15, value in 0..i32::max_value())| {
-            test_failover(&mut env.borrow_mut(), requests, value)
+        |(requests in 0..15i32, value in 0..i32::max_value())| {
+            let cluster = cluster.clone();
+            block_on_all(async move { test_failover(&cluster, requests, value).await; });
         }
     );
 }
 
 #[test]
-fn basic_failover() {
-    test_failover(&mut FailoverEnv::new(), 10, 123);
-}
-
-struct FailoverEnv {
-    env: RuntimeEnv,
-    connection: cluster_async::Connection,
-}
-
-impl FailoverEnv {
-    fn new() -> Self {
-        let env = RuntimeEnv::new();
-        let connection = env
-            .runtime
-            .block_on(env.redis.client.get_connection())
-            .unwrap();
-
-        FailoverEnv { env, connection }
-    }
+fn test_async_cluster_basic_failover() {
+    block_on_all(async move {
+        test_failover(&TestClusterContext::new(6, 1), 10, 123).await;
+        Ok(())
+    })
+    .map_err(|err: RedisError| err)
+    .unwrap()
 }
 
 async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<(), anyhow::Error> {
@@ -235,106 +134,98 @@ async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<()
     Ok(())
 }
 
-fn test_failover(env: &mut FailoverEnv, requests: i32, value: i32) {
+async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
     let completed = Cell::new(0);
     let completed = &completed;
 
-    let FailoverEnv { env, connection } = env;
-
-    let nodes = env.redis.nodes.clone();
+    let connection = env.async_connection().await;
+    let mut node_conns: Vec<MultiplexedConnection> = Vec::new();
 
     'outer: loop {
-        let node_infos = async {
-            let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
-            Self::cluster_info(&mut conn).await
-        }
-        .await
-        .expect("Unable to query nodes for information");
-        // Wait for the cluster to stabilize
-        if node_infos.iter().filter(|(_, master)| *master).count() == 3 {
-            let cleared_nodes = async {
-                master_urls.clear();
-                nodes.clear();
-                // Clear databases:
-                for (url, master) in node_infos {
-                    let redis_client = redis::Client::open(&url[..])
-                        .unwrap_or_else(|_| panic!("Failed to connect to '{}'", url));
-                    let mut conn = redis_client.get_multiplexed_tokio_connection().await?;
+        node_conns.clear();
+        let cleared_nodes = async {
+            for server in env.cluster.iter_servers() {
+                let addr = server.client_addr();
+                let client = redis::Client::open(server.connection_info())
+                    .unwrap_or_else(|e| panic!("Failed to connect to '{}': {}", addr, e));
+                let mut conn = client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .unwrap_or_else(|e| panic!("Failed to get connection: {}", e));
 
-                    if master {
-                        master_urls.push(url.to_string());
-                        let () =
-                            tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                                Ok(redis::Cmd::new()
-                                    .arg("FLUSHALL")
-                                    .query_async(&mut conn)
-                                    .await?)
-                            })
-                            .await
-                            .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
-                    }
+                let info: InfoDict = redis::Cmd::new()
+                    .arg("INFO")
+                    .query_async(&mut conn)
+                    .await
+                    .expect("INFO");
+                let role: String = info.get("role").expect("cluster role");
 
-                    nodes.push(conn);
+                if role == "master" {
+                    let () = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                        Ok(redis::Cmd::new()
+                            .arg("FLUSHALL")
+                            .query_async(&mut conn)
+                            .await?)
+                    })
+                    .await
+                    .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
                 }
-                Ok::<_, anyhow::Error>(())
+
+                node_conns.push(conn);
             }
-            .await;
-            match cleared_nodes {
-                Ok(()) => break 'outer,
-                Err(err) => {
-                    // Failed to clear the databases, retry
-                    log::warn!("{}", err);
-                }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        match cleared_nodes {
+            Ok(()) => break 'outer,
+            Err(err) => {
+                // Failed to clear the databases, retry
+                log::warn!("{}", err);
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    let test_future = async {
-        (0..requests + 1)
-            .map(|i| {
-                let mut connection = connection.clone();
-                let mut nodes = nodes.clone();
-                async move {
-                    if i == requests / 2 {
-                        // Failover all the nodes, error only if all the failover requests error
-                        nodes
-                            .iter_mut()
-                            .map(|node| do_failover(node))
-                            .collect::<stream::FuturesUnordered<_>>()
-                            .fold(
-                                Err(anyhow::anyhow!("None")),
-                                |acc: Result<(), _>, result: Result<(), _>| async move {
-                                    acc.or_else(|_| result)
-                                },
-                            )
-                            .await
-                    } else {
-                        let key = format!("test-{}-{}", value, i);
-                        let () = cmd("SET")
-                            .arg(&key)
-                            .arg(i)
-                            .clone()
-                            .query_async(&mut connection)
-                            .await?;
-                        let res: i32 = cmd("GET")
-                            .arg(key)
-                            .clone()
-                            .query_async(&mut connection)
-                            .await?;
-                        assert_eq!(res, i);
-                        completed.set(completed.get() + 1);
-                        Ok::<_, anyhow::Error>(())
-                    }
+    (0..requests + 1)
+        .map(|i| {
+            let mut connection = connection.clone();
+            let mut node_conns = node_conns.clone();
+            async move {
+                if i == requests / 2 {
+                    // Failover all the nodes, error only if all the failover requests error
+                    node_conns
+                        .iter_mut()
+                        .map(|node| do_failover(node))
+                        .collect::<stream::FuturesUnordered<_>>()
+                        .fold(
+                            Err(anyhow::anyhow!("None")),
+                            |acc: Result<(), _>, result: Result<(), _>| async move {
+                                acc.or_else(|_| result)
+                            },
+                        )
+                        .await
+                } else {
+                    let key = format!("test-{}-{}", value, i);
+                    let () = cmd("SET")
+                        .arg(&key)
+                        .arg(i)
+                        .clone()
+                        .query_async(&mut connection)
+                        .await?;
+                    let res: i32 = cmd("GET")
+                        .arg(key)
+                        .clone()
+                        .query_async(&mut connection)
+                        .await?;
+                    assert_eq!(res, i);
+                    completed.set(completed.get() + 1);
+                    Ok::<_, anyhow::Error>(())
                 }
-            })
-            .collect::<stream::FuturesUnordered<_>>()
-            .try_collect()
-            .await
-    };
-    env.runtime
-        .block_on(test_future)
-        .unwrap_or_else(|err| panic!("{}", err));
+            }
+        })
+        .collect::<stream::FuturesUnordered<_>>()
+        .collect::<Vec<Result<(), anyhow::Error>>>()
+        .await;
+
     assert_eq!(completed.get(), requests, "Some requests never completed!");
 }
 
@@ -381,7 +272,7 @@ impl ConnectionLike for ErrorConnection {
 }
 
 #[test]
-fn error_in_inner_connection() {
+fn test_async_cluster_error_in_inner_connection() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {

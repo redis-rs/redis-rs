@@ -139,7 +139,7 @@ impl MockEnv {
 }
 
 #[test]
-fn tryagain_simple() {
+fn test_async_cluster_tryagain_simple() {
     let _ = env_logger::try_init();
     let name = "tryagain";
 
@@ -168,7 +168,7 @@ fn tryagain_simple() {
 }
 
 #[test]
-fn tryagain_exhaust_retries() {
+fn test_async_cluster_tryagain_exhaust_retries() {
     let _ = env_logger::try_init();
     let name = "tryagain_exhaust_retries";
 
@@ -210,7 +210,7 @@ fn tryagain_exhaust_retries() {
 }
 
 #[test]
-fn rebuild_with_extra_nodes() {
+fn test_async_cluster_rebuild_with_extra_nodes() {
     let _ = env_logger::try_init();
     let name = "rebuild_with_extra_nodes";
 
