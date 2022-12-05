@@ -300,11 +300,7 @@ impl TestContext {
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
 
-        let client = redis::Client::open(redis::ConnectionInfo {
-            addr: server.client_addr().clone(),
-            redis: Default::default(),
-        })
-        .unwrap();
+        let client = redis::Client::open(server.connection_info()).unwrap();
         let mut con;
 
         let millisecond = Duration::from_millis(1);
