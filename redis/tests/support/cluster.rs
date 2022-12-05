@@ -7,7 +7,9 @@ use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
+#[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
+#[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
@@ -206,6 +208,7 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
+    #[cfg(feature = "cluster-async")]
     pub async_client: redis::cluster_async::Client,
 }
 
@@ -231,11 +234,13 @@ impl TestClusterContext {
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
+        #[cfg(feature = "cluster-async")]
         let async_client = redis::cluster_async::Client::open(initial_nodes).unwrap();
 
         TestClusterContext {
             cluster,
             client,
+            #[cfg(feature = "cluster-async")]
             async_client,
         }
     }
@@ -244,10 +249,12 @@ impl TestClusterContext {
         self.client.get_connection().unwrap()
     }
 
+    #[cfg(feature = "cluster-async")]
     pub async fn async_connection(&self) -> redis::cluster_async::Connection {
         self.async_client.get_connection().await.unwrap()
     }
 
+    #[cfg(feature = "cluster-async")]
     pub async fn async_generic_connection<
         C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
     >(
