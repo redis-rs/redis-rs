@@ -26,7 +26,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test -p redis --all-features -- --skip test_cluster --skip test_module
+	@REDISRS_SERVER_TYPE=unix cargo test -p redis --all-features -- --skip test_cluster --skip test_async_cluster --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"
