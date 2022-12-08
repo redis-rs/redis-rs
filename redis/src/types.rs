@@ -1017,24 +1017,22 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<
     }
 }
 
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
-    for HashMap<T, V>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self.iter() {
-            assert!(key.is_single_arg() && value.is_single_arg());
+impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for std::collections::HashMap<T, V> {
+  fn write_redis_args<W>(&self, out: &mut W)
+  where
+      W: ?Sized + RedisWrite,
+  {
+      for (key, value) in self {
+          assert!(key.is_single_arg() && value.is_single_arg());
 
-            key.write_redis_args(out);
-            value.write_redis_args(out);
-        }
-    }
+          key.write_redis_args(out);
+          value.write_redis_args(out);
+      }
+  }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
-    }
+  fn is_single_arg(&self) -> bool {
+      self.len() <= 1
+  }
 }
 
 macro_rules! to_redis_args_for_tuple {

@@ -261,7 +261,7 @@ fn test_types_to_redis_args() {
         .is_empty());
 
     // this can also be used on something HMSET
-    assert!(![("a", 5), ("b", 6), ("C", 7)]
+    assert!(![("d", 8), ("e", 9), ("f", 10)]
         .iter()
         .cloned()
         .collect::<HashMap<_, _>>()
