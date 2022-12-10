@@ -1893,7 +1893,7 @@ pub enum ControlFlow<U> {
 ///         10 => ControlFlow::Break(()),
 ///         _ => ControlFlow::Continue,
 ///     }
-/// });
+/// })?;
 /// # Ok(()) }
 /// ```
 // TODO In the future, it would be nice to implement Try such that `?` will work
