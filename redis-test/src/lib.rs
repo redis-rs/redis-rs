@@ -397,4 +397,27 @@ mod tests {
             .expect("success");
         assert_eq!(results, vec!["hello", "world"]);
     }
+
+    #[test]
+    fn pipeline_atomic_test() {
+        let mut conn = MockRedisConnection::new(vec![MockCmd::with_values(
+            pipe().atomic().cmd("GET").arg("foo").cmd("GET").arg("bar"),
+            Ok(vec![Value::Bulk(
+                vec!["hello", "world"]
+                    .into_iter()
+                    .map(|x| Value::Data(x.as_bytes().into()))
+                    .collect(),
+            )]),
+        )]);
+
+        let results: Vec<String> = pipe()
+            .atomic()
+            .cmd("GET")
+            .arg("foo")
+            .cmd("GET")
+            .arg("bar")
+            .query(&mut conn)
+            .expect("success");
+        assert_eq!(results, vec!["hello", "world"]);
+    }
 }
