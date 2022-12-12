@@ -40,7 +40,7 @@ impl Connect for MockConnection {
                 .read()
                 .unwrap()
                 .get(name)
-                .unwrap_or_else(|| panic!("Handler `{}` were not installed", name))
+                .unwrap_or_else(|| panic!("Handler `{name}` were not installed"))
                 .clone(),
             port,
         }))
@@ -127,7 +127,7 @@ impl MockEnv {
             Arc::new(move |cmd, port| handler(&cmd.get_packed_command(), port)),
         );
 
-        let client = Client::open(vec![&*format!("redis://{}", id)]).unwrap();
+        let client = Client::open(vec![&*format!("redis://{id}")]).unwrap();
         let connection = runtime.block_on(client.get_generic_connection()).unwrap();
         MockEnv {
             runtime,

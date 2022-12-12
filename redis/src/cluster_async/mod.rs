@@ -410,7 +410,7 @@ where
                     } else if error_code == "TRYAGAIN" || error_code == "CLUSTERDOWN" {
                         // Sleep and retry.
                         let sleep_duration =
-                            Duration::from_millis(2u64.pow(request.retry.max(7).min(16)) * 10);
+                            Duration::from_millis(2u64.pow(request.retry.clamp(7, 16)) * 10);
                         request.info.excludes.clear();
                         this.future.set(RequestState::Sleep {
                             sleep: tokio::time::sleep(sleep_duration),
@@ -480,8 +480,8 @@ where
             .map(|info| async move {
                 let addr = match info.addr {
                     ConnectionAddr::Tcp(ref host, port) => match &info.redis.password {
-                        Some(pw) => format!("redis://:{}@{}:{}", pw, host, port),
-                        None => format!("redis://{}:{}", host, port),
+                        Some(pw) => format!("redis://:{pw}@{host}:{port}"),
+                        None => format!("redis://{host}:{port}"),
                     },
                     ConnectionAddr::TcpTls {
                         ref host,
@@ -489,11 +489,11 @@ where
                         insecure,
                     } => match &info.redis.password {
                         Some(pw) if insecure => {
-                            format!("rediss://:{}@{}:{}/#insecure", pw, host, port)
+                            format!("rediss://:{pw}@{host}:{port}/#insecure")
                         }
-                        Some(pw) => format!("rediss://:{}@{}:{}", pw, host, port),
-                        None if insecure => format!("rediss://{}:{}/#insecure", host, port),
-                        None => format!("rediss://{}:{}", host, port),
+                        Some(pw) => format!("rediss://:{pw}@{host}:{port}"),
+                        None if insecure => format!("rediss://{host}:{port}/#insecure"),
+                        None => format!("rediss://{host}:{port}"),
                     },
                     _ => panic!("No reach."),
                 };
@@ -609,7 +609,7 @@ where
             return Err(RedisError::from((
                 ErrorKind::ResponseError,
                 "Slot refresh error.",
-                format!("Lacks the slots >= {}", last_slot),
+                format!("Lacks the slots >= {last_slot}"),
             )));
         }
         let slot_map = slots_data
@@ -1152,8 +1152,8 @@ where
                         };
                         let scheme = if use_tls { "rediss" } else { "redis" };
                         match &password {
-                            Some(pw) => Some(format!("{}://:{}@{}:{}", scheme, pw, ip, port)),
-                            None => Some(format!("{}://{}:{}", scheme, ip, port)),
+                            Some(pw) => Some(format!("{scheme}://:{pw}@{ip}:{port}")),
+                            None => Some(format!("{scheme}://{ip}:{port}")),
                         }
                     } else {
                         None
