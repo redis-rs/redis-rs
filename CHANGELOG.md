@@ -1,3 +1,14 @@
+<a name="0.21.7"></a>
+### 0.21.7 (2022-12-10)
+
+This release addresses bugs related to server response parsing and `MultiPlexedConnection` error handling.
+
+#### Bug fixes
+
+* Limit parser recursion depth ([#724](https://github.com/redis-rs/redis-rs/pull/724)) -- thank you to the [OSS-Fuzz project](https://github.com/google/oss-fuzz) for identifying the [issue](https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=52667#c4).
+* Improve MultiplexedConnection Error Handling ([#699](https://github.com/redis-rs/redis-rs/pull/699)) -- thank you to @kvcache for identifying the issue ([#698](https://github.com/redis-rs/redis-rs/issues/698)) and providing a reproducible example.
+
+
 <a name="0.21.6"></a>
 ### 0.21.6 (2022-08-24)
 

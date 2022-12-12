@@ -2,7 +2,6 @@
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io;
-use std::mem;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 #[cfg(unix)]
@@ -603,8 +602,22 @@ type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
 
 struct InFlight<O, E> {
     output: PipelineOutput<O, E>,
-    response_count: usize,
+    expected_response_count: usize,
+    current_response_count: usize,
     buffer: Vec<O>,
+    first_err: Option<E>,
+}
+
+impl<O, E> InFlight<O, E> {
+    fn new(output: PipelineOutput<O, E>, expected_response_count: usize) -> Self {
+        Self {
+            output,
+            expected_response_count,
+            current_response_count: 0,
+            buffer: Vec::new(),
+            first_err: None,
+        }
+    }
 }
 
 // A single message sent through the pipeline
@@ -669,26 +682,37 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
         let self_ = self.project();
-        let response = {
+
+        {
             let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
+
             match result {
                 Ok(item) => {
                     entry.buffer.push(item);
-                    if entry.response_count > entry.buffer.len() {
-                        // Need to gather more response values
-                        return;
-                    }
-                    Ok(mem::take(&mut entry.buffer))
                 }
-                // If we fail we must respond immediately
-                Err(err) => Err(err),
+                Err(err) => {
+                    if entry.first_err.is_none() {
+                        entry.first_err = Some(err);
+                    }
+                }
             }
-        };
+
+            entry.current_response_count += 1;
+            if entry.current_response_count < entry.expected_response_count {
+                // Need to gather more response values
+                return;
+            }
+        }
 
         let entry = self_.in_flight.pop_front().unwrap();
+        let response = match entry.first_err {
+            Some(err) => Err(err),
+            None => Ok(entry.buffer),
+        };
+
         // `Err` means that the receiver was dropped in which case it does not
         // care about the output and we can continue by just dropping the value
         // and sender
@@ -740,11 +764,9 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
-                self_.in_flight.push_back(InFlight {
-                    output,
-                    response_count,
-                    buffer: Vec::new(),
-                });
+                self_
+                    .in_flight
+                    .push_back(InFlight::new(output, response_count));
                 Ok(())
             }
             Err(err) => {
