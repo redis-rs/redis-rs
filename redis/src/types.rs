@@ -1215,7 +1215,10 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             // All binary data except u8 will try to parse into a single element vector.
             Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
-                None => invalid_type_error!(v, "Response type not vector compatible."),
+                None => invalid_type_error!(
+                    v,
+                    format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
+                ),
             },
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
             Value::Nil => Ok(vec![]),
