@@ -383,7 +383,7 @@ impl ClusterConnection {
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => {
                 let mut rng = thread_rng();
-                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE) as u16, 0)?)
+                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE), 0)?)
             }
             Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
             Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
