@@ -1161,3 +1161,15 @@ fn test_mget() {
     let data: Vec<Option<String>> = con.mget(&[2, 4]).unwrap();
     assert_eq!(data, vec![Some("2".to_string()), None]);
 }
+
+#[test]
+fn test_variable_length_get() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let _: () = con.set(1, "1").unwrap();
+    let keys = vec![1];
+    assert_eq!(keys.len(), 1);
+    let data: Vec<String> = con.get(&keys).unwrap();
+    assert_eq!(data, vec!["1"]);
+}
