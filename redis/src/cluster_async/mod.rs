@@ -68,10 +68,10 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    parse_redis_url, Arg, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
+    cluster_routing::RoutingInfo,
+    parse_redis_url, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Value,
 };
-use crc16::*;
 use futures::{
     future::{self, BoxFuture},
     prelude::*,
@@ -214,53 +214,21 @@ impl<C> CmdArg<C> {
         }
     }
 
+    // TODO -- return offset for master/replica to support replica reads:
     fn slot(&self) -> Option<u16> {
-        fn get_cmd_arg(cmd: &Cmd, arg_num: usize) -> Option<&[u8]> {
-            cmd.args_iter().nth(arg_num).and_then(|arg| match arg {
-                Arg::Simple(arg) => Some(arg),
-                Arg::Cursor => None,
-            })
-        }
-
-        fn position(cmd: &Cmd, candidate: &[u8]) -> Option<usize> {
-            cmd.args_iter().position(|arg| match arg {
-                Arg::Simple(arg) => arg.eq_ignore_ascii_case(candidate),
-                _ => false,
-            })
-        }
-
-        fn slot_for_command(cmd: &Cmd) -> Option<u16> {
-            match get_cmd_arg(cmd, 0) {
-                Some(b"EVAL") | Some(b"EVALSHA") => {
-                    get_cmd_arg(cmd, 2).and_then(|key_count_bytes| {
-                        let key_count_res = std::str::from_utf8(key_count_bytes)
-                            .ok()
-                            .and_then(|key_count_str| key_count_str.parse::<usize>().ok());
-                        key_count_res.and_then(|key_count| {
-                            if key_count > 0 {
-                                get_cmd_arg(cmd, 3).map(slot_for_key)
-                            } else {
-                                // TODO need to handle sending to all masters
-                                None
-                            }
-                        })
-                    })
-                }
-                Some(b"XGROUP") => get_cmd_arg(cmd, 2).map(slot_for_key),
-                Some(b"XREAD") | Some(b"XREADGROUP") => {
-                    let pos = position(cmd, b"STREAMS")?;
-                    get_cmd_arg(cmd, pos + 1).map(slot_for_key)
-                }
-                Some(b"SCRIPT") => {
-                    // TODO need to handle sending to all masters
-                    None
-                }
-                _ => get_cmd_arg(cmd, 1).map(slot_for_key),
+        fn slot_for_command(cmd: &Cmd) -> Option<(u16, u16)> {
+            match RoutingInfo::for_routable(cmd) {
+                Some(RoutingInfo::Random) => None,
+                Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0)),
+                Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1)),
+                Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
+                _ => None,
             }
         }
+
         match self {
-            Self::Cmd { cmd, .. } => slot_for_command(cmd),
-            Self::Pipeline { pipeline, .. } => {
+            Self::Cmd { ref cmd, .. } => slot_for_command(cmd).map(|x| x.0),
+            Self::Pipeline { ref pipeline, .. } => {
                 let mut iter = pipeline.cmd_iter();
                 let slot = iter.next().map(slot_for_command)?;
                 for cmd in iter {
@@ -268,7 +236,7 @@ impl<C> CmdArg<C> {
                         return None;
                     }
                 }
-                slot
+                slot.map(|x| x.0)
             }
         }
     }
@@ -1044,13 +1012,9 @@ where
     (addr.to_string(), connections.get(addr).unwrap().clone())
 }
 
-fn slot_for_key(key: &[u8]) -> u16 {
-    let key = sub_key(key);
-    State::<XMODEM>::calculate(key) % SLOT_SIZE as u16
-}
-
 // If a key contains `{` and `}`, everything between the first occurence is the only thing that
 // determines the hash slot
+#[allow(dead_code)]
 fn sub_key(key: &[u8]) -> &[u8] {
     key.iter()
         .position(|b| *b == b'{')
@@ -1184,9 +1148,9 @@ fn get_password(addr: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse_redis_value;
-
     use super::*;
+    use crate::parse_redis_value;
+    use crc16::{State, XMODEM};
 
     fn slot_for_packed_command(cmd: &[u8]) -> Option<u16> {
         command_key(cmd).map(|key| {
