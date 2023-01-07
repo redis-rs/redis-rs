@@ -1103,7 +1103,7 @@ to_redis_args_for_array! {
 /// implement it for your own types if you want.
 ///
 /// In addition to what you can see from the docs, this is also implemented
-/// for tuples up to size 12 and for Vec<u8>.
+/// for tuples up to size 12 and for `Vec<u8>`.
 pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
