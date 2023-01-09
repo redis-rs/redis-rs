@@ -36,23 +36,23 @@ impl RoutingInfo {
                 if key_count == 0 {
                     Some(RoutingInfo::Random)
                 } else {
-                    r.arg_idx(3).and_then(|key| RoutingInfo::for_key(cmd, key))
+                    r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
-            b"XGROUP" | b"XINFO" => r.arg_idx(2).and_then(|key| RoutingInfo::for_key(cmd, key)),
+            b"XGROUP" | b"XINFO" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
-                    .and_then(|key| RoutingInfo::for_key(cmd, key))
+                    .map(|key| RoutingInfo::for_key(cmd, key))
             }
             _ => match r.arg_idx(1) {
-                Some(key) => RoutingInfo::for_key(cmd, key),
+                Some(key) => Some(RoutingInfo::for_key(cmd, key)),
                 None => Some(RoutingInfo::Random),
             },
         }
     }
 
-    pub fn for_key(cmd: &[u8], key: &[u8]) -> Option<RoutingInfo> {
+    pub fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
         let key = match get_hashtag(key) {
             Some(tag) => tag,
             None => key,
@@ -60,9 +60,9 @@ impl RoutingInfo {
 
         let slot = crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE;
         if is_readonly_cmd(cmd) {
-            Some(RoutingInfo::ReplicaSlot(slot))
+            RoutingInfo::ReplicaSlot(slot)
         } else {
-            Some(RoutingInfo::MasterSlot(slot))
+            RoutingInfo::MasterSlot(slot)
         }
     }
 }
