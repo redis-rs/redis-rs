@@ -34,6 +34,11 @@ test:
 	@REDISRS_SERVER_TYPE=unix cargo test -p redis --all-features -- --skip test_cluster --skip test_async_cluster --skip test_module
 
 	@echo "===================================================================="
+	@echo "Testing async-std"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-tls-comp,cluster-async -- --nocapture --test-threads=1
+
+	@echo "===================================================================="
 	@echo "Testing redis-test"
 	@echo "===================================================================="
 	@cargo test -p redis-test

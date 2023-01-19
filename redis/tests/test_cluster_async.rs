@@ -289,3 +289,27 @@ fn test_async_cluster_error_in_inner_connection() {
     })
     .unwrap();
 }
+
+#[test]
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+fn test_async_cluster_async_std_basic_cmd() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all_using_async_std(async {
+        let mut connection = cluster.async_connection().await;
+        redis::cmd("SET")
+            .arg("test")
+            .arg("test_data")
+            .query_async(&mut connection)
+            .await?;
+        redis::cmd("GET")
+            .arg("test")
+            .clone()
+            .query_async(&mut connection)
+            .map_ok(|res: String| {
+                assert_eq!(res, "test_data");
+            })
+            .await
+    })
+    .unwrap();
+}
