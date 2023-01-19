@@ -72,6 +72,9 @@ use crate::{
     parse_redis_url, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Value,
 };
+
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{
     future::{self, BoxFuture},
     prelude::*,
@@ -156,13 +159,16 @@ where
     ) -> RedisResult<Connection<C>> {
         Pipeline::new(initial_nodes, retries).await.map(|pipeline| {
             let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
-
-            tokio::spawn(async move {
+            let stream = async move {
                 let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
                     .map(Ok)
                     .forward(pipeline)
                     .await;
-            });
+            };
+            #[cfg(feature = "tokio-comp")]
+            tokio::spawn(stream);
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            AsyncStd::spawn(stream);
 
             Connection(tx)
         })
@@ -289,7 +295,7 @@ pin_project! {
         },
         Sleep {
             #[pin]
-            sleep: tokio::time::Sleep,
+            sleep: BoxFuture<'static, ()>,
         },
     }
 }
@@ -381,7 +387,11 @@ where
                             Duration::from_millis(2u64.pow(request.retry.clamp(7, 16)) * 10);
                         request.info.excludes.clear();
                         this.future.set(RequestState::Sleep {
-                            sleep: tokio::time::sleep(sleep_duration),
+                            #[cfg(feature = "tokio-comp")]
+                            sleep: Box::pin(tokio::time::sleep(sleep_duration)),
+
+                            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                            sleep: Box::pin(async_std::task::sleep(sleep_duration)),
                         });
                         return self.poll(cx);
                     }
@@ -964,7 +974,12 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-            client.get_multiplexed_tokio_connection().await
+
+            #[cfg(feature = "tokio-comp")]
+            return client.get_multiplexed_tokio_connection().await;
+
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            return client.get_multiplexed_async_std_connection().await;
         }
         .boxed()
     }

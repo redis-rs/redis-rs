@@ -83,7 +83,7 @@ tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tls", "tokio-native-tls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
-cluster-async = ["cluster", "futures", "futures-util", "tokio/time", "log"]
+cluster-async = ["cluster", "futures", "futures-util", "log"]
 
 [dev-dependencies]
 rand = "0.8"
@@ -122,11 +122,11 @@ required-features = ["json", "serde/derive"]
 
 [[test]]
 name = "test_cluster_async"
-required-features = ["cluster-async", "tokio-comp"]
+required-features = ["cluster-async"]
 
 [[test]]
 name = "mock_cluster_async"
-required-features = ["cluster-async", "tokio-comp"]
+required-features = ["cluster-async"]
 
 [[bench]]
 name = "bench_basic"

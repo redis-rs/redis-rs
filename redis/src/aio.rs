@@ -19,9 +19,6 @@ use ::tokio::{
     sync::{mpsc, oneshot},
 };
 
-#[cfg(feature = "tls")]
-use native_tls::TlsConnector;
-
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 

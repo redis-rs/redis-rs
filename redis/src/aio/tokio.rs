@@ -16,7 +16,7 @@ use tokio::{
 };
 
 #[cfg(feature = "tls")]
-use super::TlsConnector;
+use native_tls::TlsConnector;
 
 #[cfg(feature = "tokio-native-tls-comp")]
 use tokio_native_tls::TlsStream;
