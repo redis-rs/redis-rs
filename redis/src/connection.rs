@@ -111,6 +111,8 @@ pub struct RedisConnectionInfo {
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub password: Option<String>,
+    /// Use RESP 3 mode, Redis 6 or newer is required.
+    pub use_resp3: bool,
 }
 
 impl FromStr for ConnectionInfo {
@@ -200,6 +202,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     } else {
         ConnectionAddr::Tcp(host, port)
     };
+    let query: HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr,
         redis: RedisConnectionInfo {
@@ -231,6 +234,10 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 },
                 None => None,
             },
+            use_resp3: match query.get("resp3") {
+                Some(v) => v == "true",
+                _ => false,
+            },
         },
     })
 }
@@ -253,6 +260,10 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
+            use_resp3: match query.get("resp3") {
+                Some(v) => v == "true",
+                _ => false,
+            },
         },
     })
 }
@@ -602,6 +613,9 @@ fn setup_connection(
         connect_auth(&mut rv, connection_info)?;
     }
 
+    if connection_info.use_resp3 {
+        let _ = cmd("HELLO").arg("3").query::<Value>(&mut rv)?;
+    }
     if connection_info.db != 0 {
         match cmd("SELECT")
             .arg(connection_info.db)
@@ -1188,6 +1202,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1259,6 +1274,7 @@ mod tests {
                         db: 0,
                         username: None,
                         password: None,
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1270,6 +1286,7 @@ mod tests {
                         db: 1,
                         username: None,
                         password: None,
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1284,6 +1301,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1298,6 +1316,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),

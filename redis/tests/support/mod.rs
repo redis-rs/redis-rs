@@ -329,6 +329,40 @@ where
         }
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{}\r\n", s),
+        Value::Map(ref values) => {
+            write!(writer, "%{}\r\n", values.len())?;
+            for val in values.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
+        }
+        Value::Set(ref values) => {
+            write!(writer, "~{}\r\n", values.len())?;
+            for val in values.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
+        }
+        Value::Null => write!(writer, "_\r\n"),
+        Value::Double(val) => write!(writer, ",{}\r\n", val),
+        Value::Boolean(v) => {
+            if v {
+                write!(writer, "#t\r\n")
+            } else {
+                write!(writer, "#f\r\n")
+            }
+        }
+        Value::VerbatimString(ref s1, ref s2) => {
+            write!(writer, "={}\r\n{}:{}\r\n", s1.len() + s2.len(), s1, s2)
+        }
+        Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
+        Value::Push(ref values) => {
+            write!(writer, ">{}\r\n", values.len())?;
+            for val in values.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
+        }
     }
 }
 

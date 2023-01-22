@@ -103,9 +103,8 @@ pub enum ErrorKind {
     /// Error Serializing a struct to JSON form
     Serialize,
 }
-
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
@@ -120,9 +119,25 @@ pub enum Value {
     /// to express nested structures.
     Bulk(Vec<Value>),
     /// A status response.
-    Status(String),
+    Status(String), // maybe change to SimpleString ?
     /// A status response which represents the string "OK".
     Okay,
+    /// Ordered map value from the server. use `as_map_iter` function.
+    Map(Vec<Value>),
+    /// A single null value replacing RESP v2 *-1 and $-1 null values.
+    Null,
+    /// Unordered set value from the server.
+    Set(Vec<Value>),
+    /// A floating number response from the server.
+    Double(f64),
+    /// A boolean response from the server.
+    Boolean(bool),
+    /// First String is format and other is the string
+    VerbatimString(String, String),
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(String),
+    /// Push data from the server.
+    Push(Vec<Value>),
 }
 
 pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
@@ -180,6 +195,8 @@ impl Value {
     pub fn as_sequence(&self) -> Option<&[Value]> {
         match self {
             Value::Bulk(items) => Some(&items[..]),
+            Value::Set(items) => Some(&items[..]),
+            Value::Push(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
             _ => None,
         }
@@ -189,6 +206,7 @@ impl Value {
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
             Value::Bulk(items) => Some(MapIter(items.iter())),
+            Value::Map(items) => Some(MapIter(items.iter())),
             _ => None,
         }
     }
@@ -203,7 +221,7 @@ impl fmt::Debug for Value {
                 Ok(x) => write!(fmt, "string-data('{:?}')", x),
                 Err(_) => write!(fmt, "binary-data({:?})", val),
             },
-            Value::Bulk(ref values) => {
+            Value::Bulk(ref values) | Value::Push(ref values) => {
                 write!(fmt, "bulk(")?;
                 let mut is_first = true;
                 for val in values.iter() {
@@ -217,6 +235,15 @@ impl fmt::Debug for Value {
             }
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({:?})", s),
+            Value::Map(ref m) => write!(fmt, "map({:?})", m),
+            Value::Set(ref m) => write!(fmt, "set({:?})", m),
+            Value::Null => write!(fmt, "null"),
+            Value::Double(ref m) => write!(fmt, "double({:?})", m),
+            Value::Boolean(ref m) => write!(fmt, "boolean({:?})", m),
+            Value::VerbatimString(ref format, ref string) => {
+                write!(fmt, "verbatim-string({:?},{:?})", format, string)
+            }
+            Value::BigNumber(ref m) => write!(fmt, "big-number({:?})", m),
         }
     }
 }
