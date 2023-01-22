@@ -2,30 +2,37 @@ build:
 	@cargo build
 
 test:
+
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp cargo test --no-default-features --tests -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --no-default-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp cargo test --all-features -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --all-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and TLS support"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp+tls cargo test --all-features -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp+tls cargo test -p redis --all-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test --test parser --test test_basic --test test_types --all-features -- --test-threads=1
+	@REDISRS_SERVER_TYPE=unix cargo test -p redis --test parser --test test_basic --test test_types --all-features -- --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix cargo test --all-features -- --skip test_cluster
+	@REDISRS_SERVER_TYPE=unix cargo test -p redis --all-features -- --skip test_cluster
+
+	@echo "===================================================================="
+	@echo "Testing redis-test"
+	@echo "===================================================================="
+	@cargo test -p redis-test 
+
 
 test-single: test
 

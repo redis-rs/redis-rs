@@ -1,8 +1,86 @@
-<a name="0.21.5"></a>
-### 0.21.5 (2022-01-10)
+<a name="0.22.2"></a>
+### 0.22.2 (2023-01-07)
+
+This release adds various incremental improvements and fixes a few long-standing bugs. Thanks to all our
+contributors for making this release happen.
+
+#### Features
+*   Implement ToRedisArgs for HashMap ([#722](https://github.com/redis-rs/redis-rs/pull/722) @gibranamparan) 
+*   Add explicit `MGET` command ([#729](https://github.com/redis-rs/redis-rs/pull/729) @vamshiaruru-virgodesigns)
+
+#### Bug fixes
+*   Enable single-item-vector `get` responses ([#507](https://github.com/redis-rs/redis-rs/pull/507) @hank121314)
+*   Fix empty result from xread_options with deleted entries ([#712](https://github.com/redis-rs/redis-rs/pull/712) @Quiwin)
+*   Limit Parser Recursion ([#724](https://github.com/redis-rs/redis-rs/pull/724))
+*   Improve MultiplexedConnection Error Handling ([#699](https://github.com/redis-rs/redis-rs/pull/699))
+
+#### Changes
+*   Add test case for atomic pipeline ([#702](https://github.com/redis-rs/redis-rs/pull/702) @CNLHC)
+*   Capture subscribe result error in PubSub doc example ([#739](https://github.com/redis-rs/redis-rs/pull/739) @baoyachi) 
+*   Use async-std name resolution when necessary ([#701](https://github.com/redis-rs/redis-rs/pull/701) @UgnilJoZ) 
+*   Add Script::invoke_async method ([#711](https://github.com/redis-rs/redis-rs/pull/711) @r-bk)
+*   Cluster Refactorings ([#717](https://github.com/redis-rs/redis-rs/pull/717), [#716](https://github.com/redis-rs/redis-rs/pull/716), [#709](https://github.com/redis-rs/redis-rs/pull/709), [#707](https://github.com/redis-rs/redis-rs/pull/707), [#706](https://github.com/redis-rs/redis-rs/pull/706) @0xWOF, @utkarshgupta137)
+*   Fix intermitent test failure ([#714](https://github.com/redis-rs/redis-rs/pull/714) @0xWOF, @utkarshgupta137)
+*   Doc changes ([#705](https://github.com/redis-rs/redis-rs/pull/705) @0xWOF, @utkarshgupta137)
+*   Lint fixes ([#704](https://github.com/redis-rs/redis-rs/pull/704) @0xWOF)
 
 
+<a name="0.22.1"></a>
+### 0.22.1 (2022-10-18)
 
+#### Changes
+* Add README attribute to Cargo.toml
+* Update LICENSE file / symlink from parent directory
+
+<a name="0.22.0"></a>
+### 0.22.0 (2022-10-05)
+
+This release adds various incremental improvements, including
+additional convenience commands, improved Cluster APIs, and various other bug
+fixes/library improvements.
+
+Although the changes here are incremental, this is a major release due to the 
+breaking changes listed below.
+
+This release would not be possible without our many wonderful 
+contributors -- thank you!
+
+#### Breaking changes
+*   Box all large enum variants; changes enum signature ([#667](https://github.com/redis-rs/redis-rs/pull/667) @nihohit)
+*   Support ACL commands by adding Rule::Other to cover newly defined flags; adds new enum variant ([#685](https://github.com/redis-rs/redis-rs/pull/685) @garyhai)
+*   Switch from sha1 to sha1_smol; renames `sha1` feature ([#576](https://github.com/redis-rs/redis-rs/pull/576))
+
+#### Features
+*   Add support for RedisJSON ([#657](https://github.com/redis-rs/redis-rs/pull/657) @d3rpp)
+*   Add support for weights in zunionstore and zinterstore ([#641](https://github.com/redis-rs/redis-rs/pull/641) @ndd7xv)
+*   Cluster: Create read_from_replicas option ([#635](https://github.com/redis-rs/redis-rs/pull/635) @utkarshgupta137)
+*   Make Direction a public enum to use with Commands like BLMOVE ([#646](https://github.com/redis-rs/redis-rs/pull/646) @thorbadour)
+*   Add `ahash` feature for using ahash internally & for redis values ([#636](https://github.com/redis-rs/redis-rs/pull/636) @utkarshgupta137)
+*   Add Script::load function ([#603](https://github.com/redis-rs/redis-rs/pull/603) @zhiburt)
+*   Add support for OBJECT ([[#610]](https://github.com/redis-rs/redis-rs/pull/610) @roger)
+*   Add GETEX and GETDEL support ([#582](https://github.com/redis-rs/redis-rs/pull/582) @arpandaze)
+*   Add support for ZMPOP ([#605](https://github.com/redis-rs/redis-rs/pull/605) @gkorland)
+
+#### Changes
+*   Rust 2021 Edition / MSRV 1.59.0
+*   Fix: Support IPV6 link-local address parsing ([#679](https://github.com/redis-rs/redis-rs/pull/679) @buaazp)
+*   Derive Clone and add Deref trait to InfoDict ([#661](https://github.com/redis-rs/redis-rs/pull/661) @danni-m)
+*   ClusterClient: add handling for empty initial_nodes, use ClusterParams to store cluster parameters, improve builder pattern ([#669](https://github.com/redis-rs/redis-rs/pull/669) @utkarshgupta137)
+*   Implement Debug for MultiplexedConnection & Pipeline ([#664](https://github.com/redis-rs/redis-rs/pull/664) @elpiel)
+*   Add support for casting RedisResult to CString ([#660](https://github.com/redis-rs/redis-rs/pull/660) @nihohit)
+*   Move redis crate to subdirectory to support multiple crates in project ([#465](https://github.com/redis-rs/redis-rs/pull/465) @tdyas)
+*   Stop versioning Cargo.lock ([#620](https://github.com/redis-rs/redis-rs/pull/620))
+*   Auto-implement ConnectionLike for DerefMut ([#567](https://github.com/redis-rs/redis-rs/pull/567) @holmesmr)
+*   Return errors from parsing inner items ([#608](https://github.com/redis-rs/redis-rs/pull/608))
+*   Make dns resolution async, in async runtime ([#606](https://github.com/redis-rs/redis-rs/pull/606) @roger)
+*   Make async_trait dependency optional ([#572](https://github.com/redis-rs/redis-rs/pull/572) @kamulos)
+*   Add username to ClusterClient and ClusterConnection ([#596](https://github.com/redis-rs/redis-rs/pull/596) @gildaf)
+
+
+<a name="0.21.6"></a>
+### 0.21.6 (2022-08-24)
+
+*   Update dependencies ([#588](https://github.com/mitsuhiko/redis-rs/pull/588))
 
 <a name="0.21.5"></a>
 ### 0.21.5 (2022-01-10)

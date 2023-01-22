@@ -13,6 +13,7 @@ use std::string::FromUtf8Error;
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -605,7 +606,7 @@ pub type RedisResult<T> = Result<T, RedisError>;
 pub type RedisFuture<'a, T> = futures_util::future::BoxFuture<'a, RedisResult<T>>;
 
 /// An info dictionary type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InfoDict {
     map: HashMap<String, Value>,
 }
@@ -672,6 +673,14 @@ impl InfoDict {
     /// Checks if the dict is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+}
+
+impl Deref for InfoDict {
+    type Target = HashMap<String, Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
     }
 }
 
@@ -915,11 +924,11 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(*self, out)
+        ToRedisArgs::make_arg_vec(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(*self)
+        ToRedisArgs::is_single_vec_arg(self)
     }
 }
 
@@ -1035,6 +1044,26 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<
     }
 }
 
+impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
+    for std::collections::HashMap<T, V>
+{
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        for (key, value) in self {
+            assert!(key.is_single_arg() && value.is_single_arg());
+
+            key.write_redis_args(out);
+            value.write_redis_args(out);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
 macro_rules! to_redis_args_for_tuple {
     () => ();
     ($($name:ident,)+) => (
@@ -1101,7 +1130,7 @@ to_redis_args_for_array! {
 /// implement it for your own types if you want.
 ///
 /// In addition to what you can see from the docs, this is also implemented
-/// for tuples up to size 12 and for Vec<u8>.
+/// for tuples up to size 12 and for `Vec<u8>`.
 pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
@@ -1115,11 +1144,11 @@ pub trait FromRedisValue: Sized {
         items.iter().map(FromRedisValue::from_redis_value).collect()
     }
 
-    /// This only exists internally as a workaround for the lack of
-    /// specialization.
-    #[doc(hidden)]
+    /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        None
+        Self::from_redis_value(&Value::Data(_vec.into()))
+            .map(|rv| vec![rv])
+            .ok()
     }
 }
 
@@ -1156,6 +1185,7 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
+    // this hack allows us to specialize Vec<u8> to work with binary data.
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
@@ -1229,11 +1259,13 @@ impl FromRedisValue for String {
 impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
         match *v {
-            // this hack allows us to specialize Vec<u8> to work with
-            // binary data whereas all others will fail with an error.
+            // All binary data except u8 will try to parse into a single element vector.
             Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
-                None => invalid_type_error!(v, "Response type not vector compatible."),
+                None => invalid_type_error!(
+                    v,
+                    format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
+                ),
             },
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
             Value::Nil => Ok(vec![]),
@@ -1246,10 +1278,16 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for std::collections::HashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
+        match *v {
+            Value::Nil => Ok(Default::default()),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
     }
 }
 
@@ -1258,10 +1296,16 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for ahash::AHashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V, S>> {
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
+        match *v {
+            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
     }
 }
 

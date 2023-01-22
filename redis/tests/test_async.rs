@@ -323,6 +323,7 @@ fn test_script() {
     // into Redis and when they need to be loaded in
     let script1 = redis::Script::new("return redis.call('SET', KEYS[1], ARGV[1])");
     let script2 = redis::Script::new("return redis.call('GET', KEYS[1])");
+    let script3 = redis::Script::new("return redis.call('KEYS', '*')");
 
     let ctx = TestContext::new();
 
@@ -335,6 +336,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "foo");
+        let keys: Vec<String> = script3.invoke_async(&mut con).await?;
+        assert_eq!(keys, ["key1"]);
         script1
             .key("key1")
             .arg("bar")
@@ -342,6 +345,8 @@ fn test_script() {
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");
+        let keys: Vec<String> = script3.invoke_async(&mut con).await?;
+        assert_eq!(keys, ["key1"]);
         Ok::<_, RedisError>(())
     })
     .unwrap();
@@ -565,6 +570,33 @@ mod pub_sub {
 
             let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;
             assert_eq!(&res, "bar");
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn pipe_errors_do_not_affect_subsequent_commands() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+
+            conn.lpush::<&str, &str, ()>("key", "value").await?;
+
+            let res: Result<(String, usize), redis::RedisError> = redis::pipe()
+                .get("key") // WRONGTYPE
+                .llen("key")
+                .query_async(&mut conn)
+                .await;
+
+            assert!(res.is_err());
+
+            let list: Vec<String> = conn.lrange("key", 0, -1).await?;
+
+            assert_eq!(list, vec!["value".to_owned()]);
 
             Ok::<_, RedisError>(())
         })

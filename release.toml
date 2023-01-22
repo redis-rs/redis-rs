@@ -1,2 +1,0 @@
-pre-release-hook = "scripts/update-versions.sh"
-tag-name = "{{version}}"

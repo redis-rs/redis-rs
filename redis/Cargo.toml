@@ -1,14 +1,15 @@
 [package]
 name = "redis"
-version = "0.21.5"
+version = "0.22.2"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
-edition = "2018"
+edition = "2021"
 rust-version = "1.59"
+readme = "../README.md"
 
 [package.metadata.docs.rs]
 all-features = true
