@@ -161,23 +161,23 @@ where
                     })
                 };
                 let map = || {
-                    int().then_partial(|&mut length| {
+                    int().then_partial(move |&mut length| {
                         let length = length as usize * 2;
-                        combine::count_min_max(length, length, value())
+                        combine::count_min_max(length, length, value(Some(count + 1)))
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Map))
                     })
                 };
                 let set = || {
-                    int().then_partial(|&mut length| {
+                    int().then_partial(move |&mut length| {
                         let length = length as usize;
-                        combine::count_min_max(length, length, value())
+                        combine::count_min_max(length, length, value(Some(count + 1)))
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Set))
                     })
                 };
                 let push = || {
-                    int().then_partial(|&mut length| {
+                    int().then_partial(move |&mut length| {
                         let length = length as usize;
-                        combine::count_min_max(length, length, value())
+                        combine::count_min_max(length, length, value(None))
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Push))
                     })
                 };
