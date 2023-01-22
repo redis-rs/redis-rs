@@ -177,7 +177,7 @@ where
                 let push = || {
                     int().then_partial(move |&mut length| {
                         let length = length as usize;
-                        combine::count_min_max(length, length, value(None))
+                        combine::count_min_max(length, length, value(Some(count + 1)))
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Push))
                     })
                 };
