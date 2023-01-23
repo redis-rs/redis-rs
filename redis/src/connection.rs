@@ -626,12 +626,20 @@ fn setup_connection(
         pubsub: false,
     };
 
-    if connection_info.password.is_some() {
-        connect_auth(&mut rv, connection_info)?;
-    }
-
     if connection_info.use_resp3 {
-        let _ = cmd("HELLO").arg("3").query::<Value>(&mut rv)?;
+        let mut hello_cmd = cmd("HELLO");
+        hello_cmd.arg("3");
+        if connection_info.password.is_some() && connection_info.username.is_some() {
+            hello_cmd
+                .arg("AUTH")
+                .arg(connection_info.username.as_ref().unwrap())
+                .arg(connection_info.password.as_ref().unwrap());
+        }
+        let _ = hello_cmd.query::<Value>(&mut rv)?;
+    } else {
+        if connection_info.password.is_some() {
+            connect_auth(&mut rv, connection_info)?;
+        }
     }
     if connection_info.db != 0 {
         match cmd("SELECT")
