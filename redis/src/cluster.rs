@@ -169,6 +169,12 @@ impl ClusterConnection {
         Ok(())
     }
 
+    /// Check that all connections it has are available (`PING` internally).
+    #[doc(hidden)]
+    pub fn check_connection(&mut self) -> bool {
+        <Self as ConnectionLike>::check_connection(self)
+    }
+
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
         self.send_recv_and_retry_cmds(pipe.commands())
     }
