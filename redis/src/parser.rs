@@ -116,10 +116,9 @@ where
                 };
                 let blob = || {
                     int().then_partial(move |size| {
-                        let n = take(*size as usize)
+                        take(*size as usize)
                             .map(|bs: &[u8]| String::from_utf8_lossy(bs).to_string())
-                            .skip(crlf());
-                        n
+                            .skip(crlf())
                     })
                 };
 
@@ -225,9 +224,7 @@ where
                 };
                 let verbatim = || {
                     blob().map(|line| {
-                        let mut pieces = line.splitn(2, ':');
-                        let format = pieces.next().unwrap();
-                        let string = pieces.next().unwrap();
+                        let (format, string) = line.split_once(':').unwrap();
                         Ok(Value::VerbatimString(
                             format.to_string(),
                             string.to_string(),

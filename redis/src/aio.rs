@@ -409,45 +409,43 @@ where
                 .arg(connection_info.username.as_ref().unwrap())
                 .arg(connection_info.password.as_ref().unwrap());
         }
-        let _ = hello_cmd.query_async(con).await?;
-    } else {
-        if let Some(password) = &connection_info.password {
-            let mut command = cmd("AUTH");
-            if let Some(username) = &connection_info.username {
-                command.arg(username);
-            }
-            match command.arg(password).query_async(con).await {
-                Ok(Value::Okay) => (),
-                Err(e) => {
-                    let err_msg = e.detail().ok_or((
-                        ErrorKind::AuthenticationFailed,
-                        "Password authentication failed",
-                    ))?;
+        hello_cmd.query_async(con).await?;
+    } else if let Some(password) = &connection_info.password {
+        let mut command = cmd("AUTH");
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
+        }
+        match command.arg(password).query_async(con).await {
+            Ok(Value::Okay) => (),
+            Err(e) => {
+                let err_msg = e.detail().ok_or((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed",
+                ))?;
 
-                    if !err_msg.contains("wrong number of arguments for 'auth' command") {
-                        fail!((
-                            ErrorKind::AuthenticationFailed,
-                            "Password authentication failed",
-                        ));
-                    }
-
-                    let mut command = cmd("AUTH");
-                    match command.arg(password).query_async(con).await {
-                        Ok(Value::Okay) => (),
-                        _ => {
-                            fail!((
-                                ErrorKind::AuthenticationFailed,
-                                "Password authentication failed"
-                            ));
-                        }
-                    }
-                }
-                _ => {
+                if !err_msg.contains("wrong number of arguments for 'auth' command") {
                     fail!((
                         ErrorKind::AuthenticationFailed,
-                        "Password authentication failed"
+                        "Password authentication failed",
                     ));
                 }
+
+                let mut command = cmd("AUTH");
+                match command.arg(password).query_async(con).await {
+                    Ok(Value::Okay) => (),
+                    _ => {
+                        fail!((
+                            ErrorKind::AuthenticationFailed,
+                            "Password authentication failed"
+                        ));
+                    }
+                }
+            }
+            _ => {
+                fail!((
+                    ErrorKind::AuthenticationFailed,
+                    "Password authentication failed"
+                ));
             }
         }
     }

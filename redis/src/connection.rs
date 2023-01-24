@@ -636,10 +636,8 @@ fn setup_connection(
                 .arg(connection_info.password.as_ref().unwrap());
         }
         let _ = hello_cmd.query::<Value>(&mut rv)?;
-    } else {
-        if connection_info.password.is_some() {
-            connect_auth(&mut rv, connection_info)?;
-        }
+    } else if connection_info.password.is_some() {
+        connect_auth(&mut rv, connection_info)?;
     }
     if connection_info.db != 0 {
         match cmd("SELECT")
