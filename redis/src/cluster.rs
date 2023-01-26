@@ -768,18 +768,13 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
 // - Returned from redis via the ASK/MOVED response
 fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult<ConnectionInfo> {
     let mut split = node.split(':');
-    let host = match split.next() {
-        Some(val) => val,
-        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
-    };
-    let port_parse = match split.next() {
-        Some(val) => u16::from_str(val),
-        None => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
-    };
-    let port = match port_parse {
-        Ok(val) => val,
-        Err(_) => fail!((ErrorKind::InvalidClientConfig, "Invalid node string")),
-    };
+    let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
+
+    let host = split.next().ok_or_else(invalid_error)?;
+    let port = split
+        .next()
+        .and_then(|string| u16::from_str(string).ok())
+        .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
         addr: get_connection_addr(host.to_string(), port, cluster_params.tls_mode),
