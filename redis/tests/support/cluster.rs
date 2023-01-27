@@ -31,7 +31,7 @@ impl ClusterType {
             Some("tcp") => ClusterType::Tcp,
             Some("tcp+tls") => ClusterType::TcpTls,
             val => {
-                panic!("Unknown server type {:?}", val);
+                panic!("Unknown server type {val:?}");
             }
         }
     }
@@ -124,7 +124,7 @@ impl RedisCluster {
                     }
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    addrs.push(format!("127.0.0.1:{}", port));
+                    addrs.push(format!("127.0.0.1:{port}"));
                     dbg!(&cmd);
                     cmd.spawn().unwrap()
                 },

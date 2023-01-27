@@ -64,7 +64,7 @@ fn do_show_scanning(con: &mut redis::Connection) -> redis::RedisResult<()> {
     // type of the iterator, rust will figure "int" out for us.
     let sum: i32 = cmd.iter::<i32>(con)?.sum();
 
-    println!("The sum of all numbers in the set 0-1000: {}", sum);
+    println!("The sum of all numbers in the set 0-1000: {sum}");
 
     Ok(())
 }
@@ -103,7 +103,7 @@ fn do_atomic_increment_lowlevel(con: &mut redis::Connection) -> redis::RedisResu
             }
             Some(response) => {
                 let (new_val,) = response;
-                println!("  New value: {}", new_val);
+                println!("  New value: {new_val}");
                 break;
             }
         }
@@ -129,7 +129,7 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
     })?;
 
     // and print the result
-    println!("New value: {}", new_val);
+    println!("New value: {new_val}");
 
     Ok(())
 }
