@@ -157,7 +157,7 @@ impl RedisCluster {
 
     fn wait_for_replicas(&self, replicas: u16) {
         'server: for server in &self.servers {
-            let conn_info = server.get_conn_info();
+            let conn_info = server.connection_info();
             eprintln!(
                 "waiting until {:?} knows required number of replicas",
                 conn_info.addr
@@ -222,7 +222,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(
             cluster
                 .iter_servers()
-                .map(RedisServer::get_conn_info)
+                .map(RedisServer::connection_info)
                 .collect(),
         );
         builder = initializer(builder);
@@ -253,7 +253,7 @@ impl TestClusterContext {
 
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
-            let client = redis::Client::open(server.get_conn_info()).unwrap();
+            let client = redis::Client::open(server.connection_info()).unwrap();
             let mut con = client.get_connection().unwrap();
             let _: () = redis::cmd("ACL")
                 .arg("SETUSER")
