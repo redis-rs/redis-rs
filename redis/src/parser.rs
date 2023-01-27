@@ -193,7 +193,7 @@ mod aio_support {
                     Err(err) => {
                         let err = err
                             .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{:?}", range))
+                            .map_range(|range| format!("{range:?}"))
                             .to_string();
                         return Err(RedisError::from((
                             ErrorKind::ResponseError,
@@ -252,7 +252,7 @@ mod aio_support {
                         RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
                     } else {
                         let err = err
-                            .map_range(|range| format!("{:?}", range))
+                            .map_range(|range| format!("{range:?}"))
                             .map_position(|pos| pos.translate_position(decoder.buffer()))
                             .to_string();
                         RedisError::from((ErrorKind::ResponseError, "parse error", err))
@@ -310,7 +310,7 @@ impl Parser {
                         RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
                     } else {
                         let err = err
-                            .map_range(|range| format!("{:?}", range))
+                            .map_range(|range| format!("{range:?}"))
                             .map_position(|pos| pos.translate_position(decoder.buffer()))
                             .to_string();
                         RedisError::from((ErrorKind::ResponseError, "parse error", err))

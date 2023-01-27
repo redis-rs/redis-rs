@@ -77,7 +77,7 @@ fn demo_group_reads(client: &redis::Client) {
             for key in STREAMS {
                 let created: Result<(), _> = con.xgroup_create_mkstream(*key, GROUP_NAME, "$");
                 if let Err(e) = created {
-                    println!("Group already exists: {:?}", e)
+                    println!("Group already exists: {e:?}")
                 }
             }
 
@@ -216,9 +216,9 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
         .expect("read");
 
     for StreamKey { key, ids } in srr.keys {
-        println!("Stream {}", key);
+        println!("Stream {key}");
         for StreamId { id, map } in ids {
-            println!("\tID {}", id);
+            println!("\tID {id}");
             for (n, s) in map {
                 if let Value::Data(bytes) = s {
                     println!("\t\t{}: {}", n, String::from_utf8(bytes).expect("utf8"))
@@ -233,7 +233,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
 }
 
 fn consumer_name(slowness: u8) -> String {
-    format!("example-consumer-{}", slowness)
+    format!("example-consumer-{slowness}")
 }
 
 const GROUP_NAME: &str = "example-group-aaa";

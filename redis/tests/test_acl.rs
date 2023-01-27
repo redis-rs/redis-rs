@@ -122,7 +122,7 @@ fn test_acl_cat() {
         "scripting",
     ];
     for cat in expects.iter() {
-        assert!(res.contains(*cat), "Category `{}` does not exist", cat);
+        assert!(res.contains(*cat), "Category `{cat}` does not exist");
     }
 
     let expects = vec!["pfmerge", "pfcount", "pfselftest", "pfadd"];
@@ -130,7 +130,7 @@ fn test_acl_cat() {
         .acl_cat_categoryname("hyperloglog")
         .expect("Got commands of a category");
     for cmd in expects.iter() {
-        assert!(res.contains(*cmd), "Command `{}` does not exist", cmd);
+        assert!(res.contains(*cmd), "Command `{cmd}` does not exist");
     }
 }
 

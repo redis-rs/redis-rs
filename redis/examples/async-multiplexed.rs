@@ -4,9 +4,9 @@ use redis::{aio::MultiplexedConnection, RedisResult};
 async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {
     let mut con = con.clone();
 
-    let key = format!("key{}", i);
-    let key2 = format!("key{}_2", i);
-    let value = format!("foo{}", i);
+    let key = format!("key{i}");
+    let key2 = format!("key{i}_2");
+    let value = format!("foo{i}");
 
     redis::cmd("SET")
         .arg(&key[..])

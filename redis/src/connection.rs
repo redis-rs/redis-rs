@@ -85,8 +85,8 @@ impl ConnectionAddr {
 impl fmt::Display for ConnectionAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ConnectionAddr::Tcp(ref host, port) => write!(f, "{}:{}", host, port),
-            ConnectionAddr::TcpTls { ref host, port, .. } => write!(f, "{}:{}", host, port),
+            ConnectionAddr::Tcp(ref host, port) => write!(f, "{host}:{port}"),
+            ConnectionAddr::TcpTls { ref host, port, .. } => write!(f, "{host}:{port}"),
             ConnectionAddr::Unix(ref path) => write!(f, "{}", path.display()),
         }
     }
@@ -1182,8 +1182,7 @@ mod tests {
             assert_eq!(
                 res.is_some(),
                 expected,
-                "Parsed result of `{}` is not expected",
-                url,
+                "Parsed result of `{url}` is not expected",
             );
         }
     }
@@ -1219,21 +1218,18 @@ mod tests {
         ];
         for (url, expected) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url.clone()).unwrap();
-            assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
+            assert_eq!(res.addr, expected.addr, "addr of {url} is not expected");
             assert_eq!(
                 res.redis.db, expected.redis.db,
-                "db of {} is not expected",
-                url
+                "db of {url} is not expected",
             );
             assert_eq!(
                 res.redis.username, expected.redis.username,
-                "username of {} is not expected",
-                url
+                "username of {url} is not expected",
             );
             assert_eq!(
                 res.redis.password, expected.redis.password,
-                "password of {} is not expected",
-                url
+                "password of {url} is not expected",
             );
         }
     }
@@ -1331,25 +1327,21 @@ mod tests {
             assert_eq!(
                 ConnectionAddr::Unix(url.to_file_path().unwrap()),
                 expected.addr,
-                "addr of {} is not expected",
-                url
+                "addr of {url} is not expected",
             );
             let res = url_to_unix_connection_info(url.clone()).unwrap();
-            assert_eq!(res.addr, expected.addr, "addr of {} is not expected", url);
+            assert_eq!(res.addr, expected.addr, "addr of {url} is not expected");
             assert_eq!(
                 res.redis.db, expected.redis.db,
-                "db of {} is not expected",
-                url
+                "db of {url} is not expected",
             );
             assert_eq!(
                 res.redis.username, expected.redis.username,
-                "username of {} is not expected",
-                url
+                "username of {url} is not expected",
             );
             assert_eq!(
                 res.redis.password, expected.redis.password,
-                "password of {} is not expected",
-                url
+                "password of {url} is not expected",
             );
         }
     }
