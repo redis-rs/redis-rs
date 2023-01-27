@@ -236,7 +236,7 @@ impl RedisWrite for Cmd {
 
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         use std::io::Write;
-        write!(self.data, "{}", arg).unwrap();
+        write!(self.data, "{arg}").unwrap();
         self.args.push(Arg::Simple(self.data.len()));
     }
 }

@@ -27,12 +27,12 @@ fn run() -> RedisResult<()> {
         ],
     )?;
 
-    println!("[geo_add] Added {} members.", added);
+    println!("[geo_add] Added {added} members.");
 
     // Get the position of one of them.
 
     let position: Vec<geo::Coord<f64>> = con.geo_pos("gis", "Palermo")?;
-    println!("[geo_pos] Position for Palermo: {:?}", position);
+    println!("[geo_pos] Position for Palermo: {position:?}");
 
     // Search members near (13.5, 37.75)
 
@@ -61,7 +61,7 @@ fn run() -> RedisResult<()> {
 
 fn main() {
     if let Err(e) = run() {
-        println!("{:?}", e);
+        println!("{e:?}");
         exit(1);
     }
 }

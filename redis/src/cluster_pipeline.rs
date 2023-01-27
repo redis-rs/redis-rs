@@ -113,10 +113,7 @@ impl ClusterPipeline {
                 fail!((
                     UNROUTABLE_ERROR.0,
                     UNROUTABLE_ERROR.1,
-                    format!(
-                        "Command '{}' can't be executed in a cluster pipeline.",
-                        cmd_name
-                    )
+                    format!("Command '{cmd_name}' can't be executed in a cluster pipeline.")
                 ))
             }
         }

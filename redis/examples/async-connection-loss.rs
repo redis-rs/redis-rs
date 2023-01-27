@@ -28,7 +28,7 @@ async fn run_single<C: ConnectionLike>(mut con: C) -> RedisResult<()> {
         println!();
         println!("> PING");
         let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        println!("< {:?}", result);
+        println!("< {result:?}");
     }
 }
 

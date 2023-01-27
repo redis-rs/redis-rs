@@ -191,7 +191,7 @@ impl ClusterConnection {
 
         for info in self.initial_nodes.iter() {
             let addr = match info.addr {
-                ConnectionAddr::Tcp(ref host, port) => format!("redis://{}:{}", host, port),
+                ConnectionAddr::Tcp(ref host, port) => format!("redis://{host}:{port}"),
                 ConnectionAddr::TcpTls {
                     ref host,
                     port,
@@ -304,7 +304,7 @@ impl ClusterConnection {
                     return Err(RedisError::from((
                         ErrorKind::ResponseError,
                         "Slot refresh error.",
-                        format!("Lacks the slots >= {}", last_slot),
+                        format!("Lacks the slots >= {last_slot}"),
                     )));
                 }
 
@@ -799,14 +799,14 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
 
 fn build_connection_string(host: &str, port: Option<u16>, tls_mode: Option<TlsMode>) -> String {
     let host_port = match port {
-        Some(port) => format!("{}:{}", host, port),
+        Some(port) => format!("{host}:{port}"),
         None => host.to_string(),
     };
     match tls_mode {
-        None => format!("redis://{}", host_port),
+        None => format!("redis://{host_port}"),
         Some(TlsMode::Insecure) => {
-            format!("rediss://{}/#insecure", host_port)
+            format!("rediss://{host_port}/#insecure")
         }
-        Some(TlsMode::Secure) => format!("rediss://{}", host_port),
+        Some(TlsMode::Secure) => format!("rediss://{host_port}"),
     }
 }
