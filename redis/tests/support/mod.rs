@@ -201,14 +201,21 @@ impl RedisServer {
         }
     }
 
-    pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
+    pub fn client_addr(&self) -> &redis::ConnectionAddr {
         &self.addr
+    }
+
+    pub fn connection_info(&self) -> redis::ConnectionInfo {
+        redis::ConnectionInfo {
+            addr: self.client_addr().clone(),
+            redis: Default::default(),
+        }
     }
 
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
-        if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
+        if let redis::ConnectionAddr::Unix(ref path) = *self.client_addr() {
             fs::remove_file(path).ok();
         }
     }
@@ -234,7 +241,7 @@ impl TestContext {
         let server = RedisServer::with_modules(modules);
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: server.get_client_addr().clone(),
+            addr: server.client_addr().clone(),
             redis: Default::default(),
         })
         .unwrap();
