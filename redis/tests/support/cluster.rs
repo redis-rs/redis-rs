@@ -157,10 +157,7 @@ impl RedisCluster {
 
     fn wait_for_replicas(&self, replicas: u16) {
         'server: for server in &self.servers {
-            let conn_info = redis::ConnectionInfo {
-                addr: server.get_client_addr().clone(),
-                redis: Default::default(),
-            };
+            let conn_info = server.get_conn_info();
             eprintln!(
                 "waiting until {:?} knows required number of replicas",
                 conn_info.addr
@@ -225,10 +222,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(
             cluster
                 .iter_servers()
-                .map(|server| redis::ConnectionInfo {
-                    addr: server.get_client_addr().clone(),
-                    redis: Default::default(),
-                })
+                .map(RedisServer::get_conn_info)
                 .collect(),
         );
         builder = initializer(builder);
@@ -255,5 +249,22 @@ impl TestClusterContext {
         }
 
         panic!("failed waiting for cluster to be ready");
+    }
+
+    pub fn disable_default_user(&self) {
+        for server in &self.cluster.servers {
+            let client = redis::Client::open(server.get_conn_info()).unwrap();
+            let mut con = client.get_connection().unwrap();
+            let _: () = redis::cmd("ACL")
+                .arg("SETUSER")
+                .arg("default")
+                .arg("off")
+                .query(&mut con)
+                .unwrap();
+
+            // subsequent unauthenticated command should fail:
+            let mut con = client.get_connection().unwrap();
+            assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+        }
     }
 }

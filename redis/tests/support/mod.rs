@@ -205,6 +205,13 @@ impl RedisServer {
         &self.addr
     }
 
+    pub fn get_conn_info(&self) -> redis::ConnectionInfo {
+        redis::ConnectionInfo {
+            addr: self.get_client_addr().clone(),
+            redis: Default::default(),
+        }
+    }
+
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();

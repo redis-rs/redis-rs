@@ -29,6 +29,8 @@ fn test_cluster_with_username_and_password() {
             .username(RedisCluster::username().to_string())
             .password(RedisCluster::password().to_string())
     });
+    cluster.disable_default_user();
+
     let mut con = cluster.connection();
 
     redis::cmd("SET")
