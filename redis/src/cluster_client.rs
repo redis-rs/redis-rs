@@ -8,10 +8,10 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
-    /// tls_mode indicates tls behavior of connections.
+    /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
-    pub(crate) tls_mode: Option<TlsMode>,
+    pub(crate) tls: Option<TlsMode>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -69,8 +69,8 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
-        if cluster_params.tls_mode.is_none() {
-            cluster_params.tls_mode = match first_node.addr {
+        if cluster_params.tls.is_none() {
+            cluster_params.tls = match first_node.addr {
                 ConnectionAddr::TcpTls {
                     host: _,
                     port: _,
@@ -129,8 +129,8 @@ impl ClusterClientBuilder {
     ///
     /// It is extracted from the first node of initial_nodes if not set.
     #[cfg(feature = "tls")]
-    pub fn tls_mode(mut self, tls_mode: TlsMode) -> ClusterClientBuilder {
-        self.cluster_params.tls_mode = Some(tls_mode);
+    pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
+        self.cluster_params.tls = Some(tls);
         self
     }
 

@@ -74,7 +74,7 @@ pub struct ClusterConnection {
     password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    tls_mode: Option<TlsMode>,
+    tls: Option<TlsMode>,
 }
 
 impl ClusterConnection {
@@ -91,7 +91,7 @@ impl ClusterConnection {
             password: cluster_params.password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            tls_mode: cluster_params.tls_mode,
+            tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
         };
         connection.create_initial_connections()?;
@@ -254,7 +254,7 @@ impl ClusterConnection {
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(conn, self.tls_mode) {
+            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -304,7 +304,7 @@ impl ClusterConnection {
         let params = ClusterParams {
             password: self.password.clone(),
             username: self.username.clone(),
-            tls_mode: self.tls_mode,
+            tls: self.tls,
             ..Default::default()
         };
         let info = get_connection_info(node, params)?;
@@ -694,7 +694,7 @@ fn get_random_connection<'a>(
 }
 
 // Get slot data from connection.
-fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
+fn get_slots(connection: &mut Connection, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
     let mut cmd = Cmd::new();
     cmd.arg("CLUSTER").arg("SLOTS");
     let value = connection.req_command(&cmd)?;
@@ -744,7 +744,7 @@ fn get_slots(connection: &mut Connection, tls_mode: Option<TlsMode>) -> RedisRes
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls_mode).to_string())
+                        Some(get_connection_addr(ip.into_owned(), port, tls).to_string())
                     } else {
                         None
                     }
@@ -777,7 +777,7 @@ fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls_mode),
+        addr: get_connection_addr(host.to_string(), port, cluster_params.tls),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -786,8 +786,8 @@ fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls_mode: Option<TlsMode>) -> ConnectionAddr {
-    match tls_mode {
+fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
+    match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
             port,
