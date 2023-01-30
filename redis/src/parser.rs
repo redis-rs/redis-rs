@@ -465,9 +465,9 @@ mod tests {
         let val = parse_redis_value(b"#f\r\n").unwrap();
         assert_eq!(val, Value::Boolean(false));
         let val = parse_redis_value(b"#x\r\n");
-        assert_eq!(val.is_err(), true);
+        assert!(val.is_err());
         let val = parse_redis_value(b"#\r\n");
-        assert_eq!(val.is_err(), true);
+        assert!(val.is_err());
     }
     #[test]
     fn decode_resp3_blob_error() {
