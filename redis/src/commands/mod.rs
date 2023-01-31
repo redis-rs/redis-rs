@@ -87,7 +87,7 @@ implement_commands! {
         cmd("SET").arg(key).arg(value)
     }
 
-    /// Sets multiple keys to their values.
+    /// Sets multiple keys to their values. Equivalent to MSET.
     fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
         cmd("MSET").arg(items)
     }
