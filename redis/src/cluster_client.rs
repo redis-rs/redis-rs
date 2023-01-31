@@ -152,7 +152,7 @@ impl ClusterClient {
         Self::builder(initial_nodes).build()
     }
 
-    /// Creates a [`ClusterClientBuilder`] with the the provided initial_nodes.
+    /// Creates a [`ClusterClientBuilder`] with the provided initial_nodes.
     pub fn builder<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
         ClusterClientBuilder::new(initial_nodes)
     }
