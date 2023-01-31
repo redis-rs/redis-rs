@@ -88,7 +88,13 @@ implement_commands! {
     }
 
     /// Sets multiple keys to their values.
+    #[deprecated(since = "0.24.0", note = "set_multiple was determined to be a poor name. Please use mset instead")]
     fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
+        cmd("MSET").arg(items)
+    }
+
+    /// Sets multiple keys to their values.
+    fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
         cmd("MSET").arg(items)
     }
 
