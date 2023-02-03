@@ -42,7 +42,7 @@ macro_rules! implement_json_commands {
         ///
         /// ```rust,no_run
         /// use redis::JsonCommands;
-		/// use serde_json::json;
+        /// use serde_json::json;
         /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
@@ -64,7 +64,7 @@ macro_rules! implement_json_commands {
         /// ```rust,no_run
         /// use redis_macros::Json;
         /// # use redis::JsonCommands;
-		/// # use serde_json::json;
+        /// # use serde_json::json;
         /// # fn do_something() -> redis::RedisResult<()> {
         /// # use redis::Commands;
         /// # let client = redis::Client::open("redis://127.0.0.1/")?;
@@ -115,7 +115,7 @@ macro_rules! implement_json_commands {
         ///
         /// ```rust,no_run
         /// use redis::JsonAsyncCommands;
-		/// use serde_json::json;
+        /// use serde_json::json;
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
@@ -137,7 +137,7 @@ macro_rules! implement_json_commands {
         /// ```rust,no_run
         /// use redis_macros::Json;
         /// # use redis::JsonAsyncCommands;
-		/// # use serde_json::json;
+        /// # use serde_json::json;
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// # use redis::Commands;
         /// # let client = redis::Client::open("redis://127.0.0.1/")?;

@@ -135,8 +135,8 @@ fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> 
 ```
 
 To parse the results, you'll need to use `serde_json` (or some other json lib) to deserialize
-the results from the bytes. It will always be a Vec, if no results were found at the path it'll
-be an empty Vec. If you want to handle deserialization and Vec unwrapping automatically,
+the results from the bytes. It will always be a `Vec`, if no results were found at the path it'll
+be an empty `Vec`. If you want to handle deserialization and `Vec` unwrapping automatically,
 you can use the `Json` wrapper from the
 [redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
