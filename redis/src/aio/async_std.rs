@@ -9,6 +9,8 @@ use std::{
 };
 
 use crate::aio::{AsyncStream, RedisRuntime};
+#[cfg(feature = "tls")]
+use crate::tls::Certificate;
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
 use async_native_tls::{TlsConnector, TlsStream};
@@ -154,6 +156,7 @@ impl RedisRuntime for AsyncStd {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        ca_cert: Option<Certificate>,
     ) -> RedisResult<Self> {
         let tcp_stream = TcpStream::connect(&socket_addr).await?;
         let tls_connector = if insecure {
@@ -162,7 +165,11 @@ impl RedisRuntime for AsyncStd {
                 .danger_accept_invalid_hostnames(true)
                 .use_sni(false)
         } else {
-            TlsConnector::new()
+            let mut tls_connector = TlsConnector::new();
+            if let Some(ca_cert) = ca_cert {
+                tls_connector = tls_connector.add_root_certificate(ca_cert.0);
+            }
+            tls_connector
         };
         Ok(tls_connector
             .connect(hostname, tcp_stream)

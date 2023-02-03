@@ -448,6 +448,10 @@ mod r2d2;
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
 
+#[cfg(feature = "tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+pub mod tls;
+
 mod client;
 mod cmd;
 mod commands;
