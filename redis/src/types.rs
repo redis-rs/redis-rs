@@ -679,6 +679,10 @@ impl RedisWrite for Vec<Vec<u8>> {
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
 /// some cases it might make sense to produce more than one.
+/// 
+/// If you want to automatically serialize your own types to JSON strings,
+/// you can derive this trait with the
+/// [redis-macros](https://github.com/daniel7grant/redis-macros/) crate.
 pub trait ToRedisArgs: Sized {
     /// This converts the value into a vector of bytes.  Each item
     /// is a single argument.  Most items generate a vector of a
@@ -1098,7 +1102,9 @@ to_redis_args_for_array! {
 /// return value into a `String` or an integer.
 ///
 /// This trait is well supported throughout the library and you can
-/// implement it for your own types if you want.
+/// implement it for your own types if you want. To automatically derive
+/// this trait for your own types, you can use the
+/// [redis-macros](https://github.com/daniel7grant/redis-macros/) crate.
 ///
 /// In addition to what you can see from the docs, this is also implemented
 /// for tuples up to size 12 and for `Vec<u8>`.
