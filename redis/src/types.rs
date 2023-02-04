@@ -1097,6 +1097,9 @@ to_redis_args_for_array! {
 /// that works better in rust.  For instance you might want to convert the
 /// return value into a `String` or an integer.
 ///
+/// This trait is well supported throughout the library and you can
+/// implement it for your own types if you want.
+///
 /// In addition to what you can see from the docs, this is also implemented
 /// for tuples up to size 12 and for `Vec<u8>`.
 pub trait FromRedisValue: Sized {
