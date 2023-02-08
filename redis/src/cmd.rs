@@ -472,6 +472,16 @@ impl Cmd {
         self.query::<()>(con).unwrap();
     }
 
+    /// Async version of `execute`.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn execute_async<C, T: FromRedisValue>(&self, con: &mut C)
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        con.req_packed_command(self).await.unwrap();
+    }
+
     /// Returns an iterator over the arguments in this command (including the command name itself)
     pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
         let mut prev = 0;
