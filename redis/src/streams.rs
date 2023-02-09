@@ -296,10 +296,14 @@ pub struct StreamClaimReply {
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamAutoClaimReply {
+    /// A stream ID to be used as the <start> argument for
+    /// the next call to [`xautoclaim`](../trait.Commands.html#method.xautoclaim).
+    pub start_stream_id: String,
     /// Complex data structure containing a payload for each ID in this array
     pub ids: Vec<StreamId>,
-    /// Last id
-    pub last_id: String,
+    /// An array containing message IDs that no longer exist in the stream,
+    /// and were deleted from the PEL in which they were found.
+    pub deleted_ids: Vec<String>,
 }
 
 /// Reply type used with [`xpending`] command.
@@ -568,7 +572,7 @@ impl FromRedisValue for StreamClaimReply {
 
 impl FromRedisValue for StreamAutoClaimReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let (last_id, rows, _unknown): (
+        let (start_stream_id, rows, deleted_ids): (
             String,
             Vec<HashMap<String, HashMap<String, Value>>>,
             Vec<String>,
@@ -578,7 +582,12 @@ impl FromRedisValue for StreamAutoClaimReply {
             .into_iter()
             .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
-        Ok(StreamAutoClaimReply { ids, last_id })
+
+        Ok(StreamAutoClaimReply {
+            ids,
+            start_stream_id,
+            deleted_ids,
+        })
     }
 }
 
