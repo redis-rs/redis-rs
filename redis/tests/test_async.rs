@@ -480,6 +480,25 @@ async fn test_issue_stream_blocks() {
     .unwrap();
 }
 
+// Test issue of AsyncCommands::scan returning the wrong number of keys
+// https://github.com/redis-rs/redis-rs/issues/759
+#[tokio::test]
+async fn test_issue_async_commands_scan_broken() {
+    let ctx = TestContext::new();
+    let mut con = ctx.async_connection().await.unwrap();
+    let mut keys: Vec<String> = (0..100).map(|k| format!("async-key{k}")).collect();
+    keys.sort();
+    for key in &keys {
+        let _: () = con.set(key, b"foo").await.unwrap();
+    }
+
+    let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
+    let mut keys_from_redis: Vec<_> = iter.collect().await;
+    keys_from_redis.sort();
+    assert_eq!(keys, keys_from_redis);
+    assert_eq!(keys.len(), 100);
+}
+
 mod pub_sub {
     use std::collections::HashMap;
     use std::time::Duration;
