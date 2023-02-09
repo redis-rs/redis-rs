@@ -1379,6 +1379,86 @@ implement_commands! {
             .arg(options)
     }
 
+    /// xautoclaim is equivalent to calling XPENDING and then XCLAIM, but provides a more
+    /// straightforward way to deal with message delivery failures via SCAN-like semantics.
+    ///
+    /// Like XCLAIM, the command operates on the stream entries at <key> and in the context of the
+    /// provided <group>. It transfers ownership to <consumer> of messages pending for more than
+    /// <min-idle-time> milliseconds and having an equal or greater ID than <start>.
+    ///
+    /// This method only accepts the must-have arguments for autoclaiming messages.
+    /// If optional arguments are required, see `xautoclaim_options` below.
+    ///
+    /// ```text
+    /// XAUTOCLAIM <key> <group> <consumer> <min-idle-time> <start>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xautoclaim<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs, MIT: ToRedisArgs, ID: ToRedisArgs>(
+        key: K,
+        group: G,
+        consumer: C,
+        min_idle_time: MIT,
+        start: ID
+    ) {
+        cmd("XAUTOCLAIM")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+            .arg(min_idle_time)
+            .arg(start)
+    }
+
+    /// This is the optional arguments version for xautoclaim.
+    ///
+    /// ```no_run
+    /// use redis::{Connection, Commands, RedisResult};
+    /// use redis::streams::{StreamAutoClaimOptions, StreamAutoClaimReply};
+    ///
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamAutoClaimOptions::default().count(4);
+    ///
+    /// let results: RedisResult<StreamAutoClaimReply> =
+    ///     con.xautoclaim_options("k1", "g1", "c1", 10000, "0-0", opts);
+    ///
+    /// // All optional arguments return a `Result<StreamAutoClaimReply>` with one exception:
+    /// // Passing JUSTID returns only the message `id` and omits the HashMap for each message.
+    ///
+    /// let opts = StreamAutoClaimOptions::default().with_justid();
+    /// let results: RedisResult<StreamAutoClaimReply> =
+    ///     con.xautoclaim_options("k1", "g1", "c1", 10000, "0-0", opts);
+    /// ```
+    ///
+    /// ```text
+    /// XAUTOCLAIM <key> <group> <consumer> <min-idle-time> <start> [JUSTID]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xautoclaim_options<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        C: ToRedisArgs,
+        MIT: ToRedisArgs,
+        ID: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        consumer: C,
+        min_idle_time: MIT,
+        start: ID,
+        options: streams::StreamAutoClaimOptions
+    ) {
+        cmd("XAUTOCLAIM")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+            .arg(min_idle_time)
+            .arg(start)
+            .arg(options)
+    }
+
 
     /// Deletes a list of `id`s for a given stream `key`.
     ///
