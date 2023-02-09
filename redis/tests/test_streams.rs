@@ -567,6 +567,28 @@ fn test_xautoclaim() {
 
     assert_eq!(reply.start_stream_id, read_reply.keys[0].ids[1].id);
     assert_eq!(reply.ids.len(), 1);
+
+    // Only claim given id
+    let xack_result: i32 = con.xack("k1", "g1", &[&reply.ids[0].id]).unwrap();
+
+    // Check if 1 messages was indeed claimed.
+    assert_eq!(xack_result, 1);
+
+    // grab id if > 4ms with just ids
+    let (start_id, ids, deleted_ids): (String, Vec<String>, Vec<String>) = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            4,
+            &reply.start_stream_id,
+            StreamAutoClaimOptions::default().with_justid(),
+        )
+        .unwrap();
+
+    assert_eq!(start_id, "0-0");
+    assert_eq!(ids, vec![reply.start_stream_id]);
+    assert_eq!(deleted_ids, Vec::<String>::new());
 }
 
 #[test]
