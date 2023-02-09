@@ -40,45 +40,45 @@ impl ToRedisArgs for StreamMaxlen {
 ///
 #[derive(Default, Debug)]
 pub struct StreamClaimOptions {
-    /// Set IDLE <milliseconds> cmd arg.
+    /// Set `IDLE <milliseconds>` cmd arg.
     idle: Option<usize>,
-    /// Set TIME <mstime> cmd arg.
+    /// Set `TIME <Unix epoch milliseconds>` cmd arg.
     time: Option<usize>,
-    /// Set RETRYCOUNT <count> cmd arg.
+    /// Set `RETRYCOUNT <count>` cmd arg.
     retry: Option<usize>,
-    /// Set FORCE cmd arg.
+    /// Set `FORCE` cmd arg.
     force: bool,
-    /// Set JUSTID cmd arg. Be advised: the response
+    /// Set `JUSTID` cmd arg. Be advised: the response
     /// type changes with this option.
     justid: bool,
 }
 
 impl StreamClaimOptions {
-    /// Set IDLE <milliseconds> cmd arg.
+    /// Set `IDLE <milliseconds>` cmd arg.
     pub fn idle(mut self, ms: usize) -> Self {
         self.idle = Some(ms);
         self
     }
 
-    /// Set TIME <mstime> cmd arg.
+    /// Set `TIME <Unix epoch milliseconds>` cmd arg.
     pub fn time(mut self, ms_time: usize) -> Self {
         self.time = Some(ms_time);
         self
     }
 
-    /// Set RETRYCOUNT <count> cmd arg.
+    /// Set `RETRYCOUNT <count>` cmd arg.
     pub fn retry(mut self, count: usize) -> Self {
         self.retry = Some(count);
         self
     }
 
-    /// Set FORCE cmd arg to true.
+    /// Set `FORCE` cmd arg to true.
     pub fn with_force(mut self) -> Self {
         self.force = true;
         self
     }
 
-    /// Set JUSTID cmd arg to true. Be advised: the response
+    /// Set `JUSTID` cmd arg to true. Be advised: the response
     /// type changes with this option.
     pub fn with_justid(mut self) -> Self {
         self.justid = true;
@@ -93,15 +93,15 @@ impl ToRedisArgs for StreamClaimOptions {
     {
         if let Some(ref ms) = self.idle {
             out.write_arg(b"IDLE");
-            out.write_arg(format!("{}", ms).as_bytes());
+            out.write_arg(format!("{ms}").as_bytes());
         }
         if let Some(ref ms_time) = self.time {
             out.write_arg(b"TIME");
-            out.write_arg(format!("{}", ms_time).as_bytes());
+            out.write_arg(format!("{ms_time}").as_bytes());
         }
         if let Some(ref count) = self.retry {
             out.write_arg(b"RETRYCOUNT");
-            out.write_arg(format!("{}", count).as_bytes());
+            out.write_arg(format!("{count}").as_bytes());
         }
         if self.force {
             out.write_arg(b"FORCE");
@@ -113,8 +113,8 @@ impl ToRedisArgs for StreamClaimOptions {
 }
 
 /// Argument to `StreamReadOptions`
-/// Represents the Redis GROUP <groupname> <consumername> cmd arg.
-/// This option will toggle the cmd from XREAD to XREADGROUP
+/// Represents the Redis `GROUP <groupname> <consumername>` cmd arg.
+/// This option will toggle the cmd from `XREAD` to `XREADGROUP`
 type SRGroup = Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>;
 /// Builder options for [`xread_options`] command.
 ///
@@ -122,13 +122,13 @@ type SRGroup = Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>;
 ///
 #[derive(Default, Debug)]
 pub struct StreamReadOptions {
-    /// Set the BLOCK <milliseconds> cmd arg.
+    /// Set the `BLOCK <milliseconds>` cmd arg.
     block: Option<usize>,
-    /// Set the COUNT <count> cmd arg.
+    /// Set the `COUNT <count>` cmd arg.
     count: Option<usize>,
-    /// Set the NOACK cmd arg.
+    /// Set the `NOACK` cmd arg.
     noack: Option<bool>,
-    /// Set the GROUP <groupname> <consumername> cmd arg.
+    /// Set the `GROUP <groupname> <consumername>` cmd arg.
     /// This option will toggle the cmd from XREAD to XREADGROUP.
     group: SRGroup,
 }
@@ -181,12 +181,12 @@ impl ToRedisArgs for StreamReadOptions {
     {
         if let Some(ref ms) = self.block {
             out.write_arg(b"BLOCK");
-            out.write_arg(format!("{}", ms).as_bytes());
+            out.write_arg(format!("{ms}").as_bytes());
         }
 
         if let Some(ref n) = self.count {
             out.write_arg(b"COUNT");
-            out.write_arg(format!("{}", n).as_bytes());
+            out.write_arg(format!("{n}").as_bytes());
         }
 
         if let Some(ref group) = self.group {

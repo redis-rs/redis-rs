@@ -1,3 +1,37 @@
+<a name="0.22.3"></a>
+### 0.22.3 (2023-01-23)
+
+#### Changes
+*   Restore inherent `ClusterConnection::check_connection()` method ([#758](https://github.com/redis-rs/redis-rs/pull/758) @robjtede)
+
+
+<a name="0.22.2"></a>
+### 0.22.2 (2023-01-07)
+
+This release adds various incremental improvements and fixes a few long-standing bugs. Thanks to all our
+contributors for making this release happen.
+
+#### Features
+*   Implement ToRedisArgs for HashMap ([#722](https://github.com/redis-rs/redis-rs/pull/722) @gibranamparan) 
+*   Add explicit `MGET` command ([#729](https://github.com/redis-rs/redis-rs/pull/729) @vamshiaruru-virgodesigns)
+
+#### Bug fixes
+*   Enable single-item-vector `get` responses ([#507](https://github.com/redis-rs/redis-rs/pull/507) @hank121314)
+*   Fix empty result from xread_options with deleted entries ([#712](https://github.com/redis-rs/redis-rs/pull/712) @Quiwin)
+*   Limit Parser Recursion ([#724](https://github.com/redis-rs/redis-rs/pull/724))
+*   Improve MultiplexedConnection Error Handling ([#699](https://github.com/redis-rs/redis-rs/pull/699))
+
+#### Changes
+*   Add test case for atomic pipeline ([#702](https://github.com/redis-rs/redis-rs/pull/702) @CNLHC)
+*   Capture subscribe result error in PubSub doc example ([#739](https://github.com/redis-rs/redis-rs/pull/739) @baoyachi) 
+*   Use async-std name resolution when necessary ([#701](https://github.com/redis-rs/redis-rs/pull/701) @UgnilJoZ) 
+*   Add Script::invoke_async method ([#711](https://github.com/redis-rs/redis-rs/pull/711) @r-bk)
+*   Cluster Refactorings ([#717](https://github.com/redis-rs/redis-rs/pull/717), [#716](https://github.com/redis-rs/redis-rs/pull/716), [#709](https://github.com/redis-rs/redis-rs/pull/709), [#707](https://github.com/redis-rs/redis-rs/pull/707), [#706](https://github.com/redis-rs/redis-rs/pull/706) @0xWOF, @utkarshgupta137)
+*   Fix intermitent test failure ([#714](https://github.com/redis-rs/redis-rs/pull/714) @0xWOF, @utkarshgupta137)
+*   Doc changes ([#705](https://github.com/redis-rs/redis-rs/pull/705) @0xWOF, @utkarshgupta137)
+*   Lint fixes ([#704](https://github.com/redis-rs/redis-rs/pull/704) @0xWOF)
+
+
 <a name="0.22.1"></a>
 ### 0.22.1 (2022-10-18)
 

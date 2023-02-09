@@ -199,10 +199,10 @@ impl fmt::Debug for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Value::Nil => write!(fmt, "nil"),
-            Value::Int(val) => write!(fmt, "int({:?})", val),
+            Value::Int(val) => write!(fmt, "int({val:?})"),
             Value::Data(ref val) => match from_utf8(val) {
-                Ok(x) => write!(fmt, "string-data('{:?}')", x),
-                Err(_) => write!(fmt, "binary-data({:?})", val),
+                Ok(x) => write!(fmt, "string-data('{x:?}')"),
+                Err(_) => write!(fmt, "binary-data({val:?})"),
             },
             Value::Bulk(ref values) => {
                 write!(fmt, "bulk(")?;
@@ -211,13 +211,13 @@ impl fmt::Debug for Value {
                     if !is_first {
                         write!(fmt, ", ")?;
                     }
-                    write!(fmt, "{:?}", val)?;
+                    write!(fmt, "{val:?}")?;
                     is_first = false;
                 }
                 write!(fmt, ")")
             }
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({:?})", s),
+            Value::Status(ref s) => write!(fmt, "status({s:?})"),
         }
     }
 }
@@ -235,7 +235,7 @@ impl From<serde_json::Error> for RedisError {
         RedisError::from((
             ErrorKind::Serialize,
             "Serialization Error",
-            format!("{}", serde_err),
+            format!("{serde_err}"),
         ))
     }
 }
@@ -258,9 +258,7 @@ impl PartialEq for RedisError {
                 &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
                 &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
             ) => kind_a == kind_b,
-            (&ErrorRepr::ExtensionError(ref a, _), &ErrorRepr::ExtensionError(ref b, _)) => {
-                *a == *b
-            }
+            (ErrorRepr::ExtensionError(a, _), ErrorRepr::ExtensionError(b, _)) => *a == *b,
             _ => false,
         }
     }
@@ -552,7 +550,7 @@ impl RedisError {
             }
             ErrorRepr::IoError(ref e) => ErrorRepr::IoError(io::Error::new(
                 e.kind(),
-                format!("{}: {}", ioerror_description, e),
+                format!("{ioerror_description}: {e}"),
             )),
         };
         Self { repr }
@@ -1017,6 +1015,26 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<
     }
 }
 
+impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
+    for std::collections::HashMap<T, V>
+{
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        for (key, value) in self {
+            assert!(key.is_single_arg() && value.is_single_arg());
+
+            key.write_redis_args(out);
+            value.write_redis_args(out);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        self.len() <= 1
+    }
+}
+
 macro_rules! to_redis_args_for_tuple {
     () => ();
     ($($name:ident,)+) => (
@@ -1083,7 +1101,7 @@ to_redis_args_for_array! {
 /// implement it for your own types if you want.
 ///
 /// In addition to what you can see from the docs, this is also implemented
-/// for tuples up to size 12 and for Vec<u8>.
+/// for tuples up to size 12 and for `Vec<u8>`.
 pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
@@ -1097,11 +1115,11 @@ pub trait FromRedisValue: Sized {
         items.iter().map(FromRedisValue::from_redis_value).collect()
     }
 
-    /// This only exists internally as a workaround for the lack of
-    /// specialization.
-    #[doc(hidden)]
+    /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        None
+        Self::from_redis_value(&Value::Data(_vec.into()))
+            .map(|rv| vec![rv])
+            .ok()
     }
 }
 
@@ -1138,6 +1156,7 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
+    // this hack allows us to specialize Vec<u8> to work with binary data.
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
@@ -1211,11 +1230,13 @@ impl FromRedisValue for String {
 impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
         match *v {
-            // this hack allows us to specialize Vec<u8> to work with
-            // binary data whereas all others will fail with an error.
+            // All binary data except u8 will try to parse into a single element vector.
             Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
-                None => invalid_type_error!(v, "Response type not vector compatible."),
+                None => invalid_type_error!(
+                    v,
+                    format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
+                ),
             },
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
             Value::Nil => Ok(vec![]),
@@ -1228,10 +1249,16 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for std::collections::HashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
+        match *v {
+            Value::Nil => Ok(Default::default()),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
     }
 }
 
@@ -1240,10 +1267,16 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for ahash::AHashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V, S>> {
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
+        match *v {
+            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
     }
 }
 

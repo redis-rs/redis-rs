@@ -72,6 +72,11 @@ implement_commands! {
         cmd(if key.is_single_arg() { "GET" } else { "MGET" }).arg(key)
     }
 
+    /// Get values of keys
+    fn mget<K: ToRedisArgs>(key: K){
+        cmd("MGET").arg(key)
+    }
+
     /// Gets all keys matching pattern
     fn keys<K: ToRedisArgs>(key: K) {
         cmd("KEYS").arg(key)
@@ -1888,7 +1893,7 @@ pub enum ControlFlow<U> {
 ///         10 => ControlFlow::Break(()),
 ///         _ => ControlFlow::Continue,
 ///     }
-/// });
+/// })?;
 /// # Ok(()) }
 /// ```
 // TODO In the future, it would be nice to implement Try such that `?` will work

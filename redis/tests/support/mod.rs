@@ -66,7 +66,7 @@ impl ServerType {
             Some("tcp+tls") => ServerType::Tcp { tls: true },
             Some("unix") => ServerType::Unix,
             val => {
-                panic!("Unknown server type {:?}", val);
+                panic!("Unknown server type {val:?}");
             }
         }
     }
@@ -102,13 +102,13 @@ impl RedisServer {
             }
             ServerType::Unix => {
                 let (a, b) = rand::random::<(u64, u64)>();
-                let path = format!("/tmp/redis-rs-test-{}-{}.sock", a, b);
+                let path = format!("/tmp/redis-rs-test-{a}-{b}.sock");
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
         RedisServer::new_with_addr(addr, None, modules, |cmd| {
             cmd.spawn()
-                .unwrap_or_else(|err| panic!("Failed to run {:?}: {}", cmd, err))
+                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
         })
     }
 
@@ -201,14 +201,21 @@ impl RedisServer {
         }
     }
 
-    pub fn get_client_addr(&self) -> &redis::ConnectionAddr {
+    pub fn client_addr(&self) -> &redis::ConnectionAddr {
         &self.addr
+    }
+
+    pub fn connection_info(&self) -> redis::ConnectionInfo {
+        redis::ConnectionInfo {
+            addr: self.client_addr().clone(),
+            redis: Default::default(),
+        }
     }
 
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
-        if let redis::ConnectionAddr::Unix(ref path) = *self.get_client_addr() {
+        if let redis::ConnectionAddr::Unix(ref path) = *self.client_addr() {
             fs::remove_file(path).ok();
         }
     }
@@ -234,7 +241,7 @@ impl TestContext {
         let server = RedisServer::with_modules(modules);
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: server.get_client_addr().clone(),
+            addr: server.client_addr().clone(),
             redis: Default::default(),
         })
         .unwrap();
@@ -249,10 +256,10 @@ impl TestContext {
                         sleep(millisecond);
                         retries += 1;
                         if retries > 100000 {
-                            panic!("Tried to connect too many times, last error: {}", err);
+                            panic!("Tried to connect too many times, last error: {err}");
                         }
                     } else {
-                        panic!("Could not connect: {}", err);
+                        panic!("Could not connect: {err}");
                     }
                 }
                 Ok(x) => {
@@ -314,7 +321,7 @@ where
     #![allow(clippy::write_with_newline)]
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
-        Value::Int(val) => write!(writer, ":{}\r\n", val),
+        Value::Int(val) => write!(writer, ":{val}\r\n"),
         Value::Data(ref val) => {
             write!(writer, "${}\r\n", val.len())?;
             writer.write_all(val)?;
@@ -328,7 +335,7 @@ where
             Ok(())
         }
         Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{}\r\n", s),
+        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
     }
 }
 
@@ -353,7 +360,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("genrsa")
             .arg("-out")
             .arg(name)
-            .arg(&format!("{}", size))
+            .arg(&format!("{size}"))
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
             .spawn()

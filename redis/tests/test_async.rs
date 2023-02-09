@@ -136,12 +136,12 @@ fn test_pipeline_transaction_with_errors() {
 fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let mut con = con.clone();
     async move {
-        let key = format!("key{}", i);
+        let key = format!("key{i}");
         let key_2 = key.clone();
-        let key2 = format!("key{}_2", i);
+        let key2 = format!("key{i}_2");
         let key2_2 = key2.clone();
 
-        let foo_val = format!("foo{}", i);
+        let foo_val = format!("foo{i}");
 
         redis::cmd("SET")
             .arg(&key[..])
@@ -229,7 +229,7 @@ fn test_transaction_multiplexed_connection() {
                     let mut con = con.clone();
                     async move {
                         let foo_val = i;
-                        let bar_val = format!("bar{}", i);
+                        let bar_val = format!("bar{i}");
 
                         let mut pipe = redis::pipe();
                         pipe.atomic()
@@ -406,7 +406,7 @@ async fn io_error_on_kill_issue_320() {
         .await
         .unwrap();
 
-    eprintln!("{}", client_list);
+    eprintln!("{client_list}");
     let client_to_kill = client_list
         .split('\n')
         .find(|line| line.contains("to-kill"))
@@ -442,7 +442,7 @@ async fn io_error_on_kill_issue_320() {
 async fn invalid_password_issue_343() {
     let ctx = TestContext::new();
     let coninfo = redis::ConnectionInfo {
-        addr: ctx.server.get_client_addr().clone(),
+        addr: ctx.server.client_addr().clone(),
         redis: redis::RedisConnectionInfo {
             db: 0,
             username: None,
@@ -458,8 +458,7 @@ async fn invalid_password_issue_343() {
     assert_eq!(
         err.kind(),
         ErrorKind::AuthenticationFailed,
-        "Unexpected error: {}",
-        err
+        "Unexpected error: {err}",
     );
 }
 

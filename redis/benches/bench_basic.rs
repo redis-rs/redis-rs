@@ -93,7 +93,7 @@ fn long_pipeline() -> redis::Pipeline {
     let mut pipe = redis::pipe();
 
     for i in 0..PIPELINE_QUERIES {
-        pipe.set(format!("foo{}", i), "bar").ignore();
+        pipe.set(format!("foo{i}"), "bar").ignore();
     }
     pipe
 }
@@ -147,7 +147,7 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
         .unwrap();
 
     let cmds: Vec<_> = (0..PIPELINE_QUERIES)
-        .map(|i| redis::cmd("SET").arg(format!("foo{}", i)).arg(i).clone())
+        .map(|i| redis::cmd("SET").arg(format!("foo{i}")).arg(i).clone())
         .collect();
 
     let mut connections = (0..PIPELINE_QUERIES)

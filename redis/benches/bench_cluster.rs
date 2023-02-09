@@ -46,7 +46,7 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
 
     let mut queries = Vec::new();
     for i in 0..PIPELINE_QUERIES {
-        queries.push(format!("foo{}", i));
+        queries.push(format!("foo{i}"));
     }
 
     let build_pipeline = || {

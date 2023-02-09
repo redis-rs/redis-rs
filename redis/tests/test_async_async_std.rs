@@ -126,12 +126,12 @@ fn test_pipeline_transaction() {
 fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
     let mut con = con.clone();
     async move {
-        let key = format!("key{}", i);
+        let key = format!("key{i}");
         let key_2 = key.clone();
-        let key2 = format!("key{}_2", i);
+        let key2 = format!("key{i}_2");
         let key2_2 = key2.clone();
 
-        let foo_val = format!("foo{}", i);
+        let foo_val = format!("foo{i}");
 
         redis::cmd("SET")
             .arg(&key[..])
@@ -219,7 +219,7 @@ fn test_transaction_multiplexed_connection() {
                     let mut con = con.clone();
                     async move {
                         let foo_val = i;
-                        let bar_val = format!("bar{}", i);
+                        let bar_val = format!("bar{i}");
 
                         let mut pipe = redis::pipe();
                         pipe.atomic()

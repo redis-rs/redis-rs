@@ -75,6 +75,42 @@ fn test_vec() {
 }
 
 #[test]
+fn test_single_bool_vec() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+
+    assert_eq!(v, Ok(vec![true]));
+}
+
+#[test]
+fn test_single_i32_vec() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+
+    assert_eq!(v, Ok(vec![1i32]));
+}
+
+#[test]
+fn test_single_u32_vec() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("42".into()));
+
+    assert_eq!(v, Ok(vec![42u32]));
+}
+
+#[test]
+fn test_single_string_vec() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+
+    assert_eq!(v, Ok(vec!["1".to_string()]));
+}
+
+#[test]
 fn test_tuple() {
     use redis::{FromRedisValue, Value};
 
@@ -230,6 +266,7 @@ fn test_types_to_redis_args() {
     use redis::ToRedisArgs;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+    use std::collections::HashMap;
     use std::collections::HashSet;
 
     assert!(!5i32.to_redis_args().is_empty());
@@ -256,6 +293,14 @@ fn test_types_to_redis_args() {
         .iter()
         .cloned()
         .collect::<BTreeMap<_, _>>()
+        .to_redis_args()
+        .is_empty());
+
+    // this can also be used on something HMSET
+    assert!(![("d", 8), ("e", 9), ("f", 10)]
+        .iter()
+        .cloned()
+        .collect::<HashMap<_, _>>()
         .to_redis_args()
         .is_empty());
 }
