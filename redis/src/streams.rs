@@ -112,6 +112,48 @@ impl ToRedisArgs for StreamClaimOptions {
     }
 }
 
+/// Builder options for [`xautoclaim_options`] command.
+///
+/// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
+///
+#[derive(Default, Debug)]
+pub struct StreamAutoClaimOptions {
+    /// Set the `COUNT <count>` cmd arg.
+    count: Option<usize>,
+    /// Set `JUSTID` cmd arg. Be advised: the response
+    /// type changes with this option.
+    justid: bool,
+}
+
+impl StreamAutoClaimOptions {
+    /// Sets the maximum number of elements to return per stream.
+    pub fn count(mut self, n: usize) -> Self {
+        self.count = Some(n);
+        self
+    }
+    /// Set `JUSTID` cmd arg to true. Be advised: the response
+    /// type changes with this option.
+    pub fn with_justid(mut self) -> Self {
+        self.justid = true;
+        self
+    }
+}
+
+impl ToRedisArgs for StreamAutoClaimOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref n) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg(format!("{n}").as_bytes());
+        }
+        if self.justid {
+            out.write_arg(b"JUSTID");
+        }
+    }
+}
+
 /// Argument to `StreamReadOptions`
 /// Represents the Redis `GROUP <groupname> <consumername>` cmd arg.
 /// This option will toggle the cmd from `XREAD` to `XREADGROUP`
@@ -244,6 +286,20 @@ pub struct StreamRangeReply {
 pub struct StreamClaimReply {
     /// Complex data structure containing a payload for each ID in this array
     pub ids: Vec<StreamId>,
+}
+
+/// Reply type used with [`xautoclaim`] command.
+///
+/// Represents that ownership of the specified messages was changed.
+///
+/// [`xautoclaim`]: ../trait.Commands.html#method.xautoclaim
+///
+#[derive(Default, Debug, Clone)]
+pub struct StreamAutoClaimReply {
+    /// Complex data structure containing a payload for each ID in this array
+    pub ids: Vec<StreamId>,
+    /// Last id
+    pub last_id: String,
 }
 
 /// Reply type used with [`xpending`] command.
@@ -507,6 +563,22 @@ impl FromRedisValue for StreamClaimReply {
             .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
         Ok(StreamClaimReply { ids })
+    }
+}
+
+impl FromRedisValue for StreamAutoClaimReply {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        let (last_id, rows, _unknown): (
+            String,
+            Vec<HashMap<String, HashMap<String, Value>>>,
+            Vec<String>,
+        ) = from_redis_value(v)?;
+
+        let ids: Vec<StreamId> = rows
+            .into_iter()
+            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+            .collect();
+        Ok(StreamAutoClaimReply { ids, last_id })
     }
 }
 
