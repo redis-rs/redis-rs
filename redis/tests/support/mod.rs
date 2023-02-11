@@ -241,7 +241,7 @@ impl TestContext {
         let server = RedisServer::with_modules(modules);
 
         let client = redis::Client::open(redis::ConnectionInfo {
-            addr: server.get_client_addr().clone(),
+            addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
                 use_resp3: env::var("RESP3").unwrap_or_default() == "true",
                 ..Default::default()
