@@ -55,7 +55,6 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                 ))]
                 .into_iter(),
             ),
-            Value::Null => Box::new(None.into_iter()),
         }
     }
 }

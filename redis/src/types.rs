@@ -125,8 +125,6 @@ pub enum Value {
     Okay,
     /// Ordered map value from the server. use `as_map_iter` function.
     Map(Vec<Value>),
-    /// A single null value replacing RESP v2 *-1 and $-1 null values.
-    Null,
     /// Unordered set value from the server.
     Set(Vec<Value>),
     /// A floating number response from the server.
@@ -222,8 +220,20 @@ impl fmt::Debug for Value {
                 Ok(x) => write!(fmt, "string-data('{:?}')", x),
                 Err(_) => write!(fmt, "binary-data({:?})", val),
             },
-            Value::Bulk(ref values) | Value::Push(ref values) => {
+            Value::Bulk(ref values) => {
                 write!(fmt, "bulk(")?;
+                let mut is_first = true;
+                for val in values.iter() {
+                    if !is_first {
+                        write!(fmt, ", ")?;
+                    }
+                    write!(fmt, "{:?}", val)?;
+                    is_first = false;
+                }
+                write!(fmt, ")")
+            }
+            Value::Push(ref values) => {
+                write!(fmt, "push(")?;
                 let mut is_first = true;
                 for val in values.iter() {
                     if !is_first {
@@ -238,7 +248,6 @@ impl fmt::Debug for Value {
             Value::Status(ref s) => write!(fmt, "status({:?})", s),
             Value::Map(ref m) => write!(fmt, "map({:?})", m),
             Value::Set(ref m) => write!(fmt, "set({:?})", m),
-            Value::Null => write!(fmt, "null"),
             Value::Double(ref m) => write!(fmt, "double({:?})", m),
             Value::Boolean(ref m) => write!(fmt, "boolean({:?})", m),
             Value::VerbatimString(ref format, ref string) => {
@@ -1165,6 +1174,7 @@ macro_rules! from_redis_value_for_num_internal {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
+            Value::Double(val) => Ok(val as $t),
             _ => invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
@@ -1228,6 +1238,7 @@ impl FromRedisValue for bool {
                     invalid_type_error!(v, "Response type not bool compatible.");
                 }
             }
+            Value::Boolean(b) => Ok(b),
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
@@ -1251,6 +1262,8 @@ impl FromRedisValue for String {
             Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
+            Value::VerbatimString(_, ref val) => Ok(val.to_string()),
+            Value::Double(ref val) => Ok(val.to_string()),
             _ => invalid_type_error!(v, "Response type not string compatible."),
         }
     }
@@ -1268,6 +1281,22 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                 ),
             },
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Push(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Map(ref items) => {
+                let mut n: Vec<T> = vec![];
+                for item in items.chunks(2) {
+                    match FromRedisValue::from_redis_value(&Value::Map(item.to_vec())) {
+                        Ok(v) => {
+                            n.push(v);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(n)
+            }
+            Value::Set(ref items) => FromRedisValue::from_redis_values(items),
             Value::Nil => Ok(vec![]),
             _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
@@ -1378,7 +1407,7 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 match *v {
-                    Value::Bulk(ref items) => {
+                    Value::Bulk(ref items) | Value::Push(ref items) | Value::Map(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
@@ -1401,20 +1430,36 @@ macro_rules! from_redis_value_for_tuple {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
-                if items.len() % n != 0 {
-                    invalid_type_error!(items, "Bulk response of wrong dimension")
-                }
-
-                // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                // postfix increment :)
                 let mut rv = vec![];
                 if items.len() == 0 {
                     return Ok(rv)
                 }
-                for chunk in items.chunks_exact(n) {
+                //It's uglier then before!
+                for chunk in items {
+                    match chunk {
+                        Value::Bulk(ch) => {
+                           if  let [$($name),*] = &ch[..] {
+                            rv.push(($(from_redis_value(&$name)?),*),)
+                           } else {
+                                unreachable!()
+                            };
+                        },
+                        _ => {},
+
+                    }
+                }
+                if !rv.is_empty(){
+                    return Ok(rv);
+                }
+
+                if let  [$($name),*] = items{
+                    rv.push(($(from_redis_value($name)?),*),);
+                    return Ok(rv);
+                }
+                 for chunk in items.chunks_exact(n) {
                     match chunk {
                         [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
-                         _ => unreachable!(),
+                         _ => {},
                     }
                 }
                 Ok(rv)

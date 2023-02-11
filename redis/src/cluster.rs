@@ -639,6 +639,8 @@ impl ConnectionLike for ClusterConnection {
         }
         true
     }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
 }
 
 trait MergeResults {

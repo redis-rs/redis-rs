@@ -342,6 +342,8 @@ pub struct Connection {
     /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    resp3: bool,
 }
 
 /// Represents a pubsub connection.
@@ -624,6 +626,7 @@ fn setup_connection(
         parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
+        resp3: connection_info.use_resp3,
     };
 
     if connection_info.use_resp3 {
@@ -709,6 +712,9 @@ pub trait ConnectionLike {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
+
+    /// Executes received push messages from server.
+    fn execute_push_messages(&mut self, _messages: Vec<Value>);
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -876,7 +882,6 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         self.read_response()
     }
-
     fn req_packed_commands(
         &mut self,
         cmd: &[u8],
@@ -889,7 +894,9 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
-        for idx in 0..(offset + count) {
+        let mut count = count;
+        let mut idx = 0;
+        while idx < (offset + count) {
             // When processing a transaction, some responses may be errors.
             // We need to keep processing the rest of the responses in that case,
             // so bailing early with `?` would not be correct.
@@ -897,7 +904,10 @@ impl ConnectionLike for Connection {
             let response = self.read_response();
             match response {
                 Ok(item) => {
-                    if idx >= offset {
+                    if let Value::Push(x) = item {
+                        count += 1;
+                        self.execute_push_messages(x);
+                    } else if idx >= offset {
                         rv.push(item);
                     }
                 }
@@ -907,6 +917,7 @@ impl ConnectionLike for Connection {
                     }
                 }
             }
+            idx += 1;
         }
 
         first_err.map_or(Ok(rv), Err)
@@ -916,12 +927,31 @@ impl ConnectionLike for Connection {
         self.db
     }
 
+    fn check_connection(&mut self) -> bool {
+        cmd("PING").query::<String>(self).is_ok()
+    }
+
     fn is_open(&self) -> bool {
         self.con.is_open()
     }
 
-    fn check_connection(&mut self) -> bool {
-        cmd("PING").query::<String>(self).is_ok()
+    /// Executes received push messages from server.
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // for message in messages {
+        //     if let Value::Bulk(vals) = message {
+        //         let mut iter = vals.into_iter();
+        //         let msg_type: String = from_redis_value(&iter.next().unwrap()).ok().unwrap();
+        //         if msg_type == "message" {
+        //             if let Some(tx) = &self.pubsub_tx {
+        //                 tx.send(Msg {
+        //                     payload: iter.next().unwrap(),
+        //                     channel: iter.next().unwrap(),
+        //                     pattern: None,
+        //                 });
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -962,6 +992,9 @@ where
     fn is_open(&self) -> bool {
         self.deref().is_open()
     }
+
+    /// Executes received push messages from server.
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
 }
 
 /// The pubsub object provides convenient access to the redis pubsub
@@ -1017,11 +1050,22 @@ impl<'a> PubSub<'a> {
     /// The message itself is still generic and can be converted into an
     /// appropriate type through the helper methods on it.
     pub fn get_message(&mut self) -> RedisResult<Msg> {
-        loop {
-            if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
-                return Ok(msg);
-            } else {
-                continue;
+        if self.con.resp3 {
+            loop {
+                let value = self.con.recv_response()?;
+                if let Some(msg) = Msg::from_value(&value) {
+                    return Ok(msg);
+                } else {
+                    continue;
+                }
+            }
+        } else {
+            loop {
+                if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
+                    return Ok(msg);
+                } else {
+                    continue;
+                }
             }
         }
     }

@@ -292,6 +292,8 @@ impl ConnectionLike for Client {
             false
         }
     }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
 }
 
 #[cfg(test)]

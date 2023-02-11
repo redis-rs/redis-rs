@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::Value;
+use redis::{RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -235,7 +235,10 @@ impl TestContext {
 
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.get_client_addr().clone(),
-            redis: Default::default(),
+            redis: RedisConnectionInfo {
+                use_resp3: env::var("RESP3").unwrap_or_default() == "true",
+                ..Default::default()
+            },
         })
         .unwrap();
         let mut con;
@@ -343,7 +346,7 @@ where
             }
             Ok(())
         }
-        Value::Null => write!(writer, "_\r\n"),
+        // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
         Value::Double(val) => write!(writer, ",{}\r\n", val),
         Value::Boolean(v) => {
             if v {

@@ -180,7 +180,7 @@ where
                             .map(|result: ResultExtend<_, _>| result.0.map(Value::Push))
                     })
                 };
-                let null = || line().map(|_| Ok(Value::Null));
+                let null = || line().map(|_| Ok(Value::Nil));
                 let double = || {
                     line().and_then(|line| match line.trim().parse::<f64>() {
                         Err(_) => Err(StreamErrorFor::<I>::message_static_message(

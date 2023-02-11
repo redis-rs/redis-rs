@@ -257,6 +257,8 @@ impl ConnectionLike for MockRedisConnection {
     fn is_open(&self) -> bool {
         true
     }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
 }
 
 #[cfg(feature = "aio")]
