@@ -1258,7 +1258,9 @@ fn test_push_manager() {
         assert_eq!(
             (
                 PushKind::Invalidate,
-                vec![Value::Array(vec![Value::Data("key_1".as_bytes().to_vec())])]
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
             ),
             (kind, data)
         );
@@ -1272,7 +1274,9 @@ fn test_push_manager() {
     assert_eq!(
         (
             PushKind::Invalidate,
-            vec![Value::Array(vec![Value::Data("key_1".as_bytes().to_vec())])]
+            vec![Value::Array(vec![Value::BulkString(
+                "key_1".as_bytes().to_vec()
+            )])]
         ),
         (kind, data)
     );

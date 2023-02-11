@@ -672,7 +672,7 @@ impl MergeResults for Value {
         let mut items = vec![];
         for (addr, value) in values.into_iter() {
             items.push(Value::Array(vec![
-                Value::Data(addr.as_bytes().to_vec()),
+                Value::BulkString(addr.as_bytes().to_vec()),
                 value,
             ]));
         }
@@ -761,7 +761,7 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                             return None;
                         }
 
-                        let ip = if let Value::Data(ref ip) = node[0] {
+                        let ip = if let Value::BulkString(ref ip) = node[0] {
                             String::from_utf8_lossy(ip)
                         } else {
                             return None;

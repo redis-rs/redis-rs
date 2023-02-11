@@ -43,7 +43,7 @@ fn test_i32() {
     let i = FromRedisValue::from_redis_value(&Value::Int(42));
     assert_eq!(i, Ok(42i32));
 
-    let i = FromRedisValue::from_redis_value(&Value::Data("42".into()));
+    let i = FromRedisValue::from_redis_value(&Value::BulkString("42".into()));
     assert_eq!(i, Ok(42i32));
 
     let bad_i: Result<i32, _> =
@@ -67,9 +67,9 @@ fn test_vec() {
     use redis::{FromRedisValue, Value};
 
     let v = FromRedisValue::from_redis_value(&Value::Array(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
+        Value::BulkString("1".into()),
+        Value::BulkString("2".into()),
+        Value::BulkString("3".into()),
     ]));
 
     assert_eq!(v, Ok(vec![1i32, 2, 3]));
@@ -79,7 +79,7 @@ fn test_vec() {
 fn test_single_bool_vec() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("1".into()));
 
     assert_eq!(v, Ok(vec![true]));
 }
@@ -88,7 +88,7 @@ fn test_single_bool_vec() {
 fn test_single_i32_vec() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("1".into()));
 
     assert_eq!(v, Ok(vec![1i32]));
 }
@@ -97,7 +97,7 @@ fn test_single_i32_vec() {
 fn test_single_u32_vec() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("42".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("42".into()));
 
     assert_eq!(v, Ok(vec![42u32]));
 }
@@ -106,7 +106,7 @@ fn test_single_u32_vec() {
 fn test_single_string_vec() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("1".into()));
 
     assert_eq!(v, Ok(vec!["1".to_string()]));
 }
@@ -116,9 +116,9 @@ fn test_tuple() {
     use redis::{FromRedisValue, Value};
 
     let v = FromRedisValue::from_redis_value(&Value::Array(vec![Value::Array(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
+        Value::BulkString("1".into()),
+        Value::BulkString("2".into()),
+        Value::BulkString("3".into()),
     ])]));
 
     assert_eq!(v, Ok(((1i32, 2, 3,),)));
@@ -134,12 +134,12 @@ fn test_hashmap() {
     type Hm = HashMap<String, i32>;
 
     let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Array(vec![
-        Value::Data("a".into()),
-        Value::Data("1".into()),
-        Value::Data("b".into()),
-        Value::Data("2".into()),
-        Value::Data("c".into()),
-        Value::Data("3".into()),
+        Value::BulkString("a".into()),
+        Value::BulkString("1".into()),
+        Value::BulkString("b".into()),
+        Value::BulkString("2".into()),
+        Value::BulkString("c".into()),
+        Value::BulkString("3".into()),
     ]));
     let mut e: Hm = HashMap::new();
     e.insert("a".into(), 1);
@@ -150,12 +150,12 @@ fn test_hashmap() {
     type Hasher = BuildHasherDefault<FnvHasher>;
     type HmHasher = HashMap<String, i32, Hasher>;
     let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Array(vec![
-        Value::Data("a".into()),
-        Value::Data("1".into()),
-        Value::Data("b".into()),
-        Value::Data("2".into()),
-        Value::Data("c".into()),
-        Value::Data("3".into()),
+        Value::BulkString("a".into()),
+        Value::BulkString("1".into()),
+        Value::BulkString("b".into()),
+        Value::BulkString("2".into()),
+        Value::BulkString("c".into()),
+        Value::BulkString("3".into()),
     ]));
 
     let fnv = Hasher::default();
@@ -170,13 +170,13 @@ fn test_hashmap() {
 fn test_bool() {
     use redis::{ErrorKind, FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("1".into()));
     assert_eq!(v, Ok(true));
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("0".into()));
+    let v = FromRedisValue::from_redis_value(&Value::BulkString("0".into()));
     assert_eq!(v, Ok(false));
 
-    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Data("garbage".into()));
+    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::BulkString("garbage".into()));
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
     let v = FromRedisValue::from_redis_value(&Value::SimpleString("1".into()));
@@ -212,7 +212,7 @@ fn test_bytes() {
     let content_vec: Vec<u8> = Vec::from(content);
     let content_bytes = Bytes::from_static(content);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::BulkString(content_vec));
     assert_eq!(v, Ok(content_bytes));
 
     let v: RedisResult<Bytes> =
@@ -240,7 +240,7 @@ fn test_cstring() {
     let content: &[u8] = b"\x01\x02\x03\x04";
     let content_vec: Vec<u8> = Vec::from(content);
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::BulkString(content_vec));
     assert_eq!(v, Ok(CString::new(content).unwrap()));
 
     let v: RedisResult<CString> =

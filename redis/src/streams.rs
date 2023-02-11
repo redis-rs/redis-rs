@@ -566,7 +566,7 @@ impl FromRedisValue for StreamPendingCountReply {
                 for outer in outer_tuple {
                     match outer {
                         Value::Array(inner_tuple) => match &inner_tuple[..] {
-                            [Value::Data(id_bytes), Value::Data(consumer_bytes), Value::Int(last_delivered_ms_u64), Value::Int(times_delivered_u64)] =>
+                            [Value::BulkString(id_bytes), Value::BulkString(consumer_bytes), Value::Int(last_delivered_ms_u64), Value::Int(times_delivered_u64)] =>
                             {
                                 let id = String::from_utf8(id_bytes.to_vec())?;
                                 let consumer = String::from_utf8(consumer_bytes.to_vec())?;

@@ -98,12 +98,12 @@ fn test_cluster_resp3() {
             result,
             Value::Map(vec![
                 (
-                    Value::Data("foo".as_bytes().to_vec()),
-                    Value::Data("baz".as_bytes().to_vec())
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("baz".as_bytes().to_vec())
                 ),
                 (
-                    Value::Data("bar".as_bytes().to_vec()),
-                    Value::Data("foobar".as_bytes().to_vec())
+                    Value::BulkString("bar".as_bytes().to_vec()),
+                    Value::BulkString("foobar".as_bytes().to_vec())
                 )
             ])
         );
@@ -352,7 +352,7 @@ fn test_async_cluster_retries() {
 
             match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                 0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
             }
         },
     );
@@ -439,7 +439,7 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
                     Value::Int(0),
                     Value::Int(1),
                     Value::Array(vec![
-                        Value::Data(name.as_bytes().to_vec()),
+                        Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(6379),
                     ]),
                 ]),
@@ -447,7 +447,7 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
                     Value::Int(2),
                     Value::Int(16383),
                     Value::Array(vec![
-                        Value::Data(name.as_bytes().to_vec()),
+                        Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(6380),
                     ]),
                 ]),
@@ -455,7 +455,7 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
             _ => {
                 // Check that the correct node receives the request after rebuilding
                 assert_eq!(port, 6380);
-                Err(Ok(Value::Data(b"123".to_vec())))
+                Err(Ok(Value::BulkString(b"123".to_vec())))
             }
         }
     });
@@ -488,7 +488,7 @@ fn test_async_cluster_replica_read() {
             respond_startup_with_replica(name, cmd)?;
 
             match port {
-                6380 => Err(Ok(Value::Data(b"123".to_vec()))),
+                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -580,7 +580,7 @@ fn test_async_cluster_io_error() {
                         std::io::ErrorKind::ConnectionReset,
                         "mock-io-error",
                     )))),
-                    _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 },
             }
         },

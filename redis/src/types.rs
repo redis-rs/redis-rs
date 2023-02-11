@@ -119,8 +119,8 @@ pub enum Value {
     /// is why this library generally treats integers and strings
     /// the same for all numeric responses.
     Int(i64),
-    /// An arbitrary binary data.
-    Data(Vec<u8>),
+    /// An arbitrary binary data, usually represents a binary-safe string.
+    BulkString(Vec<u8>),
     /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
     Array(Vec<Value>),
@@ -293,7 +293,7 @@ impl Value {
                     return false;
                 }
                 match items[0] {
-                    Value::Data(_) => {}
+                    Value::BulkString(_) => {}
                     _ => {
                         return false;
                     }
@@ -341,7 +341,7 @@ impl fmt::Debug for Value {
         match *self {
             Value::Nil => write!(fmt, "nil"),
             Value::Int(val) => write!(fmt, "int({val:?})"),
-            Value::Data(ref val) => match from_utf8(val) {
+            Value::BulkString(ref val) => match from_utf8(val) {
                 Ok(x) => write!(fmt, "string-data('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
@@ -1327,7 +1327,7 @@ pub trait FromRedisValue: Sized {
 
     /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        Self::from_redis_value(&Value::Data(_vec.into()))
+        Self::from_redis_value(&Value::BulkString(_vec.into()))
             .map(|rv| vec![rv])
             .ok()
     }
@@ -1362,7 +1362,7 @@ macro_rules! from_redis_value_for_num_internal {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
-            Value::Data(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+            Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
@@ -1422,7 +1422,7 @@ impl FromRedisValue for bool {
                     invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
-            Value::Data(ref bytes) => {
+            Value::BulkString(ref bytes) => {
                 if bytes == b"1" {
                     Ok(true)
                 } else if bytes == b"0" {
@@ -1442,7 +1442,7 @@ impl FromRedisValue for CString {
     fn from_redis_value(v: &Value) -> RedisResult<CString> {
         let v = get_inner_value(v);
         match *v {
-            Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
+            Value::BulkString(ref bytes) => Ok(CString::new(bytes.clone())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),
@@ -1454,7 +1454,7 @@ impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
         let v = get_inner_value(v);
         match *v {
-            Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
+            Value::BulkString(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
             Value::SimpleString(ref val) => Ok(val.to_string()),
             Value::VerbatimString {
@@ -1472,7 +1472,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
         let v = get_inner_value(v);
         match *v {
             // All binary data except u8 will try to parse into a single element vector.
-            Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+            Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
                 None => invalid_type_error!(
                     v,
@@ -1728,7 +1728,7 @@ impl FromRedisValue for bytes::Bytes {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let v = get_inner_value(v);
         match v {
-            Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
             _ => invalid_type_error!(v, "Not binary data"),
         }
     }

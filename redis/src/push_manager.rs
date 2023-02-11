@@ -66,7 +66,7 @@ mod tests {
 
         let value = Ok(Value::Push {
             kind: PushKind::Message,
-            data: vec![Value::Data("hello".to_string().into_bytes())],
+            data: vec![Value::BulkString("hello".to_string().into_bytes())],
         });
 
         push_manager.try_send(&value);
@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(push_info.kind, PushKind::Message);
         assert_eq!(
             push_info.data,
-            vec![Value::Data("hello".to_string().into_bytes())]
+            vec![Value::BulkString("hello".to_string().into_bytes())]
         );
     }
     #[test]
@@ -86,7 +86,7 @@ mod tests {
 
         let value = Ok(Value::Push {
             kind: PushKind::Message,
-            data: vec![Value::Data("hello".to_string().into_bytes())],
+            data: vec![Value::BulkString("hello".to_string().into_bytes())],
         });
 
         drop(rx);
@@ -101,19 +101,19 @@ mod tests {
 
         push_manager.try_send(&Ok(Value::Push {
             kind: PushKind::Message,
-            data: vec![Value::Data("hello".to_string().into_bytes())],
+            data: vec![Value::BulkString("hello".to_string().into_bytes())],
         })); // nothing happens!
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
         push_manager.try_send(&Ok(Value::Push {
             kind: PushKind::Message,
-            data: vec![Value::Data("hello2".to_string().into_bytes())],
+            data: vec![Value::BulkString("hello2".to_string().into_bytes())],
         }));
 
         assert_eq!(
             rx.try_recv().unwrap().data,
-            vec![Value::Data("hello2".to_string().into_bytes())]
+            vec![Value::BulkString("hello2".to_string().into_bytes())]
         );
     }
     #[test]

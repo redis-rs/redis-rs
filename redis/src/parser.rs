@@ -151,7 +151,7 @@ where
                             combine::value(Value::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| Value::Data(bs.to_vec()))
+                                .map(|bs: &[u8]| Value::BulkString(bs.to_vec()))
                                 .skip(crlf())
                                 .right()
                         }
@@ -239,7 +239,7 @@ where
                                 .map(|result: ResultExtend<Vec<Value>, _>| {
                                     let mut it: IntoIter<Value> = result.0?.into_iter();
                                     let first = it.next().unwrap_or(Value::Nil);
-                                    if let Value::Data(kind) = first {
+                                    if let Value::BulkString(kind) = first {
                                         Ok(Value::Push {
                                             kind: get_push_kind(String::from_utf8(kind)?),
                                             data: it.collect(),

@@ -27,7 +27,9 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
         match self.0 {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
-            Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
+            Value::BulkString(ref xs) => {
+                Box::new(xs.shrink().map(Value::BulkString).map(ArbitraryValue))
+            }
             Value::Array(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
@@ -94,7 +96,7 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
         match u8::arbitrary(g) % 6 {
             0 => Value::Nil,
             1 => Value::Int(Arbitrary::arbitrary(g)),
-            2 => Value::Data(Arbitrary::arbitrary(g)),
+            2 => Value::BulkString(Arbitrary::arbitrary(g)),
             3 => {
                 let size = {
                     let s = g.size();

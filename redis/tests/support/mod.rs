@@ -372,7 +372,7 @@ where
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
-        Value::Data(ref val) => {
+        Value::BulkString(ref val) => {
             write!(writer, "${}\r\n", val.len())?;
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
