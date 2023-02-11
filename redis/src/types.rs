@@ -215,10 +215,10 @@ impl fmt::Debug for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Value::Nil => write!(fmt, "nil"),
-            Value::Int(val) => write!(fmt, "int({:?})", val),
+            Value::Int(val) => write!(fmt, "int({val:?})"),
             Value::Data(ref val) => match from_utf8(val) {
-                Ok(x) => write!(fmt, "string-data('{:?}')", x),
-                Err(_) => write!(fmt, "binary-data({:?})", val),
+                Ok(x) => write!(fmt, "string-data('{x:?}')"),
+                Err(_) => write!(fmt, "binary-data({val:?})"),
             },
             Value::Bulk(ref values) => {
                 write!(fmt, "bulk(")?;
@@ -227,7 +227,7 @@ impl fmt::Debug for Value {
                     if !is_first {
                         write!(fmt, ", ")?;
                     }
-                    write!(fmt, "{:?}", val)?;
+                    write!(fmt, "{val:?}")?;
                     is_first = false;
                 }
                 write!(fmt, ")")
@@ -245,7 +245,7 @@ impl fmt::Debug for Value {
                 write!(fmt, ")")
             }
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({:?})", s),
+            Value::Status(ref s) => write!(fmt, "status({s:?})"),
             Value::Map(ref m) => write!(fmt, "map({:?})", m),
             Value::Set(ref m) => write!(fmt, "set({:?})", m),
             Value::Double(ref m) => write!(fmt, "double({:?})", m),
@@ -271,7 +271,7 @@ impl From<serde_json::Error> for RedisError {
         RedisError::from((
             ErrorKind::Serialize,
             "Serialization Error",
-            format!("{}", serde_err),
+            format!("{serde_err}"),
         ))
     }
 }
@@ -294,9 +294,7 @@ impl PartialEq for RedisError {
                 &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
                 &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
             ) => kind_a == kind_b,
-            (&ErrorRepr::ExtensionError(ref a, _), &ErrorRepr::ExtensionError(ref b, _)) => {
-                *a == *b
-            }
+            (ErrorRepr::ExtensionError(a, _), ErrorRepr::ExtensionError(b, _)) => *a == *b,
             _ => false,
         }
     }
@@ -588,7 +586,7 @@ impl RedisError {
             }
             ErrorRepr::IoError(ref e) => ErrorRepr::IoError(io::Error::new(
                 e.kind(),
-                format!("{}: {}", ioerror_description, e),
+                format!("{ioerror_description}: {e}"),
             )),
         };
         Self { repr }

@@ -29,6 +29,8 @@ fn test_cluster_with_username_and_password() {
             .username(RedisCluster::username().to_string())
             .password(RedisCluster::password().to_string())
     });
+    cluster.disable_default_user();
+
     let mut con = cluster.connection();
 
     redis::cmd("SET")
@@ -208,8 +210,8 @@ fn test_cluster_pipeline_command_ordering() {
     let mut queries = Vec::new();
     let mut expected = Vec::new();
     for i in 0..100 {
-        queries.push(format!("foo{}", i));
-        expected.push(format!("bar{}", i));
+        queries.push(format!("foo{i}"));
+        expected.push(format!("bar{i}"));
         pipe.set(&queries[i], &expected[i]).ignore();
     }
     pipe.execute(&mut con);
@@ -237,8 +239,8 @@ fn test_cluster_pipeline_ordering_with_improper_command() {
         if i == 5 {
             pipe.cmd("hset").arg("foo").ignore();
         } else {
-            let query = format!("foo{}", i);
-            let r = format!("bar{}", i);
+            let query = format!("foo{i}");
+            let r = format!("bar{i}");
             pipe.set(&query, &r).ignore();
             queries.push(query);
             expected.push(r);

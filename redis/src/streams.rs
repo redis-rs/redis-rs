@@ -93,15 +93,15 @@ impl ToRedisArgs for StreamClaimOptions {
     {
         if let Some(ref ms) = self.idle {
             out.write_arg(b"IDLE");
-            out.write_arg(format!("{}", ms).as_bytes());
+            out.write_arg(format!("{ms}").as_bytes());
         }
         if let Some(ref ms_time) = self.time {
             out.write_arg(b"TIME");
-            out.write_arg(format!("{}", ms_time).as_bytes());
+            out.write_arg(format!("{ms_time}").as_bytes());
         }
         if let Some(ref count) = self.retry {
             out.write_arg(b"RETRYCOUNT");
-            out.write_arg(format!("{}", count).as_bytes());
+            out.write_arg(format!("{count}").as_bytes());
         }
         if self.force {
             out.write_arg(b"FORCE");
@@ -181,12 +181,12 @@ impl ToRedisArgs for StreamReadOptions {
     {
         if let Some(ref ms) = self.block {
             out.write_arg(b"BLOCK");
-            out.write_arg(format!("{}", ms).as_bytes());
+            out.write_arg(format!("{ms}").as_bytes());
         }
 
         if let Some(ref n) = self.count {
             out.write_arg(b"COUNT");
-            out.write_arg(format!("{}", n).as_bytes());
+            out.write_arg(format!("{n}").as_bytes());
         }
 
         if let Some(ref group) = self.group {

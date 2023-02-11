@@ -1,3 +1,10 @@
+<a name="0.22.3"></a>
+### 0.22.3 (2023-01-23)
+
+#### Changes
+*   Restore inherent `ClusterConnection::check_connection()` method ([#758](https://github.com/redis-rs/redis-rs/pull/758) @robjtede)
+
+
 <a name="0.22.2"></a>
 ### 0.22.2 (2023-01-07)
 
