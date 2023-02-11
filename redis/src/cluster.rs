@@ -671,12 +671,12 @@ impl MergeResults for Value {
     fn merge_results(values: HashMap<&str, Value>) -> Value {
         let mut items = vec![];
         for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
+            items.push(Value::Array(vec![
                 Value::Data(addr.as_bytes().to_vec()),
                 value,
             ]));
         }
-        Value::Bulk(items)
+        Value::Array(items)
     }
 }
 
@@ -733,9 +733,9 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
     // Parse response.
     let mut result = Vec::with_capacity(2);
 
-    if let Value::Bulk(items) = raw_slot_resp {
+    if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.into_iter();
-        while let Some(Value::Bulk(item)) = iter.next() {
+        while let Some(Value::Array(item)) = iter.next() {
             if item.len() < 3 {
                 continue;
             }
@@ -756,7 +756,7 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                 .into_iter()
                 .skip(2)
                 .filter_map(|node| {
-                    if let Value::Bulk(node) = node {
+                    if let Value::Array(node) = node {
                         if node.len() < 2 {
                             return None;
                         }

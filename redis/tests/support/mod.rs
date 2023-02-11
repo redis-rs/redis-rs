@@ -377,7 +377,7 @@ where
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
-        Value::Bulk(ref values) => encode_iter(values, writer, "*"),
+        Value::Array(ref values) => encode_iter(values, writer, "*"),
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
         Value::Map(ref values) => encode_map(values, writer, "%"),

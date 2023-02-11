@@ -28,7 +28,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
             Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
-            Value::Bulk(ref xs) | Value::Set(ref xs) => {
+            Value::Array(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
@@ -36,7 +36,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
-                        .map(Value::Bulk)
+                        .map(Value::Array)
                         .map(ArbitraryValue),
                 )
             }
@@ -60,7 +60,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
-                        .map(Value::Bulk)
+                        .map(Value::Array)
                         .map(ArbitraryValue),
                 )
             }
@@ -100,7 +100,7 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     let s = g.size();
                     usize::arbitrary(g) % s
                 };
-                Value::Bulk(
+                Value::Array(
                     (0..size)
                         .map(|_| arbitrary_value(g, recursive_size / size))
                         .collect(),

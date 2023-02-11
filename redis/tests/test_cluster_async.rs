@@ -434,19 +434,19 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
             // implementation)
             0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
             // Respond with the new masters
-            1 => Err(Ok(Value::Bulk(vec![
-                Value::Bulk(vec![
+            1 => Err(Ok(Value::Array(vec![
+                Value::Array(vec![
                     Value::Int(0),
                     Value::Int(1),
-                    Value::Bulk(vec![
+                    Value::Array(vec![
                         Value::Data(name.as_bytes().to_vec()),
                         Value::Int(6379),
                     ]),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Int(2),
                     Value::Int(16383),
-                    Value::Bulk(vec![
+                    Value::Array(vec![
                         Value::Data(name.as_bytes().to_vec()),
                         Value::Int(6380),
                     ]),

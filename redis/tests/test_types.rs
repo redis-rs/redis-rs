@@ -65,7 +65,7 @@ fn test_u32() {
 fn test_vec() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+    let v = FromRedisValue::from_redis_value(&Value::Array(vec![
         Value::Data("1".into()),
         Value::Data("2".into()),
         Value::Data("3".into()),
@@ -114,7 +114,7 @@ fn test_single_string_vec() {
 fn test_tuple() {
     use redis::{FromRedisValue, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Bulk(vec![
+    let v = FromRedisValue::from_redis_value(&Value::Array(vec![Value::Array(vec![
         Value::Data("1".into()),
         Value::Data("2".into()),
         Value::Data("3".into()),
@@ -132,7 +132,7 @@ fn test_hashmap() {
 
     type Hm = HashMap<String, i32>;
 
-    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Array(vec![
         Value::Data("a".into()),
         Value::Data("1".into()),
         Value::Data("b".into()),
@@ -148,7 +148,7 @@ fn test_hashmap() {
 
     type Hasher = BuildHasherDefault<FnvHasher>;
     type HmHasher = HashMap<String, i32, Hasher>;
-    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Array(vec![
         Value::Data("a".into()),
         Value::Data("1".into()),
         Value::Data("b".into()),
@@ -320,7 +320,7 @@ fn test_attributes() {
         let x: Value = FromRedisValue::from_redis_value(&val).unwrap();
         assert_eq!(
             x,
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::Attribute {

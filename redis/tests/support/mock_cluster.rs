@@ -106,10 +106,10 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
     if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
+        Err(Ok(Value::Array(vec![Value::Array(vec![
             Value::Int(0),
             Value::Int(16383),
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Data(name.as_bytes().to_vec()),
                 Value::Int(6379),
             ]),
@@ -125,19 +125,19 @@ pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResu
     if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![
-            Value::Bulk(vec![
+        Err(Ok(Value::Array(vec![
+            Value::Array(vec![
                 Value::Int(0),
                 Value::Int(8191),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6379),
                 ]),
             ]),
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Int(8192),
                 Value::Int(16383),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6380),
                 ]),
@@ -154,27 +154,27 @@ pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisR
     if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![
-            Value::Bulk(vec![
+        Err(Ok(Value::Array(vec![
+            Value::Array(vec![
                 Value::Int(0),
                 Value::Int(8191),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6379),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6380),
                 ]),
             ]),
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Int(8192),
                 Value::Int(16383),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6381),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(6382),
                 ]),

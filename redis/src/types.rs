@@ -119,11 +119,11 @@ pub enum Value {
     /// is why this library generally treats integers and strings
     /// the same for all numeric responses.
     Int(i64),
-    /// An arbitary binary data.
+    /// An arbitrary binary data.
     Data(Vec<u8>),
-    /// A bulk response of more data.  This is generally used by redis
+    /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
-    Bulk(Vec<Value>),
+    Array(Vec<Value>),
     /// A status response.
     Status(String),
     /// A status response which represents the string "OK".
@@ -283,12 +283,12 @@ impl<'a> Iterator for MapIter<'a> {
 /// types.
 impl Value {
     /// Checks if the return value looks like it fulfils the cursor
-    /// protocol.  That means the result is a bulk item of length
-    /// two with the first one being a cursor and the second a
-    /// bulk response.
+    /// protocol.  That means the result is an array item of length
+    /// two with the first one being a cursor and the second an
+    /// array response.
     pub fn looks_like_cursor(&self) -> bool {
         match *self {
-            Value::Bulk(ref items) => {
+            Value::Array(ref items) => {
                 if items.len() != 2 {
                     return false;
                 }
@@ -299,7 +299,7 @@ impl Value {
                     }
                 };
                 match items[1] {
-                    Value::Bulk(_) => {}
+                    Value::Array(_) => {}
                     _ => {
                         return false;
                     }
@@ -313,7 +313,7 @@ impl Value {
     /// Returns an `&[Value]` if `self` is compatible with a sequence type
     pub fn as_sequence(&self) -> Option<&[Value]> {
         match self {
-            Value::Bulk(items) => Some(&items[..]),
+            Value::Array(items) => Some(&items[..]),
             Value::Set(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
             _ => None,
@@ -323,7 +323,7 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Bulk(items) => Some(MapIter {
+            Value::Array(items) => Some(MapIter {
                 bulk: Some(items.iter()),
                 map: None,
             }),
@@ -345,7 +345,7 @@ impl fmt::Debug for Value {
                 Ok(x) => write!(fmt, "string-data('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
-            Value::Bulk(ref values) => write!(fmt, "bulk({values:?})"),
+            Value::Array(ref values) => write!(fmt, "bulk({values:?})"),
             Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
@@ -1479,7 +1479,7 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                     format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
                 ),
             },
-            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Array(ref items) => FromRedisValue::from_redis_values(items),
             Value::Map(ref items) => {
                 let mut n: Vec<T> = vec![];
                 for item in items {
@@ -1612,12 +1612,12 @@ macro_rules! from_redis_value_for_tuple {
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 let v = get_inner_value(v);
                 match *v {
-                    Value::Bulk(ref items) => {
+                    Value::Array(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
                         if items.len() != n {
-                            invalid_type_error!(v, "Bulk response of wrong dimension")
+                            invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
                         // this is pretty ugly too.  The { i += 1; i - 1} is rust's
@@ -1664,7 +1664,7 @@ macro_rules! from_redis_value_for_tuple {
                 //It's uglier then before!
                 for item in items {
                     match item {
-                        Value::Bulk(ch) => {
+                        Value::Array(ch) => {
                            if  let [$($name),*] = &ch[..] {
                             rv.push(($(from_redis_value(&$name)?),*),)
                            } else {

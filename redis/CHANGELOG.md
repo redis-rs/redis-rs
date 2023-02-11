@@ -54,6 +54,7 @@ Though async Redis Cluster functionality for the time being has been kept as clo
 
 #### Changes
 *   Restore inherent `ClusterConnection::check_connection()` method ([#758](https://github.com/redis-rs/redis-rs/pull/758) @robjtede)
+* Rename Value::Bulk to Value::Array
 
 
 <a name="0.22.2"></a>

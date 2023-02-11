@@ -165,14 +165,14 @@ where
                     })
                 };
 
-                let bulk = || {
+                let array = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
                             combine::value(Value::Nil).map(Ok).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
+                                .map(|result: ResultExtend<_, _>| result.0.map(Value::Array))
                                 .right()
                         }
                     })
@@ -308,7 +308,7 @@ where
                     b'+' => status().map(Ok),
                     b':' => int().map(|i| Ok(Value::Int(i))),
                     b'$' => data().map(Ok),
-                    b'*' => bulk(),
+                    b'*' => array(),
                     b'%' => map(),
                     b'|' => attribute(),
                     b'~' => set(),

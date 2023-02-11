@@ -402,7 +402,7 @@ mod tests {
     fn pipeline_atomic_test() {
         let mut conn = MockRedisConnection::new(vec![MockCmd::with_values(
             pipe().atomic().cmd("GET").arg("foo").cmd("GET").arg("bar"),
-            Ok(vec![Value::Bulk(
+            Ok(vec![Value::Array(
                 vec!["hello", "world"]
                     .into_iter()
                     .map(|x| Value::Data(x.as_bytes().into()))

@@ -159,7 +159,7 @@ impl FromRedisValue for AclInfo {
                 let flags = flags
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                        not_convertible_error!(flags, "Expect an array response of ACL flags")
                     })?
                     .iter()
                     .map(|flag| match flag {
@@ -181,7 +181,7 @@ impl FromRedisValue for AclInfo {
                 let passwords = passwords
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                        not_convertible_error!(flags, "Expect an array response of ACL flags")
                     })?
                     .iter()
                     .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value(pass)?)))
@@ -281,18 +281,18 @@ mod tests {
 
     #[test]
     fn test_from_redis_value() {
-        let redis_value = Value::Bulk(vec![
+        let redis_value = Value::Array(vec![
             Value::Data("flags".into()),
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Data("on".into()),
                 Value::Data("allchannels".into()),
             ]),
             Value::Data("passwords".into()),
-            Value::Bulk(vec![]),
+            Value::Array(vec![]),
             Value::Data("commands".into()),
             Value::Data("-@all +get".into()),
             Value::Data("keys".into()),
-            Value::Bulk(vec![Value::Data("pat:*".into())]),
+            Value::Array(vec![Value::Data("pat:*".into())]),
         ]);
         let acl_info = AclInfo::from_redis_value(&redis_value).expect("Parse successfully");
 
