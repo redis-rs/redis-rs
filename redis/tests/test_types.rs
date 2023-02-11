@@ -23,7 +23,7 @@ fn test_is_single_arg() {
 fn test_info_dict() {
     use redis::{FromRedisValue, InfoDict, Value};
 
-    let d: InfoDict = FromRedisValue::from_redis_value(&Value::Status(
+    let d: InfoDict = FromRedisValue::from_redis_value(&Value::SimpleString(
         "# this is a comment\nkey1:foo\nkey2:42\n".into(),
     ))
     .unwrap();
@@ -37,7 +37,7 @@ fn test_info_dict() {
 fn test_i32() {
     use redis::{ErrorKind, FromRedisValue, Value};
 
-    let i = FromRedisValue::from_redis_value(&Value::Status("42".into()));
+    let i = FromRedisValue::from_redis_value(&Value::SimpleString("42".into()));
     assert_eq!(i, Ok(42i32));
 
     let i = FromRedisValue::from_redis_value(&Value::Int(42));
@@ -46,7 +46,8 @@ fn test_i32() {
     let i = FromRedisValue::from_redis_value(&Value::Data("42".into()));
     assert_eq!(i, Ok(42i32));
 
-    let bad_i: Result<i32, _> = FromRedisValue::from_redis_value(&Value::Status("42x".into()));
+    let bad_i: Result<i32, _> =
+        FromRedisValue::from_redis_value(&Value::SimpleString("42x".into()));
     assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
@@ -54,10 +55,10 @@ fn test_i32() {
 fn test_u32() {
     use redis::{ErrorKind, FromRedisValue, Value};
 
-    let i = FromRedisValue::from_redis_value(&Value::Status("42".into()));
+    let i = FromRedisValue::from_redis_value(&Value::SimpleString("42".into()));
     assert_eq!(i, Ok(42u32));
 
-    let bad_i: Result<u32, _> = FromRedisValue::from_redis_value(&Value::Status("-1".into()));
+    let bad_i: Result<u32, _> = FromRedisValue::from_redis_value(&Value::SimpleString("-1".into()));
     assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
@@ -178,13 +179,14 @@ fn test_bool() {
     let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Data("garbage".into()));
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v = FromRedisValue::from_redis_value(&Value::Status("1".into()));
+    let v = FromRedisValue::from_redis_value(&Value::SimpleString("1".into()));
     assert_eq!(v, Ok(true));
 
-    let v = FromRedisValue::from_redis_value(&Value::Status("0".into()));
+    let v = FromRedisValue::from_redis_value(&Value::SimpleString("0".into()));
     assert_eq!(v, Ok(false));
 
-    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    let v: Result<bool, _> =
+        FromRedisValue::from_redis_value(&Value::SimpleString("garbage".into()));
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
     let v = FromRedisValue::from_redis_value(&Value::Okay);
@@ -213,7 +215,8 @@ fn test_bytes() {
     let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
     assert_eq!(v, Ok(content_bytes));
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    let v: RedisResult<Bytes> =
+        FromRedisValue::from_redis_value(&Value::SimpleString("garbage".into()));
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
     let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Okay);
@@ -241,14 +244,14 @@ fn test_cstring() {
     assert_eq!(v, Ok(CString::new(content).unwrap()));
 
     let v: RedisResult<CString> =
-        FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+        FromRedisValue::from_redis_value(&Value::SimpleString("garbage".into()));
     assert_eq!(v, Ok(CString::new("garbage").unwrap()));
 
     let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Okay);
     assert_eq!(v, Ok(CString::new("OK").unwrap()));
 
     let v: RedisResult<CString> =
-        FromRedisValue::from_redis_value(&Value::Status("gar\0bage".into()));
+        FromRedisValue::from_redis_value(&Value::SimpleString("gar\0bage".into()));
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
     let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Nil);
@@ -325,7 +328,7 @@ fn test_attributes() {
                 Value::Int(2),
                 Value::Attribute {
                     data: Box::new(Value::Int(3)),
-                    attributes: vec![(Value::Status("ttl".to_string()), Value::Int(3600))]
+                    attributes: vec![(Value::SimpleString("ttl".to_string()), Value::Int(3600))]
                 }
             ])
         )

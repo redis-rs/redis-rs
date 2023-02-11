@@ -56,7 +56,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
                     .collect::<Vec<_>>();
-                ys.insert(0, ArbitraryValue(Value::Status(kind.to_string())));
+                ys.insert(0, ArbitraryValue(Value::SimpleString(kind.to_string())));
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
@@ -64,8 +64,8 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                         .map(ArbitraryValue),
                 )
             }
-            Value::Status(ref status) => {
-                Box::new(status.shrink().map(Value::Status).map(ArbitraryValue))
+            Value::SimpleString(ref status) => {
+                Box::new(status.shrink().map(Value::SimpleString).map(ArbitraryValue))
             }
             Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
             Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
@@ -112,18 +112,18 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
 
-                let mut status = String::with_capacity(size);
+                let mut string = String::with_capacity(size);
                 for _ in 0..size {
                     let c = char::arbitrary(g);
                     if c.is_ascii_alphabetic() {
-                        status.push(c);
+                        string.push(c);
                     }
                 }
 
-                if status == "OK" {
+                if string == "OK" {
                     Value::Okay
                 } else {
-                    Value::Status(status)
+                    Value::SimpleString(string)
                 }
             }
             5 => Value::Okay,

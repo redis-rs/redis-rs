@@ -374,7 +374,7 @@ fn test_cluster_rebuild_with_extra_nodes() {
         started.store(true, atomic::Ordering::SeqCst);
 
         if contains_slice(cmd, b"PING") {
-            return Err(Ok(Value::Status("OK".into())));
+            return Err(Ok(Value::SimpleString("OK".into())));
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -455,7 +455,7 @@ fn test_cluster_replica_read() {
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
             match port {
-                6379 => Err(Ok(Value::Status("OK".into()))),
+                6379 => Err(Ok(Value::SimpleString("OK".into()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -465,7 +465,7 @@ fn test_cluster_replica_read() {
         .arg("test")
         .arg("123")
         .query::<Option<Value>>(&mut connection);
-    assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
+    assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
 }
 
 #[test]

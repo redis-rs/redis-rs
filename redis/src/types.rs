@@ -124,8 +124,8 @@ pub enum Value {
     /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
     Array(Vec<Value>),
-    /// A status response.
-    Status(String),
+    /// A simple string response, without line breaks and not binary safe.
+    SimpleString(String),
     /// A status response which represents the string "OK".
     Okay,
     /// Unordered key,value list from the server. Use `as_map_iter` function.
@@ -348,7 +348,7 @@ impl fmt::Debug for Value {
             Value::Array(ref values) => write!(fmt, "bulk({values:?})"),
             Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({s:?})"),
+            Value::SimpleString(ref s) => write!(fmt, "status({s:?})"),
             Value::Map(ref values) => write!(fmt, "map({values:?})"),
             Value::Attribute {
                 ref data,
@@ -822,7 +822,7 @@ impl InfoDict {
             let mut p = line.splitn(2, ':');
             let k = unwrap_or!(p.next(), continue).to_string();
             let v = unwrap_or!(p.next(), continue).to_string();
-            map.insert(k, Value::Status(v));
+            map.insert(k, Value::SimpleString(v));
         }
         InfoDict { map }
     }
@@ -1358,7 +1358,7 @@ macro_rules! from_redis_value_for_num_internal {
         };
         match *v {
             Value::Int(val) => Ok(val as $t),
-            Value::Status(ref s) => match s.parse::<$t>() {
+            Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
@@ -1413,7 +1413,7 @@ impl FromRedisValue for bool {
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
-            Value::Status(ref s) => {
+            Value::SimpleString(ref s) => {
                 if &s[..] == "1" {
                     Ok(true)
                 } else if &s[..] == "0" {
@@ -1444,7 +1444,7 @@ impl FromRedisValue for CString {
         match *v {
             Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
             Value::Okay => Ok(CString::new("OK")?),
-            Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
+            Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
@@ -1456,7 +1456,7 @@ impl FromRedisValue for String {
         match *v {
             Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
-            Value::Status(ref val) => Ok(val.to_string()),
+            Value::SimpleString(ref val) => Ok(val.to_string()),
             Value::VerbatimString {
                 format: _,
                 ref text,

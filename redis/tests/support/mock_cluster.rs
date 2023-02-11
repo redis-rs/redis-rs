@@ -104,7 +104,7 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
 
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Array(vec![Value::Array(vec![
             Value::Int(0),
@@ -115,7 +115,7 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
             ]),
         ])])))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -152,7 +152,7 @@ pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResu
 
 pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Array(vec![
             Value::Array(vec![
@@ -181,7 +181,7 @@ pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisR
             ]),
         ])))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }

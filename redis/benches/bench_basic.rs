@@ -261,7 +261,7 @@ fn bench_decode_simple(b: &mut Bencher, input: &[u8]) {
 fn bench_decode(c: &mut Criterion) {
     let value = Value::Array(vec![
         Value::Okay,
-        Value::Status("testing".to_string()),
+        Value::SimpleString("testing".to_string()),
         Value::Array(vec![]),
         Value::Nil,
         Value::Data(vec![b'a'; 10]),

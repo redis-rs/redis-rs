@@ -126,12 +126,12 @@ where
                     )
                 };
 
-                let status = || {
+                let simple_string = || {
                     line().map(|line| {
                         if line == "OK" {
                             Value::Okay
                         } else {
-                            Value::Status(line.into())
+                            Value::SimpleString(line.into())
                         }
                     })
                 };
@@ -244,7 +244,7 @@ where
                                             kind: get_push_kind(String::from_utf8(kind)?),
                                             data: it.collect(),
                                         })
-                                    } else if let Value::Status(kind) = first {
+                                    } else if let Value::SimpleString(kind) = first {
                                         Ok(Value::Push {
                                             kind: get_push_kind(kind),
                                             data: it.collect(),
@@ -305,7 +305,7 @@ where
                     })
                 };
                 combine::dispatch!(b;
-                    b'+' => status().map(Ok),
+                    b'+' => simple_string().map(Ok),
                     b':' => int().map(|i| Ok(Value::Int(i))),
                     b'$' => data().map(Ok),
                     b'*' => array(),
@@ -551,11 +551,11 @@ mod tests {
         let val = parse_redis_value(b"%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n").unwrap();
         let mut v = val.as_map_iter().unwrap();
         assert_eq!(
-            (&Value::Status("first".to_string()), &Value::Int(1)),
+            (&Value::SimpleString("first".to_string()), &Value::Int(1)),
             v.next().unwrap()
         );
         assert_eq!(
-            (&Value::Status("second".to_string()), &Value::Int(2)),
+            (&Value::SimpleString("second".to_string()), &Value::Int(2)),
             v.next().unwrap()
         );
     }
@@ -596,8 +596,8 @@ mod tests {
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
-        assert_eq!(Value::Status("orange".to_string()), v[0]);
-        assert_eq!(Value::Status("apple".to_string()), v[1]);
+        assert_eq!(Value::SimpleString("orange".to_string()), v[0]);
+        assert_eq!(Value::SimpleString("apple".to_string()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);
         assert_eq!(Value::Int(100), v[3]);
         assert_eq!(Value::Int(999), v[4]);
@@ -609,8 +609,11 @@ mod tests {
             .unwrap();
         if let Value::Push { ref kind, ref data } = val {
             assert_eq!(&PushKind::Message, kind);
-            assert_eq!(Value::Status("somechannel".to_string()), data[0]);
-            assert_eq!(Value::Status("this is the message".to_string()), data[1]);
+            assert_eq!(Value::SimpleString("somechannel".to_string()), data[0]);
+            assert_eq!(
+                Value::SimpleString("this is the message".to_string()),
+                data[1]
+            );
         } else {
             panic!("Expected Value::Push")
         }

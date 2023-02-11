@@ -379,7 +379,7 @@ where
         }
         Value::Array(ref values) => encode_iter(values, writer, "*"),
         Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
+        Value::SimpleString(ref s) => write!(writer, "+{s}\r\n"),
         Value::Map(ref values) => encode_map(values, writer, "%"),
         Value::Attribute {
             ref data,
