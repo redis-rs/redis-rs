@@ -164,7 +164,7 @@ impl ClusterClientBuilder {
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
-    #[cfg(feature = "tls")]
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
         self.builder_params.tls = Some(tls);
         self
