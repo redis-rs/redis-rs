@@ -68,6 +68,7 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
+    cluster::slot_cmd,
     cluster_routing::RoutingInfo,
     parse_redis_url, Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Value,
@@ -1079,12 +1080,13 @@ where
     C: ConnectionLike,
 {
     trace!("get_slots");
-    let mut cmd = Cmd::new();
-    cmd.arg("CLUSTER").arg("SLOTS");
-    let value = connection.req_packed_command(&cmd).await.map_err(|err| {
-        trace!("get_slots error: {}", err);
-        err
-    })?;
+    let value = connection
+        .req_packed_command(&slot_cmd())
+        .await
+        .map_err(|err| {
+            trace!("get_slots error: {}", err);
+            err
+        })?;
     trace!("get_slots -> {:#?}", value);
     // Parse response.
     let mut result = Vec::with_capacity(2);
