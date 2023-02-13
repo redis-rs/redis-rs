@@ -211,7 +211,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
     // Same as above
     let another_form = "0";
 
-    let srr: StreamReadReply = con
+    let srr: StreamReadReply<String, Value> = con
         .xread_options(STREAMS, &[starting_id, another_form, starting_id], &opts)
         .expect("read");
 
@@ -238,7 +238,10 @@ fn consumer_name(slowness: u8) -> String {
 
 const GROUP_NAME: &str = "example-group-aaa";
 
-fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
+fn read_group_records(
+    client: &redis::Client,
+    slowness: u8,
+) -> RedisResult<StreamReadReply<String, Value>> {
     let mut con = client.get_connection().expect("conn");
 
     let opts = StreamReadOptions::default()
@@ -246,7 +249,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<Strea
         .count(3)
         .group(GROUP_NAME, consumer_name(slowness));
 
-    let srr: StreamReadReply = con
+    let srr: StreamReadReply<String, Value> = con
         .xread_options(
             &[DOG_STREAM, CAT_STREAM, DUCK_STREAM],
             &[">", ">", ">"],

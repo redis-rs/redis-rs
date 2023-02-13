@@ -212,9 +212,9 @@ impl ToRedisArgs for StreamReadOptions {
 /// [`xread_options`]: ../trait.Commands.html#method.xread_options
 ///
 #[derive(Default, Debug, Clone)]
-pub struct StreamReadReply {
+pub struct StreamReadReply<K, V> {
     /// Complex data structure containing a payload for each key in this array
-    pub keys: Vec<StreamKey>,
+    pub keys: Vec<StreamKey<K, V>>,
 }
 
 /// Reply type used with [`xrange`], [`xrange_count`], [`xrange_all`], [`xrevrange`], [`xrevrange_count`], [`xrevrange_all`] commands.
@@ -229,9 +229,9 @@ pub struct StreamReadReply {
 /// [`xrevrange_all`]: ../trait.Commands.html#method.xrevrange_all
 ///
 #[derive(Default, Debug, Clone)]
-pub struct StreamRangeReply {
+pub struct StreamRangeReply<V> {
     /// Complex data structure containing a payload for each ID in this array
-    pub ids: Vec<StreamId>,
+    pub ids: Vec<StreamId<V>>,
 }
 
 /// Reply type used with [`xclaim`] command.
@@ -241,9 +241,9 @@ pub struct StreamRangeReply {
 /// [`xclaim`]: ../trait.Commands.html#method.xclaim
 ///
 #[derive(Default, Debug, Clone)]
-pub struct StreamClaimReply {
+pub struct StreamClaimReply<V> {
     /// Complex data structure containing a payload for each ID in this array
-    pub ids: Vec<StreamId>,
+    pub ids: Vec<StreamId<V>>,
 }
 
 /// Reply type used with [`xpending`] command.
@@ -319,8 +319,8 @@ pub struct StreamPendingCountReply {
 ///
 /// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream
 ///
-#[derive(Default, Debug, Clone)]
-pub struct StreamInfoStreamReply {
+#[derive(Debug, Clone)]
+pub struct StreamInfoStreamReply<V> {
     /// The last generated ID that may not be the same as the last
     /// entry ID in case some entry was deleted.
     pub last_generated_id: String,
@@ -332,9 +332,9 @@ pub struct StreamInfoStreamReply {
     /// Number of elements of the stream.
     pub length: usize,
     /// The very first entry in the stream.
-    pub first_entry: StreamId,
+    pub first_entry: StreamId<V>,
     /// The very last entry in the stream.
-    pub last_entry: StreamId,
+    pub last_entry: StreamId<V>,
 }
 
 /// Reply type used with [`xinfo_consumer`] command, an array of every
@@ -411,23 +411,37 @@ pub struct StreamPendingId {
 
 /// Represents a stream `key` and its `id`'s parsed from `xread` methods.
 #[derive(Default, Debug, Clone)]
-pub struct StreamKey {
+pub struct StreamKey<K, V> {
     /// The stream `key`.
-    pub key: String,
+    pub key: K,
     /// The parsed stream `id`'s.
-    pub ids: Vec<StreamId>,
+    pub ids: Vec<StreamId<V>>,
 }
 
 /// Represents a stream `id` and its field/values as a `HashMap`
-#[derive(Default, Debug, Clone)]
-pub struct StreamId {
+#[derive(Debug, Clone)]
+pub struct StreamId<V> {
     /// The stream `id` (entry ID) of this particular message.
     pub id: String,
     /// All fields in this message, associated with their respective values.
-    pub map: HashMap<String, Value>,
+    pub map: HashMap<String, V>,
 }
 
-impl StreamId {
+/// This is needed since deriving Default requires V to implement Default wich is not actually
+/// required
+impl<V> Default for StreamId<V> {
+    fn default() -> Self {
+        Self {
+            id: Default::default(),
+            map: Default::default(),
+        }
+    }
+}
+
+impl<V> StreamId<V>
+where
+    V: FromRedisValue,
+{
     /// Converts a `Value::Bulk` into a `StreamId`.
     fn from_bulk_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
@@ -443,6 +457,18 @@ impl StreamId {
         Ok(stream_id)
     }
 
+    /// Returns how many field/value pairs exist in this message.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Returns true if there are no field/value pairs in this message.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl StreamId<Value> {
     /// Fetches value of a given field and converts it to the specified
     /// type.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
@@ -456,22 +482,16 @@ impl StreamId {
     pub fn contains_key(&self, key: &&str) -> bool {
         self.map.get(*key).is_some()
     }
-
-    /// Returns how many field/value pairs exist in this message.
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
-
-    /// Returns true if there are no field/value pairs in this message.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
-type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
-impl FromRedisValue for StreamReadReply {
+type SRRows<K, V> = Vec<HashMap<K, Vec<HashMap<String, HashMap<String, V>>>>>;
+impl<K, V> FromRedisValue for StreamReadReply<K, V>
+where
+    K: std::hash::Hash + std::cmp::Eq + FromRedisValue,
+    V: FromRedisValue,
+{
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let rows: SRRows = from_redis_value(v)?;
+        let rows: SRRows<K, V> = from_redis_value(v)?;
         let keys = rows
             .into_iter()
             .flat_map(|row| {
@@ -488,10 +508,13 @@ impl FromRedisValue for StreamReadReply {
     }
 }
 
-impl FromRedisValue for StreamRangeReply {
+impl<V> FromRedisValue for StreamRangeReply<V>
+where
+    V: FromRedisValue,
+{
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
-        let ids: Vec<StreamId> = rows
+        let rows: Vec<HashMap<String, HashMap<String, V>>> = from_redis_value(v)?;
+        let ids: Vec<StreamId<V>> = rows
             .into_iter()
             .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
@@ -499,10 +522,13 @@ impl FromRedisValue for StreamRangeReply {
     }
 }
 
-impl FromRedisValue for StreamClaimReply {
+impl<V> FromRedisValue for StreamClaimReply<V>
+where
+    V: FromRedisValue,
+{
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
-        let ids: Vec<StreamId> = rows
+        let rows: Vec<HashMap<String, HashMap<String, V>>> = from_redis_value(v)?;
+        let ids: Vec<StreamId<V>> = rows
             .into_iter()
             .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
             .collect();
@@ -600,7 +626,25 @@ impl FromRedisValue for StreamPendingCountReply {
     }
 }
 
-impl FromRedisValue for StreamInfoStreamReply {
+/// This is needed since deriving Default requires V to implement Default wich is not actually
+/// required
+impl<V> Default for StreamInfoStreamReply<V> {
+    fn default() -> Self {
+        Self {
+            last_generated_id: Default::default(),
+            radix_tree_keys: Default::default(),
+            groups: Default::default(),
+            length: Default::default(),
+            first_entry: Default::default(),
+            last_entry: Default::default(),
+        }
+    }
+}
+
+impl<V> FromRedisValue for StreamInfoStreamReply<V>
+where
+    V: FromRedisValue,
+{
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let map: HashMap<String, Value> = from_redis_value(v)?;
         let mut reply = StreamInfoStreamReply::default();
