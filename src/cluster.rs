@@ -59,6 +59,10 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 
+use crate::tls::Certificate;
+use crate::tls::RedisIdentity;
+
+
 type SlotMap = BTreeMap<u16, String>;
 
 /// This is a connection of Redis cluster.
@@ -70,6 +74,8 @@ pub struct ClusterConnection {
     readonly: bool,
     username: Option<String>,
     password: Option<String>,
+    ca_certificate: Option<Certificate>,
+    identity: Option<RedisIdentity>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
@@ -97,12 +103,16 @@ impl ClusterConnection {
         readonly: bool,
         username: Option<String>,
         password: Option<String>,
+        ca_certificate: Option<Certificate>,
+        identity: Option<RedisIdentity>,
     ) -> RedisResult<ClusterConnection> {
         let connections = Self::create_initial_connections(
             &initial_nodes,
             readonly,
             username.clone(),
             password.clone(),
+            ca_certificate.clone(),
+            identity.clone()
         )?;
 
         let connection = ClusterConnection {
@@ -112,6 +122,8 @@ impl ClusterConnection {
             readonly,
             username,
             password,
+            ca_certificate,
+            identity,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             #[cfg(feature = "tls")]
@@ -122,11 +134,9 @@ impl ClusterConnection {
                     // TODO: Maybe should run through whole list and make sure they're all matching?
                     match &initial_nodes.get(0).unwrap().addr {
                         ConnectionAddr::Tcp(_, _) => None,
-                        ConnectionAddr::TcpTls {
-                            host: _,
-                            port: _,
-                            insecure,
-                        } => Some(TlsMode::from_insecure_flag(*insecure)),
+                        ConnectionAddr::TcpTls { insecure, .. } => {
+                            Some(TlsMode::from_insecure_flag(*insecure))
+                        },
                         _ => None,
                     }
                 }
@@ -204,6 +214,8 @@ impl ClusterConnection {
         readonly: bool,
         username: Option<String>,
         password: Option<String>,
+        ca_cert: Option<Certificate>,
+        identity: Option<RedisIdentity>
     ) -> RedisResult<HashMap<String, Connection>> {
         let mut connections = HashMap::with_capacity(initial_nodes.len());
 
@@ -214,6 +226,7 @@ impl ClusterConnection {
                     ref host,
                     port,
                     insecure,
+                    ..
                 } => {
                     let tls_mode = TlsMode::from_insecure_flag(insecure);
                     build_connection_string(host, Some(port), Some(tls_mode))
@@ -222,7 +235,7 @@ impl ClusterConnection {
             };
 
             if let Ok(mut conn) =
-                connect(info.clone(), readonly, username.clone(), password.clone())
+                connect(info.clone(), readonly, username.clone(), password.clone(), ca_cert.clone(), identity.clone())
             {
                 if conn.check_connection() {
                     connections.insert(addr, conn);
@@ -277,6 +290,8 @@ impl ClusterConnection {
                         self.readonly,
                         self.username.clone(),
                         self.password.clone(),
+                        self.ca_certificate.clone(),
+                        self.identity.clone()
                     ) {
                         if conn.check_connection() {
                             conn.set_read_timeout(*self.read_timeout.borrow())?;
@@ -382,6 +397,8 @@ impl ClusterConnection {
                 self.readonly,
                 self.username.clone(),
                 self.password.clone(),
+                self.ca_certificate.clone(),
+                self.identity.clone()
             )?;
             Ok(connections.entry(addr.to_string()).or_insert(conn))
         }
@@ -485,6 +502,8 @@ impl ClusterConnection {
                             self.readonly,
                             self.username.clone(),
                             self.password.clone(),
+                            self.ca_certificate.clone(),
+                            self.identity.clone()
                         )?;
                         {
                             let mut connections = self.connections.borrow_mut();
@@ -715,6 +734,8 @@ fn connect<T: IntoConnectionInfo>(
     readonly: bool,
     username: Option<String>,
     password: Option<String>,
+    ca_cert: Option<Certificate>,
+    identity: Option<RedisIdentity>
 ) -> RedisResult<Connection>
 where
     T: std::fmt::Debug,
@@ -722,6 +743,24 @@ where
     let mut connection_info = info.into_connection_info()?;
     connection_info.redis.username = username;
     connection_info.redis.password = password;
+    if let ConnectionAddr::TcpTls {
+            ref host,
+            port,
+            insecure,
+            ..
+        } = connection_info.addr {
+            if !insecure {
+                let tls_addr = ConnectionAddr::TcpTls {
+                    host: host.to_string(),
+                    port,
+                    insecure,
+                    ca_cert,
+                    identity,
+                };
+                connection_info.addr = tls_addr;
+            }
+        }
+
     let client = super::Client::open(connection_info)?;
 
     let mut con = client.get_connection()?;

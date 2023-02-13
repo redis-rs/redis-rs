@@ -1,3 +1,5 @@
+#[cfg(feature = "async-std")]
+
 use futures::{future, prelude::*};
 
 use crate::support::*;

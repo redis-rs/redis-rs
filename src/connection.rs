@@ -17,7 +17,11 @@ use crate::types::{
 use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls")]
-use native_tls::{TlsConnector, TlsStream};
+use crate::tls::{Certificate, RedisIdentity};
+
+#[cfg(feature = "tls")]
+use native_tls::{Identity, TlsConnector, TlsStream};
+
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -58,6 +62,18 @@ pub enum ConnectionAddr {
         /// trusted for use from any other. This introduces a significant
         /// vulnerability to man-in-the-middle attacks.
         insecure: bool,
+        /// CA certificate
+        ///
+        /// Added to the root certificates. Used if the CA is not public
+        #[cfg(feature = "tls")]
+        ca_cert: Option<Certificate>,
+
+        /// TLS Identity
+        ///
+        /// used for client authentication at server
+        #[cfg(feature = "tls")]
+        identity: Option<RedisIdentity>,
+
     },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),
@@ -177,6 +193,8 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     host,
                     port,
                     insecure: true,
+                    ca_cert: None,
+                    identity: None
                 },
                 Some(_) => fail!((
                     ErrorKind::InvalidClientConfig,
@@ -186,6 +204,8 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     host,
                     port,
                     insecure: false,
+                    ca_cert: None,
+                    identity: None
                 },
             }
         }
@@ -372,6 +392,8 @@ impl ActualConnection {
                 ref host,
                 port,
                 insecure,
+                ref ca_cert,
+                identity: ref client_identity,
             } => {
                 let tls_connector = if insecure {
                     TlsConnector::builder()
@@ -380,7 +402,15 @@ impl ActualConnection {
                         .use_sni(false)
                         .build()?
                 } else {
-                    TlsConnector::new()?
+                    let mut builder = TlsConnector::builder();
+                    if let Some(ca_cert) = ca_cert {
+                        builder.add_root_certificate(ca_cert.0.clone());
+                    }
+                    if let Some(ident) = client_identity {
+                        let id = Identity::from_pkcs8(&*ident.cert_der, &*ident.key)?;
+                        builder.identity(id);
+                    }
+                    builder.build()?
                 };
                 let host: &str = &*host;
                 let tls = match timeout {

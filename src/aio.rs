@@ -13,9 +13,11 @@ use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset
 
 use ::tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::lookup_host,
     sync::{mpsc, oneshot},
 };
+
+#[cfg(feature = "tls")]
+use crate::tls::{Certificate,RedisIdentity};
 
 #[cfg(feature = "tls")]
 use native_tls::TlsConnector;
@@ -62,6 +64,8 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        ca_cert: Option<Certificate>,
+        client_identity: Option<RedisIdentity>,
     ) -> RedisResult<Self>;
 
     /// Performs a UNIX connection
@@ -465,9 +469,17 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref host,
             port,
             insecure,
+            ref ca_cert,
+            identity: ref client_identity,
         } => {
             let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp_tls(host, socket_addr, insecure).await?
+            <T>::connect_tcp_tls(
+                host,
+                socket_addr,
+                insecure,
+                ca_cert.clone(),
+                client_identity.clone(),
+            ).await?
         }
 
         #[cfg(not(feature = "tls"))]
@@ -492,14 +504,42 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     })
 }
 
+///In case both the tokio and the async-std flag are both turned on, we find the runtime dynamically
+/// and use the current trait to convert the (host,port) to socket address
+#[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+async fn to_socket_addrs_dynamic(
+    host: &str,
+    port: u16,
+) -> io::Result<impl Iterator<Item = SocketAddr>> {
+    let socks: Vec<SocketAddr> = match Runtime::locate() {
+        Runtime::Tokio => ::tokio::net::lookup_host((host, port)).await?.collect(),
+        Runtime::AsyncStd => {
+            use ::async_std::net::ToSocketAddrs;
+            (host, port).to_socket_addrs().await?.collect()
+        }
+    };
+    Ok(socks.into_iter())
+}
+
+
+
 async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
-    let mut socket_addrs = lookup_host((host, port)).await?;
-    match socket_addrs.next() {
-        Some(socket_addr) => Ok(socket_addr),
-        None => Err(RedisError::from((
-            ErrorKind::InvalidClientConfig,
-            "No address found for host",
-        ))),
+    #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
+    let mut socket_addrs = ::tokio::net::lookup_host((host, port)).await?;
+    #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
+    let mut socket_addrs = to_socket_addrs_dynamic(host, port).await?;
+    loop {
+        if let Some(addr) = socket_addrs.next() {
+            //if only one ip is mapped we return it, otherwise we return the ipv4 option
+            if addr.is_ipv4() || socket_addrs.size_hint().1.is_none() {
+                break Ok(addr);
+            }
+        } else {
+            break Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "No address found for host",
+            )));
+        }
     }
 }
 

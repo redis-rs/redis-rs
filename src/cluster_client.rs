@@ -1,4 +1,6 @@
 use crate::cluster::ClusterConnection;
+#[cfg(feature = "tls")]
+use crate::tls::{Certificate, RedisIdentity};
 
 use super::{
     ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisResult,
@@ -10,6 +12,10 @@ pub struct ClusterClientBuilder {
     readonly: bool,
     username: Option<String>,
     password: Option<String>,
+    #[cfg(feature = "tls")]
+    pub(crate) ca_cert: Option<Certificate>,
+    #[cfg(feature = "tls")]
+    pub(crate) identity: Option<RedisIdentity>,
 }
 
 impl ClusterClientBuilder {
@@ -23,6 +29,10 @@ impl ClusterClientBuilder {
             readonly: false,
             username: None,
             password: None,
+            #[cfg(feature = "tls")]
+            ca_cert: None,
+            #[cfg(feature = "tls")]
+            identity: None
         }
     }
 
@@ -53,8 +63,23 @@ impl ClusterClientBuilder {
     /// Set read only mode for new ClusterClient (default is false).
     /// If readonly is true, all queries will go to replica nodes. If there are no replica nodes,
     /// queries will be issued to the primary nodes.
+
     pub fn readonly(mut self, readonly: bool) -> ClusterClientBuilder {
         self.readonly = readonly;
+        self
+    }
+
+    /// relevant for secure TLS : Set ca certificate for new ClusterClient.
+    #[cfg(feature = "tls")]
+    pub fn ca_cert(mut self, ca_cert: Certificate) -> ClusterClientBuilder {
+        self.ca_cert = Some(ca_cert);
+        self
+    }
+
+    /// relevant for secure TLS : Set identity ( certificate & private key) for new ClusterClient.
+    #[cfg(feature = "tls")]
+    pub fn identity(mut self, identity: RedisIdentity) -> ClusterClientBuilder {
+        self.identity = Some(identity);
         self
     }
 }
@@ -65,6 +90,10 @@ pub struct ClusterClient {
     readonly: bool,
     username: Option<String>,
     password: Option<String>,
+    #[cfg(feature = "tls")]
+    ca_cert: Option<Certificate>,
+    #[cfg(feature = "tls")]
+    identity: Option<RedisIdentity>
 }
 
 impl ClusterClient {
@@ -92,6 +121,10 @@ impl ClusterClient {
             self.readonly,
             self.username.clone(),
             self.password.clone(),
+            #[cfg(feature = "tls")]
+                self.ca_cert.clone(),
+            #[cfg(feature = "tls")]
+                self.identity.clone()
         )
     }
 
@@ -100,6 +133,10 @@ impl ClusterClient {
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         let mut connection_info_password = None::<String>;
         let mut connection_info_username = None::<String>;
+        #[cfg(feature = "tls")]
+            let mut connection_info_ca_cert = None::<Certificate>;
+        #[cfg(feature = "tls")]
+            let mut connection_info_identity = None::<RedisIdentity>;
 
         for (index, info) in initial_nodes.into_iter().enumerate() {
             if let ConnectionAddr::Unix(_) = info.addr {
@@ -129,6 +166,34 @@ impl ClusterClient {
                 }
             }
 
+            #[cfg(feature = "tls")]
+            if builder.ca_cert.is_none(){
+                if let ConnectionAddr::TcpTls { ref ca_cert, .. } = info.addr {
+                        if index == 0 {
+                            connection_info_ca_cert = (*ca_cert).clone();
+                        } else if connection_info_ca_cert != (*ca_cert) {
+                            return Err(RedisError::from((
+                                ErrorKind::InvalidClientConfig,
+                                "Cannot use different ca_cert among initial nodes.",
+                            )));
+                        }
+                }
+            }
+
+            #[cfg(feature = "tls")]
+            if builder.identity.is_none(){
+                    if let ConnectionAddr::TcpTls { ref identity, .. } = info.addr {
+                        if index == 0 {
+                            connection_info_identity = (*identity).clone();
+                        } else if connection_info_identity != (*identity) {
+                            return Err(RedisError::from((
+                                ErrorKind::InvalidClientConfig,
+                                "Cannot use different identity among initial nodes.",
+                            )));
+                        }
+                    }
+            }
+
             nodes.push(info);
         }
 
@@ -137,6 +202,10 @@ impl ClusterClient {
             readonly: builder.readonly,
             username: builder.username.or(connection_info_username),
             password: builder.password.or(connection_info_password),
+            #[cfg(feature = "tls")]
+            ca_cert: builder.ca_cert.or(connection_info_ca_cert),
+            #[cfg(feature = "tls")]
+            identity: builder.identity.or(connection_info_identity),
         })
     }
 }
