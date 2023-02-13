@@ -791,7 +791,7 @@ fn test_auto_m_versions() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    assert_eq!(con.set_multiple(&[("key1", 1), ("key2", 2)]), Ok(()));
+    assert_eq!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(()));
     assert_eq!(con.get(&["key1", "key2"]), Ok((1, 2)));
     assert_eq!(con.get(vec!["key1", "key2"]), Ok((1, 2)));
     assert_eq!(con.get(&vec!["key1", "key2"]), Ok((1, 2)));
