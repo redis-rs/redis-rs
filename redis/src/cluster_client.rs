@@ -1,4 +1,4 @@
-use crate::cluster::ClusterConnection;
+use crate::cluster::{ClusterConnection, TlsMode};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 
@@ -8,6 +8,10 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) read_from_replicas: bool,
+    /// tls indicates tls behavior of connections.
+    /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
+    /// When None, connections do not use tls.
+    pub(crate) tls: Option<TlsMode>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -65,6 +69,19 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
+        if cluster_params.tls.is_none() {
+            cluster_params.tls = match first_node.addr {
+                ConnectionAddr::TcpTls {
+                    host: _,
+                    port: _,
+                    insecure,
+                } => Some(match insecure {
+                    false => TlsMode::Secure,
+                    true => TlsMode::Insecure,
+                }),
+                _ => None,
+            };
+        }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for node in initial_nodes {
@@ -105,6 +122,15 @@ impl ClusterClientBuilder {
     /// Sets username for the new ClusterClient.
     pub fn username(mut self, username: String) -> ClusterClientBuilder {
         self.cluster_params.username = Some(username);
+        self
+    }
+
+    /// Sets TLS mode for the new ClusterClient.
+    ///
+    /// It is extracted from the first node of initial_nodes if not set.
+    #[cfg(feature = "tls")]
+    pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
+        self.cluster_params.tls = Some(tls);
         self
     }
 
@@ -152,7 +178,7 @@ impl ClusterClient {
         Self::builder(initial_nodes).build()
     }
 
-    /// Creates a [`ClusterClientBuilder`] with the the provided initial_nodes.
+    /// Creates a [`ClusterClientBuilder`] with the provided initial_nodes.
     pub fn builder<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
         ClusterClientBuilder::new(initial_nodes)
     }
