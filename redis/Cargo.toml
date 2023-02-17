@@ -71,7 +71,7 @@ default = ["acl", "streams", "geospatial", "script"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
 geospatial = []
-json = ["serde", "serde_json"]
+json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
 tls = ["native-tls"]
@@ -89,7 +89,7 @@ socket2 = "0.4"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
-criterion = "0.3"
+criterion = "0.4"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
@@ -111,7 +111,7 @@ required-features = ["aio"]
 name = "test_acl"
 
 [[test]]
-name = "test_json"
+name = "test_module_json"
 required-features = ["json", "serde/derive"]
 
 [[bench]]

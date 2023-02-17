@@ -188,7 +188,7 @@ where
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
     /// This can be useful in cases where the stream needs to be returned or held by something other
-    //  than the [`PubSub`].
+    /// than the [`PubSub`].
     pub fn into_on_message(self) -> impl Stream<Item = Msg> {
         ValueCodec::default()
             .framed(self.0.con)
