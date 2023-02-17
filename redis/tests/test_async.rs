@@ -1,4 +1,4 @@
-use futures::{future, prelude::*};
+use futures::{future, prelude::*, StreamExt};
 use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
 
 use crate::support::*;
@@ -460,6 +460,43 @@ async fn invalid_password_issue_343() {
         ErrorKind::AuthenticationFailed,
         "Unexpected error: {err}",
     );
+}
+
+// Test issue of Stream trait blocking if we try to iterate more than 10 items
+// https://github.com/mitsuhiko/redis-rs/issues/537 and https://github.com/mitsuhiko/redis-rs/issues/583
+#[tokio::test]
+async fn test_issue_stream_blocks() {
+    let ctx = TestContext::new();
+    let mut con = ctx.multiplexed_async_connection().await.unwrap();
+    for i in 0..20usize {
+        let _: () = con.append(format!("test/{i}"), i).await.unwrap();
+    }
+    let values = con.scan_match::<&str, String>("test/*").await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_millis(100), async move {
+        let values: Vec<_> = values.collect().await;
+        assert_eq!(values.len(), 20);
+    })
+    .await
+    .unwrap();
+}
+
+// Test issue of AsyncCommands::scan returning the wrong number of keys
+// https://github.com/redis-rs/redis-rs/issues/759
+#[tokio::test]
+async fn test_issue_async_commands_scan_broken() {
+    let ctx = TestContext::new();
+    let mut con = ctx.async_connection().await.unwrap();
+    let mut keys: Vec<String> = (0..100).map(|k| format!("async-key{k}")).collect();
+    keys.sort();
+    for key in &keys {
+        let _: () = con.set(key, b"foo").await.unwrap();
+    }
+
+    let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
+    let mut keys_from_redis: Vec<_> = iter.collect().await;
+    keys_from_redis.sort();
+    assert_eq!(keys, keys_from_redis);
+    assert_eq!(keys.len(), 100);
 }
 
 mod pub_sub {
