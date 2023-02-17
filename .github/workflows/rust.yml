@@ -36,6 +36,14 @@ jobs:
           /usr/bin/redis-server
         key: ${{ runner.os }}-redis
 
+    - name: Cache RedisJSON
+      id: cache-redisjson
+      uses: actions/cache@v2
+      with:
+        path: |
+          /tmp/librejson.so
+        key: ${{ runner.os }}-redisjson
+
     - name: Install redis
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
@@ -55,7 +63,11 @@ jobs:
     - uses: Swatinem/rust-cache@v1
     - uses: actions/checkout@v2
 
+    - name: Run tests
+      run: make test
+
     - name: Checkout RedisJSON
+      if: steps.cache-redisjson.outputs.cache-hit != 'true'
       uses: actions/checkout@v2
       with:
         repository: "RedisJSON/RedisJSON"
@@ -76,6 +88,7 @@ jobs:
       # This shouldn't cause issues in the future so long as no profiles or patches
       # are applied to the workspace Cargo.toml file
     - name: Compile RedisJSON
+      if: steps.cache-redisjson.outputs.cache-hit != 'true'
       run: |
         cp ./Cargo.toml ./Cargo.toml.actual
         echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
@@ -84,8 +97,8 @@ jobs:
         rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
         rm -rf ./__ci/redis-json
 
-    - name: Run tests
-      run: make test
+    - name: Run module-specific tests
+      run: make test-module
 
     - name: Check features
       run: |
