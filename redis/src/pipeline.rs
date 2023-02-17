@@ -205,6 +205,16 @@ impl Pipeline {
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
         self.query::<()>(con).unwrap();
     }
+
+    /// Async version of `execute`.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn execute_async<C>(&self, con: &mut C)
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        self.query_async::<C, ()>(con).await.unwrap();
+    }
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
