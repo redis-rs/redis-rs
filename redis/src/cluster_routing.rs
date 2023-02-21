@@ -6,6 +6,10 @@ use crate::types::Value;
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
 
+fn slot(key: &[u8]) -> u16 {
+    crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RoutingInfo {
     AllNodes,
@@ -58,7 +62,7 @@ impl RoutingInfo {
             None => key,
         };
 
-        let slot = crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE;
+        let slot = slot(key);
         if is_readonly_cmd(cmd) {
             RoutingInfo::ReplicaSlot(slot)
         } else {
@@ -174,7 +178,7 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_hashtag, RoutingInfo};
+    use super::{get_hashtag, slot, RoutingInfo};
     use crate::{cmd, parser::parse_redis_value};
 
     #[test]
@@ -256,6 +260,99 @@ mod tests {
                 RoutingInfo::for_routable(&value).unwrap(),
                 RoutingInfo::for_routable(&cmd).unwrap(),
             );
+        }
+
+        // Assert expected RoutingInfo explicitly:
+
+        for cmd in vec![cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("SCRIPT")] {
+            assert_eq!(
+                RoutingInfo::for_routable(&cmd),
+                Some(RoutingInfo::AllMasters)
+            );
+        }
+
+        for cmd in vec![
+            cmd("ECHO"),
+            cmd("CONFIG"),
+            cmd("CLIENT"),
+            cmd("SLOWLOG"),
+            cmd("DBSIZE"),
+            cmd("LASTSAVE"),
+            cmd("PING"),
+            cmd("INFO"),
+            cmd("BGREWRITEAOF"),
+            cmd("BGSAVE"),
+            cmd("CLIENT LIST"),
+            cmd("SAVE"),
+            cmd("TIME"),
+            cmd("KEYS"),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(&cmd), Some(RoutingInfo::AllNodes));
+        }
+
+        for cmd in vec![
+            cmd("SCAN"),
+            cmd("CLIENT SETNAME"),
+            cmd("SHUTDOWN"),
+            cmd("SLAVEOF"),
+            cmd("REPLICAOF"),
+            cmd("SCRIPT KILL"),
+            cmd("MOVE"),
+            cmd("BITOP"),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(&cmd), None,);
+        }
+
+        for cmd in vec![
+            cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
+            cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(cmd), Some(RoutingInfo::Random));
+        }
+
+        for (cmd, expected) in vec![
+            (
+                cmd("EVAL")
+                    .arg(r#"redis.call("GET, KEYS[1]");"#)
+                    .arg(1)
+                    .arg("foo"),
+                Some(RoutingInfo::MasterSlot(slot(b"foo"))),
+            ),
+            (
+                cmd("XGROUP")
+                    .arg("CREATE")
+                    .arg("mystream")
+                    .arg("workers")
+                    .arg("$")
+                    .arg("MKSTREAM"),
+                Some(RoutingInfo::MasterSlot(slot(b"mystream"))),
+            ),
+            (
+                cmd("XINFO").arg("GROUPS").arg("foo"),
+                Some(RoutingInfo::ReplicaSlot(slot(b"foo"))),
+            ),
+            (
+                cmd("XREADGROUP")
+                    .arg("GROUP")
+                    .arg("wkrs")
+                    .arg("consmrs")
+                    .arg("STREAMS")
+                    .arg("mystream"),
+                Some(RoutingInfo::MasterSlot(slot(b"mystream"))),
+            ),
+            (
+                cmd("XREAD")
+                    .arg("COUNT")
+                    .arg("2")
+                    .arg("STREAMS")
+                    .arg("mystream")
+                    .arg("writers")
+                    .arg("0-0")
+                    .arg("0-0"),
+                Some(RoutingInfo::ReplicaSlot(slot(b"mystream"))),
+            ),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(cmd), expected,);
         }
     }
 }
