@@ -63,6 +63,9 @@ use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
+use crate::tls::Certificate;
+use crate::tls::RedisIdentity;
+
 /// This is a connection of Redis cluster.
 pub struct ClusterConnection {
     initial_nodes: Vec<ConnectionInfo>,
@@ -72,6 +75,8 @@ pub struct ClusterConnection {
     read_from_replicas: bool,
     username: Option<String>,
     password: Option<String>,
+    ca_cert: Option<Certificate>,
+    identity: Option<RedisIdentity>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
@@ -89,6 +94,8 @@ impl ClusterConnection {
             read_from_replicas: cluster_params.read_from_replicas,
             username: cluster_params.username,
             password: cluster_params.password,
+            ca_cert: cluster_params.ca_cert,
+            identity: cluster_params.identity,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
@@ -304,6 +311,8 @@ impl ClusterConnection {
         let params = ClusterParams {
             password: self.password.clone(),
             username: self.username.clone(),
+            ca_cert: self.ca_cert.clone(),
+            identity: self.identity.clone(),
             tls: self.tls,
             ..Default::default()
         };
@@ -744,7 +753,7 @@ fn get_slots(connection: &mut Connection, tls: Option<TlsMode>) -> RedisResult<V
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls).to_string())
+                        Some(get_connection_addr(ip.into_owned(), port, tls, None, None).to_string())
                     } else {
                         None
                     }
@@ -777,7 +786,7 @@ fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls),
+        addr: get_connection_addr(host.to_string(), port, cluster_params.tls, cluster_params.ca_cert, cluster_params.identity),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -786,17 +795,21 @@ fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
+fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>,ca_crt: Option<Certificate>, identity: Option<RedisIdentity> ) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: false,
+            ca_cert: ca_crt.clone(),
+            identity: identity.clone()
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: true,
+            ca_cert: None,
+            identity: None
         },
         _ => ConnectionAddr::Tcp(host, port),
     }

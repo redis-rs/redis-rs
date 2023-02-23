@@ -19,6 +19,11 @@ test:
 	@REDISRS_SERVER_TYPE=tcp+tls cargo test -p redis --all-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
+	@echo "Testing Connection Type TCP with all features and TLS SEC support"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp+tls+sec cargo test test_cluster --all-features -- --nocapture --test-threads=1
+
+	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
 	@REDISRS_SERVER_TYPE=unix cargo test -p redis --test parser --test test_basic --test test_types --all-features -- --test-threads=1
@@ -31,7 +36,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing redis-test"
 	@echo "===================================================================="
-	@cargo test -p redis-test 
+	@cargo test -p redis-test
 
 
 test-single: test

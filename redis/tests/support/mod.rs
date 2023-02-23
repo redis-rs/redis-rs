@@ -1,14 +1,21 @@
 #![allow(dead_code)]
 
+#[cfg(feature = "tls")]
+use std::fs::read;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
 };
 
 use futures::Future;
+#[cfg(feature = "tls")]
+use redis::ConnectionAddr;
 use redis::Value;
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
+
+#[cfg(feature = "tls")]
+use redis::tls::{Certificate, RedisIdentity};
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
@@ -41,7 +48,7 @@ pub use self::cluster::*;
 
 #[derive(PartialEq)]
 enum ServerType {
-    Tcp { tls: bool },
+    Tcp { tls: bool, sec: bool },
     Unix,
 }
 
@@ -53,6 +60,7 @@ pub struct RedisServer {
     pub process: process::Child,
     tempdir: Option<tempfile::TempDir>,
     addr: redis::ConnectionAddr,
+    tls_paths: Option<TlsFilePaths>,
 }
 
 impl ServerType {
@@ -62,8 +70,18 @@ impl ServerType {
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp") => ServerType::Tcp { tls: false },
-            Some("tcp+tls") => ServerType::Tcp { tls: true },
+            Some("tcp") => ServerType::Tcp {
+                tls: false,
+                sec: false,
+            },
+            Some("tcp+tls") => ServerType::Tcp {
+                tls: true,
+                sec: false,
+            },
+            Some("tcp+tls+sec") => ServerType::Tcp {
+                tls: true,
+                sec: true,
+            },
             Some("unix") => ServerType::Unix,
             val => {
                 panic!("Unknown server type {val:?}");
@@ -80,7 +98,7 @@ impl RedisServer {
     pub fn with_modules(modules: &[Module]) -> RedisServer {
         let server_type = ServerType::get_intended();
         let addr = match server_type {
-            ServerType::Tcp { tls } => {
+            ServerType::Tcp { tls, sec } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
                 let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
@@ -92,9 +110,13 @@ impl RedisServer {
                 let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
-                        host: "127.0.0.1".to_string(),
+                        host: "localhost".to_string(),
                         port: redis_port,
-                        insecure: true,
+                        insecure: !sec,
+                        #[cfg(feature = "tls")]
+                        ca_cert: None,
+                        #[cfg(feature = "tls")]
+                        identity: None,
                     }
                 } else {
                     redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port)
@@ -152,10 +174,12 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: None,
                     addr,
+                    tls_paths
                 }
             }
-            redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
+            redis::ConnectionAddr::TcpTls { ref host, port, insecure,  .. } => {
                 let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
+                let auth_client_str = if insecure { "no" } else { "yes" };
 
                 // prepare redis with TLS
                 redis_cmd
@@ -169,21 +193,22 @@ impl RedisServer {
                     .arg(&tls_paths.redis_key)
                     .arg("--tls-ca-cert-file")
                     .arg(&tls_paths.ca_crt)
-                    .arg("--tls-auth-clients") // Make it so client doesn't have to send cert
-                    .arg("no")
+                    .arg("--tls-auth-clients")
+                    .arg(auth_client_str)
                     .arg("--bind")
                     .arg(host);
 
-                let addr = redis::ConnectionAddr::TcpTls {
-                    host: host.clone(),
-                    port,
-                    insecure: true,
-                };
+                // let addr = redis::ConnectionAddr::TcpTls {
+                //     host: host.clone(),
+                //     port,
+                //     insecure: true,
+                // };
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: Some(tempdir),
                     addr,
+                    tls_paths: Some(tls_paths),
                 }
             }
             redis::ConnectionAddr::Unix(ref path) => {
@@ -196,13 +221,46 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: Some(tempdir),
                     addr,
+                    tls_paths: None,
                 }
             }
         }
     }
 
-    pub fn client_addr(&self) -> &redis::ConnectionAddr {
-        &self.addr
+    pub fn client_addr(&self) -> redis::ConnectionAddr {
+        let client_address = self.addr.clone();
+        match client_address {
+            #[cfg(feature = "tls")]
+            ConnectionAddr::TcpTls {
+                ref host,
+                ref port,
+                insecure,
+                ..
+            } => {
+                if !insecure {
+                    let tls_path = self
+                        .tls_paths
+                        .as_ref()
+                        .expect("failed ot get TLS paths on TLS mode");
+
+                    let (ca_cert, identity) = build_sec_entities(
+                        &tls_path.ca_crt,
+                        &tls_path.client_crt,
+                        &tls_path.client_key,
+                    );
+                    let sec_client_address = ConnectionAddr::TcpTls {
+                        host: host.clone(),
+                        port: *port,
+                        insecure: false,
+                        ca_cert: Some(ca_cert),
+                        identity: Some(identity),
+                    };
+                    return sec_client_address;
+                }
+                client_address
+            }
+            _ => client_address,
+        }
     }
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {
@@ -215,7 +273,7 @@ impl RedisServer {
     pub fn stop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
-        if let redis::ConnectionAddr::Unix(ref path) = *self.client_addr() {
+        if let redis::ConnectionAddr::Unix(ref path) = self.client_addr() {
             fs::remove_file(path).ok();
         }
     }
@@ -343,7 +401,9 @@ where
 pub struct TlsFilePaths {
     redis_crt: PathBuf,
     redis_key: PathBuf,
-    ca_crt: PathBuf,
+    pub ca_crt: PathBuf,
+    pub client_crt: PathBuf,
+    pub client_key: PathBuf,
 }
 
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
@@ -354,6 +414,21 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     let ca_serial = tempdir.path().join("ca.txt");
     let redis_crt = tempdir.path().join("redis.crt");
     let redis_key = tempdir.path().join("redis.key");
+    let client_crt = tempdir.path().join("redis_client.crt");
+    let client_key = tempdir.path().join("redis_client.key");
+
+    let ca_conf = tempdir.path().join("ca.conf");
+    let csr_conf = tempdir.path().join("csr.conf");
+    let cert_conf = tempdir.path().join("cert.conf");
+
+    #[cfg(feature = "tls")]
+    write_ca_conf_file(&ca_conf).expect("failed to write ca conf file");
+
+    #[cfg(feature = "tls")]
+    write_csr_conf_file(&csr_conf).expect("failed to write csr conf file");
+
+    #[cfg(feature = "tls")]
+    write_cert_conf_file(&cert_conf).expect("failed to write cert ext file");
 
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         process::Command::new("openssl")
@@ -369,11 +444,86 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .expect("failed to create key");
     }
 
+    fn make_cert(
+        key: &PathBuf,
+        crt: &PathBuf,
+        ca_key: &PathBuf,
+        ca_serial: &PathBuf,
+        ca_crt: &PathBuf,
+        csr_conf: &PathBuf,
+        cert_conf: &PathBuf,
+    ) {
+        // create csr
+        let mut key_cmd = process::Command::new("openssl")
+            .arg("req")
+            .arg("-new")
+            .arg("-sha256")
+            .arg("-subj")
+            .arg("/O=Redis Test/CN=localhost")
+            .arg("-key")
+            .arg(&key)
+            .arg("-config")
+            .arg(csr_conf)
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn openssl");
+
+        // build  cert
+        process::Command::new("openssl")
+            .arg("x509")
+            .arg("-req")
+            .arg("-sha256")
+            .arg("-CA")
+            .arg(&ca_crt)
+            .arg("-CAkey")
+            .arg(&ca_key)
+            .arg("-CAserial")
+            .arg(&ca_serial)
+            .arg("-CAcreateserial")
+            .arg("-days")
+            .arg("365")
+            .arg("-extfile")
+            .arg(cert_conf)
+            .arg("-out")
+            .arg(&crt)
+            .stdin(key_cmd.stdout.take().expect("should have stdout"))
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn openssl")
+            .wait()
+            .expect("failed to create cert");
+
+        key_cmd.wait().expect("failed to create key");
+    }
+
+    fn convert_key(key: &PathBuf, key8: &PathBuf){
+        //convert to pkcs8
+        process::Command::new("openssl")
+            .arg("pkcs8")
+            .arg("-nocrypt")
+            .arg("-topk8")
+            .arg("-in")
+            .arg(&key)
+            .arg("-out")
+            .arg(&key8)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn openssl")
+            .wait()
+            .expect("failed to convert key");
+    }
+
     // Build CA Key
     make_key(&ca_key, 4096);
 
     // Build redis key
     make_key(&redis_key, 2048);
+
+    //Build client key
+    make_key(&client_key, 2048);
 
     // Build CA Cert
     process::Command::new("openssl")
@@ -386,6 +536,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg(&ca_key)
         .arg("-days")
         .arg("3650")
+        .arg("-config")
+        .arg(ca_conf)
         .arg("-subj")
         .arg("/O=Redis Test/CN=Certificate Authority")
         .arg("-out")
@@ -397,49 +549,108 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .wait()
         .expect("failed to create CA cert");
 
-    // Read redis key
-    let mut key_cmd = process::Command::new("openssl")
-        .arg("req")
-        .arg("-new")
-        .arg("-sha256")
-        .arg("-subj")
-        .arg("/O=Redis Test/CN=Generic-cert")
-        .arg("-key")
-        .arg(&redis_key)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .spawn()
-        .expect("failed to spawn openssl");
+    make_cert(
+        &redis_key, &redis_crt, &ca_key, &ca_serial, &ca_crt, &csr_conf, &cert_conf,
+    );
 
-    // build redis cert
-    process::Command::new("openssl")
-        .arg("x509")
-        .arg("-req")
-        .arg("-sha256")
-        .arg("-CA")
-        .arg(&ca_crt)
-        .arg("-CAkey")
-        .arg(&ca_key)
-        .arg("-CAserial")
-        .arg(&ca_serial)
-        .arg("-CAcreateserial")
-        .arg("-days")
-        .arg("365")
-        .arg("-out")
-        .arg(&redis_crt)
-        .stdin(key_cmd.stdout.take().expect("should have stdout"))
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create redis cert");
+    make_cert(
+        &client_key,
+        &client_crt,
+        &ca_key,
+        &ca_serial,
+        &ca_crt,
+        &csr_conf,
+        &cert_conf,
+    );
 
-    key_cmd.wait().expect("failed to create redis key");
+    let mut ks = client_key.clone().into_os_string();
+    ks.push("8");
+    let client_key8 = PathBuf::from(ks);
+    ks = redis_key.clone().into_os_string();
+    ks.push("8");
+    let redis_key8 = PathBuf::from(ks);
+
+    convert_key(&client_key,&client_key8);
+    convert_key(&redis_key,&redis_key8);
+
 
     TlsFilePaths {
         redis_crt,
-        redis_key,
+        redis_key: redis_key8,
         ca_crt,
+        client_crt,
+        client_key: client_key8,
     }
+}
+
+#[cfg(feature = "tls")]
+pub fn build_sec_entities(
+    ca_crt: &PathBuf,
+    my_crt: &PathBuf,
+    my_key: &PathBuf,
+) -> (Certificate, RedisIdentity) {
+    let ca_cert_ = read(ca_crt).unwrap();
+    let ca_cert = Certificate::from_pem(ca_cert_.as_slice()).unwrap();
+
+    let tls_key = read(my_key).unwrap();
+    let tls_crt = read(my_crt).unwrap();
+    let ident = RedisIdentity::build(tls_crt, tls_key);
+
+    (ca_cert, ident)
+}
+
+#[cfg(feature = "tls")]
+fn write_ca_conf_file(path: &PathBuf) -> io::Result<()> {
+    let text = r#"
+[req]
+x509_extensions=v3_ca
+distinguished_name = req_distinguished_name
+[ req_distinguished_name ]
+[v3_ca]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical, keyCertSign
+extendedKeyUsage=serverAuth,clientAuth
+
+"#;
+    fs::write(path, text.as_bytes())
+}
+
+#[cfg(feature = "tls")]
+fn write_csr_conf_file(path: &PathBuf) -> io::Result<()> {
+    let text = r#"
+basicConstraints=CA:FALSE
+distinguished_name = dn
+req_extensions = req_ext
+
+[ req_ext ]
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+
+[ dn ]
+C = US
+ST = California
+L = San Fransisco
+CN = localhost
+
+"#;
+    fs::write(path, text.as_bytes())
+}
+
+fn write_cert_conf_file(path: &PathBuf) -> io::Result<()> {
+    let text = r#"
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+
+"#;
+    fs::write(path, text.as_bytes())
 }

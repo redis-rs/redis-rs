@@ -1,5 +1,7 @@
 use super::{async_trait, AsyncStream, RedisResult, RedisRuntime, SocketAddr};
 
+#[cfg(feature = "tls")]
+use native_tls::Identity;
 use std::{
     future::Future,
     io,
@@ -17,6 +19,8 @@ use tokio::{
 
 #[cfg(feature = "tls")]
 use super::TlsConnector;
+#[cfg(feature = "tls")]
+use crate::tls::{Certificate, RedisIdentity};
 
 #[cfg(feature = "tokio-native-tls-comp")]
 use tokio_native_tls::TlsStream;
@@ -100,6 +104,8 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        ca_cert: Option<Certificate>,
+        client_identity: Option<RedisIdentity>,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -108,7 +114,15 @@ impl RedisRuntime for Tokio {
                 .use_sni(false)
                 .build()?
         } else {
-            TlsConnector::new()?
+            let mut builder = TlsConnector::builder();
+            if let Some(ca_cert) = ca_cert {
+                builder.add_root_certificate(ca_cert.0);
+            }
+            if let Some(ident) = client_identity {
+                let id = Identity::from_pkcs8(&ident.cert_der, &ident.key)?;
+                builder.identity(id);
+            }
+            builder.build()?
         }
         .into();
         Ok(tls_connector
