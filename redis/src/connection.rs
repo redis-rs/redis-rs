@@ -73,8 +73,6 @@ pub enum ConnectionAddr {
         /// used for client authentication at server
         #[cfg(feature = "tls")]
         identity: Option<RedisIdentity>,
-
-
     },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),

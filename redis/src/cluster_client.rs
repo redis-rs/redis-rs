@@ -109,7 +109,6 @@ impl ClusterClientBuilder {
             };
             &cluster_params.identity
         } else { &None };
-
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
@@ -146,7 +145,6 @@ impl ClusterClientBuilder {
                         )));
                     }
             }
-
             nodes.push(node);
         }
 
@@ -212,7 +210,6 @@ impl ClusterClientBuilder {
         self.cluster_params.read_from_replicas = read_from_replicas;
         self
     }
-
 }
 
 /// This is a Redis cluster client.

@@ -2,6 +2,7 @@
 
 #[cfg(feature = "tls")]
 use std::fs::read;
+
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
@@ -10,6 +11,7 @@ use std::{
 use futures::Future;
 #[cfg(feature = "tls")]
 use redis::ConnectionAddr;
+
 use redis::Value;
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
@@ -183,6 +185,7 @@ impl RedisServer {
                 let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
                 let auth_client_str = if insecure { "no" } else { "yes" };
 
+
                 // prepare redis with TLS
                 redis_cmd
                     .arg("--tls-port")
@@ -206,11 +209,13 @@ impl RedisServer {
                 //     insecure: true,
                 // };
 
+
                 RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: Some(tempdir),
                     addr,
                     tls_paths: Some(tls_paths),
+
                 }
             }
             redis::ConnectionAddr::Unix(ref path) => {
@@ -428,6 +433,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     #[cfg(feature = "tls")]
     write_cert_conf_file(&cert_conf).expect("failed to write cert ext file");
 
+
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         process::Command::new("openssl")
             .arg("genrsa")
@@ -513,6 +519,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .wait()
             .expect("failed to convert key");
     }
+
 
     // Build CA Key
     make_key(&ca_key, 4096);
@@ -652,3 +659,4 @@ IP.1 = 127.0.0.1
 "#;
     fs::write(path, text.as_bytes())
 }
+

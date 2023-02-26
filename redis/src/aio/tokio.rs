@@ -2,6 +2,7 @@ use super::{async_trait, AsyncStream, RedisResult, RedisRuntime, SocketAddr};
 
 #[cfg(feature = "tls")]
 use native_tls::Identity;
+
 use std::{
     future::Future,
     io,

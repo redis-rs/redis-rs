@@ -11,6 +11,7 @@ use std::{
 use crate::aio::{AsyncStream, RedisRuntime};
 #[cfg(feature = "tls")]
 use crate::tls::{Certificate, RedisIdentity};
+
 use crate::types::RedisResult;
 #[cfg(feature = "tls")]
 use async_native_tls::{TlsConnector, TlsStream};
@@ -21,6 +22,7 @@ use async_trait::async_trait;
 use futures_util::ready;
 #[cfg(feature = "tls")]
 use native_tls::Identity;
+
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pin_project_lite::pin_project! {

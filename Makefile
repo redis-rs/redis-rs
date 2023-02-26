@@ -41,7 +41,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing redis-test"
 	@echo "===================================================================="
-	@cargo test -p redis-test
+	@cargo test -p redis-test 
 
 
 test-module:
