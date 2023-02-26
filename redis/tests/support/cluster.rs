@@ -166,11 +166,11 @@ impl RedisCluster {
             cmd.arg("--tls");
             if is_tls_sec {
                 cmd.arg("--cert");
-                cmd.arg(&tls_paths.clone().unwrap().client_crt);
+                cmd.arg(&tls_paths.as_ref().unwrap().client_crt);
                 cmd.arg("--key");
-                cmd.arg(&tls_paths.clone().unwrap().client_key);
+                cmd.arg(&tls_paths.as_ref().unwrap().client_key);
                 cmd.arg("--cacert");
-                cmd.arg(&tls_paths.clone().unwrap().ca_crt);
+                cmd.arg(&tls_paths.unwrap().ca_crt);
             } else {
                 cmd.arg("--insecure");
             }

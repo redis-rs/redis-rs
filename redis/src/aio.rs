@@ -476,7 +476,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             identity: ref client_identity,
         } => {
             let socket_addr = get_socket_addrs(host, port).await?;
-            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert.clone(), client_identity.clone()).await?
+            <T>::connect_tcp_tls(host, socket_addr, insecure, ca_cert.clone().clone(), client_identity.clone()).await?
         }
 
         #[cfg(not(feature = "tls"))]
@@ -523,6 +523,8 @@ async fn to_socket_addrs_dynamic(
 async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<SocketAddr> {
     #[cfg(all(feature = "tokio-comp", not(feature = "async-std-comp")))]
         let mut socket_addrs = ::tokio::net::lookup_host((host, port)).await?;
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+        let mut socket_addrs = (host, port).to_socket_addrs().await?;
     #[cfg(all(feature = "tokio-comp", feature = "async-std-comp"))]
         let mut socket_addrs = to_socket_addrs_dynamic(host, port).await?;
     loop {

@@ -424,7 +424,7 @@ impl ActualConnection {
                         builder.add_root_certificate(ca_cert.0.clone());
                     }
                     if let Some(ident) = client_identity {
-                        let id = Identity::from_pkcs8(&*ident.cert_der, &*ident.key)?;
+                        let id = Identity::from_pkcs8(&ident.cert_der, &ident.key)?;
                         builder.identity(id);
                     }
                     builder.build()?

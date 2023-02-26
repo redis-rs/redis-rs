@@ -65,7 +65,6 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 use crate::tls::Certificate;
 use crate::tls::RedisIdentity;
-type SlotMap = BTreeMap<u16, String>;
 
 /// This is a connection of Redis cluster.
 pub struct ClusterConnection {
@@ -802,8 +801,8 @@ fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>,ca_crt: Opt
             host,
             port,
             insecure: false,
-            ca_cert: ca_crt.clone(),
-            identity: identity.clone()
+            ca_cert: ca_crt,
+            identity
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,

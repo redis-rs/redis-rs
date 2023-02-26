@@ -272,7 +272,7 @@ impl RedisServer {
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {
         redis::ConnectionInfo {
-            addr: self.client_addr().clone(),
+            addr: self.client_addr(),
             redis: Default::default(),
         }
     }
@@ -465,7 +465,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("-subj")
             .arg("/O=Redis Test/CN=localhost")
             .arg("-key")
-            .arg(&key)
+            .arg(key)
             .arg("-config")
             .arg(csr_conf)
             .stdout(process::Stdio::piped())
@@ -479,18 +479,18 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("-req")
             .arg("-sha256")
             .arg("-CA")
-            .arg(&ca_crt)
+            .arg(ca_crt)
             .arg("-CAkey")
-            .arg(&ca_key)
+            .arg(ca_key)
             .arg("-CAserial")
-            .arg(&ca_serial)
+            .arg(ca_serial)
             .arg("-CAcreateserial")
             .arg("-days")
             .arg("365")
             .arg("-extfile")
             .arg(cert_conf)
             .arg("-out")
-            .arg(&crt)
+            .arg(crt)
             .stdin(key_cmd.stdout.take().expect("should have stdout"))
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
@@ -509,9 +509,9 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("-nocrypt")
             .arg("-topk8")
             .arg("-in")
-            .arg(&key)
+            .arg(key)
             .arg("-out")
-            .arg(&key8)
+            .arg(key8)
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
             .spawn()
