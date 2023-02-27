@@ -355,4 +355,26 @@ mod tests {
             assert_eq!(RoutingInfo::for_routable(cmd), expected,);
         }
     }
+
+    #[test]
+    fn test_slot_for_packed_cmd() {
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
+                244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
+            ]).unwrap()), Some(RoutingInfo::ReplicaSlot(slot)) if slot == 964));
+
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
+                197, 111, 180, 254, 5, 175, 143, 146, 171, 39, 172, 23, 164, 145, 13, 10, 36, 52,
+                13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
+                80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
+            ]).unwrap()), Some(RoutingInfo::MasterSlot(slot)) if slot == 8352));
+
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 169, 233,
+                247, 59, 50, 247, 100, 232, 123, 140, 2, 101, 125, 221, 66, 170, 13, 10, 36, 52,
+                13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
+                80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
+            ]).unwrap()), Some(RoutingInfo::MasterSlot(slot)) if slot == 5210));
+    }
 }
