@@ -1,6 +1,8 @@
 use crate::cluster::{ClusterConnection, TlsMode};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
+#[cfg(feature = "tls")]
+use crate::tls::{Certificate, RedisIdentity};
 
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
@@ -12,6 +14,10 @@ pub(crate) struct ClusterParams {
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
+    #[cfg(feature = "tls")]
+    pub(crate) ca_cert: Option<Certificate>,
+    #[cfg(feature = "tls")]
+    pub(crate) identity: Option<RedisIdentity>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -74,7 +80,7 @@ impl ClusterClientBuilder {
                 ConnectionAddr::TcpTls {
                     host: _,
                     port: _,
-                    insecure,
+                    insecure, ..
                 } => Some(match insecure {
                     false => TlsMode::Secure,
                     true => TlsMode::Insecure,
@@ -82,7 +88,27 @@ impl ClusterClientBuilder {
                 _ => None,
             };
         }
+        let i_ca_cert = if cluster_params.ca_cert.is_none() {
+            cluster_params.ca_cert = match &first_node.addr {
+                ConnectionAddr::TcpTls {
+                    ca_cert,
+                    ..
+                } => ca_cert.clone(),
+                _ => None,
+            };
+            &cluster_params.ca_cert
+        } else { &None };
 
+        let i_identity = if cluster_params.identity.is_none() {
+            cluster_params.identity = match &first_node.addr {
+                ConnectionAddr::TcpTls {
+                    identity,
+                    ..
+                } => identity.clone(),
+                _ => None,
+            };
+            &cluster_params.identity
+        } else { &None };
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
@@ -104,6 +130,21 @@ impl ClusterClientBuilder {
                 )));
             }
 
+            #[cfg(feature = "tls")]
+            if let ConnectionAddr::TcpTls { ref ca_cert, ref identity,  .. } = node.addr {
+                    if i_ca_cert.is_some() && ca_cert != i_ca_cert {
+                        return Err(RedisError::from((
+                            ErrorKind::InvalidClientConfig,
+                            "Cannot use different ca certs among initial nodes.",
+                        )));
+                    }
+                    if i_identity.is_some() && identity != i_identity {
+                        return Err(RedisError::from((
+                            ErrorKind::InvalidClientConfig,
+                            "Cannot use different identity among initial nodes.",
+                        )));
+                    }
+            }
             nodes.push(node);
         }
 
@@ -131,6 +172,20 @@ impl ClusterClientBuilder {
     #[cfg(feature = "tls")]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
         self.cluster_params.tls = Some(tls);
+        self
+    }
+
+    /// relevant for secure TLS : Set ca certificate for new ClusterClient.
+    #[cfg(feature = "tls")]
+    pub fn ca_cert(mut self, ca_cert: Certificate) -> ClusterClientBuilder {
+        self.cluster_params.ca_cert = Some(ca_cert);
+        self
+    }
+
+    /// relevant for secure TLS : Set identity ( certificate & private key) for new ClusterClient.
+    #[cfg(feature = "tls")]
+    pub fn identity(mut self, identity: RedisIdentity) -> ClusterClientBuilder {
+        self.cluster_params.identity = Some(identity);
         self
     }
 

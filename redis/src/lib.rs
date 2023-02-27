@@ -451,6 +451,10 @@ pub mod streams;
 #[cfg(feature = "cluster-async")]
 pub mod cluster_async;
 
+#[cfg(feature = "tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+pub mod tls;
+
 mod client;
 mod cmd;
 mod commands;

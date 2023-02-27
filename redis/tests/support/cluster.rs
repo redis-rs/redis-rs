@@ -21,9 +21,11 @@ use super::RedisServer;
 
 const LOCALHOST: &str = "127.0.0.1";
 
+#[derive(PartialEq)]
 enum ClusterType {
     Tcp,
     TcpTls,
+    TcpTlsSec
 }
 
 impl ClusterType {
@@ -35,6 +37,7 @@ impl ClusterType {
         {
             Some("tcp") => ClusterType::Tcp,
             Some("tcp+tls") => ClusterType::TcpTls,
+            Some("tcp+tls+sec") => ClusterType::TcpTlsSec,
             val => {
                 panic!("Unknown server type {val:?}");
             }
@@ -48,6 +51,15 @@ impl ClusterType {
                 host: "127.0.0.1".into(),
                 port,
                 insecure: true,
+                ca_cert: None,
+                identity: None,
+            },
+            ClusterType::TcpTlsSec => redis::ConnectionAddr::TcpTls {
+                host: "localhost".into(),
+                port,
+                insecure: false,
+                ca_cert: None,
+                identity: None,
             },
         }
     }
@@ -80,7 +92,10 @@ impl RedisCluster {
 
         let mut is_tls = false;
 
-        if let ClusterType::TcpTls = ClusterType::get_intended() {
+        let cluster_type = ClusterType::get_intended();
+        let is_tls_sec = cluster_type == ClusterType::TcpTlsSec;
+
+        if cluster_type == ClusterType::TcpTls || cluster_type == ClusterType::TcpTlsSec {
             // Create a shared set of keys in cluster mode
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
@@ -148,7 +163,17 @@ impl RedisCluster {
         }
         cmd.arg("--cluster-yes");
         if is_tls {
-            cmd.arg("--tls").arg("--insecure");
+            cmd.arg("--tls");
+            if is_tls_sec {
+                cmd.arg("--cert");
+                cmd.arg(&tls_paths.as_ref().unwrap().client_crt);
+                cmd.arg("--key");
+                cmd.arg(&tls_paths.as_ref().unwrap().client_key);
+                cmd.arg("--cacert");
+                cmd.arg(&tls_paths.unwrap().ca_crt);
+            } else {
+                cmd.arg("--insecure");
+            }
         }
         let status = dbg!(cmd).status().unwrap();
         assert!(status.success());

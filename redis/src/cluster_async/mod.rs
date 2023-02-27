@@ -465,6 +465,7 @@ where
                         ref host,
                         port,
                         insecure,
+                        ..
                     } => match &info.redis.password {
                         Some(pw) if insecure => {
                             format!("rediss://:{pw}@{host}:{port}/#insecure")
