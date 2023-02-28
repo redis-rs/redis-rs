@@ -454,6 +454,7 @@ where
                     host: _,
                     port: _,
                     insecure,
+                    ..
                 } => Some(match insecure {
                     false => TlsMode::Secure,
                     true => TlsMode::Insecure,
