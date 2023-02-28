@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
@@ -23,17 +24,48 @@ use native_tls::{TlsConnector, TlsStream};
 
 static DEFAULT_PORT: u16 = 6379;
 
+/// Wrapper struct for Url adding custom validations.
+///
+/// We rely on rust-url for url parsing but add extra checks for valid redis schemes.
+/// Additionaly allow for link-local ipv6 addresses that isn't supported by rust-url.
+/// https://url.spec.whatwg.org/#host-representation
+#[derive(Clone, Debug)]
+pub struct Url {
+    inner: url::Url,
+    zone_id: Option<String>,
+}
+
+impl Url {
+    pub fn parse(input: &str) -> Option<Url> {
+        let (url, zone_id) = match (input.find("[fe80::"), input.rfind('%'), input.rfind(']')) {
+            (Some(_), Some(start), Some(end)) if start < end => {
+                let mut url = String::from(input);
+                let zone_id = String::from(&input[start + 1..end]);
+                // Strip zone identifier as rust-url will fail to parse it.
+                url.replace_range(start..end, "");
+                (Cow::Owned(url), Some(zone_id))
+            }
+            _ => (Cow::Borrowed(input), None),
+        };
+
+        url::Url::parse(&url)
+            .ok()
+            .filter(|u| matches!(u.scheme(), "redis" | "rediss" | "redis+unix" | "unix"))
+            .map(|u| Url { inner: u, zone_id })
+    }
+}
+
+impl fmt::Display for Url {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
 /// This function takes a redis URL string and parses it into a URL
 /// as used by rust-url.  This is necessary as the default parser does
 /// not understand how redis URLs function.
-pub fn parse_redis_url(input: &str) -> Option<url::Url> {
-    match url::Url::parse(input) {
-        Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "redis+unix" | "unix" => Some(result),
-            _ => None,
-        },
-        Err(_) => None,
-    }
+pub fn parse_redis_url(input: &str) -> Option<Url> {
+    Url::parse(input)
 }
 
 /// Defines the connection address.
@@ -166,7 +198,10 @@ impl IntoConnectionInfo for String {
     }
 }
 
-fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
+fn url_to_tcp_connection_info(
+    url: url::Url,
+    zone_id: Option<String>,
+) -> RedisResult<ConnectionInfo> {
     let host = match url.host() {
         Some(host) => {
             // Here we manually match host's enum arms and call their to_string().
@@ -183,7 +218,9 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             match host {
                 url::Host::Domain(path) => path.to_string(),
                 url::Host::Ipv4(v4) => v4.to_string(),
-                url::Host::Ipv6(v6) => v6.to_string(),
+                url::Host::Ipv6(v6) => {
+                    zone_id.map_or_else(|| v6.to_string(), |z| format!("{}%{}", v6, z))
+                }
             }
         }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
@@ -283,11 +320,11 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
     ));
 }
 
-impl IntoConnectionInfo for url::Url {
+impl IntoConnectionInfo for Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
-        match self.scheme() {
-            "redis" | "rediss" => url_to_tcp_connection_info(self),
-            "unix" | "redis+unix" => url_to_unix_connection_info(self),
+        match self.inner.scheme() {
+            "redis" | "rediss" => url_to_tcp_connection_info(self.inner, self.zone_id),
+            "unix" | "redis+unix" => url_to_unix_connection_info(self.inner),
             _ => fail!((
                 ErrorKind::InvalidClientConfig,
                 "URL provided is not a redis URL"
@@ -1173,6 +1210,7 @@ mod tests {
         let cases = vec![
             ("redis://127.0.0.1", true),
             ("redis://[::1]", true),
+            ("redis://foo:bar@[fe80::123:4567:89ab:cdef%eth0]:1234", true),
             ("redis+unix:///run/redis.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
@@ -1192,21 +1230,21 @@ mod tests {
     fn test_url_to_tcp_connection_info() {
         let cases = vec![
             (
-                url::Url::parse("redis://127.0.0.1").unwrap(),
+                Url::parse("redis://127.0.0.1").unwrap(),
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
                 },
             ),
             (
-                url::Url::parse("redis://[::1]").unwrap(),
+                Url::parse("redis://[::1]").unwrap(),
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
                 },
             ),
             (
-                url::Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
+                Url::parse("redis://%25johndoe%25:%23%40%3C%3E%24@example.com/2").unwrap(),
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("example.com".to_string(), 6379),
                     redis: RedisConnectionInfo {
@@ -1216,9 +1254,21 @@ mod tests {
                     },
                 },
             ),
+            (
+                Url::parse("redis://foo:bar@[fe80::123:4567:89ab:cdef%eth0]:1234").unwrap(),
+                ConnectionInfo {
+                    addr: ConnectionAddr::Tcp("fe80::123:4567:89ab:cdef%eth0".to_string(), 1234),
+                    redis: RedisConnectionInfo {
+                        username: Some("foo".to_string()),
+                        password: Some("bar".to_string()),
+                        ..Default::default()
+                    },
+                },
+            ),
         ];
         for (url, expected) in cases.into_iter() {
-            let res = url_to_tcp_connection_info(url.clone()).unwrap();
+            let cloned = url.clone();
+            let res = url_to_tcp_connection_info(cloned.inner, cloned.zone_id).unwrap();
             assert_eq!(res.addr, expected.addr, "addr of {url} is not expected");
             assert_eq!(
                 res.redis.db, expected.redis.db,
@@ -1253,7 +1303,7 @@ mod tests {
             ),
         ];
         for (url, expected) in cases.into_iter() {
-            let res = url_to_tcp_connection_info(url);
+            let res = url_to_tcp_connection_info(url, None);
             assert_eq!(
                 res.as_ref().unwrap_err().kind(),
                 crate::ErrorKind::InvalidClientConfig,
