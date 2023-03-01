@@ -819,19 +819,19 @@ impl Connection {
         let mut received_punsub = false;
         if self.resp3 {
             while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
-                    match kind.bytes().next() {
-                        Some(b'u') => received_unsub = true,
-                        Some(b'p') => received_punsub = true,
-                        _ => (),
-                    }
-                    if let Value::Int(num) = data[1] {
-                        if received_unsub && received_punsub && num == 0 {
-                            break;
-                        }
-                    } else {
+                match kind.bytes().next() {
+                    Some(b'u') => received_unsub = true,
+                    Some(b'p') => received_punsub = true,
+                    _ => (),
+                }
+                if let Value::Int(num) = data[1] {
+                    if received_unsub && received_punsub && num == 0 {
                         break;
                     }
+                } else {
+                    break;
                 }
+            }
         } else {
             loop {
                 let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
@@ -1098,9 +1098,7 @@ impl Msg {
     #[allow(clippy::unnecessary_to_owned)]
     pub fn from_value(value: &Value) -> Option<Self> {
         let (msg_type, mut iter) = if let Value::Push { kind, data } = value {
-            let iter: IntoIter<Value> = data
-                .to_vec()
-                .into_iter();
+            let iter: IntoIter<Value> = data.to_vec().into_iter();
             (kind.to_string(), iter)
         } else {
             let raw_msg: Vec<Value> = from_redis_value(value).ok()?;

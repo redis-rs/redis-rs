@@ -358,21 +358,20 @@ where
         let mut received_unsub = false;
         let mut received_punsub = false;
         if self.resp3 {
-            while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)?
-                {
-                    match kind.bytes().next() {
-                        Some(b'u') => received_unsub = true,
-                        Some(b'p') => received_punsub = true,
-                        _ => (),
-                    }
-                    if let Value::Int(num) = data[1] {
-                        if received_unsub && received_punsub && num == 0 {
-                            break;
-                        }
-                    } else {
+            while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
+                match kind.bytes().next() {
+                    Some(b'u') => received_unsub = true,
+                    Some(b'p') => received_punsub = true,
+                    _ => (),
+                }
+                if let Value::Int(num) = data[1] {
+                    if received_unsub && received_punsub && num == 0 {
                         break;
                     }
+                } else {
+                    break;
                 }
+            }
         } else {
             loop {
                 let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;

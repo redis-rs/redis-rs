@@ -191,17 +191,17 @@ where
                                     let mut it: IntoIter<Value> = result.0?.into_iter();
                                     let first = it.next().unwrap();
                                     if let Value::Data(kind) = first {
-                                         Ok(Value::Push {
+                                        Ok(Value::Push {
                                             kind: String::from_utf8(kind)?,
                                             data: it.collect(),
                                         })
                                     } else if let Value::Status(kind) = first {
-                                    Ok(Value::Push {
+                                        Ok(Value::Push {
                                             kind,
                                             data: it.collect(),
                                         })
                                     } else {
-                                         Err(RedisError::from((
+                                        Err(RedisError::from((
                                             ErrorKind::ResponseError,
                                             "parse error",
                                         )))
