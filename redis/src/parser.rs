@@ -19,6 +19,7 @@ use combine::{
     stream::{PointerOffset, RangeStream, StreamErrorFor},
     ParseError, Parser as _,
 };
+use num_bigint::BigInt;
 
 struct ResultExtend<T, E>(Result<T, E>);
 
@@ -56,7 +57,28 @@ where
 }
 
 const MAX_RECURSE_DEPTH: usize = 100;
-
+fn err_parser(line: &str) -> RedisError {
+    let desc = "An error was signalled by the server";
+    let mut pieces = line.splitn(2, ' ');
+    let kind = match pieces.next().unwrap() {
+        "ERR" => ErrorKind::ResponseError,
+        "EXECABORT" => ErrorKind::ExecAbortError,
+        "LOADING" => ErrorKind::BusyLoadingError,
+        "NOSCRIPT" => ErrorKind::NoScriptError,
+        "MOVED" => ErrorKind::Moved,
+        "ASK" => ErrorKind::Ask,
+        "TRYAGAIN" => ErrorKind::TryAgain,
+        "CLUSTERDOWN" => ErrorKind::ClusterDown,
+        "CROSSSLOT" => ErrorKind::CrossSlot,
+        "MASTERDOWN" => ErrorKind::MasterDown,
+        "READONLY" => ErrorKind::ReadOnly,
+        code => return make_extension_error(code, pieces.next()),
+    };
+    match pieces.next() {
+        Some(detail) => RedisError::from((kind, desc, detail.to_string())),
+        None => RedisError::from((kind, desc)),
+    }
+}
 fn value<'a, I>(
     count: Option<usize>,
 ) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
@@ -137,30 +159,7 @@ where
                     })
                 };
 
-                let error = || {
-                    line().map(|line: &str| {
-                        let desc = "An error was signalled by the server";
-                        let mut pieces = line.splitn(2, ' ');
-                        let kind = match pieces.next().unwrap() {
-                            "ERR" => ErrorKind::ResponseError,
-                            "EXECABORT" => ErrorKind::ExecAbortError,
-                            "LOADING" => ErrorKind::BusyLoadingError,
-                            "NOSCRIPT" => ErrorKind::NoScriptError,
-                            "MOVED" => ErrorKind::Moved,
-                            "ASK" => ErrorKind::Ask,
-                            "TRYAGAIN" => ErrorKind::TryAgain,
-                            "CLUSTERDOWN" => ErrorKind::ClusterDown,
-                            "CROSSSLOT" => ErrorKind::CrossSlot,
-                            "MASTERDOWN" => ErrorKind::MasterDown,
-                            "READONLY" => ErrorKind::ReadOnly,
-                            code => return make_extension_error(code, pieces.next()),
-                        };
-                        match pieces.next() {
-                            Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                            None => RedisError::from((kind, desc)),
-                        }
-                    })
-                };
+                let error = || line().map(err_parser);
                 let map = || {
                     int().then_partial(move |&mut length| {
                         let length = length as usize * 2;
@@ -223,30 +222,7 @@ where
                         )),
                     })
                 };
-                let blob_error = || {
-                    blob().map(|line| {
-                        let desc = "An error was signalled by the server";
-                        let mut pieces = line.splitn(2, ' ');
-                        let kind = match pieces.next().unwrap() {
-                            "ERR" => ErrorKind::ResponseError,
-                            "EXECABORT" => ErrorKind::ExecAbortError,
-                            "LOADING" => ErrorKind::BusyLoadingError,
-                            "NOSCRIPT" => ErrorKind::NoScriptError,
-                            "MOVED" => ErrorKind::Moved,
-                            "ASK" => ErrorKind::Ask,
-                            "TRYAGAIN" => ErrorKind::TryAgain,
-                            "CLUSTERDOWN" => ErrorKind::ClusterDown,
-                            "CROSSSLOT" => ErrorKind::CrossSlot,
-                            "MASTERDOWN" => ErrorKind::MasterDown,
-                            "READONLY" => ErrorKind::ReadOnly,
-                            code => return make_extension_error(code, pieces.next()),
-                        };
-                        match pieces.next() {
-                            Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                            None => RedisError::from((kind, desc)),
-                        }
-                    })
-                };
+                let blob_error = || blob().map(|line| err_parser(&line));
                 let verbatim = || {
                     blob().map(|line| {
                         let (format, text) = line.split_once(':').unwrap();
