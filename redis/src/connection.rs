@@ -885,6 +885,7 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         self.read_response()
     }
+    
     fn req_packed_commands(
         &mut self,
         cmd: &[u8],

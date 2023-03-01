@@ -318,6 +318,16 @@ impl TestContext {
     }
 }
 
+fn encode_iter<W>(values: &Vec<Value>, writer: &mut W, prefix: &str) -> io::Result<()>
+    where
+        W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for val in values.iter() {
+        encode_value(val, writer)?;
+    }
+    Ok(())
+}
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
 where
     W: io::Write,
@@ -332,27 +342,15 @@ where
             writer.write_all(b"\r\n")
         }
         Value::Bulk(ref values) => {
-            write!(writer, "*{}\r\n", values.len())?;
-            for val in values.iter() {
-                encode_value(val, writer)?;
-            }
-            Ok(())
+            encode_iter(values, writer, "*")
         }
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
         Value::Map(ref values) => {
-            write!(writer, "%{}\r\n", values.len())?;
-            for val in values.iter() {
-                encode_value(val, writer)?;
-            }
-            Ok(())
+            encode_iter(values, writer, "%")
         }
         Value::Set(ref values) => {
-            write!(writer, "~{}\r\n", values.len())?;
-            for val in values.iter() {
-                encode_value(val, writer)?;
-            }
-            Ok(())
+            encode_iter(values, writer, "~")
         }
         // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
         Value::Double(val) => write!(writer, ",{}\r\n", val),
@@ -368,11 +366,7 @@ where
         }
         Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
         Value::Push(ref values) => {
-            write!(writer, ">{}\r\n", values.len())?;
-            for val in values.iter() {
-                encode_value(val, writer)?;
-            }
-            Ok(())
+            encode_iter(values, writer, ">")
         }
     }
 }
