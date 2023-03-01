@@ -20,6 +20,7 @@ use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls")]
 use native_tls::{TlsConnector, TlsStream};
+use crate::commands::create_hello_command;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -631,15 +632,16 @@ fn setup_connection(
     };
 
     if connection_info.use_resp3 {
-        let mut hello_cmd = cmd("HELLO");
-        hello_cmd.arg("3");
-        if connection_info.password.is_some() && connection_info.username.is_some() {
-            hello_cmd
-                .arg("AUTH")
-                .arg(connection_info.username.as_ref().unwrap())
-                .arg(connection_info.password.as_ref().unwrap());
+        let hello_cmd = create_hello_command(connection_info);
+        let val: RedisResult<Value> = hello_cmd.query(&mut rv);
+        if let Err(err) = val {
+            if let Some(detail) = err.detail() {
+                if detail.starts_with("unknown command `HELLO`") {
+                    return Err((ErrorKind::RESP3NotSupported, "Redis Server doesn't support HELLO command therefore resp3 cannot be used").into());
+                }
+            }
+            return Err(err);
         }
-        let _ = hello_cmd.query::<Value>(&mut rv)?;
     } else if connection_info.password.is_some() {
         connect_auth(&mut rv, connection_info)?;
     }

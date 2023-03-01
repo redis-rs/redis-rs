@@ -103,6 +103,10 @@ pub enum ErrorKind {
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
     Serialize,
+
+    /// Redis Servers prior to v6.0.0 doesn't support RESP3.
+    /// Try disabling resp3 option
+    RESP3NotSupported,
 }
 /// Internal low-level redis value enum.
 #[derive(PartialEq, Clone)]
@@ -473,6 +477,7 @@ impl RedisError {
             ErrorKind::ReadOnly => "read-only",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
+            ErrorKind::RESP3NotSupported => "resp3 is not supported by server"
         }
     }
 

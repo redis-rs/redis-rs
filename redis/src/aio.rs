@@ -41,6 +41,7 @@ use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
+use crate::commands::create_hello_command;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -401,15 +402,16 @@ where
     C: ConnectionLike,
 {
     if connection_info.use_resp3 {
-        let mut hello_cmd = cmd("HELLO");
-        hello_cmd.arg("3");
-        if connection_info.password.is_some() && connection_info.username.is_some() {
-            hello_cmd
-                .arg("AUTH")
-                .arg(connection_info.username.as_ref().unwrap())
-                .arg(connection_info.password.as_ref().unwrap());
+        let hello_cmd = create_hello_command(connection_info);
+        let val: RedisResult<Value> = hello_cmd.query_async(con).await;
+        if let Err(err) = val {
+            if let Some(detail) = err.detail() {
+                if detail.starts_with("unknown command `HELLO`") {
+                    return Err((ErrorKind::RESP3NotSupported, "Redis Server doesn't support HELLO command therefore resp3 cannot be used").into());
+                }
+            }
+            return Err(err);
         }
-        hello_cmd.query_async(con).await?;
     } else if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
         if let Some(username) = &connection_info.username {
