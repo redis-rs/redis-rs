@@ -907,9 +907,11 @@ impl ConnectionLike for Connection {
             let response = self.read_response();
             match response {
                 Ok(item) => {
-                    if let Value::Push(x) = item {
+                    // RESP3 can insert push data between command replies
+                    if let Value::Push(push_messages) = item {
+                        // if that is the case we have to extend the loop and handle push data
                         count += 1;
-                        self.execute_push_messages(x);
+                        self.execute_push_messages(push_messages);
                     } else if idx >= offset {
                         rv.push(item);
                     }
@@ -940,21 +942,7 @@ impl ConnectionLike for Connection {
 
     /// Executes received push messages from server.
     fn execute_push_messages(&mut self, _messages: Vec<Value>) {
-        // for message in messages {
-        //     if let Value::Bulk(vals) = message {
-        //         let mut iter = vals.into_iter();
-        //         let msg_type: String = from_redis_value(&iter.next().unwrap()).ok().unwrap();
-        //         if msg_type == "message" {
-        //             if let Some(tx) = &self.pubsub_tx {
-        //                 tx.send(Msg {
-        //                     payload: iter.next().unwrap(),
-        //                     channel: iter.next().unwrap(),
-        //                     pattern: None,
-        //                 });
-        //             }
-        //         }
-        //     }
-        // }
+        // TODO - implement handling RESP3 push messages
     }
 }
 
@@ -997,7 +985,9 @@ where
     }
 
     /// Executes received push messages from server.
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 /// The pubsub object provides convenient access to the redis pubsub
@@ -1053,22 +1043,11 @@ impl<'a> PubSub<'a> {
     /// The message itself is still generic and can be converted into an
     /// appropriate type through the helper methods on it.
     pub fn get_message(&mut self) -> RedisResult<Msg> {
-        if self.con.resp3 {
-            loop {
-                let value = self.con.recv_response()?;
-                if let Some(msg) = Msg::from_value(&value) {
-                    return Ok(msg);
-                } else {
-                    continue;
-                }
-            }
-        } else {
-            loop {
-                if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
-                    return Ok(msg);
-                } else {
-                    continue;
-                }
+        loop {
+            if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
+                return Ok(msg);
+            } else {
+                continue;
             }
         }
     }

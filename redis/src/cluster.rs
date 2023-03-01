@@ -618,7 +618,9 @@ impl ConnectionLike for ClusterConnection {
         true
     }
 
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 trait MergeResults {

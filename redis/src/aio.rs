@@ -541,6 +541,9 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+
+    /// Executes received push messages from server.
+    fn execute_push_messages(&mut self, _messages: Vec<Value>);
 }
 
 impl<C> ConnectionLike for Connection<C>
@@ -587,11 +590,20 @@ where
             }
 
             let mut rv = Vec::with_capacity(count);
-            for _ in 0..count {
+            let mut count = count;
+            let mut idx = 0;
+            while idx < (offset + count) {
                 let response = self.read_response().await;
                 match response {
                     Ok(item) => {
-                        rv.push(item);
+                        // RESP3 can insert push data between command replies
+                        if let Value::Push(push_messages) = item {
+                            // if that is the case we have to extend the loop and handle push data
+                            count += 1;
+                            self.execute_push_messages(push_messages);
+                        } else if idx >= offset {
+                            rv.push(item);
+                        }
                     }
                     Err(err) => {
                         if first_err.is_none() {
@@ -599,6 +611,7 @@ where
                         }
                     }
                 }
+                idx += 1;
             }
 
             if let Some(err) = first_err {
@@ -612,6 +625,10 @@ where
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 
@@ -998,6 +1015,10 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 

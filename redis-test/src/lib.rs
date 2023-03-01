@@ -258,7 +258,9 @@ impl ConnectionLike for MockRedisConnection {
         true
     }
 
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {}
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 #[cfg(feature = "aio")]
@@ -290,6 +292,10 @@ impl AioConnectionLike for MockRedisConnection {
 
     fn get_db(&self) -> i64 {
         0
+    }
+
+    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 
