@@ -230,6 +230,7 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
+    pub use_resp3: bool,
 }
 
 impl TestContext {
@@ -239,11 +240,11 @@ impl TestContext {
 
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
-
+        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
-                use_resp3: env::var("RESP3").unwrap_or_default() == "true",
+                use_resp3,
                 ..Default::default()
             },
         })
@@ -273,7 +274,7 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext { server, client }
+        TestContext { server, client, use_resp3 }
     }
 
     pub fn connection(&self) -> redis::Connection {

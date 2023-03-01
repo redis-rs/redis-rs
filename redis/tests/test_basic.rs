@@ -1139,6 +1139,14 @@ fn test_zrandmember() {
     let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
     assert_eq!(results.len(), 5);
 
+    if !ctx.use_resp3 {
+        let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
+        assert_eq!(results.len(), 10);
+
+        let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
+        assert_eq!(results.len(), 10);
+    }
+
     let results: Vec<(String, f64)> = con.zrandmember_withscores(setname, 5).unwrap();
     assert_eq!(results.len(), 5);
 
