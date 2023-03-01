@@ -1,4 +1,5 @@
 use crate::cluster::{ClusterConnection, TlsMode};
+use crate::cluster_async;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 
@@ -12,6 +13,7 @@ pub(crate) struct ClusterParams {
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
+    pub(crate) retries: Option<u32>,
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -125,6 +127,12 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets number of retries for the new ClusterClient.
+    pub fn retries(mut self, retries: u32) -> ClusterClientBuilder {
+        self.cluster_params.retries = Some(retries);
+        self
+    }
+
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
@@ -191,6 +199,26 @@ impl ClusterClient {
     /// An error is returned if there is a failure while creating connections or slots.
     pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
         ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    }
+
+    /// TODO
+    #[cfg(feature = "cluster-async")]
+    pub async fn get_async_connection(&self) -> RedisResult<cluster_async::Connection> {
+        cluster_async::Connection::new(&self.initial_nodes, self.cluster_params.clone()).await
+    }
+
+    #[doc(hidden)]
+    pub async fn get_generic_connection<C>(&self) -> RedisResult<cluster_async::Connection<C>>
+    where
+        C: crate::aio::ConnectionLike
+            + cluster_async::Connect
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
+    {
+        cluster_async::Connection::new(&self.initial_nodes, self.cluster_params.clone()).await
     }
 
     /// Use `new()`.

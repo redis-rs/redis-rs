@@ -208,8 +208,6 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
-    #[cfg(feature = "cluster-async")]
-    pub async_client: redis::cluster_async::Client,
 }
 
 impl TestClusterContext {
@@ -230,19 +228,12 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
-        #[cfg(feature = "cluster-async")]
-        let async_client = redis::cluster_async::Client::open(initial_nodes).unwrap();
 
-        TestClusterContext {
-            cluster,
-            client,
-            #[cfg(feature = "cluster-async")]
-            async_client,
-        }
+        TestClusterContext { cluster, client }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
@@ -251,7 +242,7 @@ impl TestClusterContext {
 
     #[cfg(feature = "cluster-async")]
     pub async fn async_connection(&self) -> redis::cluster_async::Connection {
-        self.async_client.get_connection().await.unwrap()
+        self.client.get_async_connection().await.unwrap()
     }
 
     #[cfg(feature = "cluster-async")]
@@ -260,10 +251,7 @@ impl TestClusterContext {
     >(
         &self,
     ) -> redis::cluster_async::Connection<C> {
-        self.async_client
-            .get_generic_connection::<C>()
-            .await
-            .unwrap()
+        self.client.get_generic_connection::<C>().await.unwrap()
     }
 
     pub fn wait_for_cluster_up(&self) {

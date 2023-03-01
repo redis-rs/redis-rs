@@ -1,59 +1,4 @@
-//! This is a rust implementation for Redis cluster library.
-//!
-//! This library extends redis-rs library to be able to use cluster.
-//! Client impletemts traits of ConnectionLike and Commands.
-//! So you can use redis-rs's access methods.
-//! If you want more information, read document of redis-rs.
-//!
-//! Note that this library is currently not have features of Pubsub.
-//!
-//! # Example
-//! ```rust,no_run
-//! use redis::{
-//!     cluster_async::Client,
-//!     Commands, cmd, RedisResult
-//! };
-//!
-//! #[tokio::main]
-//! async fn main() -> RedisResult<()> {
-//! #   let _ = env_logger::try_init();
-//!     let nodes = vec!["redis://127.0.0.1:7000/", "redis://127.0.0.1:7001/", "redis://127.0.0.1:7002/"];
-//!
-//!     let client = Client::open(nodes)?;
-//!     let mut connection = client.get_connection().await?;
-//!     cmd("SET").arg("test").arg("test_data").query_async(&mut connection).await?;
-//!     let res: String = cmd("GET").arg("test").query_async(&mut connection).await?;
-//!     assert_eq!(res, "test_data");
-//!     Ok(())
-//! }
-//! ```
-//!
-//! # Pipelining
-//! ```rust,no_run
-//! use redis::{
-//!     cluster_async::Client,
-//!     pipe, RedisResult
-//! };
-//!
-//! #[tokio::main]
-//! async fn main() -> RedisResult<()> {
-//! #   let _ = env_logger::try_init();
-//!     let nodes = vec!["redis://127.0.0.1:7000/", "redis://127.0.0.1:7001/", "redis://127.0.0.1:7002/"];
-//!
-//!     let client = Client::open(nodes)?;
-//!     let mut connection = client.get_connection().await?;
-//!     let key = "test2";
-//!
-//!     let mut pipe = pipe();
-//!     pipe.rpush(key, "123").ignore()
-//!         .ltrim(key, -10, -1).ignore()
-//!         .expire(key, 60).ignore();
-//!     pipe.query_async(&mut connection)
-//!         .await?;
-//!     Ok(())
-//! }
-//! ```
-
+//! TODO
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt, io,
@@ -68,11 +13,11 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd, TlsMode},
+    cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{RoutingInfo, Slot},
-    Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture,
-    RedisResult, Value,
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
+    Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -89,63 +34,6 @@ use rand::thread_rng;
 use tokio::sync::{mpsc, oneshot};
 
 const SLOT_SIZE: usize = 16384;
-const DEFAULT_RETRIES: u32 = 16;
-
-/// This is a Redis cluster client.
-pub struct Client {
-    initial_nodes: Vec<ConnectionInfo>,
-    retries: Option<u32>,
-}
-
-impl Client {
-    /// Connect to a redis cluster server and return a cluster client.
-    /// This does not actually open a connection yet but it performs some basic checks on the URL.
-    ///
-    /// # Errors
-    ///
-    /// If it is failed to parse initial_nodes, an error is returned.
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<Client> {
-        let mut nodes = Vec::with_capacity(initial_nodes.len());
-
-        for info in initial_nodes {
-            let info = info.into_connection_info()?;
-            if let ConnectionAddr::Unix(_) = info.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
-            }
-            nodes.push(info);
-        }
-
-        Ok(Client {
-            initial_nodes: nodes,
-            retries: Some(DEFAULT_RETRIES),
-        })
-    }
-
-    /// Set how many times we should retry a query. Set `None` to retry forever.
-    /// Default: 16
-    pub fn set_retries(&mut self, retries: Option<u32>) -> &mut Self {
-        self.retries = retries;
-        self
-    }
-
-    /// Open and get a Redis cluster connection.
-    ///
-    /// # Errors
-    ///
-    /// If it is failed to open connections and to create slots, an error is returned.
-    pub async fn get_connection(&self) -> RedisResult<Connection> {
-        Connection::new(&self.initial_nodes, self.retries).await
-    }
-
-    #[doc(hidden)]
-    pub async fn get_generic_connection<C>(&self) -> RedisResult<Connection<C>>
-    where
-        C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
-    {
-        Connection::new(&self.initial_nodes, self.retries).await
-    }
-}
 
 /// This is a connection of Redis cluster.
 #[derive(Clone)]
@@ -155,25 +43,27 @@ impl<C> Connection<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
-    async fn new(
+    pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
-        retries: Option<u32>,
+        cluster_params: ClusterParams,
     ) -> RedisResult<Connection<C>> {
-        Pipeline::new(initial_nodes, retries).await.map(|pipeline| {
-            let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
-            let stream = async move {
-                let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
-                    .map(Ok)
-                    .forward(pipeline)
-                    .await;
-            };
-            #[cfg(feature = "tokio-comp")]
-            tokio::spawn(stream);
-            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            AsyncStd::spawn(stream);
+        Pipeline::new(initial_nodes, cluster_params)
+            .await
+            .map(|pipeline| {
+                let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
+                let stream = async move {
+                    let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
+                        .map(Ok)
+                        .forward(pipeline)
+                        .await;
+                };
+                #[cfg(feature = "tokio-comp")]
+                tokio::spawn(stream);
+                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                AsyncStd::spawn(stream);
 
-            Connection(tx)
-        })
+                Connection(tx)
+            })
     }
 }
 
@@ -191,7 +81,6 @@ struct Pipeline<C> {
     >,
     refresh_error: Option<RedisError>,
     pending_requests: Vec<PendingRequest<Response, C>>,
-    retries: Option<u32>,
     cluster_params: ClusterParams,
 }
 
@@ -432,37 +321,10 @@ impl<C> Pipeline<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    async fn new(initial_nodes: &[ConnectionInfo], retries: Option<u32>) -> RedisResult<Self> {
-        // This is mostly copied from ClusterClientBuilder
-        // and is just a placeholder until ClusterClient
-        // handles async connections
-        let first_node = match initial_nodes.first() {
-            Some(node) => node,
-            None => {
-                return Err(RedisError::from((
-                    ErrorKind::InvalidClientConfig,
-                    "Initial nodes can't be empty.",
-                )))
-            }
-        };
-
-        let cluster_params = ClusterParams {
-            password: first_node.redis.password.clone(),
-            username: first_node.redis.username.clone(),
-            tls: match first_node.addr {
-                ConnectionAddr::TcpTls {
-                    host: _,
-                    port: _,
-                    insecure,
-                } => Some(match insecure {
-                    false => TlsMode::Secure,
-                    true => TlsMode::Insecure,
-                }),
-                _ => None,
-            },
-            ..Default::default()
-        };
-
+    async fn new(
+        initial_nodes: &[ConnectionInfo],
+        cluster_params: ClusterParams,
+    ) -> RedisResult<Self> {
         let connections =
             Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
         let mut connection = Pipeline {
@@ -472,7 +334,6 @@ where
             refresh_error: None,
             pending_requests: Vec::new(),
             state: ConnectionState::PollComplete,
-            retries,
             cluster_params,
         };
         let (slots, connections) = connection.refresh_slots().await.map_err(|(err, _)| err)?;
@@ -711,7 +572,7 @@ where
 
                 let future = self.try_request(&request.info);
                 self.in_flight_requests.push(Box::pin(Request {
-                    max_retries: self.retries,
+                    max_retries: self.cluster_params.retries,
                     request: Some(request),
                     future: RequestState::Future {
                         future: future.boxed(),
@@ -738,7 +599,7 @@ where
                     }
                     let future = self.try_request(&request.info);
                     self.in_flight_requests.push(Box::pin(Request {
-                        max_retries: self.retries,
+                        max_retries: self.cluster_params.retries,
                         request: Some(request),
                         future: RequestState::Future {
                             future: Box::pin(future),
@@ -975,13 +836,6 @@ where
         0
     }
 }
-
-impl Clone for Client {
-    fn clone(&self) -> Client {
-        Client::open(self.initial_nodes.clone()).unwrap()
-    }
-}
-
 /// Implements the process of connecting to a redis server
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
