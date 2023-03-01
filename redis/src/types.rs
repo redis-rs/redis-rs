@@ -11,6 +11,7 @@ use std::string::FromUtf8Error;
 
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use num_bigint::BigInt;
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -136,9 +137,14 @@ pub enum Value {
     /// A boolean response from the server.
     Boolean(bool),
     /// First String is format and other is the string
-    VerbatimString(String, String),
+    VerbatimString {
+        /// Text's format type
+        format: VerbatimFormat,
+        /// Remaining string check format before using!
+        text: String,
+    },
     /// Very large number that out of the range of the signed 64 bit numbers
-    BigNumber(String),
+    BigNumber(BigInt),
     /// Push data from the server.
     Push {
         /// Push Kind
@@ -153,6 +159,16 @@ pub enum VerbatimFormat {
     Unknown(String),
     Markdown,
     Text,
+}
+
+impl fmt::Display for VerbatimFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VerbatimFormat::Markdown => write!(f, "mkd"),
+            VerbatimFormat::Unknown(val) => write!(f, "{val}"),
+            VerbatimFormat::Text => write!(f, "txt"),
+        }
+    }
 }
 
 pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
@@ -211,7 +227,6 @@ impl Value {
         match self {
             Value::Bulk(items) => Some(&items[..]),
             Value::Set(items) => Some(&items[..]),
-            Value::Push(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
             _ => None,
         }
@@ -240,12 +255,15 @@ impl fmt::Debug for Value {
             Value::Push { ref kind, ref data } => write!(fmt, "push({kind}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
-            Value::Map(ref m) => write!(fmt, "map({:?})", m),
-            Value::Set(ref m) => write!(fmt, "set({:?})", m),
-            Value::Double(ref m) => write!(fmt, "double({:?})", m),
-            Value::Boolean(ref m) => write!(fmt, "boolean({:?})", m),
-            Value::VerbatimString(ref format, ref string) => {
-                write!(fmt, "verbatim-string({:?},{:?})", format, string)
+            Value::Map(ref values) => write!(fmt, "map({values:?})"),
+            Value::Set(ref values) => write!(fmt, "set({values:?})"),
+            Value::Double(ref d) => write!(fmt, "double({d:?})"),
+            Value::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
+            Value::VerbatimString {
+                ref format,
+                ref text,
+            } => {
+                write!(fmt, "verbatim-string({:?},{:?})", format, text)
             }
             Value::BigNumber(ref m) => write!(fmt, "big-number({:?})", m),
         }
@@ -467,7 +485,7 @@ impl RedisError {
             ErrorKind::ReadOnly => "read-only",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
-            ErrorKind::RESP3NotSupported => "resp3 is not supported by server"
+            ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
         }
     }
 
@@ -1255,7 +1273,10 @@ impl FromRedisValue for String {
             Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
             Value::Status(ref val) => Ok(val.to_string()),
-            Value::VerbatimString(_, ref val) => Ok(val.to_string()),
+            Value::VerbatimString {
+                format: _,
+                ref text,
+            } => Ok(text.to_string()),
             Value::Double(ref val) => Ok(val.to_string()),
             _ => invalid_type_error!(v, "Response type not string compatible."),
         }
@@ -1274,7 +1295,6 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
                 ),
             },
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
-            Value::Push(ref items) => FromRedisValue::from_redis_values(items),
             Value::Map(ref items) => {
                 let mut n: Vec<T> = vec![];
                 for item in items.chunks(2) {

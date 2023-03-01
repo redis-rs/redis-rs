@@ -3,7 +3,9 @@ use std::{
     str,
 };
 
-use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
+use crate::types::{
+    make_extension_error, ErrorKind, RedisError, RedisResult, Value, VerbatimFormat,
+};
 
 use combine::{
     any,
@@ -247,14 +249,26 @@ where
                 };
                 let verbatim = || {
                     blob().map(|line| {
-                        let (format, string) = line.split_once(':').unwrap();
-                        Ok(Value::VerbatimString(
-                            format.to_string(),
-                            string.to_string(),
-                        ))
+                        let (format, text) = line.split_once(':').unwrap();
+                        let format = match format {
+                            "txt" => VerbatimFormat::Text,
+                            "mkd" => VerbatimFormat::Markdown,
+                            x => VerbatimFormat::Unknown(x.to_string()),
+                        };
+                        Ok(Value::VerbatimString {
+                            format: format,
+                            text: text.to_string(),
+                        })
                     })
                 };
-                let big_number = || line().map(|line| Ok(Value::BigNumber(line.to_string())));
+                let big_number = || {
+                    line().and_then(|line| match BigInt::parse_bytes(line.as_bytes(), 10) {
+                        None => Err(StreamErrorFor::<I>::message_static_message(
+                            "Expected bigint, got garbage",
+                        )),
+                        Some(value) => Ok(value),
+                    })
+                };
                 combine::dispatch!(b;
                     b'+' => status().map(Ok),
                     b':' => int().map(|i| Ok(Value::Int(i))),
@@ -269,7 +283,7 @@ where
                     b'#' => boolean().map(|b| Ok(Value::Boolean(b))),
                     b'!' => blob_error().map(Err),
                     b'=' => verbatim(),
-                    b'(' => big_number(),
+                    b'(' => big_number().map(|i| Ok(Value::BigNumber(i))),
                     b'>' => push(),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
@@ -505,7 +519,9 @@ mod tests {
         let val = parse_redis_value(b"(3492890328409238509324850943850943825024385\r\n").unwrap();
         assert_eq!(
             val,
-            Value::BigNumber("3492890328409238509324850943850943825024385".to_string())
+            Value::BigNumber(
+                BigInt::parse_bytes(b"3492890328409238509324850943850943825024385", 10).unwrap()
+            )
         );
     }
     #[test]

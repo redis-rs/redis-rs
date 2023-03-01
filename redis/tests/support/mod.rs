@@ -274,7 +274,11 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext { server, client, use_resp3 }
+        TestContext {
+            server,
+            client,
+            use_resp3,
+        }
     }
 
     pub fn connection(&self) -> redis::Connection {
@@ -319,8 +323,8 @@ impl TestContext {
 }
 
 fn encode_iter<W>(values: &Vec<Value>, writer: &mut W, prefix: &str) -> io::Result<()>
-    where
-        W: io::Write,
+where
+    W: io::Write,
 {
     write!(writer, "{}{}\r\n", prefix, values.len())?;
     for val in values.iter() {
@@ -341,17 +345,11 @@ where
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
-        Value::Bulk(ref values) => {
-            encode_iter(values, writer, "*")
-        }
+        Value::Bulk(ref values) => encode_iter(values, writer, "*"),
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
-        Value::Map(ref values) => {
-            encode_iter(values, writer, "%")
-        }
-        Value::Set(ref values) => {
-            encode_iter(values, writer, "~")
-        }
+        Value::Map(ref values) => encode_iter(values, writer, "%"),
+        Value::Set(ref values) => encode_iter(values, writer, "~"),
         // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
         Value::Double(val) => write!(writer, ",{}\r\n", val),
         Value::Boolean(v) => {
@@ -361,8 +359,9 @@ where
                 write!(writer, "#f\r\n")
             }
         }
-        Value::VerbatimString(ref s1, ref s2) => {
-            write!(writer, "={}\r\n{}:{}\r\n", s1.len() + s2.len(), s1, s2)
+        Value::VerbatimString { format, text } => {
+            // format is always 3 bytes
+            write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
         }
         Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
         Value::Push { kind, data } => {
