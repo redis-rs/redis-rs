@@ -254,7 +254,8 @@ impl ClusterConnection {
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
 
         for conn in samples.iter_mut() {
-            if let Ok(mut slots_data) = get_slots(conn, self.tls) {
+            let value = conn.req_command(&slot_cmd())?;
+            if let Ok(mut slots_data) = parse_slots(value, self.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -697,16 +698,12 @@ fn get_random_connection<'a>(
     (addr, con)
 }
 
-// Get slot data from connection.
-fn get_slots(connection: &mut Connection, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
-    let mut cmd = Cmd::new();
-    cmd.arg("CLUSTER").arg("SLOTS");
-    let value = connection.req_command(&cmd)?;
-
+// Parse slot data from raw redis value.
+pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
     // Parse response.
     let mut result = Vec::with_capacity(2);
 
-    if let Value::Bulk(items) = value {
+    if let Value::Bulk(items) = raw_slot_resp {
         let mut iter = items.into_iter();
         while let Some(Value::Bulk(item)) = iter.next() {
             if item.len() < 3 {
@@ -770,7 +767,10 @@ fn get_slots(connection: &mut Connection, tls: Option<TlsMode>) -> RedisResult<V
 // The node string passed to this function will always be in the format host:port as it is either:
 // - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
 // - Returned from redis via the ASK/MOVED response
-fn get_connection_info(node: &str, cluster_params: ClusterParams) -> RedisResult<ConnectionInfo> {
+pub(crate) fn get_connection_info(
+    node: &str,
+    cluster_params: ClusterParams,
+) -> RedisResult<ConnectionInfo> {
     let mut split = node.split(':');
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
@@ -804,4 +804,10 @@ fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> Connect
         },
         _ => ConnectionAddr::Tcp(host, port),
     }
+}
+
+pub(crate) fn slot_cmd() -> Cmd {
+    let mut cmd = Cmd::new();
+    cmd.arg("CLUSTER").arg("SLOTS");
+    cmd
 }

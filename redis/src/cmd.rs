@@ -1,7 +1,8 @@
 #[cfg(feature = "aio")]
 use futures_util::{
+    future::BoxFuture,
     task::{Context, Poll},
-    FutureExt, Stream,
+    Stream, StreamExt,
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
@@ -70,30 +71,30 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 #[cfg(feature = "aio")]
 use crate::aio::ConnectionLike as AsyncConnection;
 
-/// Represents a redis iterator that can be used with async connections.
+/// The inner future of AsyncIter
 #[cfg(feature = "aio")]
-pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
     batch: std::vec::IntoIter<T>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
 
+/// Represents the state of AsyncIter
 #[cfg(feature = "aio")]
-impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
-    /// ```rust,no_run
-    /// # use redis::AsyncCommands;
-    /// # async fn scan_set() -> redis::RedisResult<()> {
-    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
-    /// # let mut con = client.get_async_connection().await?;
-    /// con.sadd("my_set", 42i32).await?;
-    /// con.sadd("my_set", 43i32).await?;
-    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
-    /// while let Some(element) = iter.next_item().await {
-    ///     assert!(element == 42 || element == 43);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+enum IterOrFuture<'a, T: FromRedisValue + 'a> {
+    Iter(AsyncIterInner<'a, T>),
+    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<T>)>),
+    Empty,
+}
+
+/// Represents a redis iterator that can be used with async connections.
+#[cfg(feature = "aio")]
+pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+    inner: IterOrFuture<'a, T>,
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
     #[inline]
     pub async fn next_item(&mut self) -> Option<T> {
         // we need to do this in a loop until we produce at least one item
@@ -125,13 +126,55 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
 }
 
 #[cfg(feature = "aio")]
-impl<'a, T: FromRedisValue + Unpin + 'a> Stream for AsyncIter<'a, T> {
+impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
+    /// ```rust,no_run
+    /// # use redis::AsyncCommands;
+    /// # async fn scan_set() -> redis::RedisResult<()> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_async_connection().await?;
+    /// con.sadd("my_set", 42i32).await?;
+    /// con.sadd("my_set", 43i32).await?;
+    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
+    /// while let Some(element) = iter.next_item().await {
+    ///     assert!(element == 42 || element == 43);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub async fn next_item(&mut self) -> Option<T> {
+        StreamExt::next(self).await
+    }
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
     type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
-        let this = self.get_mut();
-        let mut future = Box::pin(this.next_item());
-        future.poll_unpin(cx)
+        let mut this = self.get_mut();
+        let inner = std::mem::replace(&mut this.inner, IterOrFuture::Empty);
+        match inner {
+            IterOrFuture::Iter(mut iter) => {
+                let fut = async move {
+                    let next_item = iter.next_item().await;
+                    (iter, next_item)
+                };
+                this.inner = IterOrFuture::Future(Box::pin(fut));
+                Pin::new(this).poll_next(cx)
+            }
+            IterOrFuture::Future(mut fut) => match fut.as_mut().poll(cx) {
+                Poll::Pending => {
+                    this.inner = IterOrFuture::Future(fut);
+                    Poll::Pending
+                }
+                Poll::Ready((iter, value)) => {
+                    this.inner = IterOrFuture::Iter(iter);
+                    Poll::Ready(value)
+                }
+            },
+            IterOrFuture::Empty => unreachable!(),
+        }
     }
 }
 
@@ -416,7 +459,7 @@ impl Cmd {
 
     /// Similar to `iter()` but returns an AsyncIter over the items of the
     /// bulk result or iterator.  A [futures::Stream](https://docs.rs/futures/0.3.3/futures/stream/trait.Stream.html)
-    /// can be obtained by calling `stream()` on the AsyncIter.  In normal mode this is not in any way more
+    /// is implemented on AsyncIter. In normal mode this is not in any way more
     /// efficient than just querying into a `Vec<T>` as it's internally
     /// implemented as buffering into a vector.  This however is useful when
     /// `cursor_arg` was used in which case the stream will query for more
@@ -449,9 +492,11 @@ impl Cmd {
         }
 
         Ok(AsyncIter {
-            batch: batch.into_iter(),
-            con,
-            cmd: self,
+            inner: IterOrFuture::Iter(AsyncIterInner {
+                batch: batch.into_iter(),
+                con,
+                cmd: self,
+            }),
         })
     }
 

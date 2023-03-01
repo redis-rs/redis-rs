@@ -6,6 +6,10 @@ use crate::types::Value;
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
 
+fn slot(key: &[u8]) -> u16 {
+    crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RoutingInfo {
     AllNodes,
@@ -58,7 +62,7 @@ impl RoutingInfo {
             None => key,
         };
 
-        let slot = crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE;
+        let slot = slot(key);
         if is_readonly_cmd(cmd) {
             RoutingInfo::ReplicaSlot(slot)
         } else {
@@ -174,7 +178,7 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_hashtag, RoutingInfo};
+    use super::{get_hashtag, slot, RoutingInfo};
     use crate::{cmd, parser::parse_redis_value};
 
     #[test]
@@ -257,5 +261,120 @@ mod tests {
                 RoutingInfo::for_routable(&cmd).unwrap(),
             );
         }
+
+        // Assert expected RoutingInfo explicitly:
+
+        for cmd in vec![cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("SCRIPT")] {
+            assert_eq!(
+                RoutingInfo::for_routable(&cmd),
+                Some(RoutingInfo::AllMasters)
+            );
+        }
+
+        for cmd in vec![
+            cmd("ECHO"),
+            cmd("CONFIG"),
+            cmd("CLIENT"),
+            cmd("SLOWLOG"),
+            cmd("DBSIZE"),
+            cmd("LASTSAVE"),
+            cmd("PING"),
+            cmd("INFO"),
+            cmd("BGREWRITEAOF"),
+            cmd("BGSAVE"),
+            cmd("CLIENT LIST"),
+            cmd("SAVE"),
+            cmd("TIME"),
+            cmd("KEYS"),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(&cmd), Some(RoutingInfo::AllNodes));
+        }
+
+        for cmd in vec![
+            cmd("SCAN"),
+            cmd("CLIENT SETNAME"),
+            cmd("SHUTDOWN"),
+            cmd("SLAVEOF"),
+            cmd("REPLICAOF"),
+            cmd("SCRIPT KILL"),
+            cmd("MOVE"),
+            cmd("BITOP"),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(&cmd), None,);
+        }
+
+        for cmd in vec![
+            cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
+            cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(cmd), Some(RoutingInfo::Random));
+        }
+
+        for (cmd, expected) in vec![
+            (
+                cmd("EVAL")
+                    .arg(r#"redis.call("GET, KEYS[1]");"#)
+                    .arg(1)
+                    .arg("foo"),
+                Some(RoutingInfo::MasterSlot(slot(b"foo"))),
+            ),
+            (
+                cmd("XGROUP")
+                    .arg("CREATE")
+                    .arg("mystream")
+                    .arg("workers")
+                    .arg("$")
+                    .arg("MKSTREAM"),
+                Some(RoutingInfo::MasterSlot(slot(b"mystream"))),
+            ),
+            (
+                cmd("XINFO").arg("GROUPS").arg("foo"),
+                Some(RoutingInfo::ReplicaSlot(slot(b"foo"))),
+            ),
+            (
+                cmd("XREADGROUP")
+                    .arg("GROUP")
+                    .arg("wkrs")
+                    .arg("consmrs")
+                    .arg("STREAMS")
+                    .arg("mystream"),
+                Some(RoutingInfo::MasterSlot(slot(b"mystream"))),
+            ),
+            (
+                cmd("XREAD")
+                    .arg("COUNT")
+                    .arg("2")
+                    .arg("STREAMS")
+                    .arg("mystream")
+                    .arg("writers")
+                    .arg("0-0")
+                    .arg("0-0"),
+                Some(RoutingInfo::ReplicaSlot(slot(b"mystream"))),
+            ),
+        ] {
+            assert_eq!(RoutingInfo::for_routable(cmd), expected,);
+        }
+    }
+
+    #[test]
+    fn test_slot_for_packed_cmd() {
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
+                244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
+            ]).unwrap()), Some(RoutingInfo::ReplicaSlot(slot)) if slot == 964));
+
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
+                197, 111, 180, 254, 5, 175, 143, 146, 171, 39, 172, 23, 164, 145, 13, 10, 36, 52,
+                13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
+                80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
+            ]).unwrap()), Some(RoutingInfo::MasterSlot(slot)) if slot == 8352));
+
+        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+                42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 169, 233,
+                247, 59, 50, 247, 100, 232, 123, 140, 2, 101, 125, 221, 66, 170, 13, 10, 36, 52,
+                13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
+                80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
+            ]).unwrap()), Some(RoutingInfo::MasterSlot(slot)) if slot == 5210));
     }
 }

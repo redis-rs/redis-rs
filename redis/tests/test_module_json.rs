@@ -20,7 +20,7 @@ use serde_json::{self, json};
 const TEST_KEY: &str = "my_json";
 
 #[test]
-fn test_json_serialize_error() {
+fn test_module_json_serialize_error() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -52,7 +52,7 @@ fn test_json_serialize_error() {
 }
 
 #[test]
-fn test_json_arr_append() {
+fn test_module_json_arr_append() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -70,7 +70,7 @@ fn test_json_arr_append() {
 }
 
 #[test]
-fn test_json_arr_index() {
+fn test_module_json_arr_index() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -94,13 +94,14 @@ fn test_json_arr_index() {
 
     assert_eq!(update_initial, Ok(true));
 
-    let json_arrindex_2: RedisResult<Value> = con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, 0, 0);
+    let json_arrindex_2: RedisResult<Value> =
+        con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
 
     assert_eq!(json_arrindex_2, Ok(Bulk(vec![Int(1i64), Nil])));
 }
 
 #[test]
-fn test_json_arr_insert() {
+fn test_module_json_arr_insert() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -130,7 +131,7 @@ fn test_json_arr_insert() {
 }
 
 #[test]
-fn test_json_arr_len() {
+fn test_module_json_arr_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -160,7 +161,7 @@ fn test_json_arr_len() {
 }
 
 #[test]
-fn test_json_arr_pop() {
+fn test_module_json_arr_pop() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -200,7 +201,7 @@ fn test_json_arr_pop() {
 }
 
 #[test]
-fn test_json_arr_trim() {
+fn test_module_json_arr_trim() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -230,7 +231,7 @@ fn test_json_arr_trim() {
 }
 
 #[test]
-fn test_json_clear() {
+fn test_module_json_clear() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -255,7 +256,7 @@ fn test_json_clear() {
 }
 
 #[test]
-fn test_json_del() {
+fn test_module_json_del() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -273,7 +274,7 @@ fn test_json_del() {
 }
 
 #[test]
-fn test_json_get() {
+fn test_module_json_get() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -289,23 +290,27 @@ fn test_json_get() {
 
     assert_eq!(json_get, Ok("[3,null]".into()));
 
-    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, "..a $..b");
+    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, vec!["..a", "$..b"]);
 
-    assert_eq!(json_get_multi, Ok("2".into()));
+    if json_get_multi != Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into())
+        && json_get_multi != Ok("{\"..a\":[2,4],\"$..b\":[3,null]}".into())
+    {
+        panic!("test_error: incorrect response from json_get_multi");
+    }
 }
 
 #[test]
-fn test_json_mget() {
+fn test_module_json_mget() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
     let set_initial_a: RedisResult<bool> = con.json_set(
-        format!("{}-a", TEST_KEY),
+        format!("{TEST_KEY}-a"),
         "$",
         &json!({"a":1i64, "b": 2i64, "nested": {"a": 3i64, "b": null}}),
     );
     let set_initial_b: RedisResult<bool> = con.json_set(
-        format!("{}-b", TEST_KEY),
+        format!("{TEST_KEY}-b"),
         "$",
         &json!({"a":4i64, "b": 5i64, "nested": {"a": 6i64, "b": null}}),
     );
@@ -313,8 +318,8 @@ fn test_json_mget() {
     assert_eq!(set_initial_a, Ok(true));
     assert_eq!(set_initial_b, Ok(true));
 
-    let json_mget: RedisResult<Value> = con.json_mget(
-        vec![format!("{}-a", TEST_KEY), format!("{}-b", TEST_KEY)],
+    let json_mget: RedisResult<Value> = con.json_get(
+        vec![format!("{TEST_KEY}-a"), format!("{TEST_KEY}-b")],
         "$..a",
     );
 
@@ -328,7 +333,7 @@ fn test_json_mget() {
 }
 
 #[test]
-fn test_json_numincrby() {
+fn test_module_json_num_incr_by() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -340,19 +345,19 @@ fn test_json_numincrby() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_numincrby_a: RedisResult<String> = con.json_numincrby(TEST_KEY, "$.a", 2);
+    let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
 
     // cannot increment a string
     assert_eq!(json_numincrby_a, Ok("[null]".into()));
 
-    let json_numincrby_b: RedisResult<String> = con.json_numincrby(TEST_KEY, "$..a", 2);
+    let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
 
     // however numbers can be incremented
     assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
 }
 
 #[test]
-fn test_json_objkeys() {
+fn test_module_json_obj_keys() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -364,7 +369,7 @@ fn test_json_objkeys() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_objkeys: RedisResult<Value> = con.json_objkeys(TEST_KEY, "$..a");
+    let json_objkeys: RedisResult<Value> = con.json_obj_keys(TEST_KEY, "$..a");
 
     assert_eq!(
         json_objkeys,
@@ -379,7 +384,7 @@ fn test_json_objkeys() {
 }
 
 #[test]
-fn test_json_objlen() {
+fn test_module_json_obj_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -391,13 +396,13 @@ fn test_json_objlen() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_objlen: RedisResult<Value> = con.json_objlen(TEST_KEY, "$..a");
+    let json_objlen: RedisResult<Value> = con.json_obj_len(TEST_KEY, "$..a");
 
     assert_eq!(json_objlen, Ok(Bulk(vec![Nil, Int(2)])));
 }
 
 #[test]
-fn test_json_set() {
+fn test_module_json_set() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -407,7 +412,7 @@ fn test_json_set() {
 }
 
 #[test]
-fn test_json_strappend() {
+fn test_module_json_str_append() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -419,7 +424,7 @@ fn test_json_strappend() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_strappend: RedisResult<Value> = con.json_strappend(TEST_KEY, "$..a", "\"baz\"");
+    let json_strappend: RedisResult<Value> = con.json_str_append(TEST_KEY, "$..a", "\"baz\"");
 
     assert_eq!(json_strappend, Ok(Bulk(vec![Int(6), Int(8), Nil])));
 
@@ -432,7 +437,7 @@ fn test_json_strappend() {
 }
 
 #[test]
-fn test_json_strlen() {
+fn test_module_json_str_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -444,13 +449,13 @@ fn test_json_strlen() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_strlen: RedisResult<Value> = con.json_strlen(TEST_KEY, "$..a");
+    let json_strlen: RedisResult<Value> = con.json_str_len(TEST_KEY, "$..a");
 
     assert_eq!(json_strlen, Ok(Bulk(vec![Int(3), Int(5), Nil])));
 }
 
 #[test]
-fn test_json_toggle() {
+fn test_module_json_toggle() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
@@ -466,7 +471,7 @@ fn test_json_toggle() {
 }
 
 #[test]
-fn test_json_type() {
+fn test_module_json_type() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 

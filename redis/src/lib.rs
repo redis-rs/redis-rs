@@ -448,6 +448,9 @@ mod r2d2;
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
 
+#[cfg(feature = "cluster-async")]
+pub mod cluster_async;
+
 mod client;
 mod cmd;
 mod commands;
