@@ -264,6 +264,10 @@ impl ConnectionLike for ErrorConnection {
     fn get_db(&self) -> i64 {
         self.inner.get_db()
     }
+
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 #[test]

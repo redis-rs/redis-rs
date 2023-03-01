@@ -258,7 +258,7 @@ where
                     b'$' => data().map(Ok),
                     b'*' => bulk(),
                     b'%' => map(),
-                    b'|' => map(), //Attribute type
+                    b'|' => map(), //Attribute type (TODO: maybe we have to handle this too ?)
                     b'~' => set(),
                     b'-' => error().map(Err),
                     b'_' => null(),

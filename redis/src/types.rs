@@ -1448,8 +1448,8 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(rv)
                 }
                 //It's uglier then before!
-                for chunk in items {
-                    match chunk {
+                for item in items {
+                    match item {
                         Value::Bulk(ch) => {
                            if  let [$($name),*] = &ch[..] {
                             rv.push(($(from_redis_value(&$name)?),*),)

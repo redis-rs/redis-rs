@@ -92,6 +92,10 @@ impl ConnectionLike for MockConnection {
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 pub struct MockEnv {
