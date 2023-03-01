@@ -17,6 +17,7 @@ use crate::types::{
 use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+use std::vec::IntoIter;
 
 use crate::commands::create_hello_command;
 #[cfg(feature = "tls")]
@@ -816,17 +817,34 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
+        if self.resp3 {
+            while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
+                    match kind.bytes().next() {
+                        Some(b'u') => received_unsub = true,
+                        Some(b'p') => received_punsub = true,
+                        _ => (),
+                    }
+                    if let Value::Int(num) = data[1] {
+                        if received_unsub && received_punsub && num == 0 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+        } else {
+            loop {
+                let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
 
-            match res.0.first() {
-                Some(&b'u') => received_unsub = true,
-                Some(&b'p') => received_punsub = true,
-                _ => (),
-            }
+                match res.0.first() {
+                    Some(&b'u') => received_unsub = true,
+                    Some(&b'p') => received_punsub = true,
+                    _ => (),
+                }
 
-            if received_unsub && received_punsub && res.2 == 0 {
-                break;
+                if received_unsub && received_punsub && res.2 == 0 {
+                    break;
+                }
             }
         }
 
@@ -1077,10 +1095,20 @@ impl<'a> Drop for PubSub<'a> {
 /// connection.  It only contains actual message data.
 impl Msg {
     /// Tries to convert provided [`Value`] into [`Msg`].
+    #[allow(clippy::unnecessary_to_owned)]
     pub fn from_value(value: &Value) -> Option<Self> {
-        let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
-        let mut iter = raw_msg.into_iter();
-        let msg_type: String = from_redis_value(&iter.next()?).ok()?;
+        let (msg_type, mut iter) = if let Value::Push { kind, data } = value {
+            let iter: IntoIter<Value> = data
+                .to_vec()
+                .into_iter();
+            (kind.to_string(), iter)
+        } else {
+            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
+            let mut iter = raw_msg.into_iter();
+            let msg_type: String = from_redis_value(&iter.next()?).ok()?;
+            (msg_type, iter)
+        };
+
         let mut pattern = None;
         let payload;
         let channel;

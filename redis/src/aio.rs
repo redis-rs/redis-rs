@@ -249,6 +249,8 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     // This flag is checked when attempting to send a command, and if it's raised, we attempt to
     // exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    resp3: bool,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -266,6 +268,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            resp3,
         } = self;
         Connection {
             con: f(con),
@@ -273,6 +276,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            resp3,
         }
     }
 }
@@ -290,6 +294,7 @@ where
             decoder: combine::stream::Decoder::new(),
             db: connection_info.db,
             pubsub: false,
+            resp3: connection_info.use_resp3,
         };
         authenticate(connection_info, &mut rv).await?;
         Ok(rv)
@@ -348,7 +353,6 @@ where
             // Execute commands
             self.con.write_all(&unsubscribe).await?;
         }
-
         // Receive responses
         //
         // There will be at minimum two responses - 1 for each of punsubscribe and unsubscribe
@@ -356,17 +360,35 @@ where
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
+        if self.resp3 {
+            while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)?
+                {
+                    match kind.bytes().next() {
+                        Some(b'u') => received_unsub = true,
+                        Some(b'p') => received_punsub = true,
+                        _ => (),
+                    }
+                    if let Value::Int(num) = data[1] {
+                        if received_unsub && received_punsub && num == 0 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+        } else {
+            loop {
+                let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
 
-            match res.0.first() {
-                Some(&b'u') => received_unsub = true,
-                Some(&b'p') => received_punsub = true,
-                _ => (),
-            }
+                match res.0.first() {
+                    Some(&b'u') => received_unsub = true,
+                    Some(&b'p') => received_punsub = true,
+                    _ => (),
+                }
 
-            if received_unsub && received_punsub && res.2 == 0 {
-                break;
+                if received_unsub && received_punsub && res.2 == 0 {
+                    break;
+                }
             }
         }
 
@@ -596,7 +618,7 @@ where
             let mut rv = Vec::with_capacity(count);
             let mut count = count;
             let mut idx = 0;
-            while idx < (offset + count) {
+            while idx < count {
                 let response = self.read_response().await;
                 match response {
                     Ok(item) => {
@@ -605,7 +627,7 @@ where
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
                             self.execute_push_message(kind, data);
-                        } else if idx >= offset {
+                        } else {
                             rv.push(item);
                         }
                     }

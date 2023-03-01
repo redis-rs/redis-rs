@@ -28,11 +28,24 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
             Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
-            Value::Bulk(ref xs) | Value::Map(ref xs) | Value::Set(ref xs) | Value::Push(ref xs) => {
+            Value::Bulk(ref xs) | Value::Map(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
                     .collect::<Vec<_>>();
+                Box::new(
+                    ys.shrink()
+                        .map(|xs| xs.into_iter().map(|x| x.0).collect())
+                        .map(Value::Bulk)
+                        .map(ArbitraryValue),
+                )
+            }
+            Value::Push { ref kind, ref data } => {
+                let mut ys = data
+                    .iter()
+                    .map(|x| ArbitraryValue(x.clone()))
+                    .collect::<Vec<_>>();
+                ys.insert(0, ArbitraryValue(Value::Status(kind.to_string())));
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
@@ -46,13 +59,16 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
             Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
             Value::BigNumber(ref i) => {
-                Box::new(i.shrink().map(Value::BigNumber).map(ArbitraryValue))
+                Box::new(vec![ArbitraryValue(Value::BigNumber(i.clone()))].into_iter())
             }
-            Value::VerbatimString(ref t, ref s) => Box::new(
-                vec![ArbitraryValue(Value::VerbatimString(
-                    t.to_string(),
-                    s.to_string(),
-                ))]
+            Value::VerbatimString {
+                ref format,
+                ref text,
+            } => Box::new(
+                vec![ArbitraryValue(Value::VerbatimString {
+                    format: format.clone(),
+                    text: text.clone(),
+                })]
                 .into_iter(),
             ),
         }

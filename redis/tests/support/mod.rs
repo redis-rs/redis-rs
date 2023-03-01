@@ -359,14 +359,16 @@ where
                 write!(writer, "#f\r\n")
             }
         }
-        Value::VerbatimString { format, text } => {
+        Value::VerbatimString {
+            ref format,
+            ref text,
+        } => {
             // format is always 3 bytes
             write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
         }
         Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
-        Value::Push { kind, data } => {
-            write!(writer, ">{}\r\n", data.len() + 1)?;
-            encode_value(&Value::Status(kind), writer)?;
+        Value::Push { ref kind, ref data } => {
+            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
             for val in data.iter() {
                 encode_value(val, writer)?;
             }

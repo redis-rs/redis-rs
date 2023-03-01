@@ -150,7 +150,7 @@ pub enum Value {
         /// Push Kind
         kind: String,
         /// Remaining data from push message
-        data: Vec<Value>
+        data: Vec<Value>,
     },
 }
 

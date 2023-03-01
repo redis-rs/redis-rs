@@ -1,3 +1,4 @@
+use std::vec::IntoIter;
 use std::{
     io::{self, Read},
     str,
@@ -187,18 +188,24 @@ where
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
                                 .map(|result: ResultExtend<Vec<Value>, _>| {
-                                    let vals = result.0?;
-                                    if let Value::Status(kind) = &vals[0] {
-                                        return Ok(Value::Push {
-                                            kind: kind.to_string(),
-                                            data: vals[1..].to_vec(),
-                                        });
+                                    let mut it: IntoIter<Value> = result.0?.into_iter();
+                                    let first = it.next().unwrap();
+                                    if let Value::Data(kind) = first {
+                                         Ok(Value::Push {
+                                            kind: String::from_utf8(kind)?,
+                                            data: it.collect(),
+                                        })
+                                    } else if let Value::Status(kind) = first {
+                                    Ok(Value::Push {
+                                            kind,
+                                            data: it.collect(),
+                                        })
                                     } else {
-                                        return Err(RedisError::from((
+                                         Err(RedisError::from((
                                             ErrorKind::ResponseError,
                                             "parse error",
-                                        )));
-                                    };
+                                        )))
+                                    }
                                 })
                                 .right()
                         }
@@ -232,7 +239,7 @@ where
                             x => VerbatimFormat::Unknown(x.to_string()),
                         };
                         Ok(Value::VerbatimString {
-                            format: format,
+                            format,
                             text: text.to_string(),
                         })
                     })
