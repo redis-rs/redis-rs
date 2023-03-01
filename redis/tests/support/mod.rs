@@ -365,8 +365,13 @@ where
             write!(writer, "={}\r\n{}:{}\r\n", s1.len() + s2.len(), s1, s2)
         }
         Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
-        Value::Push(ref values) => {
-            encode_iter(values, writer, ">")
+        Value::Push { kind, data } => {
+            write!(writer, ">{}\r\n", data.len() + 1)?;
+            encode_value(&Value::Status(kind), writer)?;
+            for val in data.iter() {
+                encode_value(val, writer)?;
+            }
+            Ok(())
         }
     }
 }

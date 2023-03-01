@@ -175,9 +175,32 @@ where
                 };
                 let push = || {
                     int().then_partial(move |&mut length| {
-                        let length = length as usize;
-                        combine::count_min_max(length, length, value(Some(count + 1)))
-                            .map(|result: ResultExtend<_, _>| result.0.map(Value::Push))
+                        if length <= 0 {
+                            combine::value(Value::Push {
+                                kind: "".to_string(),
+                                data: vec![],
+                            })
+                            .map(Ok)
+                            .left()
+                        } else {
+                            let length = length as usize;
+                            combine::count_min_max(length, length, value(Some(count + 1)))
+                                .map(|result: ResultExtend<Vec<Value>, _>| {
+                                    let vals = result.0?;
+                                    if let Value::Status(kind) = &vals[0] {
+                                        return Ok(Value::Push {
+                                            kind: kind.to_string(),
+                                            data: vals[1..].to_vec(),
+                                        });
+                                    } else {
+                                        return Err(RedisError::from((
+                                            ErrorKind::ResponseError,
+                                            "parse error",
+                                        )));
+                                    };
+                                })
+                                .right()
+                        }
                     })
                 };
                 let null = || line().map(|_| Ok(Value::Nil));
@@ -501,11 +524,14 @@ mod tests {
             b">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n",
         )
         .unwrap();
-        let v = val.as_sequence().unwrap();
-        assert_eq!(Value::Status("pubsub".to_string()), v[0]);
-        assert_eq!(Value::Status("message".to_string()), v[1]);
-        assert_eq!(Value::Status("somechannel".to_string()), v[2]);
-        assert_eq!(Value::Status("this is the message".to_string()), v[3]);
+        if let Value::Push { ref kind, ref data } = val {
+            assert_eq!(&"pubsub".to_string(), kind);
+            assert_eq!(Value::Status("message".to_string()), data[0]);
+            assert_eq!(Value::Status("somechannel".to_string()), data[1]);
+            assert_eq!(Value::Status("this is the message".to_string()), data[2]);
+        } else {
+            panic!("Expected Value::Push")
+        }
     }
 
     #[test]

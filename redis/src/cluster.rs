@@ -618,7 +618,7 @@ impl ConnectionLike for ClusterConnection {
         true
     }
 
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }

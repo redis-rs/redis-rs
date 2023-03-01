@@ -18,9 +18,9 @@ use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
+use crate::commands::create_hello_command;
 #[cfg(feature = "tls")]
 use native_tls::{TlsConnector, TlsStream};
-use crate::commands::create_hello_command;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -637,7 +637,11 @@ fn setup_connection(
         if let Err(err) = val {
             if let Some(detail) = err.detail() {
                 if detail.starts_with("unknown command `HELLO`") {
-                    return Err((ErrorKind::RESP3NotSupported, "Redis Server doesn't support HELLO command therefore resp3 cannot be used").into());
+                    return Err((
+                        ErrorKind::RESP3NotSupported,
+                        "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+                    )
+                        .into());
                 }
             }
             return Err(err);
@@ -716,8 +720,8 @@ pub trait ConnectionLike {
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
 
-    /// Executes received push messages from server.
-    fn execute_push_messages(&mut self, _messages: Vec<Value>);
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, kind: String, data: Vec<Value>);
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -885,7 +889,7 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         self.read_response()
     }
-    
+
     fn req_packed_commands(
         &mut self,
         cmd: &[u8],
@@ -909,10 +913,10 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
-                    if let Value::Push(push_messages) = item {
+                    if let Value::Push { kind, data } = item {
                         // if that is the case we have to extend the loop and handle push data
                         count += 1;
-                        self.execute_push_messages(push_messages);
+                        self.execute_push_message(kind, data);
                     } else if idx >= offset {
                         rv.push(item);
                     }
@@ -941,9 +945,9 @@ impl ConnectionLike for Connection {
         self.con.is_open()
     }
 
-    /// Executes received push messages from server.
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push message
     }
 }
 
@@ -985,8 +989,8 @@ where
         self.deref().is_open()
     }
 
-    /// Executes received push messages from server.
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }

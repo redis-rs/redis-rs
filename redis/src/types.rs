@@ -140,7 +140,19 @@ pub enum Value {
     /// Very large number that out of the range of the signed 64 bit numbers
     BigNumber(String),
     /// Push data from the server.
-    Push(Vec<Value>),
+    Push {
+        /// Push Kind
+        kind: String,
+        /// Remaining data from push message
+        data: Vec<Value>
+    },
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum VerbatimFormat {
+    Unknown(String),
+    Markdown,
+    Text,
 }
 
 pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
@@ -224,30 +236,8 @@ impl fmt::Debug for Value {
                 Ok(x) => write!(fmt, "string-data('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
-            Value::Bulk(ref values) => {
-                write!(fmt, "bulk(")?;
-                let mut is_first = true;
-                for val in values.iter() {
-                    if !is_first {
-                        write!(fmt, ", ")?;
-                    }
-                    write!(fmt, "{val:?}")?;
-                    is_first = false;
-                }
-                write!(fmt, ")")
-            }
-            Value::Push(ref values) => {
-                write!(fmt, "push(")?;
-                let mut is_first = true;
-                for val in values.iter() {
-                    if !is_first {
-                        write!(fmt, ", ")?;
-                    }
-                    write!(fmt, "{:?}", val)?;
-                    is_first = false;
-                }
-                write!(fmt, ")")
-            }
+            Value::Bulk(ref values) => write!(fmt, "bulk({values:?})"),
+            Value::Push { ref kind, ref data } => write!(fmt, "push({kind}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
             Value::Map(ref m) => write!(fmt, "map({:?})", m),
@@ -1410,7 +1400,7 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 match *v {
-                    Value::Bulk(ref items) | Value::Push(ref items) | Value::Map(ref items) => {
+                    Value::Bulk(ref items) | Value::Map(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*

@@ -37,11 +37,11 @@ use pin_project_lite::pin_project;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
 
+use crate::commands::create_hello_command;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
-use crate::commands::create_hello_command;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -407,7 +407,11 @@ where
         if let Err(err) = val {
             if let Some(detail) = err.detail() {
                 if detail.starts_with("unknown command `HELLO`") {
-                    return Err((ErrorKind::RESP3NotSupported, "Redis Server doesn't support HELLO command therefore resp3 cannot be used").into());
+                    return Err((
+                        ErrorKind::RESP3NotSupported,
+                        "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+                    )
+                        .into());
                 }
             }
             return Err(err);
@@ -542,8 +546,8 @@ pub trait ConnectionLike {
     /// actually connected.
     fn get_db(&self) -> i64;
 
-    /// Executes received push messages from server.
-    fn execute_push_messages(&mut self, _messages: Vec<Value>);
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, kind: String, data: Vec<Value>);
 }
 
 impl<C> ConnectionLike for Connection<C>
@@ -597,10 +601,10 @@ where
                 match response {
                     Ok(item) => {
                         // RESP3 can insert push data between command replies
-                        if let Value::Push(push_messages) = item {
+                        if let Value::Push { kind, data } = item {
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
-                            self.execute_push_messages(push_messages);
+                            self.execute_push_message(kind, data);
                         } else if idx >= offset {
                             rv.push(item);
                         }
@@ -627,7 +631,7 @@ where
         self.db
     }
 
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }
@@ -1017,7 +1021,7 @@ impl ConnectionLike for MultiplexedConnection {
         self.db
     }
 
-    fn execute_push_messages(&mut self, _messages: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }
@@ -1193,6 +1197,10 @@ mod connection_manager {
 
         fn get_db(&self) -> i64 {
             self.client.connection_info().redis.db
+        }
+
+        fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+            // TODO - implement handling RESP3 push messages
         }
     }
 }
