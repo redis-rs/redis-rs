@@ -75,6 +75,7 @@ pub struct ClusterConnection {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
+    retries: u32,
 }
 
 impl ClusterConnection {
@@ -93,6 +94,7 @@ impl ClusterConnection {
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
+            retries: cluster_params.retries,
         };
         connection.create_initial_connections()?;
 
@@ -426,7 +428,7 @@ impl ClusterConnection {
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = 16;
+        let mut retries = self.retries;
         let mut excludes = HashSet::new();
         let mut redirected = None::<String>;
         let mut is_asking = false;
