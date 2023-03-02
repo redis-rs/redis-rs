@@ -767,13 +767,11 @@ pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
 ) -> RedisResult<ConnectionInfo> {
-    let mut split = node.split(':');
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
-    let host = split.next().ok_or_else(invalid_error)?;
-    let port = split
-        .next()
-        .and_then(|string| u16::from_str(string).ok())
+    let (host, port) = node
+        .rsplit_once(':')
+        .and_then(|(host, port)| Some(host).zip(u16::from_str(port).ok()))
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
