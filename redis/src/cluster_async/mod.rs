@@ -199,7 +199,7 @@ struct PendingRequest<I, C> {
 
 pin_project! {
     struct Request<F, I, C> {
-        max_retries: Option<u32>,
+        max_retries: u32,
         request: Option<PendingRequest<I, C>>,
         #[pin]
         future: RequestState<F>,
@@ -254,12 +254,9 @@ where
 
                 let request = this.request.as_mut().unwrap();
 
-                match *this.max_retries {
-                    Some(max_retries) if request.retry >= max_retries => {
-                        self.respond(Err(err));
-                        return Next::Done.into();
-                    }
-                    _ => (),
+                if request.retry >= *this.max_retries {
+                    self.respond(Err(err));
+                    return Next::Done.into();
                 }
                 request.retry = request.retry.saturating_add(1);
 
