@@ -346,6 +346,7 @@ pub struct Connection {
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
 
+    // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
 }
 
@@ -819,30 +820,28 @@ impl Connection {
         let mut received_punsub = false;
         if self.resp3 {
             while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
-                match kind.bytes().next() {
-                    Some(b'u') => received_unsub = true,
-                    Some(b'p') => received_punsub = true,
-                    _ => (),
-                }
-                if let Value::Int(num) = data[1] {
-                    if received_unsub && received_punsub && num == 0 {
-                        break;
+                if data.len() >= 2 {
+                    if let Value::Int(num) = data[1] {
+                        if is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            kind.as_bytes(),
+                            num as isize,
+                        ) {
+                            break;
+                        }
                     }
-                } else {
-                    break;
                 }
             }
         } else {
             loop {
                 let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
-
-                match res.0.first() {
-                    Some(&b'u') => received_unsub = true,
-                    Some(&b'p') => received_punsub = true,
-                    _ => (),
-                }
-
-                if received_unsub && received_punsub && res.2 == 0 {
+                if is_pub_sub_state_cleared(
+                    &mut received_unsub,
+                    &mut received_punsub,
+                    &res.0,
+                    res.2,
+                ) {
                     break;
                 }
             }
@@ -1238,6 +1237,21 @@ pub fn transaction<
             }
         }
     }
+}
+
+/// It's common logic for clearing subscriptions in both RESP3/RESP2 and async/sync
+pub fn is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    kind: &[u8],
+    num: isize,
+) -> bool {
+    match kind.first() {
+        Some(&b'u') => *received_unsub = true,
+        Some(&b'p') => *received_punsub = true,
+        _ => (),
+    };
+    *received_unsub && *received_punsub && num == 0
 }
 
 #[cfg(test)]

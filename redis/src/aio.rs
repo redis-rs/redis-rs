@@ -32,7 +32,9 @@ use futures_util::{
 use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
-use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
+use crate::connection::{
+    is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo,
+};
 
 use crate::commands::create_hello_command;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -247,6 +249,7 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     // exit the pubsub state before executing the new request.
     pubsub: bool,
 
+    // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
 }
 
@@ -359,30 +362,28 @@ where
         let mut received_punsub = false;
         if self.resp3 {
             while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
-                match kind.bytes().next() {
-                    Some(b'u') => received_unsub = true,
-                    Some(b'p') => received_punsub = true,
-                    _ => (),
-                }
-                if let Value::Int(num) = data[1] {
-                    if received_unsub && received_punsub && num == 0 {
-                        break;
+                if data.len() >= 2 {
+                    if let Value::Int(num) = data[1] {
+                        if is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            kind.as_bytes(),
+                            num as isize,
+                        ) {
+                            break;
+                        }
                     }
-                } else {
-                    break;
                 }
             }
         } else {
             loop {
                 let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
-
-                match res.0.first() {
-                    Some(&b'u') => received_unsub = true,
-                    Some(&b'p') => received_punsub = true,
-                    _ => (),
-                }
-
-                if received_unsub && received_punsub && res.2 == 0 {
+                if is_pub_sub_state_cleared(
+                    &mut received_unsub,
+                    &mut received_punsub,
+                    &res.0,
+                    res.2,
+                ) {
                     break;
                 }
             }
