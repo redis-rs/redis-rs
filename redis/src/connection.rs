@@ -637,16 +637,7 @@ fn setup_connection(
         let hello_cmd = create_hello_command(connection_info);
         let val: RedisResult<Value> = hello_cmd.query(&mut rv);
         if let Err(err) = val {
-            if let Some(detail) = err.detail() {
-                if detail.starts_with("unknown command `HELLO`") {
-                    return Err((
-                        ErrorKind::RESP3NotSupported,
-                        "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
-                    )
-                        .into());
-                }
-            }
-            return Err(err);
+            return Err(get_resp3_hello_command_error(err));
         }
     } else if connection_info.password.is_some() {
         connect_auth(&mut rv, connection_info)?;
@@ -1239,7 +1230,7 @@ pub fn transaction<
     }
 }
 
-/// It's common logic for clearing subscriptions in both RESP3/RESP2 and async/sync
+/// Common logic for clearing subscriptions in both RESP3/RESP2 and async/sync
 pub fn is_pub_sub_state_cleared(
     received_unsub: &mut bool,
     received_punsub: &mut bool,
@@ -1252,6 +1243,20 @@ pub fn is_pub_sub_state_cleared(
         _ => (),
     };
     *received_unsub && *received_punsub && num == 0
+}
+
+/// Common logic for checking real cause of hello3 command error
+pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
+    if let Some(detail) = err.detail() {
+        if detail.starts_with("unknown command `HELLO`") {
+            return (
+                ErrorKind::RESP3NotSupported,
+                "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+            )
+                .into();
+        }
+    }
+    err
 }
 
 #[cfg(test)]

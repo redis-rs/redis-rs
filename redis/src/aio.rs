@@ -33,7 +33,8 @@ use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo,
+    get_resp3_hello_command_error, is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo, Msg,
+    RedisConnectionInfo,
 };
 
 use crate::commands::create_hello_command;
@@ -424,16 +425,7 @@ where
         let hello_cmd = create_hello_command(connection_info);
         let val: RedisResult<Value> = hello_cmd.query_async(con).await;
         if let Err(err) = val {
-            if let Some(detail) = err.detail() {
-                if detail.starts_with("unknown command `HELLO`") {
-                    return Err((
-                        ErrorKind::RESP3NotSupported,
-                        "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
-                    )
-                        .into());
-                }
-            }
-            return Err(err);
+            return Err(get_resp3_hello_command_error(err));
         }
     } else if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
