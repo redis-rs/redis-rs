@@ -510,6 +510,11 @@ implement_commands! {
         cmd("SMEMBERS").arg(key)
     }
 
+    /// Determine if multiple given values are members of a set.
+    fn smismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("SMISMEMBER").arg(key).arg(members)
+    }
+
     /// Move a member from one set to another.
     fn smove<K: ToRedisArgs, M: ToRedisArgs>(srckey: K, dstkey: K, member: M) {
         cmd("SMOVE").arg(srckey).arg(dstkey).arg(member)
