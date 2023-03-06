@@ -382,7 +382,7 @@ where
     ) -> impl Future<Output = Result<(SlotMap, ConnectionMap<C>), (RedisError, ConnectionMap<C>)>>
     {
         let mut connections = mem::take(&mut self.connections);
-        let params = self.cluster_params.clone();
+        let cluster_params = self.cluster_params.clone();
 
         async move {
             let mut result = Ok(SlotMap::new());
@@ -395,7 +395,7 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, params.tls).and_then(|v| Self::build_slot_map(v)) {
+                match parse_slots(value, cluster_params.tls).and_then(|v| Self::build_slot_map(v)) {
                     Ok(s) => {
                         result = Ok(s);
                         break;
@@ -409,41 +409,32 @@ where
             };
 
             // Remove dead connections and connect to new nodes if necessary
-            let new_connections = HashMap::with_capacity(connections.len());
+            let mut new_connections = HashMap::with_capacity(slots.len());
 
-            let (_, connections) = stream::iter(slots.values())
-                .fold(
-                    (connections, new_connections),
-                    move |(mut connections, mut new_connections), addr| {
-                        let params = params.clone();
-                        async move {
-                            if !new_connections.contains_key(addr) {
-                                let new_connection = if let Some(conn) = connections.remove(addr) {
-                                    let mut conn = conn.await;
-                                    match check_connection(&mut conn).await {
-                                        Ok(_) => Some((addr.to_string(), conn)),
-                                        Err(_) => match connect_and_check(addr, params).await {
-                                            Ok(conn) => Some((addr.to_string(), conn)),
-                                            Err(_) => None,
-                                        },
-                                    }
-                                } else {
-                                    match connect_and_check(addr, params).await {
-                                        Ok(conn) => Some((addr.to_string(), conn)),
-                                        Err(_) => None,
-                                    }
-                                };
-                                if let Some((addr, new_connection)) = new_connection {
-                                    new_connections
-                                        .insert(addr, async { new_connection }.boxed().shared());
-                                }
-                            }
-                            (connections, new_connections)
+            for addr in slots.values() {
+                if !new_connections.contains_key(addr) {
+                    let new_connection = if let Some(conn) = connections.remove(addr) {
+                        let mut conn = conn.await;
+                        match check_connection(&mut conn).await {
+                            Ok(_) => Some((addr.to_string(), conn)),
+                            Err(_) => match connect_and_check(addr, cluster_params.clone()).await {
+                                Ok(conn) => Some((addr.to_string(), conn)),
+                                Err(_) => None,
+                            },
                         }
-                    },
-                )
-                .await;
-            Ok((slots, connections))
+                    } else {
+                        match connect_and_check(addr, cluster_params.clone()).await {
+                            Ok(conn) => Some((addr.to_string(), conn)),
+                            Err(_) => None,
+                        }
+                    };
+                    if let Some((addr, new_connection)) = new_connection {
+                        new_connections.insert(addr, async { new_connection }.boxed().shared());
+                    }
+                }
+            }
+
+            Ok((slots, new_connections))
         }
     }
 
