@@ -1,6 +1,6 @@
 //! TODO
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt, io,
     iter::Iterator,
     marker::Unpin,
@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd},
+    cluster::{get_connection_info, parse_slots, slot_cmd, Route, SlotMap},
     cluster_client::ClusterParams,
     cluster_routing::{RoutingInfo, Slot},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
@@ -29,7 +29,7 @@ use futures::{
 };
 use log::trace;
 use pin_project_lite::pin_project;
-use rand::seq::IteratorRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use rand::thread_rng;
 use tokio::sync::{mpsc, oneshot};
 
@@ -67,7 +67,6 @@ where
     }
 }
 
-type SlotMap = BTreeMap<u16, String>;
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
@@ -111,29 +110,28 @@ impl<C> CmdArg<C> {
         }
     }
 
-    // TODO -- return offset for master/replica to support replica reads:
-    fn slot(&self) -> Option<u16> {
-        fn slot_for_command(cmd: &Cmd) -> Option<(u16, u16)> {
+    fn route(&self) -> Option<Route> {
+        fn route_for_command(cmd: &Cmd) -> Option<Route> {
             match RoutingInfo::for_routable(cmd) {
                 Some(RoutingInfo::Random) => None,
-                Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0)),
-                Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1)),
+                Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0).into()),
+                Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1).into()),
                 Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
                 _ => None,
             }
         }
 
         match self {
-            Self::Cmd { ref cmd, .. } => slot_for_command(cmd).map(|x| x.0),
+            Self::Cmd { ref cmd, .. } => route_for_command(cmd),
             Self::Pipeline { ref pipeline, .. } => {
                 let mut iter = pipeline.cmd_iter();
-                let slot = iter.next().map(slot_for_command)?;
+                let slot = iter.next().map(route_for_command)?;
                 for cmd in iter {
-                    if slot != slot_for_command(cmd) {
+                    if slot != route_for_command(cmd) {
                         return None;
                     }
                 }
-                slot.map(|x| x.0)
+                slot
             }
         }
     }
@@ -172,7 +170,7 @@ impl<C> fmt::Debug for ConnectionState<C> {
 
 struct RequestInfo<C> {
     cmd: CmdArg<C>,
-    slot: Option<u16>,
+    route: Option<Route>,
     excludes: HashSet<String>,
 }
 
@@ -395,7 +393,9 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, cluster_params.tls).and_then(|v| Self::build_slot_map(v)) {
+                match parse_slots(value, cluster_params.tls)
+                    .and_then(|v| Self::build_slot_map(v, cluster_params.read_from_replicas))
+                {
                     Ok(s) => {
                         result = Ok(s);
                         break;
@@ -408,10 +408,14 @@ where
                 Err(err) => return Err((err, connections)),
             };
 
+            let mut nodes = slots.values().flatten().collect::<Vec<_>>();
+            nodes.sort_unstable();
+            nodes.dedup();
+
             // Remove dead connections and connect to new nodes if necessary
             let mut new_connections = HashMap::with_capacity(slots.len());
 
-            for addr in slots.values() {
+            for addr in nodes {
                 if !new_connections.contains_key(addr) {
                     let new_connection = if let Some(conn) = connections.remove(addr) {
                         let mut conn = conn.await;
@@ -438,7 +442,7 @@ where
         }
     }
 
-    fn build_slot_map(mut slots_data: Vec<Slot>) -> RedisResult<SlotMap> {
+    fn build_slot_map(mut slots_data: Vec<Slot>, read_from_replicas: bool) -> RedisResult<SlotMap> {
         slots_data.sort_by_key(|slot_data| slot_data.start());
         let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
             if prev_end != slot_data.start() {
@@ -465,14 +469,27 @@ where
         }
         let slot_map = slots_data
             .iter()
-            .map(|slot_data| (slot_data.end(), slot_data.master().to_string()))
+            .map(|slot_data| {
+                let replica = if !read_from_replicas || slot_data.replicas().is_empty() {
+                    slot_data.master().to_string()
+                } else {
+                    slot_data
+                        .replicas()
+                        .choose(&mut thread_rng())
+                        .unwrap()
+                        .to_string()
+                };
+
+                (slot_data.end(), [slot_data.master().to_string(), replica])
+            })
             .collect();
         trace!("{:?}", slot_map);
         Ok(slot_map)
     }
 
-    fn get_connection(&mut self, slot: u16) -> (String, ConnectionFuture<C>) {
-        if let Some((_, addr)) = self.slots.range(&slot..).next() {
+    fn get_connection(&mut self, route: &Route) -> (String, ConnectionFuture<C>) {
+        if let Some((_, node_addrs)) = self.slots.range(&route.slot()..).next() {
+            let addr = &node_addrs[route.node_id()];
             if let Some(conn) = self.connections.get(addr) {
                 return (addr.clone(), conn.clone());
             }
@@ -507,10 +524,10 @@ where
     ) -> impl Future<Output = (String, RedisResult<Response>)> {
         // TODO remove clone by changing the ConnectionLike trait
         let cmd = info.cmd.clone();
-        let (addr, conn) = if !info.excludes.is_empty() || info.slot.is_none() {
+        let (addr, conn) = if !info.excludes.is_empty() || info.route.is_none() {
             get_random_connection(&self.connections, Some(&info.excludes))
         } else {
-            self.get_connection(info.slot.unwrap())
+            self.get_connection(info.route.as_ref().unwrap())
         };
         async move {
             let conn = conn.await;
@@ -665,11 +682,11 @@ where
         let Message { cmd, sender } = msg;
 
         let excludes = HashSet::new();
-        let slot = cmd.slot();
+        let slot = cmd.route();
 
         let info = RequestInfo {
             cmd,
-            slot,
+            route: slot,
             excludes,
         };
 
@@ -856,9 +873,14 @@ async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
+    let read_from_replicas = params.read_from_replicas;
     let info = get_connection_info(node, params)?;
     let mut conn = C::connect(info).await?;
     check_connection(&mut conn).await?;
+    if read_from_replicas {
+        // If READONLY is sent to primary nodes, it will have no effect
+        crate::cmd("READONLY").query_async(&mut conn).await?;
+    }
     Ok(conn)
 }
 

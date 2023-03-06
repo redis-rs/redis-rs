@@ -323,14 +323,14 @@ impl ClusterConnection {
     fn get_connection<'a>(
         &self,
         connections: &'a mut HashMap<String, Connection>,
-        route: (u16, usize),
+        route: &Route,
     ) -> RedisResult<(String, &'a mut Connection)> {
-        let (slot, idx) = route;
         let slots = self.slots.borrow();
-        if let Some((_, addr)) = slots.range(&slot..).next() {
+        if let Some((_, node_addrs)) = slots.range(route.slot()..).next() {
+            let addr = &node_addrs[route.node_id()];
             Ok((
-                addr[idx].clone(),
-                self.get_connection_by_addr(connections, &addr[idx])?,
+                addr.clone(),
+                self.get_connection_by_addr(connections, addr)?,
             ))
         } else {
             // try a random node next.  This is safe if slots are involved
@@ -420,8 +420,8 @@ impl ClusterConnection {
     {
         let route = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0)),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1)),
+            Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0).into()),
+            Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1).into()),
             Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
                 return self.execute_on_all_nodes(func);
             }
@@ -449,7 +449,7 @@ impl ClusterConnection {
                 } else if !excludes.is_empty() || route.is_none() {
                     get_random_connection(&mut connections, Some(&excludes))
                 } else {
-                    self.get_connection(&mut connections, route.unwrap())?
+                    self.get_connection(&mut connections, route.as_ref().unwrap())?
                 };
                 (addr, func(conn))
             };
@@ -647,7 +647,26 @@ impl MergeResults for Vec<Value> {
     }
 }
 
-type SlotMap = BTreeMap<u16, [String; 2]>;
+pub(crate) type SlotMap = BTreeMap<u16, [String; 2]>;
+
+#[derive(Eq, PartialEq)]
+// FIXME -- something better than usize:
+pub(crate) struct Route(u16, usize);
+
+impl Route {
+    pub fn slot(&self) -> u16 {
+        self.0
+    }
+    pub fn node_id(&self) -> usize {
+        self.1
+    }
+}
+
+impl From<(u16, usize)> for Route {
+    fn from(val: (u16, usize)) -> Self {
+        Route(val.0, val.1)
+    }
+}
 
 #[derive(Debug)]
 struct NodeCmd {
