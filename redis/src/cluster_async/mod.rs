@@ -13,9 +13,9 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd, Route, SlotMap},
+    cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
-    cluster_routing::{RoutingInfo, Slot},
+    cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotAddrs, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -29,7 +29,7 @@ use futures::{
 };
 use log::trace;
 use pin_project_lite::pin_project;
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use tokio::sync::{mpsc, oneshot};
 
@@ -114,8 +114,8 @@ impl<C> CmdArg<C> {
         fn route_for_command(cmd: &Cmd) -> Option<Route> {
             match RoutingInfo::for_routable(cmd) {
                 Some(RoutingInfo::Random) => None,
-                Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0).into()),
-                Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1).into()),
+                Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
+                Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
                 Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
                 _ => None,
             }
@@ -469,19 +469,7 @@ where
         }
         let slot_map = slots_data
             .iter()
-            .map(|slot_data| {
-                let replica = if !read_from_replicas || slot_data.replicas().is_empty() {
-                    slot_data.master().to_string()
-                } else {
-                    slot_data
-                        .replicas()
-                        .choose(&mut thread_rng())
-                        .unwrap()
-                        .to_string()
-                };
-
-                (slot_data.end(), [slot_data.master().to_string(), replica])
-            })
+            .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
             .collect();
         trace!("{:?}", slot_map);
         Ok(slot_map)
@@ -489,9 +477,9 @@ where
 
     fn get_connection(&mut self, route: &Route) -> (String, ConnectionFuture<C>) {
         if let Some((_, node_addrs)) = self.slots.range(&route.slot()..).next() {
-            let addr = &node_addrs[route.node_id()];
-            if let Some(conn) = self.connections.get(addr) {
-                return (addr.clone(), conn.clone());
+            let addr = node_addrs.slot_addr(route.slot_addr()).to_string();
+            if let Some(conn) = self.connections.get(&addr) {
+                return (addr, conn.clone());
             }
 
             // Create new connection.
@@ -511,7 +499,7 @@ where
             .shared();
             self.connections
                 .insert(addr.clone(), connection_future.clone());
-            (addr.clone(), connection_future)
+            (addr, connection_future)
         } else {
             // Return a random connection
             get_random_connection(&self.connections, None)

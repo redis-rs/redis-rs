@@ -39,18 +39,13 @@
 //!     .query(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::iter::Iterator;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use rand::{
-    seq::{IteratorRandom, SliceRandom},
-    thread_rng, Rng,
-};
+use rand::{seq::IteratorRandom, thread_rng, Rng};
 
-use crate::cluster_client::ClusterParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
@@ -59,6 +54,10 @@ use crate::connection::{
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
+use crate::{
+    cluster_client::ClusterParams,
+    cluster_routing::{Route, SlotAddr, SlotAddrs, SlotMap},
+};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -200,19 +199,7 @@ impl ClusterConnection {
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&self) -> RedisResult<()> {
         let mut slots = self.slots.borrow_mut();
-        *slots = self.create_new_slots(|slot_data| {
-            let replica = if !self.read_from_replicas || slot_data.replicas().is_empty() {
-                slot_data.master().to_string()
-            } else {
-                slot_data
-                    .replicas()
-                    .choose(&mut thread_rng())
-                    .unwrap()
-                    .to_string()
-            };
-
-            [slot_data.master().to_string(), replica]
-        })?;
+        *slots = self.create_new_slots()?;
 
         let mut nodes = slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
@@ -245,10 +232,7 @@ impl ClusterConnection {
         Ok(())
     }
 
-    fn create_new_slots<F>(&self, mut get_addr: F) -> RedisResult<SlotMap>
-    where
-        F: FnMut(&Slot) -> [String; 2],
-    {
+    fn create_new_slots(&self) -> RedisResult<SlotMap> {
         let mut connections = self.connections.borrow_mut();
         let mut new_slots = None;
         let mut rng = thread_rng();
@@ -286,7 +270,12 @@ impl ClusterConnection {
                 new_slots = Some(
                     slots_data
                         .iter()
-                        .map(|slot_data| (slot_data.end(), get_addr(slot_data)))
+                        .map(|slot| {
+                            (
+                                slot.end(),
+                                SlotAddrs::from_slot(slot, self.read_from_replicas),
+                            )
+                        })
                         .collect(),
                 );
                 break;
@@ -326,10 +315,10 @@ impl ClusterConnection {
         route: &Route,
     ) -> RedisResult<(String, &'a mut Connection)> {
         let slots = self.slots.borrow();
-        if let Some((_, node_addrs)) = slots.range(route.slot()..).next() {
-            let addr = &node_addrs[route.node_id()];
+        if let Some((_, slot_addrs)) = slots.range(route.slot()..).next() {
+            let addr = &slot_addrs.slot_addr(route.slot_addr());
             Ok((
-                addr.clone(),
+                addr.to_string(),
                 self.get_connection_by_addr(connections, addr)?,
             ))
         } else {
@@ -357,21 +346,24 @@ impl ClusterConnection {
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
         let slots = self.slots.borrow();
 
-        let addr_for_slot = |slot: u16, idx: usize| -> RedisResult<String> {
-            let (_, addr) = slots
+        let addr_for_slot = |slot: u16, slot_addr: SlotAddr| -> RedisResult<String> {
+            let (_, slot_addrs) = slots
                 .range(&slot..)
                 .next()
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(addr[idx].clone())
+            Ok(slot_addrs.slot_addr(&slot_addr).to_string())
         };
 
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => {
                 let mut rng = thread_rng();
-                Ok(addr_for_slot(rng.gen_range(0..SLOT_SIZE), 0)?)
+                Ok(addr_for_slot(
+                    rng.gen_range(0..SLOT_SIZE),
+                    SlotAddr::Master,
+                )?)
             }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, 0)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, 1)?),
+            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Master)?),
+            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Replica)?),
             _ => fail!(UNROUTABLE_ERROR),
         }
     }
@@ -420,8 +412,8 @@ impl ClusterConnection {
     {
         let route = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::MasterSlot(slot)) => Some((slot, 0).into()),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Some((slot, 1).into()),
+            Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
+            Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
             Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
                 return self.execute_on_all_nodes(func);
             }
@@ -644,27 +636,6 @@ impl MergeResults for Value {
 impl MergeResults for Vec<Value> {
     fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
         unreachable!("attempted to merge a pipeline. This should not happen");
-    }
-}
-
-pub(crate) type SlotMap = BTreeMap<u16, [String; 2]>;
-
-#[derive(Eq, PartialEq)]
-// FIXME -- something better than usize:
-pub(crate) struct Route(u16, usize);
-
-impl Route {
-    pub fn slot(&self) -> u16 {
-        self.0
-    }
-    pub fn node_id(&self) -> usize {
-        self.1
-    }
-}
-
-impl From<(u16, usize)> for Route {
-    fn from(val: (u16, usize)) -> Self {
-        Route(val.0, val.1)
     }
 }
 
