@@ -3,7 +3,7 @@ use std::{
     sync::{atomic, Arc, RwLock},
 };
 
-use redis::cluster::ClusterClient;
+use redis::cluster::{ClusterClient, ClusterClientBuilder};
 
 use {
     futures::future,
@@ -69,6 +69,31 @@ fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
                 Value::Int(6379),
             ]),
         ])])))
+    } else if contains_slice(cmd, b"READONLY") {
+        Err(Ok(Value::Status("OK".into())))
+    } else {
+        Ok(())
+    }
+}
+
+fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
+    if contains_slice(cmd, b"PING") {
+        Err(Ok(Value::Status("OK".into())))
+    } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+        Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
+            Value::Int(0),
+            Value::Int(16383),
+            Value::Bulk(vec![
+                Value::Data(name.as_bytes().to_vec()),
+                Value::Int(6379),
+            ]),
+            Value::Bulk(vec![
+                Value::Data("replica".as_bytes().to_vec()),
+                Value::Int(6379),
+            ]),
+        ])])))
+    } else if contains_slice(cmd, b"READONLY") {
+        Err(Ok(Value::Status("OK".into())))
     } else {
         Ok(())
     }
@@ -103,16 +128,30 @@ pub struct MockEnv {
     handler: RemoveHandler,
 }
 
-struct RemoveHandler(String);
+struct RemoveHandler(Vec<String>);
 
 impl Drop for RemoveHandler {
     fn drop(&mut self) {
-        HANDLERS.write().unwrap().remove(&self.0);
+        for id in &self.0 {
+            HANDLERS.write().unwrap().remove(id);
+        }
     }
 }
 
 impl MockEnv {
     fn new(
+        id: &str,
+        handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
+    ) -> Self {
+        Self::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{id}")]),
+            id,
+            handler,
+        )
+    }
+
+    fn with_client_builder(
+        client_builder: ClusterClientBuilder,
         id: &str,
         handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
     ) -> Self {
@@ -128,22 +167,51 @@ impl MockEnv {
             Arc::new(move |cmd, port| handler(&cmd.get_packed_command(), port)),
         );
 
-        let client = ClusterClient::builder(vec![&*format!("redis://{id}")])
-            .retries(2)
-            .build()
-            .unwrap();
+        let client = client_builder.build().unwrap();
         let connection = runtime.block_on(client.get_generic_connection()).unwrap();
         MockEnv {
             runtime,
             client,
             connection,
-            handler: RemoveHandler(id),
+            handler: RemoveHandler(vec![id]),
+        }
+    }
+
+    fn with_replica(
+        client_builder: ClusterClientBuilder,
+        node_id: &str,
+        node_handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
+        replica_id: &str,
+        replica_handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
+    ) -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        HANDLERS.write().unwrap().insert(
+            node_id.to_string(),
+            Arc::new(move |cmd, port| node_handler(&cmd.get_packed_command(), port)),
+        );
+        HANDLERS.write().unwrap().insert(
+            replica_id.to_string(),
+            Arc::new(move |cmd, port| replica_handler(&cmd.get_packed_command(), port)),
+        );
+
+        let client = client_builder.build().unwrap();
+        let connection = runtime.block_on(client.get_generic_connection()).unwrap();
+        MockEnv {
+            runtime,
+            client,
+            connection,
+            handler: RemoveHandler(vec![node_id.to_string(), replica_id.to_string()]),
         }
     }
 }
 
 #[test]
-fn test_async_cluster_tryagain_simple() {
+fn test_async_cluster_retries() {
     let _ = env_logger::try_init();
     let name = "tryagain";
 
@@ -153,14 +221,18 @@ fn test_async_cluster_tryagain_simple() {
         mut connection,
         handler: _handler,
         ..
-    } = MockEnv::new(name, move |cmd: &[u8], _| {
-        respond_startup(name, cmd)?;
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
+        name,
+        move |cmd: &[u8], _| {
+            respond_startup(name, cmd)?;
 
-        match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-            0..=1 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-            _ => Err(Ok(Value::Data(b"123".to_vec()))),
-        }
-    });
+            match requests.fetch_add(1, atomic::Ordering::SeqCst) {
+                0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
+                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+            }
+        },
+    );
 
     let value = runtime.block_on(
         cmd("GET")
@@ -183,14 +255,18 @@ fn test_async_cluster_tryagain_exhaust_retries() {
         client,
         handler: _handler,
         ..
-    } = MockEnv::new(name, {
-        let requests = requests.clone();
-        move |cmd: &[u8], _| {
-            respond_startup(name, cmd)?;
-            requests.fetch_add(1, atomic::Ordering::SeqCst);
-            Err(parse_redis_value(b"-TRYAGAIN mock\r\n"))
-        }
-    });
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+        name,
+        {
+            let requests = requests.clone();
+            move |cmd: &[u8], _| {
+                respond_startup(name, cmd)?;
+                requests.fetch_add(1, atomic::Ordering::SeqCst);
+                Err(parse_redis_value(b"-TRYAGAIN mock\r\n"))
+            }
+        },
+    );
 
     let mut connection = runtime
         .block_on(client.get_generic_connection::<MockConnection>())
@@ -272,4 +348,72 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
     );
 
     assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_replica_read() {
+    let _ = env_logger::try_init();
+    let node_name = "node";
+    let replica_name = "replica";
+
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_replica(
+        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+            .retries(0)
+            .read_from_replicas(),
+        node_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_REPLICA mock\r\n"))
+        },
+        replica_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(Ok(Value::Data(b"123".to_vec())))
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+
+    // requests should route to primary
+    let MockEnv {
+        runtime,
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_replica(
+        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+            .retries(0)
+            .read_from_replicas(),
+        node_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(Ok(Value::Status("OK".into())))
+        },
+        replica_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_PRIMARY mock\r\n"))
+        },
+    );
+
+    let resp = runtime.block_on(
+        cmd("SET")
+            .arg("test")
+            .arg("123")
+            .query_async::<_, Option<Value>>(&mut connection),
+    );
+
+    assert_eq!(resp, Ok(Some(Value::Status("OK".to_owned()))));
 }
