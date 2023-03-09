@@ -1229,17 +1229,39 @@ impl FromRedisValue for String {
 
 impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
-        match *v {
+        match v {
             // All binary data except u8 will try to parse into a single element vector.
-            Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+            // u8 has its own implementation of from_byte_vec.
+            Value::Data(bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(x) => Ok(x),
                 None => invalid_type_error!(
                     v,
                     format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
                 ),
             },
-            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
+            Value::Bulk(items) => FromRedisValue::from_redis_values(items),
             Value::Nil => Ok(vec![]),
+            _ => invalid_type_error!(v, "Response type not vector compatible."),
+        }
+    }
+}
+
+impl<T: FromRedisValue> FromRedisValue for Box<[T]> {
+    fn from_redis_value(v: &Value) -> RedisResult<Box<[T]>> {
+        match v {
+            // All binary data except u8 will try to parse into a single element vector.
+            // u8 has its own implementation of from_byte_vec.
+            Value::Data(bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                Some(x) => Ok(x.into_boxed_slice()),
+                None => invalid_type_error!(
+                    v,
+                    format!("Conversion to Box<{}> failed.", std::any::type_name::<T>())
+                ),
+            },
+            Value::Bulk(items) => {
+                FromRedisValue::from_redis_values(items).map(Vec::into_boxed_slice)
+            }
+            Value::Nil => Ok(Box::new([])),
             _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
     }
