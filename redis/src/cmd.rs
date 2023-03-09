@@ -74,37 +74,41 @@ use crate::aio::ConnectionLike as AsyncConnection;
 /// The inner future of AsyncIter
 #[cfg(feature = "aio")]
 struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
-    batch: std::vec::IntoIter<T>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
+    _pd: std::marker::PhantomData<T>,
 }
 
 /// Represents the state of AsyncIter
 #[cfg(feature = "aio")]
 enum IterOrFuture<'a, T: FromRedisValue + 'a> {
     Iter(AsyncIterInner<'a, T>),
-    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<T>)>),
+    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<Vec<T>>)>),
     Empty,
 }
 
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+    batch: std::vec::IntoIter<T>,
+    inner: AsyncIterBatched<'a, T>,
+}
+
+/// Represents a redis iterator that can be used with async connections.
+#[cfg(feature = "aio")]
+pub struct AsyncIterBatched<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
     #[inline]
-    pub async fn next_item(&mut self) -> Option<T> {
+    pub async fn next_item(&mut self) -> Option<Vec<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.next() {
-                return Some(v);
-            };
             if let Some(cursor) = self.cmd.cursor {
                 if cursor == 0 {
                     return None;
@@ -120,7 +124,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
             let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
 
             self.cmd.cursor = Some(cur);
-            self.batch = batch.into_iter();
+            return Some(batch);
         }
     }
 }
@@ -153,6 +157,55 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
         let mut this = self.get_mut();
+        if let Some(value) = this.batch.next() {
+            return Poll::Ready(Some(value));
+        }
+
+        match this.inner.poll_next_unpin(cx) {
+            Poll::Ready(Some(batch)) => {
+                this.batch = batch.into_iter();
+                Poll::Ready(this.batch.next())
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIterBatched<'a, T> {
+    /// ```rust,no_run
+    /// # use redis::AsyncCommands;
+    /// # async fn scan_set() -> redis::RedisResult<()> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_async_connection().await?;
+    /// con.sadd("my_set", 42i32).await?;
+    /// con.sadd("my_set", 43i32).await?;
+    /// let (mut iter, mut batch) = redis::cmd("SSCAN")
+    ///     .arg("my_set")
+    ///     .cursor_arg(0)
+    ///     .clone()
+    ///     .iter_async_batched(&mut con)
+    ///     .await
+    ///     .unwrap();
+    /// assert!(batch.contains(&42i32));
+    /// assert!(batch.contains(&43i32));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub async fn next_item(&mut self) -> Option<Vec<T>> {
+        StreamExt::next(self).await
+    }
+}
+
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIterBatched<'a, T> {
+    type Item = Vec<T>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Vec<T>>> {
+        let mut this = self.get_mut();
+
         let inner = std::mem::replace(&mut this.inner, IterOrFuture::Empty);
         match inner {
             IterOrFuture::Iter(mut iter) => {
@@ -475,9 +528,25 @@ impl Cmd {
     #[cfg(feature = "aio")]
     #[inline]
     pub async fn iter_async<'a, T: FromRedisValue + 'a>(
-        mut self,
+        self,
         con: &'a mut (dyn AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
+        let (inner, batch) = self.iter_async_batched(con).await?;
+
+        Ok(AsyncIter {
+            inner,
+            batch: batch.into_iter(),
+        })
+    }
+
+    /// Similar to `iter_async()`, but returns Vec<T> instead of individual T.
+    /// See the `iter_async()` docs for additional details.
+    #[cfg(feature = "aio")]
+    #[inline]
+    pub async fn iter_async_batched<'a, T: FromRedisValue + 'a>(
+        mut self,
+        con: &'a mut (dyn AsyncConnection + Send),
+    ) -> RedisResult<(AsyncIterBatched<'a, T>, Vec<T>)> {
         let rv = con.req_packed_command(&self).await?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
@@ -491,13 +560,16 @@ impl Cmd {
             self.cursor = Some(cursor);
         }
 
-        Ok(AsyncIter {
-            inner: IterOrFuture::Iter(AsyncIterInner {
-                batch: batch.into_iter(),
-                con,
-                cmd: self,
-            }),
-        })
+        Ok((
+            AsyncIterBatched {
+                inner: IterOrFuture::Iter(AsyncIterInner {
+                    con,
+                    cmd: self,
+                    _pd: std::marker::PhantomData,
+                }),
+            },
+            batch,
+        ))
     }
 
     /// This is a shortcut to `query()` that does not return a value and
