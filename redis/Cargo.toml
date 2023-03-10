@@ -124,10 +124,6 @@ required-features = ["json", "serde/derive"]
 name = "test_cluster_async"
 required-features = ["cluster-async"]
 
-[[test]]
-name = "mock_cluster_async"
-required-features = ["cluster-async"]
-
 [[bench]]
 name = "bench_basic"
 harness = false

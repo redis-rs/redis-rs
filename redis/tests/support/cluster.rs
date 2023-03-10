@@ -251,7 +251,10 @@ impl TestClusterContext {
     >(
         &self,
     ) -> redis::cluster_async::Connection<C> {
-        self.client.get_generic_connection::<C>().await.unwrap()
+        self.client
+            .get_async_generic_connection::<C>()
+            .await
+            .unwrap()
     }
 
     pub fn wait_for_cluster_up(&self) {

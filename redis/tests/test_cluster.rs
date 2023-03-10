@@ -1,7 +1,12 @@
 #![cfg(feature = "cluster")]
 mod support;
+use std::sync::atomic;
+
 use crate::support::*;
-use redis::cluster::cluster_pipe;
+use redis::{
+    cluster::{cluster_pipe, ClusterClient},
+    cmd, parse_redis_value, Value,
+};
 
 #[test]
 fn test_cluster_basics() {
@@ -257,4 +262,31 @@ fn test_cluster_pipeline_ordering_with_improper_command() {
 
     let got = pipe.query::<Vec<String>>(&mut con).unwrap();
     assert_eq!(got, expected);
+}
+
+#[test]
+fn test_cluster_retries() {
+    let name = "tryagain";
+
+    let requests = atomic::AtomicUsize::new(0);
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
+        name,
+        move |cmd: &[u8], _| {
+            respond_startup(name, cmd)?;
+
+            match requests.fetch_add(1, atomic::Ordering::SeqCst) {
+                0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
+                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+            }
+        },
+    );
+
+    let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+
+    assert_eq!(value, Ok(Some(123)));
 }

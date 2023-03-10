@@ -3,6 +3,7 @@ mod support;
 use std::{
     cell::Cell,
     sync::{
+        atomic,
         atomic::{AtomicBool, Ordering},
         Arc,
     },
@@ -14,9 +15,10 @@ use once_cell::sync::Lazy;
 use proptest::proptest;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
+    cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
-    Script, Value,
+    cmd, parse_redis_value, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, RedisError,
+    RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -312,4 +314,212 @@ fn test_async_cluster_async_std_basic_cmd() {
             .await
     })
     .unwrap();
+}
+
+#[test]
+fn test_async_cluster_retries() {
+    let _ = env_logger::try_init();
+    let name = "tryagain";
+
+    let requests = atomic::AtomicUsize::new(0);
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
+        name,
+        move |cmd: &[u8], _| {
+            respond_startup(name, cmd)?;
+
+            match requests.fetch_add(1, atomic::Ordering::SeqCst) {
+                0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
+                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_tryagain_exhaust_retries() {
+    let _ = env_logger::try_init();
+    let name = "tryagain_exhaust_retries";
+
+    let requests = Arc::new(atomic::AtomicUsize::new(0));
+
+    let MockEnv {
+        runtime,
+        client,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+        name,
+        {
+            let requests = requests.clone();
+            move |cmd: &[u8], _| {
+                respond_startup(name, cmd)?;
+                requests.fetch_add(1, atomic::Ordering::SeqCst);
+                Err(parse_redis_value(b"-TRYAGAIN mock\r\n"))
+            }
+        },
+    );
+
+    let mut connection = runtime
+        .block_on(client.get_async_generic_connection::<MockConnection>())
+        .unwrap();
+
+    let result = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(
+        result.map_err(|err| err.to_string()),
+        Err("An error was signalled by the server: mock".to_string())
+    );
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
+}
+
+#[test]
+fn test_async_cluster_rebuild_with_extra_nodes() {
+    let _ = env_logger::try_init();
+    let name = "rebuild_with_extra_nodes";
+
+    let requests = atomic::AtomicUsize::new(0);
+    let started = atomic::AtomicBool::new(false);
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        if !started.load(atomic::Ordering::SeqCst) {
+            respond_startup(name, cmd)?;
+        }
+        started.store(true, atomic::Ordering::SeqCst);
+
+        if contains_slice(cmd, b"PING") {
+            return Err(Ok(Value::Status("OK".into())));
+        }
+
+        let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+        eprintln!("{} => {}", i, String::from_utf8_lossy(cmd));
+
+        match i {
+            // Respond that the key exists elswehere (the slot, 123, is unused in the
+            // implementation)
+            0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
+            // Respond with the new masters
+            1 => Err(Ok(Value::Bulk(vec![
+                Value::Bulk(vec![
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Bulk(vec![
+                        Value::Data(name.as_bytes().to_vec()),
+                        Value::Int(6379),
+                    ]),
+                ]),
+                Value::Bulk(vec![
+                    Value::Int(2),
+                    Value::Int(16383),
+                    Value::Bulk(vec![
+                        Value::Data(name.as_bytes().to_vec()),
+                        Value::Int(6380),
+                    ]),
+                ]),
+            ]))),
+            _ => {
+                // Check that the correct node receives the request after rebuilding
+                assert_eq!(port, 6380);
+                Err(Ok(Value::Data(b"123".to_vec())))
+            }
+        }
+    });
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_replica_read() {
+    let _ = env_logger::try_init();
+    let node_name = "node";
+    let replica_name = "replica";
+
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_replica(
+        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+            .retries(0)
+            .read_from_replicas(),
+        node_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_REPLICA mock\r\n"))
+        },
+        replica_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(Ok(Value::Data(b"123".to_vec())))
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+
+    // requests should route to primary
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_replica(
+        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+            .retries(0)
+            .read_from_replicas(),
+        node_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(Ok(Value::Status("OK".into())))
+        },
+        replica_name,
+        move |cmd: &[u8], _| {
+            respond_startup_with_replica(node_name, cmd)?;
+            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_PRIMARY mock\r\n"))
+        },
+    );
+
+    let resp = runtime.block_on(
+        cmd("SET")
+            .arg("test")
+            .arg("123")
+            .query_async::<_, Option<Value>>(&mut connection),
+    );
+
+    assert_eq!(resp, Ok(Some(Value::Status("OK".to_owned()))));
 }
