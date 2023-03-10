@@ -185,13 +185,16 @@ where
                         combine::count_min_max(length, length, value(Some(count + 1))).map(
                             move |result: ResultExtend<Vec<Value>, _>| {
                                 let mut it: IntoIter<Value> = result.0?.into_iter();
-                                let mut _attributes = vec![];
+                                let mut attributes = vec![];
                                 for _ in 0..kv_length {
                                     if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                        _attributes.push((k, v))
+                                        attributes.push((k, v))
                                     }
                                 }
-                                Ok(it.next().unwrap())
+                                Ok(Value::Attribute {
+                                    data: Box::new(it.next().unwrap()),
+                                    attributes,
+                                })
                             },
                         )
                     })
@@ -570,18 +573,6 @@ mod tests {
         match parse_redis_value(bytes) {
             Ok(_) => panic!("Expected Err"),
             Err(e) => assert!(matches!(e.kind(), ErrorKind::ResponseError)),
-        }
-    }
-
-    #[test]
-    fn test_attributes() {
-        let bytes: &[u8] = b"*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n";
-        match parse_redis_value(bytes) {
-            Ok(val) => assert_eq!(
-                val,
-                Value::Bulk(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
-            ),
-            Err(e) => panic!("{}", e),
         }
     }
 }

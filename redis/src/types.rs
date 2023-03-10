@@ -1204,9 +1204,29 @@ pub trait FromRedisValue: Sized {
     }
 }
 
+fn get_inner_value(v: &Value) -> &Value {
+    if let Value::Attribute {
+        data,
+        attributes: _,
+    } = v
+    {
+        data.as_ref()
+    } else {
+        v
+    }
+}
+
 macro_rules! from_redis_value_for_num_internal {
     ($t:ty, $v:expr) => {{
-        let v = $v;
+        let v = if let Value::Attribute {
+            data,
+            attributes: _,
+        } = $v
+        {
+            data
+        } else {
+            $v
+        };
         match *v {
             Value::Int(val) => Ok(val as $t),
             Value::Status(ref s) => match s.parse::<$t>() {
@@ -1260,6 +1280,7 @@ from_redis_value_for_num!(usize);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
@@ -1290,6 +1311,7 @@ impl FromRedisValue for bool {
 
 impl FromRedisValue for CString {
     fn from_redis_value(v: &Value) -> RedisResult<CString> {
+        let v = get_inner_value(v);
         match *v {
             Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
             Value::Okay => Ok(CString::new("OK")?),
@@ -1301,6 +1323,7 @@ impl FromRedisValue for CString {
 
 impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
+        let v = get_inner_value(v);
         match *v {
             Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
@@ -1317,6 +1340,7 @@ impl FromRedisValue for String {
 
 impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
+        let v = get_inner_value(v);
         match *v {
             // All binary data except u8 will try to parse into a single element vector.
             Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
@@ -1352,6 +1376,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for std::collections::HashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(Default::default()),
             _ => v
@@ -1370,6 +1395,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for ahash::AHashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V, S>> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
             _ => v
@@ -1388,6 +1414,7 @@ where
     K: Ord,
 {
     fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
+        let v = get_inner_value(v);
         v.as_map_iter()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
             .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
@@ -1399,6 +1426,7 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
     for std::collections::HashSet<T, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashSet<T, S>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
@@ -1411,6 +1439,7 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
     for ahash::AHashSet<T, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T, S>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
@@ -1423,6 +1452,7 @@ where
     T: Ord,
 {
     fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
@@ -1451,6 +1481,7 @@ macro_rules! from_redis_value_for_tuple {
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
+                let v = get_inner_value(v);
                 match *v {
                     Value::Bulk(ref items) => {
                         // hacky way to count the tuple size
@@ -1547,6 +1578,7 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
+        let v = get_inner_value(v);
         let s: String = from_redis_value(v)?;
         Ok(InfoDict::new(&s))
     }
@@ -1554,6 +1586,7 @@ impl FromRedisValue for InfoDict {
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
+        let v = get_inner_value(v);
         if *v == Value::Nil {
             return Ok(None);
         }
@@ -1564,6 +1597,7 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
 #[cfg(feature = "bytes")]
 impl FromRedisValue for bytes::Bytes {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        let v = get_inner_value(v);
         match v {
             Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
             _ => invalid_type_error!(v, "Not binary data"),
