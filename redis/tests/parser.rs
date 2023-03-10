@@ -28,7 +28,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
             Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
-            Value::Bulk(ref xs) | Value::Map(ref xs) | Value::Set(ref xs) => {
+            Value::Bulk(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
@@ -40,6 +40,17 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                         .map(ArbitraryValue),
                 )
             }
+            Value::Map(ref _xs) => Box::new(vec![ArbitraryValue(Value::Map(vec![]))].into_iter()),
+            Value::Attribute {
+                ref data,
+                ref attributes,
+            } => Box::new(
+                vec![ArbitraryValue(Value::Attribute {
+                    data: data.clone(),
+                    attributes: attributes.clone(),
+                })]
+                .into_iter(),
+            ),
             Value::Push { ref kind, ref data } => {
                 let mut ys = data
                     .iter()

@@ -162,10 +162,38 @@ where
 
                 let error = || line().map(err_parser);
                 let map = || {
-                    int().then_partial(move |&mut length| {
-                        let length = length as usize * 2;
-                        combine::count_min_max(length, length, value(Some(count + 1)))
-                            .map(|result: ResultExtend<_, _>| result.0.map(Value::Map))
+                    int().then_partial(move |&mut kv_length| {
+                        let length = kv_length as usize * 2;
+                        combine::count_min_max(length, length, value(Some(count + 1))).map(
+                            move |result: ResultExtend<Vec<Value>, _>| {
+                                let mut it: IntoIter<Value> = result.0?.into_iter();
+                                let mut x = vec![];
+                                for _ in 0..kv_length {
+                                    if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                                        x.push((k, v))
+                                    }
+                                }
+                                Ok(Value::Map(x))
+                            },
+                        )
+                    })
+                };
+                let attribute = || {
+                    int().then_partial(move |&mut kv_length| {
+                        // + 1 is for data!
+                        let length = kv_length as usize * 2 + 1;
+                        combine::count_min_max(length, length, value(Some(count + 1))).map(
+                            move |result: ResultExtend<Vec<Value>, _>| {
+                                let mut it: IntoIter<Value> = result.0?.into_iter();
+                                let mut _attributes = vec![];
+                                for _ in 0..kv_length {
+                                    if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                                        _attributes.push((k, v))
+                                    }
+                                }
+                                Ok(it.next().unwrap())
+                            },
+                        )
                     })
                 };
                 let set = || {
@@ -189,7 +217,7 @@ where
                             combine::count_min_max(length, length, value(Some(count + 1)))
                                 .map(|result: ResultExtend<Vec<Value>, _>| {
                                     let mut it: IntoIter<Value> = result.0?.into_iter();
-                                    let first = it.next().unwrap();
+                                    let first = it.next().unwrap_or(Value::Nil);
                                     if let Value::Data(kind) = first {
                                         Ok(Value::Push {
                                             kind: String::from_utf8(kind)?,
@@ -232,16 +260,19 @@ where
                 let blob_error = || blob().map(|line| err_parser(&line));
                 let verbatim = || {
                     blob().map(|line| {
-                        let (format, text) = line.split_once(':').unwrap();
-                        let format = match format {
-                            "txt" => VerbatimFormat::Text,
-                            "mkd" => VerbatimFormat::Markdown,
-                            x => VerbatimFormat::Unknown(x.to_string()),
-                        };
-                        Ok(Value::VerbatimString {
-                            format,
-                            text: text.to_string(),
-                        })
+                        if let Some((format, text)) = line.split_once(':') {
+                            let format = match format {
+                                "txt" => VerbatimFormat::Text,
+                                "mkd" => VerbatimFormat::Markdown,
+                                x => VerbatimFormat::Unknown(x.to_string()),
+                            };
+                            Ok(Value::VerbatimString {
+                                format,
+                                text: text.to_string(),
+                            })
+                        } else {
+                            Err(RedisError::from((ErrorKind::ResponseError, "parse error")))
+                        }
                     })
                 };
                 let big_number = || {
@@ -258,7 +289,7 @@ where
                     b'$' => data().map(Ok),
                     b'*' => bulk(),
                     b'%' => map(),
-                    b'|' => map(), //Attribute type (TODO: maybe we have to handle this too ?)
+                    b'|' => attribute(),
                     b'~' => set(),
                     b'-' => error().map(Err),
                     b'_' => null(),
@@ -539,6 +570,18 @@ mod tests {
         match parse_redis_value(bytes) {
             Ok(_) => panic!("Expected Err"),
             Err(e) => assert!(matches!(e.kind(), ErrorKind::ResponseError)),
+        }
+    }
+
+    #[test]
+    fn test_attributes() {
+        let bytes: &[u8] = b"*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n";
+        match parse_redis_value(bytes) {
+            Ok(val) => assert_eq!(
+                val,
+                Value::Bulk(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+            ),
+            Err(e) => panic!("{}", e),
         }
     }
 }

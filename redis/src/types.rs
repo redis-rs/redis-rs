@@ -125,11 +125,18 @@ pub enum Value {
     /// to express nested structures.
     Bulk(Vec<Value>),
     /// A status response.
-    Status(String), // maybe change to SimpleString ?
+    Status(String),
     /// A status response which represents the string "OK".
     Okay,
-    /// Ordered map value from the server. use `as_map_iter` function.
-    Map(Vec<Value>),
+    /// Ordered key,value list from the server. use `as_map_iter` function.
+    Map(Vec<(Value, Value)>),
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
+    Attribute {
+        /// Data that attributes belong to.
+        data: Box<Value>,
+        /// Key,Value list of attributes.
+        attributes: Vec<(Value, Value)>,
+    },
     /// Unordered set value from the server.
     Set(Vec<Value>),
     /// A floating number response from the server.
@@ -171,18 +178,33 @@ impl fmt::Display for VerbatimFormat {
     }
 }
 
-pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
+pub struct MapIter<'a> {
+    bulk: Option<std::slice::Iter<'a, Value>>,
+    map: Option<std::slice::Iter<'a, (Value, Value)>>,
+}
 
 impl<'a> Iterator for MapIter<'a> {
     type Item = (&'a Value, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some((self.0.next()?, self.0.next()?))
+        if let Some(m) = &mut self.map {
+            let (k, v) = m.next()?;
+            return Some((k, v));
+        } else if let Some(bulk) = &mut self.bulk {
+            return Some((bulk.next()?, bulk.next()?));
+        }
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (low, high) = self.0.size_hint();
-        (low / 2, high.map(|h| h / 2))
+        if let Some(ref m) = self.map {
+            return m.size_hint();
+        }
+        if let Some(ref bulk) = self.bulk {
+            let (low, high) = bulk.size_hint();
+            return (low / 2, high.map(|h| h / 2));
+        }
+        (0, None)
     }
 }
 
@@ -235,8 +257,14 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Bulk(items) => Some(MapIter(items.iter())),
-            Value::Map(items) => Some(MapIter(items.iter())),
+            Value::Bulk(items) => Some(MapIter {
+                bulk: Some(items.iter()),
+                map: None,
+            }),
+            Value::Map(items) => Some(MapIter {
+                bulk: None,
+                map: Some(items.iter()),
+            }),
             _ => None,
         }
     }
@@ -256,6 +284,10 @@ impl fmt::Debug for Value {
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
             Value::Map(ref values) => write!(fmt, "map({values:?})"),
+            Value::Attribute {
+                ref data,
+                attributes: _,
+            } => write!(fmt, "attribute({data:?})"),
             Value::Set(ref values) => write!(fmt, "set({values:?})"),
             Value::Double(ref d) => write!(fmt, "double({d:?})"),
             Value::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
@@ -1297,8 +1329,8 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
             Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
             Value::Map(ref items) => {
                 let mut n: Vec<T> = vec![];
-                for item in items.chunks(2) {
-                    match FromRedisValue::from_redis_value(&Value::Map(item.to_vec())) {
+                for item in items {
+                    match FromRedisValue::from_redis_value(&Value::Map(vec![item.clone()])) {
                         Ok(v) => {
                             n.push(v);
                         }
@@ -1420,7 +1452,7 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 match *v {
-                    Value::Bulk(ref items) | Value::Map(ref items) => {
+                    Value::Bulk(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
@@ -1434,6 +1466,28 @@ macro_rules! from_redis_value_for_tuple {
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
+
+                    Value::Map(ref items) => {
+                        // hacky way to count the tuple size
+                        let mut n = 0;
+                        $(let $name = (); n += 1;)*
+                        if n != 2 {
+                            invalid_type_error!(v, "Map response of wrong dimension")
+                        }
+
+                        let mut flatten_items = vec![];
+                        for (k,v) in items {
+                            flatten_items.push(k);
+                            flatten_items.push(v);
+                        }
+
+                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                        // postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_redis_value(
+                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                    }
+
                     _ => invalid_type_error!(v, "Not a bulk response")
                 }
             }

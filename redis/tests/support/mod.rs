@@ -334,6 +334,17 @@ where
     }
     Ok(())
 }
+fn encode_map<W>(values: &Vec<(Value, Value)>, writer: &mut W, prefix: &str) -> io::Result<()>
+where
+    W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for (k, v) in values.iter() {
+        encode_value(k, writer)?;
+        encode_value(v, writer)?;
+    }
+    Ok(())
+}
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
 where
     W: io::Write,
@@ -350,7 +361,15 @@ where
         Value::Bulk(ref values) => encode_iter(values, writer, "*"),
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
-        Value::Map(ref values) => encode_iter(values, writer, "%"),
+        Value::Map(ref values) => encode_map(values, writer, "%"),
+        Value::Attribute {
+            ref data,
+            ref attributes,
+        } => {
+            encode_map(attributes, writer, "|")?;
+            encode_value(data, writer)?;
+            Ok(())
+        }
         Value::Set(ref values) => encode_iter(values, writer, "~"),
         // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
         Value::Double(val) => write!(writer, ",{}\r\n", val),
