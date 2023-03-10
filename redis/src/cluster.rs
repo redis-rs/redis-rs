@@ -492,10 +492,10 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    retries -= 1;
                     if retries == 0 {
                         return Err(err);
                     }
+                    retries -= 1;
 
                     if err.is_cluster_error() {
                         let kind = err.kind();

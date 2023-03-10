@@ -234,7 +234,15 @@ impl ClusterClient {
     }
 
     #[doc(hidden)]
-    pub async fn get_generic_connection<C>(&self) -> RedisResult<cluster_async::Connection<C>>
+    pub fn get_generic_connection<C>(&self) -> RedisResult<ClusterConnection<C>>
+    where
+        C: crate::ConnectionLike + crate::cluster::Connect + Send,
+    {
+        ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    }
+
+    #[doc(hidden)]
+    pub async fn get_async_generic_connection<C>(&self) -> RedisResult<cluster_async::Connection<C>>
     where
         C: crate::aio::ConnectionLike
             + cluster_async::Connect
