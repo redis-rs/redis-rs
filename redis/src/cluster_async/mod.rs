@@ -830,7 +830,10 @@ where
     }
 }
 /// Implements the process of connecting to a redis server
-/// and obtaining a connection handle.
+/// and obtaining a connection handle. Encapsulating
+/// this functionality behind a trait allows for flexibility in
+/// defining the underlying connection type for a clustered client and is
+/// particularly useful for testing.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
