@@ -7,13 +7,15 @@ use std::{
 use redis::cluster::{self, ClusterClient, ClusterClientBuilder};
 
 use {
-    futures::future,
     once_cell::sync::Lazy,
-    redis::{IntoConnectionInfo, RedisFuture, RedisResult, Value},
+    redis::{IntoConnectionInfo, RedisResult, Value},
 };
 
 #[cfg(feature = "cluster-async")]
-use redis::{aio, cluster_async};
+use redis::{aio, cluster_async, RedisFuture};
+
+#[cfg(feature = "cluster-async")]
+use futures::future;
 
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
@@ -131,8 +133,8 @@ pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisR
                 Value::Int(6379),
             ]),
             Value::Bulk(vec![
-                Value::Data("replica".as_bytes().to_vec()),
-                Value::Int(6379),
+                Value::Data(name.as_bytes().to_vec()),
+                Value::Int(6380),
             ]),
         ])])))
     } else if contains_slice(cmd, b"READONLY") {
@@ -254,47 +256,9 @@ impl MockEnv {
             runtime,
             client,
             connection,
+            #[cfg(feature = "cluster-async")]
             async_connection,
             handler: RemoveHandler(vec![id]),
-        }
-    }
-
-    pub fn with_replica(
-        client_builder: ClusterClientBuilder,
-        node_id: &str,
-        node_handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
-        replica_id: &str,
-        replica_handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
-    ) -> Self {
-        #[cfg(feature = "cluster-async")]
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
-
-        HANDLERS.write().unwrap().insert(
-            node_id.to_string(),
-            Arc::new(move |cmd, port| node_handler(cmd, port)),
-        );
-        HANDLERS.write().unwrap().insert(
-            replica_id.to_string(),
-            Arc::new(move |cmd, port| replica_handler(cmd, port)),
-        );
-
-        let client = client_builder.build().unwrap();
-        let connection = client.get_generic_connection().unwrap();
-        #[cfg(feature = "cluster-async")]
-        let async_connection = runtime
-            .block_on(client.get_async_generic_connection())
-            .unwrap();
-        MockEnv {
-            #[cfg(feature = "cluster-async")]
-            runtime,
-            client,
-            connection,
-            async_connection,
-            handler: RemoveHandler(vec![node_id.to_string(), replica_id.to_string()]),
         }
     }
 }

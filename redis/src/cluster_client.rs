@@ -1,7 +1,9 @@
 use crate::cluster::{ClusterConnection, TlsMode};
-use crate::cluster_async;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
+
+#[cfg(feature = "cluster-async")]
+use crate::cluster_async;
 
 const DEFAULT_RETRIES: u32 = 16;
 
@@ -242,6 +244,7 @@ impl ClusterClient {
     }
 
     #[doc(hidden)]
+    #[cfg(feature = "cluster-async")]
     pub async fn get_async_generic_connection<C>(&self) -> RedisResult<cluster_async::Connection<C>>
     where
         C: crate::aio::ConnectionLike
