@@ -358,7 +358,7 @@ fn test_async_cluster_tryagain_exhaust_retries() {
 
     let MockEnv {
         runtime,
-        client,
+        async_connection: mut connection,
         handler: _handler,
         ..
     } = MockEnv::with_client_builder(
@@ -373,10 +373,6 @@ fn test_async_cluster_tryagain_exhaust_retries() {
             }
         },
     );
-
-    let mut connection = runtime
-        .block_on(client.get_async_generic_connection::<MockConnection>())
-        .unwrap();
 
     let result = runtime.block_on(
         cmd("GET")
@@ -459,8 +455,7 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
 #[test]
 fn test_async_cluster_replica_read() {
     let _ = env_logger::try_init();
-    let node_name = "node";
-    let replica_name = "replica";
+    let name = "node";
 
     // requests should route to replica
     let MockEnv {
@@ -468,19 +463,18 @@ fn test_async_cluster_replica_read() {
         async_connection: mut connection,
         handler: _handler,
         ..
-    } = MockEnv::with_replica(
-        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
             .retries(0)
             .read_from_replicas(),
-        node_name,
-        move |cmd: &[u8], _| {
-            respond_startup_with_replica(node_name, cmd)?;
-            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_REPLICA mock\r\n"))
-        },
-        replica_name,
-        move |cmd: &[u8], _| {
-            respond_startup_with_replica(node_name, cmd)?;
-            Err(Ok(Value::Data(b"123".to_vec())))
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+
+            match port {
+                6380 => Err(Ok(Value::Data(b"123".to_vec()))),
+                _ => panic!("Wrong node"),
+            }
         },
     );
 
@@ -489,7 +483,6 @@ fn test_async_cluster_replica_read() {
             .arg("test")
             .query_async::<_, Option<i32>>(&mut connection),
     );
-
     assert_eq!(value, Ok(Some(123)));
 
     // requests should route to primary
@@ -498,28 +491,25 @@ fn test_async_cluster_replica_read() {
         async_connection: mut connection,
         handler: _handler,
         ..
-    } = MockEnv::with_replica(
-        ClusterClient::builder(vec![&*format!("redis://{node_name}")])
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
             .retries(0)
             .read_from_replicas(),
-        node_name,
-        move |cmd: &[u8], _| {
-            respond_startup_with_replica(node_name, cmd)?;
-            Err(Ok(Value::Status("OK".into())))
-        },
-        replica_name,
-        move |cmd: &[u8], _| {
-            respond_startup_with_replica(node_name, cmd)?;
-            Err(parse_redis_value(b"-SHOULD_ROUTE_TO_PRIMARY mock\r\n"))
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+            match port {
+                6379 => Err(Ok(Value::Status("OK".into()))),
+                _ => panic!("Wrong node"),
+            }
         },
     );
 
-    let resp = runtime.block_on(
+    let value = runtime.block_on(
         cmd("SET")
             .arg("test")
             .arg("123")
             .query_async::<_, Option<Value>>(&mut connection),
     );
-
-    assert_eq!(resp, Ok(Some(Value::Status("OK".to_owned()))));
+    assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
 }
