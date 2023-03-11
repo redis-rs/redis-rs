@@ -64,16 +64,38 @@ pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
 /// Implements the process of connecting to a redis server
-/// and obtaining a connection handle.
+/// and obtaining and configuring a connection handle. Encapsulating
+/// this functionality behind a trait allows for flexibility in
+/// defining the underlying connection type for a clustered client and is
+/// particularly useful for testing.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
     where
         T: IntoConnectionInfo;
 
+    /// Sends an already encoded (packed) command into the TCP socket and
+    /// does not read a response.  This is useful for commands like
+    /// `MONITOR` which yield multiple items.  This needs to be used with
+    /// care because it changes the state of the connection.
     fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()>;
+
+    /// Sets the write timeout for the connection.
+    ///
+    /// If the provided value is `None`, then `send_packed_command` call will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
     fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()>;
+
+    /// Sets the read timeout for the connection.
+    ///
+    /// If the provided value is `None`, then `recv_response` call will
+    /// block indefinitely. It is an error to pass the zero `Duration` to this
+    /// method.
     fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()>;
+
+    /// Fetches a single response from the connection.  This is useful
+    /// if used in combination with `send_packed_command`.
     fn recv_response(&mut self) -> RedisResult<Value>;
 }
 
@@ -90,11 +112,11 @@ impl Connect for Connection {
     }
 
     fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        Self::set_write_timeout(&self, dur)
+        Self::set_write_timeout(self, dur)
     }
 
     fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        Self::set_read_timeout(&self, dur)
+        Self::set_read_timeout(self, dur)
     }
 
     fn recv_response(&mut self) -> RedisResult<Value> {
