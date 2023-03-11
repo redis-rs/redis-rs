@@ -513,3 +513,30 @@ fn test_async_cluster_replica_read() {
     );
     assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
 }
+
+#[test]
+fn test_async_cluster_with_username_and_password() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
+        builder
+            .username(RedisCluster::username().to_string())
+            .password(RedisCluster::password().to_string())
+    });
+    cluster.disable_default_user();
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        cmd("SET")
+            .arg("test")
+            .arg("test_data")
+            .query_async(&mut connection)
+            .await?;
+        let res: String = cmd("GET")
+            .arg("test")
+            .clone()
+            .query_async(&mut connection)
+            .await?;
+        assert_eq!(res, "test_data");
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
