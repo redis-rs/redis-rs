@@ -25,7 +25,7 @@ const LOCALHOST: &str = "127.0.0.1";
 enum ClusterType {
     Tcp,
     TcpTls,
-    TcpTlsSec
+    TcpTlsSec,
 }
 
 impl ClusterType {

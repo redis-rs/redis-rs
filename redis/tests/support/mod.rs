@@ -178,13 +178,17 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir: None,
                     addr,
-                    tls_paths
+                    tls_paths,
                 }
             }
-            redis::ConnectionAddr::TcpTls { ref host, port, insecure,  .. } => {
+            redis::ConnectionAddr::TcpTls {
+                ref host,
+                port,
+                insecure,
+                ..
+            } => {
                 let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
                 let auth_client_str = if insecure { "no" } else { "yes" };
-
 
                 // prepare redis with TLS
                 redis_cmd
@@ -208,7 +212,6 @@ impl RedisServer {
                     tempdir: Some(tempdir),
                     addr,
                     tls_paths: Some(tls_paths),
-
                 }
             }
             redis::ConnectionAddr::Unix(ref path) => {
@@ -426,7 +429,6 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     #[cfg(feature = "tls")]
     write_cert_conf_file(&cert_conf).expect("failed to write cert ext file");
 
-
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         process::Command::new("openssl")
             .arg("genrsa")
@@ -495,7 +497,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         key_cmd.wait().expect("failed to create key");
     }
 
-    fn convert_key(key: &PathBuf, key8: &PathBuf){
+    fn convert_key(key: &PathBuf, key8: &PathBuf) {
         //convert to pkcs8
         process::Command::new("openssl")
             .arg("pkcs8")
@@ -512,7 +514,6 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .wait()
             .expect("failed to convert key");
     }
-
 
     // Build CA Key
     make_key(&ca_key, 4096);
@@ -568,9 +569,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     ks.push("8");
     let redis_key8 = PathBuf::from(ks);
 
-    convert_key(&client_key,&client_key8);
-    convert_key(&redis_key,&redis_key8);
-
+    convert_key(&client_key, &client_key8);
+    convert_key(&redis_key, &redis_key8);
 
     TlsFilePaths {
         redis_crt,
@@ -652,4 +652,3 @@ IP.1 = 127.0.0.1
 "#;
     fs::write(path, text.as_bytes())
 }
-

@@ -211,7 +211,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     port,
                     insecure: true,
                     ca_cert: None,
-                    identity: None
+                    identity: None,
                 },
                 Some(_) => fail!((
                     ErrorKind::InvalidClientConfig,
@@ -222,7 +222,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     port,
                     insecure: false,
                     ca_cert: None,
-                    identity: None
+                    identity: None,
                 },
             }
         }

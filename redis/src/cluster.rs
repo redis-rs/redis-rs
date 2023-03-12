@@ -750,7 +750,9 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls, None, None).to_string())
+                        Some(
+                            get_connection_addr(ip.into_owned(), port, tls, None, None).to_string(),
+                        )
                     } else {
                         None
                     }
@@ -786,7 +788,13 @@ pub(crate) fn get_connection_info(
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls, cluster_params.ca_cert, cluster_params.identity),
+        addr: get_connection_addr(
+            host.to_string(),
+            port,
+            cluster_params.tls,
+            cluster_params.ca_cert,
+            cluster_params.identity,
+        ),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -795,21 +803,27 @@ pub(crate) fn get_connection_info(
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>,ca_crt: Option<Certificate>, identity: Option<RedisIdentity> ) -> ConnectionAddr {
+fn get_connection_addr(
+    host: String,
+    port: u16,
+    tls: Option<TlsMode>,
+    ca_crt: Option<Certificate>,
+    identity: Option<RedisIdentity>,
+) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: false,
             ca_cert: ca_crt,
-            identity
+            identity,
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: true,
             ca_cert: None,
-            identity: None
+            identity: None,
         },
         _ => ConnectionAddr::Tcp(host, port),
     }
