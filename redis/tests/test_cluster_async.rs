@@ -318,7 +318,6 @@ fn test_async_cluster_async_std_basic_cmd() {
 
 #[test]
 fn test_async_cluster_retries() {
-    let _ = env_logger::try_init();
     let name = "tryagain";
 
     let requests = atomic::AtomicUsize::new(0);
@@ -351,7 +350,6 @@ fn test_async_cluster_retries() {
 
 #[test]
 fn test_async_cluster_tryagain_exhaust_retries() {
-    let _ = env_logger::try_init();
     let name = "tryagain_exhaust_retries";
 
     let requests = Arc::new(atomic::AtomicUsize::new(0));
@@ -389,7 +387,6 @@ fn test_async_cluster_tryagain_exhaust_retries() {
 
 #[test]
 fn test_async_cluster_rebuild_with_extra_nodes() {
-    let _ = env_logger::try_init();
     let name = "rebuild_with_extra_nodes";
 
     let requests = atomic::AtomicUsize::new(0);
@@ -454,7 +451,6 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
 
 #[test]
 fn test_async_cluster_replica_read() {
-    let _ = env_logger::try_init();
     let name = "node";
 
     // requests should route to replica
