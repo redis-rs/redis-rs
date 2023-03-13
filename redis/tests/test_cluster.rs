@@ -325,7 +325,6 @@ fn test_cluster_exhaust_retries() {
 
 #[test]
 fn test_cluster_rebuild_with_extra_nodes() {
-    let _ = env_logger::try_init();
     let name = "rebuild_with_extra_nodes";
 
     let requests = atomic::AtomicUsize::new(0);
@@ -385,7 +384,6 @@ fn test_cluster_rebuild_with_extra_nodes() {
 
 #[test]
 fn test_cluster_replica_read() {
-    let _ = env_logger::try_init();
     let name = "node";
 
     // requests should route to replica
