@@ -1,9 +1,6 @@
-//! Redis cluster support.
+//! This module extends the library to support Redis Cluster.
 //!
-//! This module extends the library to be able to use cluster.
-//! ClusterClient implements traits of ConnectionLike and Commands.
-//!
-//! Note that the cluster support currently does not provide pubsub
+//! Note that this module does not currently provide pubsub
 //! functionality.
 //!
 //! # Example
@@ -63,11 +60,8 @@ use crate::{
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-/// Implements the process of connecting to a redis server
-/// and obtaining and configuring a connection handle. Encapsulating
-/// this functionality behind a trait allows for flexibility in
-/// defining the underlying connection type for a clustered client and is
-/// particularly useful for testing.
+/// Implements the process of connecting to a Redis server
+/// and obtaining and configuring a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
@@ -124,7 +118,9 @@ impl Connect for Connection {
     }
 }
 
-/// This is a connection of Redis cluster.
+/// This represents a Redis Cluster connection. It stores the
+/// underlying connections maintained for each node in the cluster, as well
+/// as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
     connections: RefCell<HashMap<String, C>>,
