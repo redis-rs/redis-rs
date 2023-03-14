@@ -50,7 +50,9 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 
 ## Async support
 
-To enable asynchronous clients a feature for the underlying feature need to be activated.
+To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
+`tokio-comp` for tokio users or `async-std-comp` for async-std users.
+
 
 ```
 # if you use tokio
@@ -82,23 +84,43 @@ let client = redis::Client::open("rediss://127.0.0.1/")?;
 
 ## Cluster Support
 
-Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
+Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
 
 `redis = { version = "0.22.3", features = [ "cluster"] }`
 
-Then you can simply use the `ClusterClient` which accepts a list of available nodes.
+Then you can simply use the `ClusterClient`, which accepts a list of available nodes. Note
+that only one node in the cluster needs to be specified when instantiating the client, though
+you can specify multiple.
 
 ```rust
 use redis::cluster::ClusterClient;
 use redis::Commands;
 
 fn fetch_an_integer() -> String {
-    // connect to redis
     let nodes = vec!["redis://127.0.0.1/"];
-    let client = ClusterClient::open(nodes).unwrap();
+    let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_connection().unwrap();
     let _: () = connection.set("test", "test_data").unwrap();
     let rv: String = connection.get("test").unwrap();
+    return rv;
+}
+```
+
+Async Redis Cluster support can be enabled by enabling the `cluster-async` feature, along
+with your preferred async runtime, e.g.:
+
+`redis = { version = "0.22.3", features = [ "cluster-async", "tokio-std-comp" ] }`
+
+```rust
+use redis::cluster::ClusterClient;
+use redis::AsyncCommands;
+
+async fn fetch_an_integer() -> String {
+    let nodes = vec!["redis://127.0.0.1/"];
+    let client = ClusterClient::new(nodes).unwrap();
+    let mut connection = client.get_async_connection().await.unwrap();
+    let _: () = connection.set("test", "test_data").await.unwrap();
+    let rv: String = connection.get("test").await.unwrap();
     return rv;
 }
 ```

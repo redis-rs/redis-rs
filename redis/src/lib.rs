@@ -1,4 +1,4 @@
-//! redis-rs is a rust implementation of a Redis client library.  It exposes
+//! redis-rs is a Rust implementation of a Redis client library.  It exposes
 //! a general purpose interface to Redis and also provides specific helpers for
 //! commonly used functionality.
 //!
@@ -59,6 +59,7 @@
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
+//! * `cluster-async`: enables async redis cluster support (optional)
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //!

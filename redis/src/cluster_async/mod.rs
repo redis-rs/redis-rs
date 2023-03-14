@@ -1,4 +1,26 @@
-//! TODO
+//! This module provides async functionality for Redis Cluster.
+//!
+//! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
+//! of connections to each node in the cluster. While it  generally behaves similarly to
+//! the sync cluster module, certain commands do not route identically, due most notably to
+//! a current lack of support for routing commands to multiple nodes.
+//!
+//! Also note that pubsub functionality is not currently provided by this module.
+//!
+//! # Example
+//! ```rust,no_run
+//! use redis::cluster::ClusterClient;
+//! use redis::AsyncCommands;
+//!
+//! async fn fetch_an_integer() -> String {
+//!     let nodes = vec!["redis://127.0.0.1/"];
+//!     let client = ClusterClient::new(nodes).unwrap();
+//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let _: () = connection.set("test", "test_data").await.unwrap();
+//!     let rv: String = connection.get("test").await.unwrap();
+//!     return rv;
+//! }
+//! ```
 use std::{
     collections::{HashMap, HashSet},
     fmt, io,
@@ -35,7 +57,9 @@ use tokio::sync::{mpsc, oneshot};
 
 const SLOT_SIZE: usize = 16384;
 
-/// This is a connection of Redis cluster.
+/// This represents an async Redis Cluster connection. It stores the
+/// underlying connections maintained for each node in the cluster, as well
+/// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
 pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
@@ -829,11 +853,8 @@ where
         0
     }
 }
-/// Implements the process of connecting to a redis server
-/// and obtaining a connection handle. Encapsulating
-/// this functionality behind a trait allows for flexibility in
-/// defining the underlying connection type for a clustered client and is
-/// particularly useful for testing.
+/// Implements the process of connecting to a Redis server
+/// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
