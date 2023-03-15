@@ -154,6 +154,12 @@ implement_commands! {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
+    /// Set the expiration for a key in a SET/HASH/ZSET in seconds.
+    /// This is only implemented in KeyDB.
+    fn expiremember<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F, seconds: usize) {
+        cmd("EXPIREMEMBER").arg(key).arg(field).arg(seconds)
+    }
+
     /// Set a key's time to live in milliseconds.
     fn pexpire<K: ToRedisArgs>(key: K, ms: usize) {
         cmd("PEXPIRE").arg(key).arg(ms)
