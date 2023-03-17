@@ -240,7 +240,7 @@ impl TestClusterContext {
     }
 
     #[cfg(feature = "cluster-async")]
-    pub async fn async_connection(&self) -> redis::cluster_async::Connection {
+    pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
         self.client.get_async_connection().await.unwrap()
     }
 
@@ -249,7 +249,7 @@ impl TestClusterContext {
         C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
     >(
         &self,
-    ) -> redis::cluster_async::Connection<C> {
+    ) -> redis::cluster_async::ClusterConnection<C> {
         self.client
             .get_async_generic_connection::<C>()
             .await

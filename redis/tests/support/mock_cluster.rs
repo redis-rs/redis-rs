@@ -200,7 +200,7 @@ pub struct MockEnv {
     pub client: redis::cluster::ClusterClient,
     pub connection: redis::cluster::ClusterConnection<MockConnection>,
     #[cfg(feature = "cluster-async")]
-    pub async_connection: redis::cluster_async::Connection<MockConnection>,
+    pub async_connection: redis::cluster_async::ClusterConnection<MockConnection>,
     #[allow(unused)]
     pub handler: RemoveHandler,
 }

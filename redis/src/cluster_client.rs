@@ -231,8 +231,9 @@ impl ClusterClient {
 
     /// TODO
     #[cfg(feature = "cluster-async")]
-    pub async fn get_async_connection(&self) -> RedisResult<cluster_async::Connection> {
-        cluster_async::Connection::new(&self.initial_nodes, self.cluster_params.clone()).await
+    pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
     }
 
     #[doc(hidden)]
@@ -245,7 +246,9 @@ impl ClusterClient {
 
     #[doc(hidden)]
     #[cfg(feature = "cluster-async")]
-    pub async fn get_async_generic_connection<C>(&self) -> RedisResult<cluster_async::Connection<C>>
+    pub async fn get_async_generic_connection<C>(
+        &self,
+    ) -> RedisResult<cluster_async::ClusterConnection<C>>
     where
         C: crate::aio::ConnectionLike
             + cluster_async::Connect
@@ -255,7 +258,8 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::Connection::new(&self.initial_nodes, self.cluster_params.clone()).await
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
     }
 
     /// Use `new()`.

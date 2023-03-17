@@ -37,16 +37,16 @@ const SLOT_SIZE: usize = 16384;
 
 /// This is a connection of Redis cluster.
 #[derive(Clone)]
-pub struct Connection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
-impl<C> Connection<C>
+impl<C> ClusterConnection<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> RedisResult<Connection<C>> {
+    ) -> RedisResult<ClusterConnection<C>> {
         Pipeline::new(initial_nodes, cluster_params)
             .await
             .map(|pipeline| {
@@ -62,7 +62,7 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                Connection(tx)
+                ClusterConnection(tx)
             })
     }
 }
@@ -744,7 +744,7 @@ where
     }
 }
 
-impl<C> ConnectionLike for Connection<C>
+impl<C> ConnectionLike for ClusterConnection<C>
 where
     C: ConnectionLike + Send + 'static,
 {
