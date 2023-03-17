@@ -47,14 +47,14 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
-        Pipeline::new(initial_nodes, cluster_params)
+        ClusterConnInner::new(initial_nodes, cluster_params)
             .await
-            .map(|pipeline| {
+            .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
                 let stream = async move {
                     let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
                         .map(Ok)
-                        .forward(pipeline)
+                        .forward(inner)
                         .await;
                 };
                 #[cfg(feature = "tokio-comp")]
@@ -70,7 +70,7 @@ where
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
-struct Pipeline<C> {
+struct ClusterConnInner<C> {
     connections: ConnectionMap<C>,
     slots: SlotMap,
     state: ConnectionState<C>,
@@ -312,7 +312,7 @@ where
     }
 }
 
-impl<C> Pipeline<C>
+impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
@@ -322,7 +322,7 @@ where
     ) -> RedisResult<Self> {
         let connections =
             Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
-        let mut connection = Pipeline {
+        let mut connection = ClusterConnInner {
             connections,
             slots: Default::default(),
             in_flight_requests: Default::default(),
@@ -631,7 +631,7 @@ where
     }
 }
 
-impl<C> Sink<Message<C>> for Pipeline<C>
+impl<C> Sink<Message<C>> for ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
