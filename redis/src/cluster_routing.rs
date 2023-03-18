@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
 use std::iter::Iterator;
+
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
@@ -152,6 +156,78 @@ impl Slot {
 
     pub fn replicas(&self) -> &Vec<String> {
         &self.replicas
+    }
+}
+
+#[derive(Eq, PartialEq)]
+pub(crate) enum SlotAddr {
+    Master,
+    Replica,
+}
+
+/// This is just a simplified version of [`Slot`],
+/// which stores only the master and [optional] replica
+/// to avoid the need to choose a replica each time
+/// a command is executed
+#[derive(Debug)]
+pub(crate) struct SlotAddrs([String; 2]);
+
+impl SlotAddrs {
+    pub(crate) fn new(master_node: String, replica_node: Option<String>) -> Self {
+        let replica = replica_node.unwrap_or_else(|| master_node.clone());
+        Self([master_node, replica])
+    }
+
+    pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr) -> &str {
+        match slot_addr {
+            SlotAddr::Master => &self.0[0],
+            SlotAddr::Replica => &self.0[1],
+        }
+    }
+
+    pub(crate) fn from_slot(slot: &Slot, read_from_replicas: bool) -> Self {
+        let replica = if !read_from_replicas || slot.replicas().is_empty() {
+            None
+        } else {
+            Some(
+                slot.replicas()
+                    .choose(&mut thread_rng())
+                    .unwrap()
+                    .to_string(),
+            )
+        };
+
+        SlotAddrs::new(slot.master().to_string(), replica)
+    }
+}
+
+impl<'a> IntoIterator for &'a SlotAddrs {
+    type Item = &'a String;
+    type IntoIter = std::slice::Iter<'a, String>;
+
+    fn into_iter(self) -> std::slice::Iter<'a, String> {
+        self.0.iter()
+    }
+}
+
+pub(crate) type SlotMap = BTreeMap<u16, SlotAddrs>;
+
+/// Defines the slot and the [`SlotAddr`] to which
+/// a command should be sent
+#[derive(Eq, PartialEq)]
+pub(crate) struct Route(u16, SlotAddr);
+
+impl Route {
+    pub(crate) fn new(slot: u16, slot_addr: SlotAddr) -> Self {
+        Self(slot, slot_addr)
+    }
+
+    pub(crate) fn slot(&self) -> u16 {
+        self.0
+    }
+
+    pub(crate) fn slot_addr(&self) -> &SlotAddr {
+        &self.1
     }
 }
 

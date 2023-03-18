@@ -39,7 +39,13 @@ where
 mod cluster;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+mod mock_cluster;
+
+#[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::cluster::*;
+
+#[cfg(any(feature = "cluster", feature = "cluster-async"))]
+pub use self::mock_cluster::*;
 
 #[derive(PartialEq)]
 enum ServerType {
