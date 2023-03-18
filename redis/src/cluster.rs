@@ -771,7 +771,7 @@ pub(crate) fn get_connection_info(
 
     let (host, port) = node
         .rsplit_once(':')
-        .and_then(|(host, port)| Some(host).zip(u16::from_str(port).ok()))
+        .and_then(|(h, p)| Some(h).filter(|h| !h.is_empty()).zip(u16::from_str(p).ok()))
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
