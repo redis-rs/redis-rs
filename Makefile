@@ -31,7 +31,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing async-std"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-tls-comp,cluster-async -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"
