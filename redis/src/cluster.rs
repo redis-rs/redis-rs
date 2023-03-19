@@ -839,10 +839,7 @@ mod tests {
             let res = get_connection_info(input, ClusterParams::default());
             assert_eq!(res.unwrap().addr, expected);
         }
-    }
 
-    #[test]
-    fn parse_cluster_node_host_port_invalid() {
         let cases = vec![":0", "[]:6379"];
         for input in cases {
             let res = get_connection_info(input, ClusterParams::default());
