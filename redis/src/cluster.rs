@@ -815,50 +815,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_cluster_node_empty_host() {
-        let res = get_connection_info(":0", ClusterParams::default());
-        assert_eq!(
-            res.err(),
-            Some(RedisError::from((
-                ErrorKind::InvalidClientConfig,
-                "Invalid node string",
-            ))),
-        );
+    fn parse_cluster_node_host_port() {
+        let cases = vec![
+            (
+                "127.0.0.1:6379",
+                ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379u16),
+            ),
+            (
+                "localhost.localdomain:6379",
+                ConnectionAddr::Tcp("localhost.localdomain".to_string(), 6379u16),
+            ),
+            (
+                "dead::cafe:beef:30001",
+                ConnectionAddr::Tcp("dead::cafe:beef".to_string(), 30001u16),
+            ),
+            (
+                "[fe80::cafe:beef%en1]:30001",
+                ConnectionAddr::Tcp("fe80::cafe:beef%en1".to_string(), 30001u16),
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(res.unwrap().addr, expected);
+        }
     }
 
     #[test]
-    fn parse_cluster_node_hostname_port() {
-        let res = get_connection_info("localhost.localdomain:6379", ClusterParams::default());
-        assert_eq!(
-            res.unwrap().addr,
-            ConnectionAddr::Tcp("localhost.localdomain".to_string(), 6379u16)
-        );
-    }
-
-    #[test]
-    fn parse_cluster_node_ipv4_host_port() {
-        let res = get_connection_info("127.0.0.1:6379", ClusterParams::default());
-        assert_eq!(
-            res.unwrap().addr,
-            ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379u16)
-        );
-    }
-
-    #[test]
-    fn parse_cluster_node_ipv6_host_port() {
-        let res = get_connection_info("dead::cafe:beef:30001", ClusterParams::default());
-        assert_eq!(
-            res.unwrap().addr,
-            ConnectionAddr::Tcp("dead::cafe:beef".to_string(), 30001u16)
-        );
-    }
-
-    #[test]
-    fn parse_cluster_node_ipv6_host_zone_port() {
-        let res = get_connection_info("fe80::cafe:beef%en1:30001", ClusterParams::default());
-        assert_eq!(
-            res.unwrap().addr,
-            ConnectionAddr::Tcp("fe80::cafe:beef%en1".to_string(), 30001u16)
-        );
+    fn parse_cluster_node_host_port_invalid() {
+        let cases = vec![":0", "[]:6379"];
+        for input in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(
+                res.err(),
+                Some(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Invalid node string",
+                ))),
+            );
+        }
     }
 }
