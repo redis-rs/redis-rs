@@ -824,13 +824,15 @@ pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
 ) -> RedisResult<ConnectionInfo> {
-    let mut split = node.split(':');
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
-    let host = split.next().ok_or_else(invalid_error)?;
-    let port = split
-        .next()
-        .and_then(|string| u16::from_str(string).ok())
+    let (host, port) = node
+        .rsplit_once(':')
+        .and_then(|(host, port)| {
+            Some(host.trim_start_matches('[').trim_end_matches(']'))
+                .filter(|h| !h.is_empty())
+                .zip(u16::from_str(port).ok())
+        })
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
@@ -863,4 +865,48 @@ pub(crate) fn slot_cmd() -> Cmd {
     let mut cmd = Cmd::new();
     cmd.arg("CLUSTER").arg("SLOTS");
     cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cluster_node_host_port() {
+        let cases = vec![
+            (
+                "127.0.0.1:6379",
+                ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379u16),
+            ),
+            (
+                "localhost.localdomain:6379",
+                ConnectionAddr::Tcp("localhost.localdomain".to_string(), 6379u16),
+            ),
+            (
+                "dead::cafe:beef:30001",
+                ConnectionAddr::Tcp("dead::cafe:beef".to_string(), 30001u16),
+            ),
+            (
+                "[fe80::cafe:beef%en1]:30001",
+                ConnectionAddr::Tcp("fe80::cafe:beef%en1".to_string(), 30001u16),
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(res.unwrap().addr, expected);
+        }
+
+        let cases = vec![":0", "[]:6379"];
+        for input in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(
+                res.err(),
+                Some(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Invalid node string",
+                ))),
+            );
+        }
+    }
 }
