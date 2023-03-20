@@ -130,7 +130,6 @@ impl RedisCluster {
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{port}"));
-                    dbg!(&cmd);
                     cmd.spawn().unwrap()
                 },
             ));
@@ -150,7 +149,7 @@ impl RedisCluster {
         if is_tls {
             cmd.arg("--tls").arg("--insecure");
         }
-        let status = dbg!(cmd).status().unwrap();
+        let status = cmd.status().unwrap();
         assert!(status.success());
 
         let cluster = RedisCluster { servers, folders };
