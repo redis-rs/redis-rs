@@ -37,24 +37,24 @@ const SLOT_SIZE: usize = 16384;
 
 /// This is a connection of Redis cluster.
 #[derive(Clone)]
-pub struct Connection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
-impl<C> Connection<C>
+impl<C> ClusterConnection<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> RedisResult<Connection<C>> {
-        Pipeline::new(initial_nodes, cluster_params)
+    ) -> RedisResult<ClusterConnection<C>> {
+        ClusterConnInner::new(initial_nodes, cluster_params)
             .await
-            .map(|pipeline| {
+            .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
                 let stream = async move {
                     let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
                         .map(Ok)
-                        .forward(pipeline)
+                        .forward(inner)
                         .await;
                 };
                 #[cfg(feature = "tokio-comp")]
@@ -62,7 +62,7 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                Connection(tx)
+                ClusterConnection(tx)
             })
     }
 }
@@ -70,7 +70,7 @@ where
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
-struct Pipeline<C> {
+struct ClusterConnInner<C> {
     connections: ConnectionMap<C>,
     slots: SlotMap,
     state: ConnectionState<C>,
@@ -312,7 +312,7 @@ where
     }
 }
 
-impl<C> Pipeline<C>
+impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
@@ -322,7 +322,7 @@ where
     ) -> RedisResult<Self> {
         let connections =
             Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
-        let mut connection = Pipeline {
+        let mut connection = ClusterConnInner {
             connections,
             slots: Default::default(),
             in_flight_requests: Default::default(),
@@ -631,7 +631,7 @@ where
     }
 }
 
-impl<C> Sink<Message<C>> for Pipeline<C>
+impl<C> Sink<Message<C>> for ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
@@ -744,7 +744,7 @@ where
     }
 }
 
-impl<C> ConnectionLike for Connection<C>
+impl<C> ConnectionLike for ClusterConnection<C>
 where
     C: ConnectionLike + Send + 'static,
 {
