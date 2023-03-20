@@ -12,6 +12,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
 };
+use crate::ValueResult;
 
 #[cfg(unix)]
 use crate::types::HashMap;
@@ -855,7 +856,7 @@ impl ConnectionLike for Connection {
         }
 
         self.con.send_bytes(cmd)?;
-        self.read_response()
+        self.read_response().map_value_error()
     }
 
     fn req_packed_commands(

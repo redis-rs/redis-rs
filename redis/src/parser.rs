@@ -3,7 +3,7 @@ use std::{
     str,
 };
 
-use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
+use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value, ValueResult};
 
 use combine::{
     any,
@@ -130,7 +130,6 @@ where
 
                 let error = || {
                     line().map(|line: &str| {
-                        let desc = "An error was signalled by the server";
                         let mut pieces = line.splitn(2, ' ');
                         let kind = match pieces.next().unwrap() {
                             "ERR" => ErrorKind::ResponseError,
@@ -147,8 +146,8 @@ where
                             code => return make_extension_error(code, pieces.next()),
                         };
                         match pieces.next() {
-                            Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                            None => RedisError::from((kind, desc)),
+                            Some(detail) => Value::Error(kind, Some(detail.to_string())),
+                            None => Value::Error(kind, None),
                         }
                     })
                 };
@@ -158,7 +157,7 @@ where
                     b':' => int().map(|i| Ok(Value::Int(i))),
                     b'$' => data().map(Ok),
                     b'*' => bulk(),
-                    b'-' => error().map(Err),
+                    b'-' => error().map(Ok),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
             })
@@ -328,7 +327,7 @@ impl Parser {
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
     let mut parser = Parser::new();
-    parser.parse_value(bytes)
+    parser.parse_value(bytes).map_value_error()
 }
 
 #[cfg(test)]

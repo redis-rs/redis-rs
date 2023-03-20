@@ -2,7 +2,7 @@
 
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult,
+    RedisResult, ValueResult,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -340,9 +340,9 @@ fn test_pipeline_with_err() {
 
     let res = redis::pipe()
         .set("x", "another-x-value")
-        .ignore()
         .get("y")
-        .query::<()>(&mut con);
+        .query(&mut con)
+        .first_error();
     assert!(res.is_err() && res.unwrap_err().kind() == ErrorKind::ReadOnly);
 
     // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
@@ -402,14 +402,13 @@ fn test_pipeline_transaction_with_errors() {
         .unwrap();
 
     // Ensure that a write command fails with a READONLY error
-    let err: RedisResult<()> = redis::pipe()
+    let err: RedisResult<redis::Value> = redis::pipe()
         .atomic()
         .set("x", 142)
-        .ignore()
         .get("x")
         .query(&mut con);
 
-    assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+    assert_eq!(err.unwrap_err().kind(), ErrorKind::ExecAbortError);
 
     let x: i32 = con.get("x").unwrap();
     assert_eq!(x, 42);

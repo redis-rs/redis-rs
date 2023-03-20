@@ -8,9 +8,9 @@ use futures_util::{
 use std::pin::Pin;
 use std::{fmt, io};
 
-use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, Value, ValueResult};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -114,7 +114,11 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
             }
 
             let rv = unwrap_or!(
-                self.con.req_packed_command(&self.cmd).await.ok(),
+                self.con
+                    .req_packed_command(&self.cmd)
+                    .await
+                    .map_value_error()
+                    .ok(),
                 return None
             );
             let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
@@ -421,7 +425,7 @@ impl Cmd {
     where
         C: crate::aio::ConnectionLike,
     {
-        let val = con.req_packed_command(self).await?;
+        let val = con.req_packed_command(self).await.map_value_error()?;
         from_redis_value(&val)
     }
 
@@ -478,7 +482,7 @@ impl Cmd {
         mut self,
         con: &'a mut (dyn AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
-        let rv = con.req_packed_command(&self).await?;
+        let rv = con.req_packed_command(&self).await.map_value_error()?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?
@@ -514,7 +518,7 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        let _ = self.query::<Value>(con).map_value_error().unwrap();
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)

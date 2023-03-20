@@ -6,6 +6,7 @@ use std::pin::Pin;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
+    ValueResult,
 };
 
 /// The client type.
@@ -260,7 +261,9 @@ use crate::aio::Runtime;
 
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        self.get_connection()?.req_packed_command(cmd)
+        self.get_connection()?
+            .req_packed_command(cmd)
+            .map_value_error()
     }
 
     fn req_packed_commands(

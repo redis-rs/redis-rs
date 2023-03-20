@@ -124,6 +124,8 @@ pub enum Value {
     Status(String),
     /// A status response which represents the string "OK".
     Okay,
+    /// An Error signaled by the server
+    Error(ErrorKind, Option<String>),
 }
 
 pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
@@ -193,6 +195,36 @@ impl Value {
             _ => None,
         }
     }
+
+    fn first_error(&self) -> Option<RedisError> {
+        match self {
+            Value::Error(_, _) => Some(value_to_error(self)),
+            Value::Bulk(v) => {
+                for value in v {
+                    match value {
+                        Value::Error(..) => return Some(value_to_error(value)),
+                        Value::Bulk(_) => {
+                            let error_opt = value.first_error();
+                            if error_opt.is_some() {
+                                return error_opt;
+                            }
+                        }
+                        _ => continue,
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns a Err(RedisError), if the Value contains an error and the value wrapped in Ok otherwise
+    pub fn wrap(self) -> Result<Value, RedisError> {
+        match self {
+            Value::Error(_, _) => Err(value_to_error(&self)),
+            _ => Ok(self),
+        }
+    }
 }
 
 impl fmt::Debug for Value {
@@ -218,6 +250,7 @@ impl fmt::Debug for Value {
             }
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
+            Value::Error(ref kind, ref detail) => write!(fmt, "error({kind:?}, {detail:?})"),
         }
     }
 }
@@ -244,6 +277,7 @@ impl From<serde_json::Error> for RedisError {
 enum ErrorRepr {
     WithDescription(ErrorKind, &'static str),
     WithDescriptionAndDetail(ErrorKind, &'static str, String),
+    #[allow(unused)]
     ExtensionError(String, String),
     IoError(io::Error),
 }
@@ -557,20 +591,68 @@ impl RedisError {
     }
 }
 
-pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
-    RedisError {
-        repr: ErrorRepr::ExtensionError(
-            code.to_string(),
-            match detail {
-                Some(x) => x.to_string(),
-                None => "Unknown extension error encountered".to_string(),
-            },
-        ),
+pub fn make_extension_error(code: &str, detail: Option<&str>) -> Value {
+    match detail {
+        None => Value::Error(ErrorKind::ExtensionError, Some(code.to_string())),
+        Some(s) => Value::Error(ErrorKind::ExtensionError, Some(format!("{code}: {s}"))),
     }
 }
 
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
+
+#[inline]
+fn value_to_error(value: &Value) -> RedisError {
+    match value {
+        Value::Error(kind, Some(detail)) => RedisError::from((
+            *kind,
+            "An error was signalled by the server",
+            detail.to_string(),
+        )),
+        Value::Error(kind, None) => {
+            RedisError::from((*kind, "An error was signalled by the server"))
+        }
+        _ => unimplemented!("Should only be called on Value::Error"),
+    }
+}
+
+/// This extension trait contains utility functions to simplify handling nested errors
+pub trait ValueResult {
+    /// Maps an Ok(Value::Error) to the corresponding RedisError and returns the first error of a
+    /// Value::Bulk, if there is an error inside (this was the default behaviour in previous versions)
+    fn first_error(self) -> RedisResult<Value>;
+    /// Checks, if there is a nested error inside the result
+    fn contains_error(&self) -> bool;
+    /// Maps an Ok(Value::Error) to the corresponding RedisError, but keeps nested errors inside
+    /// a RedisResult<Value::Bulk> (this is the non-recursive variation of first_error)
+    fn map_value_error(self) -> RedisResult<Value>;
+}
+
+impl ValueResult for RedisResult<Value> {
+    fn contains_error(&self) -> bool {
+        match self {
+            Err(_) => true,
+            Ok(v) => v.first_error().is_some(),
+        }
+    }
+
+    fn first_error(self) -> RedisResult<Value> {
+        match self {
+            Err(e) => Err(e),
+            Ok(ref v) => match v.first_error() {
+                Some(error) => Err(error),
+                None => self,
+            },
+        }
+    }
+
+    fn map_value_error(self) -> RedisResult<Value> {
+        match self {
+            Ok(Value::Error(kind, detail)) => Value::Error(kind, detail).wrap(),
+            _ => self,
+        }
+    }
+}
 
 /// Library generic future type.
 #[cfg(feature = "aio")]

@@ -399,6 +399,7 @@ pub use crate::types::{
 
     // low level values
     Value,
+    ValueResult,
 };
 
 #[cfg(feature = "aio")]

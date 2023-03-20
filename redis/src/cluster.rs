@@ -495,7 +495,8 @@ where
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
                         // actually want to execute.
-                        conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                        conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])
+                            .map_value_error()?;
                         is_asking = false;
                     }
                     (addr.to_string(), conn)
