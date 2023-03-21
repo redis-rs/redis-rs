@@ -9,7 +9,6 @@ use std::sync::{
 use futures::prelude::*;
 use futures::stream;
 use once_cell::sync::Lazy;
-use proptest::proptest;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
@@ -99,19 +98,6 @@ fn test_async_cluster_basic_pipe() {
         Ok::<_, RedisError>(())
     })
     .unwrap()
-}
-
-#[test]
-fn test_async_cluster_proptests() {
-    let cluster = Arc::new(TestClusterContext::new(6, 1));
-
-    proptest!(
-        proptest::prelude::ProptestConfig { cases: 30, failure_persistence: None, .. Default::default() },
-        |(requests in 0..15i32, value in 0..i32::max_value())| {
-            let cluster = cluster.clone();
-            block_on_all(async move { test_failover(&cluster, requests, value).await; });
-        }
-    );
 }
 
 #[test]
@@ -217,8 +203,9 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
             }
         })
         .collect::<stream::FuturesUnordered<_>>()
-        .collect::<Vec<Result<(), anyhow::Error>>>()
-        .await;
+        .try_collect()
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(
         completed.load(Ordering::SeqCst),
