@@ -340,6 +340,7 @@ where
         }
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
+        Value::Error(ref kind, ref detail) => write!(writer, "-{kind:?} {detail:?}\r\n"),
     }
 }
 

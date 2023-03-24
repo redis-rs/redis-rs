@@ -36,7 +36,9 @@ use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo
 
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{
+    ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value, ValueResult,
+};
 use crate::{from_redis_value, ToRedisArgs};
 
 /// Enables the async_std compatibility
@@ -540,7 +542,7 @@ where
             self.buf.clear();
             cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
-            self.read_response().await
+            self.read_response().await.map_value_error()
         })
         .boxed()
     }
@@ -953,7 +955,7 @@ impl ConnectionLike for MultiplexedConnection {
                         RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
                     })
                 })?;
-            Ok(value)
+            Ok(value).map_value_error()
         })
         .boxed()
     }
@@ -1127,7 +1129,7 @@ mod connection_manager {
                 reconnect_if_io_error!(self, connection_result, guard);
                 let result = connection_result?.req_packed_command(cmd).await;
                 reconnect_if_dropped!(self, &result, guard);
-                result
+                result.map_value_error()
             })
             .boxed()
         }
