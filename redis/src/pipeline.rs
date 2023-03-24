@@ -80,7 +80,7 @@ impl Pipeline {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
 
-    fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
+    fn execute_pipelined(&self, con: &mut impl ConnectionLike) -> RedisResult<Value> {
         Ok(self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),
             0,
@@ -88,7 +88,7 @@ impl Pipeline {
         )?))
     }
 
-    fn execute_transaction(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
+    fn execute_transaction(&self, con: &mut impl ConnectionLike) -> RedisResult<Value> {
         let mut resp = con.req_packed_commands(
             &encode_pipeline(&self.commands, true),
             self.commands.len() + 1,
@@ -122,7 +122,7 @@ impl Pipeline {
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut impl ConnectionLike) -> RedisResult<T> {
         if !con.supports_pipelining() {
             fail!((
                 ErrorKind::ResponseError,
@@ -202,7 +202,7 @@ impl Pipeline {
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
-    pub fn execute(&self, con: &mut dyn ConnectionLike) {
+    pub fn execute(&self, con: &mut impl ConnectionLike) {
         self.query::<()>(con).unwrap();
     }
 }

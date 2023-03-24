@@ -407,7 +407,7 @@ impl Cmd {
     /// result to the target redis value.  This is the general way how
     /// you can retrieve data.
     #[inline]
-    pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+    pub fn query<T: FromRedisValue>(&self, con: &mut impl ConnectionLike) -> RedisResult<T> {
         match con.req_command(self) {
             Ok(val) => from_redis_value(&val),
             Err(e) => Err(e),
@@ -440,7 +440,7 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
+    pub fn iter<T: FromRedisValue>(self, con: &mut impl ConnectionLike) -> RedisResult<Iter<'_, T>> {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
@@ -476,7 +476,7 @@ impl Cmd {
     #[inline]
     pub async fn iter_async<'a, T: FromRedisValue + 'a>(
         mut self,
-        con: &'a mut (dyn AsyncConnection + Send),
+        con: &'a mut (impl AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
         let rv = con.req_packed_command(&self).await?;
 
@@ -513,7 +513,7 @@ impl Cmd {
     /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
     /// ```
     #[inline]
-    pub fn execute(&self, con: &mut dyn ConnectionLike) {
+    pub fn execute(&self, con: &mut impl ConnectionLike) {
         self.query::<()>(con).unwrap();
     }
 

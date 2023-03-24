@@ -78,7 +78,7 @@ impl Script {
 
     /// Invokes the script directly without arguments.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut impl ConnectionLike) -> RedisResult<T> {
         ScriptInvocation {
             script: self,
             args: vec![],
@@ -141,7 +141,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Invokes the script and returns the result.
     #[inline]
-    pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+    pub fn invoke<T: FromRedisValue>(&self, con: &mut impl ConnectionLike) -> RedisResult<T> {
         let eval_cmd = self.eval_cmd();
         match eval_cmd.query(con) {
             Ok(val) => Ok(val),
@@ -184,7 +184,7 @@ impl<'a> ScriptInvocation<'a> {
 
     /// Loads the script and returns the SHA1 of it.
     #[inline]
-    pub fn load(&self, con: &mut dyn ConnectionLike) -> RedisResult<String> {
+    pub fn load(&self, con: &mut impl ConnectionLike) -> RedisResult<String> {
         let hash: String = self.load_cmd().query(con)?;
 
         debug_assert_eq!(hash, self.script.hash);
