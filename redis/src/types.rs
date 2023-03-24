@@ -1255,7 +1255,10 @@ impl<T: FromRedisValue> FromRedisValue for Box<[T]> {
                 Some(x) => Ok(x.into_boxed_slice()),
                 None => invalid_type_error!(
                     v,
-                    format!("Conversion to Box<{}> failed.", std::any::type_name::<T>())
+                    format!(
+                        "Conversion to Box<[{}]> failed.",
+                        std::any::type_name::<T>()
+                    )
                 ),
             },
             Value::Bulk(items) => {
