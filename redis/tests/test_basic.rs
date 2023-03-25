@@ -1173,3 +1173,14 @@ fn test_variable_length_get() {
     let data: Vec<String> = con.get(&keys).unwrap();
     assert_eq!(data, vec!["1"]);
 }
+
+#[test]
+fn test_multi_generics() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    assert_eq!(con.sadd(b"set1", vec![5, 42]), Ok(2));
+    assert_eq!(con.sadd(999_i64, vec![42, 123]), Ok(2));
+    let _: () = con.rename(999_i64, b"set2").unwrap();
+    assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
+}
