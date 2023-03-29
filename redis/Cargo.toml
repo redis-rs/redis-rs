@@ -98,6 +98,10 @@ connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
 
+# Deprecated features
+tls = ["tls-native-tls"] # use "tls-native-tls" instead
+async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
+
 [dev-dependencies]
 rand = "0.8"
 socket2 = "0.4"

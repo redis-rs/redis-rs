@@ -101,6 +101,8 @@ then you should be able to connect to a redis instance using the `rediss://` URL
 let client = redis::Client::open("rediss://127.0.0.1/")?;
 ```
 
+**Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
+
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
