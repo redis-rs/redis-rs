@@ -14,7 +14,7 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.22.3"
+redis = "0.23.0"
 ```
 
 Documentation on the library can be found at
@@ -50,29 +50,50 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 
 ## Async support
 
-To enable asynchronous clients a feature for the underlying feature need to be activated.
+To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
+`tokio-comp` for tokio users or `async-std-comp` for async-std users.
+
 
 ```
 # if you use tokio
-redis = { version = "0.22.3", features = ["tokio-comp"] }
+redis = { version = "0.23.0", features = ["tokio-comp"] }
 
 # if you use async-std
-redis = { version = "0.22.3", features = ["async-std-comp"] }
+redis = { version = "0.23.0", features = ["async-std-comp"] }
 ```
 
 ## TLS Support
 
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
+Currently, `native-tls` and `rustls` are supported.
+
+To use `native-tls`:
 
 ```
-redis = { version = "0.22.3", features = ["tls"] }
+redis = { version = "0.23.0", features = ["tls-native-tls"] }
 
 # if you use tokio
-redis = { version = "0.22.3", features = ["tokio-native-tls-comp"] }
+redis = { version = "0.23.0", features = ["tokio-native-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.22.3", features = ["async-std-tls-comp"] }
+redis = { version = "0.23.0", features = ["async-std-native-tls-comp"] }
 ```
+
+To use `rustls`:
+
+```
+redis = { version = "0.23.0", features = ["tls-rustls"] }
+
+# if you use tokio
+redis = { version = "0.23.0", features = ["tokio-rustls-comp"] }
+
+# if you use async-std
+redis = { version = "0.23.0", features = ["async-std-rustls-comp"] }
+```
+
+With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
+- `tls-rustls-insecure`: Allow insecure TLS connections
+- `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
@@ -80,25 +101,47 @@ then you should be able to connect to a redis instance using the `rediss://` URL
 let client = redis::Client::open("rediss://127.0.0.1/")?;
 ```
 
+**Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
+
 ## Cluster Support
 
-Cluster mode can be used by specifying "cluster" as a features entry in your Cargo.toml.
+Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
 
-`redis = { version = "0.22.3", features = [ "cluster"] }`
+`redis = { version = "0.23.0", features = [ "cluster"] }`
 
-Then you can simply use the `ClusterClient` which accepts a list of available nodes.
+Then you can simply use the `ClusterClient`, which accepts a list of available nodes. Note
+that only one node in the cluster needs to be specified when instantiating the client, though
+you can specify multiple.
 
 ```rust
 use redis::cluster::ClusterClient;
 use redis::Commands;
 
 fn fetch_an_integer() -> String {
-    // connect to redis
     let nodes = vec!["redis://127.0.0.1/"];
-    let client = ClusterClient::open(nodes).unwrap();
+    let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_connection().unwrap();
     let _: () = connection.set("test", "test_data").unwrap();
     let rv: String = connection.get("test").unwrap();
+    return rv;
+}
+```
+
+Async Redis Cluster support can be enabled by enabling the `cluster-async` feature, along
+with your preferred async runtime, e.g.:
+
+`redis = { version = "0.23.0", features = [ "cluster-async", "tokio-std-comp" ] }`
+
+```rust
+use redis::cluster::ClusterClient;
+use redis::AsyncCommands;
+
+async fn fetch_an_integer() -> String {
+    let nodes = vec!["redis://127.0.0.1/"];
+    let client = ClusterClient::new(nodes).unwrap();
+    let mut connection = client.get_async_connection().await.unwrap();
+    let _: () = connection.set("test", "test_data").await.unwrap();
+    let rv: String = connection.get("test").await.unwrap();
     return rv;
 }
 ```
@@ -107,7 +150,7 @@ fn fetch_an_integer() -> String {
 
 Support for the RedisJSON Module can be enabled by specifying "json" as a feature in your Cargo.toml.
 
-`redis = { version = "0.22.3", features = ["json"] }`
+`redis = { version = "0.23.0", features = ["json"] }`
 
 Then you can simply import the `JsonCommands` trait which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
 

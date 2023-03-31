@@ -1,5 +1,7 @@
 #[cfg(unix)]
 use std::path::Path;
+#[cfg(feature = "tls-rustls")]
+use std::sync::Arc;
 use std::{
     future::Future,
     io,
@@ -10,8 +12,15 @@ use std::{
 
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
-#[cfg(feature = "tls")]
+
+#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use async_native_tls::{TlsConnector, TlsStream};
+
+#[cfg(feature = "tls-rustls")]
+use crate::connection::create_rustls_config;
+#[cfg(feature = "tls-rustls")]
+use futures_rustls::{client::TlsStream, TlsConnector};
+
 use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
@@ -82,7 +91,10 @@ pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
     Tcp(AsyncStdWrapped<TcpStream>),
     /// Represents an Async_std TLS encrypted TCP connection.
-    #[cfg(feature = "async-std-tls-comp")]
+    #[cfg(any(
+        feature = "async-std-native-tls-comp",
+        feature = "async-std-rustls-comp"
+    ))]
     TcpTls(AsyncStdWrapped<Box<TlsStream<TcpStream>>>),
     /// Represents an Async_std Unix connection.
     #[cfg(unix)]
@@ -97,7 +109,10 @@ impl AsyncWrite for AsyncStd {
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(feature = "async-std-tls-comp")]
+            #[cfg(any(
+                feature = "async-std-native-tls-comp",
+                feature = "async-std-rustls-comp"
+            ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_write(cx, buf),
@@ -107,7 +122,10 @@ impl AsyncWrite for AsyncStd {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(feature = "async-std-tls-comp")]
+            #[cfg(any(
+                feature = "async-std-native-tls-comp",
+                feature = "async-std-rustls-comp"
+            ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_flush(cx),
@@ -117,7 +135,10 @@ impl AsyncWrite for AsyncStd {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(feature = "async-std-tls-comp")]
+            #[cfg(any(
+                feature = "async-std-native-tls-comp",
+                feature = "async-std-rustls-comp"
+            ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_shutdown(cx),
@@ -133,7 +154,10 @@ impl AsyncRead for AsyncStd {
     ) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(feature = "async-std-tls-comp")]
+            #[cfg(any(
+                feature = "async-std-native-tls-comp",
+                feature = "async-std-rustls-comp"
+            ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_read(cx, buf),
@@ -149,7 +173,7 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
 
-    #[cfg(feature = "tls")]
+    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
@@ -170,6 +194,23 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }
 
+    #[cfg(feature = "tls-rustls")]
+    async fn connect_tcp_tls(
+        hostname: &str,
+        socket_addr: SocketAddr,
+        insecure: bool,
+    ) -> RedisResult<Self> {
+        let tcp_stream = TcpStream::connect(&socket_addr).await?;
+
+        let config = create_rustls_config(insecure)?;
+        let tls_connector = TlsConnector::from(Arc::new(config));
+
+        Ok(tls_connector
+            .connect(hostname.try_into()?, tcp_stream)
+            .await
+            .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
+    }
+
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
         Ok(UnixStream::connect(path)
@@ -184,7 +225,10 @@ impl RedisRuntime for AsyncStd {
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         match self {
             AsyncStd::Tcp(x) => Box::pin(x),
-            #[cfg(feature = "async-std-tls-comp")]
+            #[cfg(any(
+                feature = "async-std-native-tls-comp",
+                feature = "async-std-rustls-comp"
+            ))]
             AsyncStd::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]
             AsyncStd::Unix(x) => Box::pin(x),

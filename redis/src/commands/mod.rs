@@ -89,7 +89,14 @@ implement_commands! {
     }
 
     /// Sets multiple keys to their values.
+    #[allow(deprecated)]
+    #[deprecated(since = "0.22.4", note = "Renamed to mset() to reflect Redis name")]
     fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
+        cmd("MSET").arg(items)
+    }
+
+    /// Sets multiple keys to their values.
+    fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
         cmd("MSET").arg(items)
     }
 
@@ -192,12 +199,12 @@ implement_commands! {
     }
 
     /// Rename a key.
-    fn rename<K: ToRedisArgs>(key: K, new_key: K) {
+    fn rename<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
         cmd("RENAME").arg(key).arg(new_key)
     }
 
     /// Rename a key, only if the new key does not exist.
-    fn rename_nx<K: ToRedisArgs>(key: K, new_key: K) {
+    fn rename_nx<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
@@ -250,25 +257,25 @@ implement_commands! {
 
     /// Perform a bitwise AND between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_and<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise OR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_or<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise XOR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_xor<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise NOT of the key (containing string values)
     /// and store the result in the destination key.
-    fn bit_not<K: ToRedisArgs>(dstkey: K, srckey: K) {
+    fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
@@ -342,7 +349,7 @@ implement_commands! {
 
     /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
-    fn blmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction, timeout: usize) {
+    fn blmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: usize) {
         cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
@@ -364,7 +371,7 @@ implement_commands! {
 
     /// Pop a value from a list, push it to another list and return it;
     /// or block until one is available.
-    fn brpoplpush<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
+    fn brpoplpush<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, timeout: usize) {
         cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
     }
 
@@ -391,7 +398,7 @@ implement_commands! {
     }
 
     /// Pop an element a list, push it to another list and return it
-    fn lmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction) {
+    fn lmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction) {
         cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
     }
 
@@ -454,7 +461,7 @@ implement_commands! {
     }
 
     /// Pop a value from a list, push it to another list and return it.
-    fn rpoplpush<K: ToRedisArgs>(key: K, dstkey: K) {
+    fn rpoplpush<K: ToRedisArgs, D: ToRedisArgs>(key: K, dstkey: D) {
         cmd("RPOPLPUSH").arg(key).arg(dstkey)
     }
 
@@ -487,7 +494,7 @@ implement_commands! {
     }
 
     /// Subtract multiple sets and store the resulting set in a key.
-    fn sdiffstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sdiffstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SDIFFSTORE").arg(dstkey).arg(keys)
     }
 
@@ -497,7 +504,7 @@ implement_commands! {
     }
 
     /// Intersect multiple sets and store the resulting set in a key.
-    fn sinterstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SINTERSTORE").arg(dstkey).arg(keys)
     }
 
@@ -512,7 +519,7 @@ implement_commands! {
     }
 
     /// Move a member from one set to another.
-    fn smove<K: ToRedisArgs, M: ToRedisArgs>(srckey: K, dstkey: K, member: M) {
+    fn smove<S: ToRedisArgs, D: ToRedisArgs, M: ToRedisArgs>(srckey: S, dstkey: D, member: M) {
         cmd("SMOVE").arg(srckey).arg(dstkey).arg(member)
     }
 
@@ -542,7 +549,7 @@ implement_commands! {
     }
 
     /// Add multiple sets and store the resulting set in a key.
-    fn sunionstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SUNIONSTORE").arg(dstkey).arg(keys)
     }
 
@@ -576,26 +583,26 @@ implement_commands! {
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
-    fn zinterstore<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys)
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
-    fn zinterstore_min<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
-    fn zinterstore_max<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
 
     /// [`Commands::zinterstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
     }
@@ -603,7 +610,7 @@ implement_commands! {
     /// [`Commands::zinterstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
     }
@@ -611,13 +618,13 @@ implement_commands! {
     /// [`Commands::zinterstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
-    fn zlexcount<K: ToRedisArgs, L: ToRedisArgs>(key: K, min: L, max: L) {
+    fn zlexcount<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
     }
 
@@ -787,26 +794,26 @@ implement_commands! {
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
-    fn zunionstore<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys)
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
-    fn zunionstore_min<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
-    fn zunionstore_max<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
 
     /// [`Commands::zunionstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
     }
@@ -814,7 +821,7 @@ implement_commands! {
     /// [`Commands::zunionstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
     }
@@ -822,7 +829,7 @@ implement_commands! {
     /// [`Commands::zunionstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
@@ -841,7 +848,7 @@ implement_commands! {
     }
 
     /// Merge N different HyperLogLogs into a single one.
-    fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn pfmerge<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
 
