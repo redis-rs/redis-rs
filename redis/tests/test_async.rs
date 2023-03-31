@@ -499,6 +499,21 @@ async fn test_issue_async_commands_scan_broken() {
     assert_eq!(keys.len(), 100);
 }
 
+#[test]
+fn test_multiplexed_connection_timing_out() {
+    let ctx = TestContext::new();
+    block_on_all(async {
+        let mut con = ctx
+            .multiplexed_async_connection()
+            .await
+            .unwrap()
+            .set_request_timeout(Some(std::time::Duration::from_nanos(1).into()));
+        let result: RedisResult<redis::Value> = con.blpop("foo", 0).await; // 0 timeout blocks indefinitely
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_timeout());
+    });
+}
+
 mod pub_sub {
     use std::collections::HashMap;
     use std::time::Duration;

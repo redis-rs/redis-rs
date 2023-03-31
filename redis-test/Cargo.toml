@@ -20,5 +20,5 @@ aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
 redis = { version = "0.23.0", path = "../redis", features = ["aio", "tokio-comp"] }
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
 

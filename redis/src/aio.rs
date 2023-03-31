@@ -1,5 +1,7 @@
 //! Adds experimental async IO support to redis.
 use async_trait::async_trait;
+use futures_time::prelude::*;
+use futures_time::time::Duration;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
@@ -884,6 +886,7 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, Value, RedisError>,
     db: i64,
+    request_timeout: Option<Duration>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -922,6 +925,7 @@ impl MultiplexedConnection {
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
+            request_timeout: None,
         };
         let driver = {
             let auth = authenticate(connection_info, &mut con);
@@ -940,9 +944,13 @@ impl MultiplexedConnection {
         Ok((con, driver))
     }
 
-    /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the single response from it.
-    pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+    /// Adds a request timeout to the connection.
+    pub fn set_request_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
+    async fn send_packed_command_internal(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let value = self
             .pipeline
             .send(cmd.get_packed_command())
@@ -953,10 +961,7 @@ impl MultiplexedConnection {
         Ok(value)
     }
 
-    /// Sends multiple already encoded (packed) command into the TCP socket
-    /// and reads `count` responses from it.  This is used to implement
-    /// pipelining.
-    pub async fn send_packed_commands(
+    async fn send_packed_commands_internal(
         &mut self,
         cmd: &crate::Pipeline,
         offset: usize,
@@ -972,6 +977,36 @@ impl MultiplexedConnection {
 
         value.drain(..offset);
         Ok(value)
+    }
+
+    /// Sends an already encoded (packed) command into the TCP socket and
+    /// reads the single response from it.
+    pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        if let Some(request_timeout) = self.request_timeout {
+            self.send_packed_command_internal(cmd)
+                .timeout(request_timeout)
+                .await?
+        } else {
+            self.send_packed_command_internal(cmd).await
+        }
+    }
+
+    /// Sends multiple already encoded (packed) command into the TCP socket
+    /// and reads `count` responses from it.  This is used to implement
+    /// pipelining.
+    pub async fn send_packed_commands(
+        &mut self,
+        cmd: &crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        if let Some(request_timeout) = self.request_timeout {
+            self.send_packed_commands_internal(cmd, offset, count)
+                .timeout(request_timeout)
+                .await?
+        } else {
+            self.send_packed_commands_internal(cmd, offset, count).await
+        }
     }
 }
 
