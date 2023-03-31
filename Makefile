@@ -14,9 +14,14 @@ test:
 	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features and TLS support"
+	@echo "Testing Connection Type TCP with all features and Rustls support"
 	@echo "===================================================================="
 	@REDISRS_SERVER_TYPE=tcp+tls cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
+
+	@echo "===================================================================="
+	@echo "Testing Connection Type TCP with all features and native-TLS support"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp+tls cargo test -p redis --features=json,tokio-native-tls-comp,connection-manager,cluster-async -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
@@ -29,9 +34,14 @@ test:
 	@REDISRS_SERVER_TYPE=unix cargo test -p redis --all-features -- --skip test_cluster --skip test_async_cluster --skip test_module
 
 	@echo "===================================================================="
-	@echo "Testing async-std"
+	@echo "Testing async-std with Rustls"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-tls-comp,cluster-async -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1
+
+	@echo "===================================================================="
+	@echo "Testing async-std with native-TLS"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp cargo test -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"

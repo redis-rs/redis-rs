@@ -54,10 +54,18 @@ rand = { version = "0.8", optional = true }
 async-std = { version = "1.8.0", optional = true}
 async-trait = { version = "0.1.24", optional = true }
 
-# Only needed for TLS
+# Only needed for native tls
 native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
+
+# Only needed for rustls
+rustls = { version = "0.20.4", optional = true }
+webpki = { version = "0.22.0", optional = true }
+webpki-roots = { version = "0.22.3", optional = true }
+rustls-native-certs = { version = "0.6.2", optional = true }
+tokio-rustls = { version = "0.23.3", optional = true }
+futures-rustls = { version = "0.22.2", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.82", optional = true }
@@ -76,14 +84,23 @@ geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
-tls = ["native-tls"]
+tls-native-tls = ["native-tls"]
+tls-rustls = ["rustls", "rustls-native-certs", "webpki"]
+tls-rustls-insecure = ["tls-rustls", "rustls/dangerous_configuration"]
+tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std"]
-async-std-tls-comp = ["async-std-comp", "async-native-tls", "tls"]
+async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
+async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio", "tokio/net"]
-tokio-native-tls-comp = ["tls", "tokio-native-tls"]
+tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
+tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
 connection-manager = ["arc-swap", "futures", "aio"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
+
+# Deprecated features
+tls = ["tls-native-tls"] # use "tls-native-tls" instead
+async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
 
 [dev-dependencies]
 rand = "0.8"

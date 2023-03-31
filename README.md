@@ -65,22 +65,43 @@ redis = { version = "0.23.0", features = ["async-std-comp"] }
 ## TLS Support
 
 To enable TLS support, you need to use the relevant feature entry in your Cargo.toml.
+Currently, `native-tls` and `rustls` are supported.
+
+To use `native-tls`:
 
 ```
-redis = { version = "0.23.0", features = ["tls"] }
+redis = { version = "0.23.0", features = ["tls-native-tls"] }
 
 # if you use tokio
 redis = { version = "0.23.0", features = ["tokio-native-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.23.0", features = ["async-std-tls-comp"] }
+redis = { version = "0.23.0", features = ["async-std-native-tls-comp"] }
 ```
+
+To use `rustls`:
+
+```
+redis = { version = "0.23.0", features = ["tls-rustls"] }
+
+# if you use tokio
+redis = { version = "0.23.0", features = ["tokio-rustls-comp"] }
+
+# if you use async-std
+redis = { version = "0.23.0", features = ["async-std-rustls-comp"] }
+```
+
+With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
+- `tls-rustls-insecure`: Allow insecure TLS connections
+- `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/")?;
 ```
+
+**Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
 
 ## Cluster Support
 
