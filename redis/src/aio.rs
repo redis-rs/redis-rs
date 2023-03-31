@@ -37,7 +37,7 @@ use crate::connection::{
     RedisConnectionInfo,
 };
 
-use crate::commands::create_hello_command;
+use crate::commands::resp3_hello;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
@@ -422,7 +422,7 @@ where
     C: ConnectionLike,
 {
     if connection_info.use_resp3 {
-        let hello_cmd = create_hello_command(connection_info);
+        let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query_async(con).await;
         if let Err(err) = val {
             return Err(get_resp3_hello_command_error(err));

@@ -19,7 +19,7 @@ use crate::types::HashMap;
 use std::os::unix::net::UnixStream;
 use std::vec::IntoIter;
 
-use crate::commands::create_hello_command;
+use crate::commands::resp3_hello;
 #[cfg(feature = "tls")]
 use native_tls::{TlsConnector, TlsStream};
 
@@ -634,7 +634,7 @@ fn setup_connection(
     };
 
     if connection_info.use_resp3 {
-        let hello_cmd = create_hello_command(connection_info);
+        let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query(&mut rv);
         if let Err(err) = val {
             return Err(get_resp3_hello_command_error(err));

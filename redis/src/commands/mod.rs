@@ -2060,7 +2060,7 @@ impl ToRedisArgs for Direction {
 }
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
-pub fn create_hello_command(connection_info: &RedisConnectionInfo) -> Cmd{
+pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd{
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");
     if connection_info.password.is_some() {
