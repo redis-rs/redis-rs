@@ -859,6 +859,8 @@ itoa_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(i128, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(u128, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 
@@ -870,6 +872,8 @@ non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::Numbe
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI128, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU128, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
 
