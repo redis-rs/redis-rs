@@ -325,8 +325,9 @@ assert_eq!(result, 3);
 In addition to the synchronous interface that's been explained above there also exists an
 asynchronous interface based on [`futures`][] and [`tokio`][].
 
-This interface exists under the `aio` (async io) module and largely mirrors the synchronous
-with a few concessions to make it fit the constraints of `futures`.
+This interface exists under the `aio` (async io) module (which requires that the `aio` feature
+is enabled) and largely mirrors the synchronous with a few concessions to make it fit the 
+constraints of `futures`.
 
 ```rust,no_run
 use futures::prelude::*;
