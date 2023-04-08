@@ -327,6 +327,15 @@ impl Cmd {
         }
     }
 
+    /// Creates a new empty command, with at least the requested capcity.
+    pub fn with_capacity(arg_count: usize, size_of_data: usize) -> Cmd {
+        Cmd {
+            data: Vec::with_capacity(size_of_data),
+            args: Vec::with_capacity(arg_count),
+            cursor: None,
+        }
+    }
+
     /// Appends an argument to the command.  The argument passed must
     /// be a type that implements `ToRedisArgs`.  Most primitive types as
     /// well as vectors of primitive types implement it.
