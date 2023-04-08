@@ -58,7 +58,7 @@ fn test_getset() {
 }
 
 #[test]
-fn test_client_tracking_multi_order() {
+fn test_push() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let (k1, k2): (i32, i32) = redis::pipe()
@@ -81,10 +81,16 @@ fn test_client_tracking_multi_order() {
         .arg("key_1")
         .cmd("GET")
         .arg("key_2")
+        .cmd("SET")
+        .arg("key_1")
+        .arg(45)
+        .ignore()
         .query(&mut con)
         .unwrap();
     assert_eq!(k1, 42);
     assert_eq!(k2, 43);
+    let num: i32 = con.get("key_1").unwrap();
+    assert_eq!(num, 45);
 }
 
 #[test]

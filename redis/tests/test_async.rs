@@ -98,6 +98,29 @@ fn test_pipeline_transaction() {
 }
 
 #[test]
+fn test_push() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await.unwrap();
+        let mut pipe = redis::pipe();
+        pipe.cmd("CLIENT")
+            .arg("TRACKING")
+            .arg("ON")
+            .ignore()
+            .cmd("GET")
+            .arg("key_1")
+            .ignore()
+            .cmd("SET")
+            .arg("key_1")
+            .arg(42)
+            .ignore();
+        let _: RedisResult<()> = pipe.query_async(&mut con).await;
+        let num: i32 = con.get("key_1").await.unwrap();
+        assert_eq!(num, 42);
+    });
+}
+
+#[test]
 fn test_pipeline_transaction_with_errors() {
     use redis::RedisError;
     let ctx = TestContext::new();

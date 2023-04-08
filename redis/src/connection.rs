@@ -895,7 +895,12 @@ impl ConnectionLike for Connection {
         }
 
         self.con.send_bytes(cmd)?;
-        self.read_response()
+        loop {
+            match self.read_response()? {
+                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                val => return Ok(val),
+            }
+        }
     }
 
     fn req_packed_commands(

@@ -573,7 +573,12 @@ where
             self.buf.clear();
             cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
-            self.read_response().await
+            loop {
+                match self.read_response().await? {
+                    Value::Push { kind, data } => self.execute_push_message(kind, data),
+                    val => return Ok(val),
+                }
+            }
         })
         .boxed()
     }
