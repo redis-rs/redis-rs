@@ -1,18 +1,14 @@
 #![cfg(feature = "cluster-async")]
 mod support;
-use std::{
-    cell::Cell,
-    sync::{
-        atomic,
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{self, AtomicI32},
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 use futures::prelude::*;
 use futures::stream;
 use once_cell::sync::Lazy;
-use proptest::proptest;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
@@ -105,19 +101,6 @@ fn test_async_cluster_basic_pipe() {
 }
 
 #[test]
-fn test_async_cluster_proptests() {
-    let cluster = Arc::new(TestClusterContext::new(6, 1));
-
-    proptest!(
-        proptest::prelude::ProptestConfig { cases: 30, failure_persistence: None, .. Default::default() },
-        |(requests in 0..15i32, value in 0..i32::max_value())| {
-            let cluster = cluster.clone();
-            block_on_all(async move { test_failover(&cluster, requests, value).await; });
-        }
-    );
-}
-
-#[test]
 fn test_async_cluster_basic_failover() {
     block_on_all(async move {
         test_failover(&TestClusterContext::new(6, 1), 10, 123).await;
@@ -132,8 +115,7 @@ async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<()
 }
 
 async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
-    let completed = Cell::new(0);
-    let completed = &completed;
+    let completed = Arc::new(AtomicI32::new(0));
 
     let connection = env.async_connection().await;
     let mut node_conns: Vec<MultiplexedConnection> = Vec::new();
@@ -186,6 +168,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
         .map(|i| {
             let mut connection = connection.clone();
             let mut node_conns = node_conns.clone();
+            let completed = completed.clone();
             async move {
                 if i == requests / 2 {
                     // Failover all the nodes, error only if all the failover requests error
@@ -214,16 +197,21 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
                         .query_async(&mut connection)
                         .await?;
                     assert_eq!(res, i);
-                    completed.set(completed.get() + 1);
+                    completed.fetch_add(1, Ordering::SeqCst);
                     Ok::<_, anyhow::Error>(())
                 }
             }
         })
         .collect::<stream::FuturesUnordered<_>>()
-        .collect::<Vec<Result<(), anyhow::Error>>>()
-        .await;
+        .try_collect()
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
 
-    assert_eq!(completed.get(), requests, "Some requests never completed!");
+    assert_eq!(
+        completed.load(Ordering::SeqCst),
+        requests,
+        "Some requests never completed!"
+    );
 }
 
 static ERROR: Lazy<AtomicBool> = Lazy::new(Default::default);
@@ -411,7 +399,6 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
-        eprintln!("{} => {}", i, String::from_utf8_lossy(cmd));
 
         match i {
             // Respond that the key exists elswehere (the slot, 123, is unused in the

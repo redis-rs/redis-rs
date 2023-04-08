@@ -1,3 +1,45 @@
+<a name="0.23.0-beta.1"></a>
+### 0.23.0-beta.1 (2023-03-28)
+
+This release adds the `cluster_async` module, which introduces async Redis Cluster support. The code therein
+is largely taken from @Marwes's [redis-cluster-async crate](https://github.com/redis-rs/redis-cluster-async), which itself
+appears to have started from a sync Redis Cluster implementation started by @atuk721. In any case, thanks to @Marwes and @atuk721
+for the great work, and we hope to keep development moving forward in `redis-rs`. 
+
+Though async Redis Cluster functionality for the time being has been kept as close to the originating crate as possible, previous users of 
+`redis-cluster-async` should note the following changes:
+* Retries, while still configurable, can no longer be set to `None`/infinite retries
+* Routing and slot parsing logic has been removed and merged with existing `redis-rs` functionality
+* The client has been removed and superceded by common `ClusterClient`
+* Renamed `Connection` to `ClusterConnection`
+* Added support for reading from replicas
+* Added support for insecure TLS
+* Added support for setting both username and password
+
+#### Breaking Changes
+* Fix long-standing bug related to `AsyncIter`'s stream implementation in which polling the server
+  for additional data yielded broken data in most cases. Type bounds for `AsyncIter` have changed slightly,
+  making this a potentially breaking change. ([#597](https://github.com/redis-rs/redis-rs/pull/597) @roger)
+
+#### Changes
+* Commands: Add additional generic args for key arguments ([#795](https://github.com/redis-rs/redis-rs/pull/795) @MaxOhn)
+* Add `mset` / deprecate `set_multiple` ([#766](https://github.com/redis-rs/redis-rs/pull/766) @randomairborne)
+* More efficient interfaces for `MultiplexedConnection` and `ConnectionManager` ([#811](https://github.com/redis-rs/redis-rs/pull/811) @nihohit)
+* Refactor / remove flaky test ([#810](https://github.com/redis-rs/redis-rs/pull/810))
+* `cluster_async`: rename `Connection` to `ClusterConnection`, `Pipeline` to `ClusterConnInner` ([#808](https://github.com/redis-rs/redis-rs/pull/808))
+* Support parsing IPV6 cluster nodes ([#796](https://github.com/redis-rs/redis-rs/pull/796) @socs)
+* Common client for sync/async cluster connections ([#798](https://github.com/redis-rs/redis-rs/pull/798))
+  * `cluster::ClusterConnection` underlying connection type is now generic (with existing type as default)
+  * Support `read_from_replicas` in cluster_async
+  * Set retries in `ClusterClientBuilder`
+  * Add mock tests for `cluster`
+* cluster-async common slot parsing([#793](https://github.com/redis-rs/redis-rs/pull/793))
+* Support async-std in cluster_async module ([#790](https://github.com/redis-rs/redis-rs/pull/790))
+* Async-Cluster use same routing as Sync-Cluster ([#789](https://github.com/redis-rs/redis-rs/pull/789))
+* Add Async Cluster Support ([#696](https://github.com/redis-rs/redis-rs/pull/696))
+* Fix broken json-module tests ([#786](https://github.com/redis-rs/redis-rs/pull/786))
+* `cluster`: Tls Builder support / simplify cluster connection map ([#718](https://github.com/redis-rs/redis-rs/pull/718) @0xWOF, @utkarshgupta137)
+
 <a name="0.22.3"></a>
 ### 0.22.3 (2023-01-23)
 

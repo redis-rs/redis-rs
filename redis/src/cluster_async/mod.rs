@@ -1,4 +1,26 @@
-//! TODO
+//! This module provides async functionality for Redis Cluster.
+//!
+//! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
+//! of connections to each node in the cluster. While it  generally behaves similarly to
+//! the sync cluster module, certain commands do not route identically, due most notably to
+//! a current lack of support for routing commands to multiple nodes.
+//!
+//! Also note that pubsub functionality is not currently provided by this module.
+//!
+//! # Example
+//! ```rust,no_run
+//! use redis::cluster::ClusterClient;
+//! use redis::AsyncCommands;
+//!
+//! async fn fetch_an_integer() -> String {
+//!     let nodes = vec!["redis://127.0.0.1/"];
+//!     let client = ClusterClient::new(nodes).unwrap();
+//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let _: () = connection.set("test", "test_data").await.unwrap();
+//!     let rv: String = connection.get("test").await.unwrap();
+//!     return rv;
+//! }
+//! ```
 use std::{
     collections::{HashMap, HashSet},
     fmt, io,
@@ -35,26 +57,28 @@ use tokio::sync::{mpsc, oneshot};
 
 const SLOT_SIZE: usize = 16384;
 
-/// This is a connection of Redis cluster.
+/// This represents an async Redis Cluster connection. It stores the
+/// underlying connections maintained for each node in the cluster, as well
+/// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
-pub struct Connection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
-impl<C> Connection<C>
+impl<C> ClusterConnection<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> RedisResult<Connection<C>> {
-        Pipeline::new(initial_nodes, cluster_params)
+    ) -> RedisResult<ClusterConnection<C>> {
+        ClusterConnInner::new(initial_nodes, cluster_params)
             .await
-            .map(|pipeline| {
+            .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
                 let stream = async move {
                     let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
                         .map(Ok)
-                        .forward(pipeline)
+                        .forward(inner)
                         .await;
                 };
                 #[cfg(feature = "tokio-comp")]
@@ -62,7 +86,7 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                Connection(tx)
+                ClusterConnection(tx)
             })
     }
 }
@@ -70,7 +94,7 @@ where
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
-struct Pipeline<C> {
+struct ClusterConnInner<C> {
     connections: ConnectionMap<C>,
     slots: SlotMap,
     state: ConnectionState<C>,
@@ -312,7 +336,7 @@ where
     }
 }
 
-impl<C> Pipeline<C>
+impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
@@ -322,7 +346,7 @@ where
     ) -> RedisResult<Self> {
         let connections =
             Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
-        let mut connection = Pipeline {
+        let mut connection = ClusterConnInner {
             connections,
             slots: Default::default(),
             in_flight_requests: Default::default(),
@@ -631,7 +655,7 @@ where
     }
 }
 
-impl<C> Sink<Message<C>> for Pipeline<C>
+impl<C> Sink<Message<C>> for ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
@@ -744,7 +768,7 @@ where
     }
 }
 
-impl<C> ConnectionLike for Connection<C>
+impl<C> ConnectionLike for ClusterConnection<C>
 where
     C: ConnectionLike + Send + 'static,
 {
@@ -833,11 +857,8 @@ where
         // TODO - implement handling RESP3 push messages
     }
 }
-/// Implements the process of connecting to a redis server
-/// and obtaining a connection handle. Encapsulating
-/// this functionality behind a trait allows for flexibility in
-/// defining the underlying connection type for a clustered client and is
-/// particularly useful for testing.
+/// Implements the process of connecting to a Redis server
+/// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>

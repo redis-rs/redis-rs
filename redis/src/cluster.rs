@@ -1,9 +1,6 @@
-//! Redis cluster support.
+//! This module extends the library to support Redis Cluster.
 //!
-//! This module extends the library to be able to use cluster.
-//! ClusterClient implements traits of ConnectionLike and Commands.
-//!
-//! Note that the cluster support currently does not provide pubsub
+//! Note that this module does not currently provide pubsub
 //! functionality.
 //!
 //! # Example
@@ -63,11 +60,8 @@ use crate::{
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-/// Implements the process of connecting to a redis server
-/// and obtaining and configuring a connection handle. Encapsulating
-/// this functionality behind a trait allows for flexibility in
-/// defining the underlying connection type for a clustered client and is
-/// particularly useful for testing.
+/// Implements the process of connecting to a Redis server
+/// and obtaining and configuring a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
@@ -124,7 +118,9 @@ impl Connect for Connection {
     }
 }
 
-/// This is a connection of Redis cluster.
+/// This represents a Redis Cluster connection. It stores the
+/// underlying connections maintained for each node in the cluster, as well
+/// as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
     connections: RefCell<HashMap<String, C>>,
@@ -828,13 +824,15 @@ pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
 ) -> RedisResult<ConnectionInfo> {
-    let mut split = node.split(':');
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
-    let host = split.next().ok_or_else(invalid_error)?;
-    let port = split
-        .next()
-        .and_then(|string| u16::from_str(string).ok())
+    let (host, port) = node
+        .rsplit_once(':')
+        .and_then(|(host, port)| {
+            Some(host.trim_start_matches('[').trim_end_matches(']'))
+                .filter(|h| !h.is_empty())
+                .zip(u16::from_str(port).ok())
+        })
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
@@ -867,4 +865,48 @@ pub(crate) fn slot_cmd() -> Cmd {
     let mut cmd = Cmd::new();
     cmd.arg("CLUSTER").arg("SLOTS");
     cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cluster_node_host_port() {
+        let cases = vec![
+            (
+                "127.0.0.1:6379",
+                ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379u16),
+            ),
+            (
+                "localhost.localdomain:6379",
+                ConnectionAddr::Tcp("localhost.localdomain".to_string(), 6379u16),
+            ),
+            (
+                "dead::cafe:beef:30001",
+                ConnectionAddr::Tcp("dead::cafe:beef".to_string(), 30001u16),
+            ),
+            (
+                "[fe80::cafe:beef%en1]:30001",
+                ConnectionAddr::Tcp("fe80::cafe:beef%en1".to_string(), 30001u16),
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(res.unwrap().addr, expected);
+        }
+
+        let cases = vec![":0", "[]:6379"];
+        for input in cases {
+            let res = get_connection_info(input, ClusterParams::default());
+            assert_eq!(
+                res.err(),
+                Some(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Invalid node string",
+                ))),
+            );
+        }
+    }
 }

@@ -344,7 +344,6 @@ fn test_cluster_rebuild_with_extra_nodes() {
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
-        eprintln!("{} => {}", i, String::from_utf8_lossy(cmd));
 
         match i {
             // Respond that the key exists elswehere (the slot, 123, is unused in the
