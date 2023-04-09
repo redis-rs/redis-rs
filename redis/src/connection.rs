@@ -1054,6 +1054,24 @@ impl Connection {
 }
 
 impl ConnectionLike for Connection {
+    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        if self.pubsub {
+            self.exit_pubsub()?;
+        }
+
+        self.con.send_bytes(&pcmd)?;
+        if cmd.is_no_response() {
+            return Ok(Value::Nil);
+        }
+        loop {
+            match self.read_response()? {
+                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                val => return Ok(val),
+            }
+        }
+    }
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         if self.pubsub {
             self.exit_pubsub()?;
@@ -1201,22 +1219,42 @@ impl<'a> PubSub<'a> {
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("SUBSCRIBE").arg(channel).query(self.con)
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PSUBSCRIBE").arg(pchannel).query(self.con)
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("UNSUBSCRIBE").arg(channel).query(self.con)
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until

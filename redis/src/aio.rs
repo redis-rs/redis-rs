@@ -129,6 +129,7 @@ impl Runtime {
 
 /// Trait for objects that implements `AsyncRead` and `AsyncWrite`
 pub trait AsyncStream: AsyncRead + AsyncWrite {}
+
 impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
 
 /// Represents a `PubSub` connection.
@@ -147,31 +148,42 @@ where
 
     /// Subscribes to a new channel.
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("SUBSCRIBE").arg(channel).query_async(&mut self.0).await
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Subscribes to a new channel with a pattern.
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PSUBSCRIBE")
-            .arg(pchannel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Unsubscribes from a channel.
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("UNSUBSCRIBE")
-            .arg(channel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PUNSUBSCRIBE")
-            .arg(pchannel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
@@ -516,7 +528,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
                 ErrorKind::InvalidClientConfig,
                 "Cannot connect to unix sockets \
                  on this platform",
-            )))
+            )));
         }
     })
 }
@@ -573,6 +585,9 @@ where
             self.buf.clear();
             cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
+            if cmd.is_no_response() {
+                return Ok(Value::Nil);
+            }
             loop {
                 match self.read_response().await? {
                     Value::Push { kind, data } => self.execute_push_message(kind, data),
