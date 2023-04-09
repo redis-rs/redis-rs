@@ -1044,6 +1044,7 @@ impl MultiplexedConnection {
 
 impl ConnectionLike for MultiplexedConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+        // TODO - implement handling RESP3 Push
         (async move { self.send_packed_command(cmd).await }).boxed()
     }
 
@@ -1053,6 +1054,7 @@ impl ConnectionLike for MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        // TODO - implement handling RESP3 Push
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 
