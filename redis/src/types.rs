@@ -587,6 +587,32 @@ impl RedisError {
         };
         Self { repr }
     }
+
+    #[cfg(feature = "cluster")] // Used to avoid "unused method" warning
+    pub(crate) fn is_retryable(&self) -> bool {
+        match self.kind() {
+            ErrorKind::ExecAbortError => true,
+            ErrorKind::BusyLoadingError => true,
+            ErrorKind::Moved => true,
+            ErrorKind::Ask => true,
+            ErrorKind::TryAgain => true,
+            ErrorKind::MasterDown => true,
+            ErrorKind::IoError => true,
+            ErrorKind::ExtensionError => true,
+            ErrorKind::ReadOnly => true,
+            ErrorKind::ClusterDown => true,
+
+            ErrorKind::ResponseError => false,
+            ErrorKind::AuthenticationFailed => false,
+            ErrorKind::TypeError => false,
+            ErrorKind::NoScriptError => false,
+            ErrorKind::InvalidClientConfig => false,
+            ErrorKind::CrossSlot => false,
+            ErrorKind::ClientError => false,
+            #[cfg(feature = "json")]
+            ErrorKind::Serialize => false,
+        }
+    }
 }
 
 pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
