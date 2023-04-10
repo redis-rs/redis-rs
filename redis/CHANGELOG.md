@@ -1,3 +1,12 @@
+<a name="0.23.0"></a>
+### 0.23.0 (2023-04-05)
+In addition to *everything mentioned in 0.23.0-beta.1 notes*, this release adds support for Rustls, a long-
+sought feature. Thanks to @rharish101 and @LeoRowan for getting this in!
+
+#### Changes
+* Update Rustls to v0.21.0 ([#820](https://github.com/redis-rs/redis-rs/pull/820) @rharish101)
+* Implement support for Rustls ([#725](https://github.com/redis-rs/redis-rs/pull/725) @rharish101, @LeoRowan)
+
 <a name="0.23.0-beta.1"></a>
 ### 0.23.0-beta.1 (2023-03-28)
 
