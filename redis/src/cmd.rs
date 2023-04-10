@@ -28,7 +28,7 @@ pub struct Cmd {
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
     cursor: Option<u64>,
-    // If it's true command's response won't be readed from socket. Useful for Pub/Sub.
+    // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
 }
 
@@ -336,6 +336,7 @@ impl Cmd {
             data: Vec::with_capacity(size_of_data),
             args: Vec::with_capacity(arg_count),
             cursor: None,
+            no_response: false,
         }
     }
 
