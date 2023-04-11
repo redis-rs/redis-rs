@@ -128,7 +128,7 @@ pub enum Value {
     Status(String),
     /// A status response which represents the string "OK".
     Okay,
-    /// Ordered key,value list from the server. use `as_map_iter` function.
+    /// Unordered key,value list from the server. Use `as_map_iter` function.
     Map(Vec<(Value, Value)>),
     /// Attribute value from the server. Client will give data instead of whole Attribute type.
     Attribute {
