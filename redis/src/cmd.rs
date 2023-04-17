@@ -521,6 +521,7 @@ impl Cmd {
     /// # let mut con = client.get_connection().unwrap();
     /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
     /// ```
+    #[track_caller]
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
         self.query::<()>(con).unwrap();
