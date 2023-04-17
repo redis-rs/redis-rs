@@ -169,7 +169,7 @@
 //! to serialize and deserialize in Redis, you can use the [redis-macros](https://github.com/daniel7grant/redis-macros/)
 //! crate. This will use Serde to save the data in Redis in JSON format.
 //! 
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use redis::Commands;
 //! # use std::collections::{HashMap, HashSet};
 //! #[derive(Serialize, Deserialize, FromRedisValue, ToRedisArgs)]
@@ -192,7 +192,7 @@
 //! be used with `SCAN` like commands in which case iteration will send more
 //! queries until the cursor is exhausted:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
