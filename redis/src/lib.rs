@@ -164,17 +164,17 @@
 //! # Ok(())
 //! # }
 //! ```
-//! 
+//!
 //! If you want to derive `FromRedisValue` and `ToRedisArgs` automatically
 //! to serialize and deserialize in Redis, you can use the [redis-macros](https://github.com/daniel7grant/redis-macros/)
 //! crate. This will use Serde to save the data in Redis in JSON format.
-//! 
+//!
 //! ```rust,ignore
 //! # use redis::Commands;
 //! # use std::collections::{HashMap, HashSet};
 //! #[derive(Serialize, Deserialize, FromRedisValue, ToRedisArgs)]
 //! struct User { name: String }
-//! 
+//!
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
