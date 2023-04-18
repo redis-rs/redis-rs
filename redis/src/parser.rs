@@ -58,6 +58,7 @@ where
 }
 
 const MAX_RECURSE_DEPTH: usize = 100;
+
 fn err_parser(line: &str) -> RedisError {
     let desc = "An error was signalled by the server";
     let mut pieces = line.splitn(2, ' ');
@@ -80,6 +81,7 @@ fn err_parser(line: &str) -> RedisError {
         None => RedisError::from((kind, desc)),
     }
 }
+
 fn value<'a, I>(
     count: Option<usize>,
 ) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
@@ -476,7 +478,6 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[cfg(feature = "aio")]
@@ -498,7 +499,32 @@ mod tests {
     fn decode_resp3_double() {
         let val = parse_redis_value(b",1.23\r\n").unwrap();
         assert_eq!(val, Value::Double(1.23));
+        let val = parse_redis_value(b",nan\r\n").unwrap();
+        if let Value::Double(val) = val {
+            assert!(val.is_sign_positive());
+            assert!(val.is_nan());
+        } else {
+            panic!("expected double");
+        }
+        // -nan is supported prior to redis 7.2
+        let val = parse_redis_value(b",-nan\r\n").unwrap();
+        if let Value::Double(val) = val {
+            assert!(val.is_sign_negative());
+            assert!(val.is_nan());
+        } else {
+            panic!("expected double");
+        }
+        //Allow doubles in scientific E notation
+        let val = parse_redis_value(b",2.67923e+8\r\n").unwrap();
+        assert_eq!(val, Value::Double(267923000.0));
+        let val = parse_redis_value(b",2.67923E+8\r\n").unwrap();
+        assert_eq!(val, Value::Double(267923000.0));
+        let val = parse_redis_value(b",-2.67923E+8\r\n").unwrap();
+        assert_eq!(val, Value::Double(-267923000.0));
+        let val = parse_redis_value(b",2.1E-2\r\n").unwrap();
+        assert_eq!(val, Value::Double(0.021));
     }
+
     #[test]
     fn decode_resp3_map() {
         let val = parse_redis_value(b"%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n").unwrap();
@@ -512,6 +538,7 @@ mod tests {
             v.next().unwrap()
         );
     }
+
     #[test]
     fn decode_resp3_boolean() {
         let val = parse_redis_value(b"#t\r\n").unwrap();
@@ -523,6 +550,7 @@ mod tests {
         let val = parse_redis_value(b"#\r\n");
         assert!(val.is_err());
     }
+
     #[test]
     fn decode_resp3_blob_error() {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
@@ -531,6 +559,7 @@ mod tests {
             Some(make_extension_error("SYNTAX", Some("invalid syntax")))
         )
     }
+
     #[test]
     fn decode_resp3_big_number() {
         let val = parse_redis_value(b"(3492890328409238509324850943850943825024385\r\n").unwrap();
@@ -541,6 +570,7 @@ mod tests {
             )
         );
     }
+
     #[test]
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
@@ -551,6 +581,7 @@ mod tests {
         assert_eq!(Value::Int(100), v[3]);
         assert_eq!(Value::Int(999), v[4]);
     }
+
     #[test]
     fn decode_resp3_push() {
         let val = parse_redis_value(
