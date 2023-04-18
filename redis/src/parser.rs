@@ -523,6 +523,11 @@ mod tests {
         assert_eq!(val, Value::Double(-267923000.0));
         let val = parse_redis_value(b",2.1E-2\r\n").unwrap();
         assert_eq!(val, Value::Double(0.021));
+        // infinity supported is not specified by redis, but we can support it!
+        let val = parse_redis_value(b",-inf\r\n").unwrap();
+        assert_eq!(val, Value::Double(-f64::INFINITY));
+        let val = parse_redis_value(b",inf\r\n").unwrap();
+        assert_eq!(val, Value::Double(f64::INFINITY));
     }
 
     #[test]
