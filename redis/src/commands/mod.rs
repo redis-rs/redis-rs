@@ -500,9 +500,14 @@ implement_commands! {
         cmd("SINTERSTORE").arg(dstkey).arg(keys)
     }
 
-    /// Determine if a given value is a member of a set.  If key is a vec this becomes an `SMISMEMBER`.
+    /// Determine if a given value is a member of a set.
     fn sismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
-        cmd(if member.is_single_arg() { "SISMEMBER" } else { "SMISMEMBER" }).arg(key).arg(member)
+        cmd("SISMEMBER").arg(key).arg(member)
+    }
+
+    /// Determine if multiple values are members of a set.
+    fn smismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) {
+        cmd("SMISMEMBER").arg(key).arg(member)
     }
 
     /// Get all the members in a set.
