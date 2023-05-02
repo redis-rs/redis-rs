@@ -116,6 +116,12 @@ pub struct ConnectionInfo {
 
     /// A boxed connection address for where to connect to.
     pub redis: RedisConnectionInfo,
+
+    /// Defines for how long each connection attempt should continue before failing.
+    /// If not set, connection attempts won't timeout by the connection.
+    ///
+    /// @important - not all connection times use this field. please verify for the connection type you use.
+    pub connection_timeout: Option<std::time::Duration>,
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
@@ -168,6 +174,7 @@ where
         Ok(ConnectionInfo {
             addr: ConnectionAddr::Tcp(self.0.into(), self.1),
             redis: RedisConnectionInfo::default(),
+            connection_timeout: None,
         })
     }
 }
@@ -265,6 +272,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
         },
+        connection_timeout: None,
     })
 }
 
@@ -287,6 +295,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
         },
+        connection_timeout: None,
     })
 }
 
@@ -1361,6 +1370,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    connection_timeout: None,
                 },
             ),
             (
@@ -1368,6 +1378,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
+                    connection_timeout: None,
                 },
             ),
             (
@@ -1379,6 +1390,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                     },
+                    connection_timeout: None,
                 },
             ),
         ];
@@ -1447,6 +1459,7 @@ mod tests {
                         username: None,
                         password: None,
                     },
+                    connection_timeout: None,
                 },
             ),
             (
@@ -1458,6 +1471,7 @@ mod tests {
                         username: None,
                         password: None,
                     },
+                    connection_timeout: None,
                 },
             ),
             (
@@ -1472,6 +1486,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                     },
+                    connection_timeout: None,
                 },
             ),
             (
@@ -1486,6 +1501,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
                     },
+                    connection_timeout: None,
                 },
             ),
         ];

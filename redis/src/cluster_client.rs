@@ -1,6 +1,7 @@
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
+use std::time::Duration;
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
@@ -17,6 +18,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     retries: Option<u32>,
+    connection_timeout: Option<Duration>,
 }
 
 /// Redis cluster specific parameters.
@@ -30,6 +32,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retries: u32,
+    pub(crate) connection_timeout: Option<Duration>,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -40,6 +43,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retries: value.retries.unwrap_or(DEFAULT_RETRIES),
+            connection_timeout: value.connection_timeout,
         }
     }
 }
@@ -176,6 +180,14 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = true;
+        self
+    }
+
+    /// Enables timing out on slow connection time.
+    ///
+    /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
+    pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.connection_timeout = Some(connection_timeout);
         self
     }
 

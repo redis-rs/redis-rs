@@ -838,6 +838,7 @@ pub(crate) fn get_connection_info(
             username: cluster_params.username,
             ..Default::default()
         },
+        connection_timeout: cluster_params.connection_timeout,
     })
 }
 
