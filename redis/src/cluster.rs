@@ -43,7 +43,6 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
-use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, SingleNodeRoutingInfo, SlotAddr,
@@ -158,6 +157,19 @@ pub trait Connect: Sized {
     where
         T: IntoConnectionInfo;
 
+    /// Connect to a node, returning handle for command execution.
+    /// This function should be implemented only for connection types that require additional data for connection setup.
+    fn connect_extended<'a, T>(
+        info: T,
+        timeout: Option<Duration>,
+        _additional_data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    ) -> RedisResult<Self>
+    where
+        T: IntoConnectionInfo + Send + 'a,
+    {
+        Self::connect(info, timeout)
+    }
+
     /// Sends an already encoded (packed) command into the TCP socket and
     /// does not read a response.  This is useful for commands like
     /// `MONITOR` which yield multiple items.  This needs to be used with
@@ -216,13 +228,9 @@ pub struct ClusterConnection<C = Connection> {
     connections: RefCell<HashMap<String, C>>,
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
-    retry_params: RetryParams,
+    cluster_params: ClusterParams,
 }
 
 impl<C> ClusterConnection<C>
@@ -237,14 +245,10 @@ where
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
-            read_from_replicas: cluster_params.read_from_replicas,
-            username: cluster_params.username,
-            password: cluster_params.password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
-            retry_params: cluster_params.retry_params,
+            cluster_params,
         };
         connection.create_initial_connections()?;
 
@@ -389,7 +393,7 @@ where
 
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            if let Ok(mut slots_data) = parse_slots(value, self.tls) {
+            if let Ok(mut slots_data) = parse_slots(value, self.cluster_params.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -415,7 +419,10 @@ where
                     )));
                 }
 
-                new_slots = Some(SlotMap::from_slots(&slots_data, self.read_from_replicas));
+                new_slots = Some(SlotMap::from_slots(
+                    &slots_data,
+                    self.cluster_params.read_from_replicas,
+                ));
                 break;
             }
         }
@@ -432,15 +439,15 @@ where
 
     fn connect(&self, node: &str) -> RedisResult<C> {
         let params = ClusterParams {
-            password: self.password.clone(),
-            username: self.username.clone(),
-            tls: self.tls,
+            password: self.cluster_params.password.clone(),
+            username: self.cluster_params.username.clone(),
+            tls: self.cluster_params.tls,
             ..Default::default()
         };
         let info = get_connection_info(node, params)?;
 
         let mut conn = C::connect(info, None)?;
-        if self.read_from_replicas {
+        if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
@@ -657,7 +664,7 @@ where
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = 0;
+        let mut retries = self.cluster_params.retry_params.number_of_retries;
         let mut redirected = None::<Redirect>;
 
         loop {
@@ -688,7 +695,7 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    if retries == self.retry_params.number_of_retries {
+                    if retries == self.cluster_params.retry_params.number_of_retries {
                         return Err(err);
                     }
                     retries += 1;
@@ -709,7 +716,10 @@ where
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
-                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
+                            let sleep_time = self
+                                .cluster_params
+                                .retry_params
+                                .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
                         ErrorKind::IoError => {

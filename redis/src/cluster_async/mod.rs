@@ -1200,6 +1200,18 @@ pub trait Connect: Sized {
     fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
+
+    /// Connect to a node, returning handle for command execution.
+    /// This function should be implemented only for connection types that require additional data for connection setup.
+    fn connect_extended<'a, T>(
+        info: T,
+        _additional_data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    ) -> RedisFuture<'a, Self>
+    where
+        T: IntoConnectionInfo + Send + 'a,
+    {
+        Self::connect(info)
+    }
 }
 
 impl Connect for MultiplexedConnection {
@@ -1226,8 +1238,9 @@ where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
+    let additional_data = params.additional_data.clone();
     let info = get_connection_info(node, params)?;
-    let mut conn = C::connect(info).await?;
+    let mut conn = C::connect_extended(info, additional_data).await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
