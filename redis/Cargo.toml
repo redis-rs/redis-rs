@@ -43,6 +43,7 @@ tokio = { version = "1", features = ["rt", "net"], optional = true }
 # Only needed for the connection manager
 arc-swap = { version = "1.1.0", optional = true }
 futures = { version = "0.3.3", optional = true }
+tokio-retry = { version = "0.3.0", optional = true }
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.8", optional = true }
@@ -93,7 +94,7 @@ async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
-connection-manager = ["arc-swap", "futures", "aio"]
+connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
 
