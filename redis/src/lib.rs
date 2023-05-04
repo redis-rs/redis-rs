@@ -458,6 +458,8 @@ pub mod streams;
 #[cfg(feature = "cluster-async")]
 pub mod cluster_async;
 
+pub mod sentinel;
+
 mod client;
 mod cmd;
 mod commands;

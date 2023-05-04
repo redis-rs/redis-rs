@@ -121,6 +121,10 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+    /// Requested name not found among masters
+    MasterNameNotFound,
+    /// No valid replicas found for given master name
+    NoValidReplicasFound,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -489,6 +493,8 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            ErrorKind::MasterNameNotFound => "master name not found",
+            ErrorKind::NoValidReplicasFound => "no valid replicas found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
         }

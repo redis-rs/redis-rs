@@ -98,6 +98,7 @@ impl RedisCluster {
 
             servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
+                None,
                 tls_paths.clone(),
                 modules,
                 |cmd| {
