@@ -389,6 +389,12 @@ pub struct StreamInfoGroup {
     pub pending: usize,
     /// Last ID delivered to this group.
     pub last_delivered_id: String,
+    /// The logical "read counter" of the last entry delivered to group's consumers
+    /// (or `None` if the server does not provide the value).
+    pub entries_read: Option<usize>,
+    /// The number of entries in the stream that are still waiting to be delivered to the
+    /// group's consumers, or a `None` when that number can't be determined.
+    pub lag: Option<usize>,
 }
 
 /// Represents a pending message parsed from [`xpending`] methods.
@@ -665,6 +671,16 @@ impl FromRedisValue for StreamInfoGroupsReply {
             }
             if let Some(v) = &map.get("last-delivered-id") {
                 g.last_delivered_id = from_redis_value(v)?;
+            }
+            if let Some(v) = &map.get("entries-read") {
+                g.entries_read = Some(from_redis_value(v)?);
+            }
+            if let Some(v) = &map.get("lag") {
+                g.lag = if let Value::Nil = v {
+                    None
+                } else {
+                    Some(from_redis_value(v)?)
+                };
             }
             reply.groups.push(g);
         }

@@ -235,11 +235,25 @@ fn test_assorted_2() {
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g99");
     assert_eq!(&reply.groups[0].last_delivered_id, &"0-0");
+    if let Some(lag) = reply.groups[0].lag {
+        assert_eq!(lag, 0);
+    }
 
     // call xadd on k99 just so we can read from it
     // using consumer g99 and test xinfo_consumers
     let _: RedisResult<String> = con.xadd("k99", "1000-0", &[("a", "b"), ("c", "d")]);
     let _: RedisResult<String> = con.xadd("k99", "1000-1", &[("e", "f"), ("g", "h")]);
+
+    // Two messages have been added but not acked:
+    // this should give us a `lag` of 2 (if the server supports it)
+    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k99");
+    assert!(result.is_ok());
+    let reply = result.unwrap();
+    assert_eq!(&reply.groups.len(), &1);
+    assert_eq!(&reply.groups[0].name, &"g99");
+    if let Some(lag) = reply.groups[0].lag {
+        assert_eq!(lag, 2);
+    }
 
     // test empty PEL
     let empty_reply: StreamPendingReply = con.xpending("k99", "g99").unwrap();
