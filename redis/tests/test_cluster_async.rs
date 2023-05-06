@@ -13,7 +13,7 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, parse_redis_value, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, RedisError,
+    cmd, parse_redis_value, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, PushKind, RedisError,
     RedisFuture, RedisResult, Script, Value,
 };
 
@@ -255,7 +255,7 @@ impl ConnectionLike for ErrorConnection {
         self.inner.get_db()
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }

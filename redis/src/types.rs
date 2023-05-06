@@ -155,17 +155,48 @@ pub enum Value {
     /// Push data from the server.
     Push {
         /// Push Kind
-        kind: String,
+        kind: PushKind,
         /// Remaining data from push message
         data: Vec<Value>,
     },
 }
 
+/// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
 pub enum VerbatimFormat {
+    /// Unknown type to catch future formats.
     Unknown(String),
+    /// `mkd` format
     Markdown,
+    /// `txt` format
     Text,
+}
+
+/// `Push` type's currently known kinds.
+#[derive(PartialEq, Clone, Debug)]
+pub enum PushKind {
+    /// Other kind to catch future kinds.
+    Other(String),
+    /// `invalidate` is received when a key is changed/deleted.
+    Invalidate,
+    /// `message` is received when pubsub message published by another client.
+    Message,
+    /// `pmessage` is received when pubsub message published by another client and client subscribed to topic via pattern.
+    PMessage,
+    /// `smessage` is received when pubsub message published by another client and client subscribed to it with sharding.
+    SMessage,
+    /// `unsubscribe` is received when client unsubscribed from a channel.
+    Unsubscribe,
+    /// `punsubscribe` is received when client unsubscribed from a pattern.
+    PUnsubscribe,
+    /// `sunsubscribe` is received when client unsubscribed from a shard channel.
+    SUnsubscribe,
+    /// `subscribe` is received when client subscribed to a channel.
+    Subscribe,
+    /// `psubscribe` is received when client subscribed to a pattern.
+    PSubscribe,
+    /// `ssubscribe` is received when client subscribed to a shard channel.
+    SSubscribe,
 }
 
 impl fmt::Display for VerbatimFormat {
@@ -174,6 +205,24 @@ impl fmt::Display for VerbatimFormat {
             VerbatimFormat::Markdown => write!(f, "mkd"),
             VerbatimFormat::Unknown(val) => write!(f, "{val}"),
             VerbatimFormat::Text => write!(f, "txt"),
+        }
+    }
+}
+
+impl fmt::Display for PushKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PushKind::Other(kind) => write!(f, "{}", kind),
+            PushKind::Invalidate => write!(f, "invalidate"),
+            PushKind::Message => write!(f, "message"),
+            PushKind::PMessage => write!(f, "pmessage"),
+            PushKind::SMessage => write!(f, "smessage"),
+            PushKind::Unsubscribe => write!(f, "unsubscribe"),
+            PushKind::PUnsubscribe => write!(f, "punsubscribe"),
+            PushKind::SUnsubscribe => write!(f, "sunsubscribe"),
+            PushKind::Subscribe => write!(f, "subscribe"),
+            PushKind::PSubscribe => write!(f, "psubscribe"),
+            PushKind::SSubscribe => write!(f, "ssubscribe"),
         }
     }
 }
@@ -280,7 +329,7 @@ impl fmt::Debug for Value {
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
             Value::Bulk(ref values) => write!(fmt, "bulk({values:?})"),
-            Value::Push { ref kind, ref data } => write!(fmt, "push({kind}, {data:?})"),
+            Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
             Value::Map(ref values) => write!(fmt, "map({values:?})"),

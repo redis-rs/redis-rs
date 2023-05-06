@@ -17,6 +17,7 @@ use redis::{aio, cluster_async, RedisFuture};
 #[cfg(feature = "cluster-async")]
 use futures::future;
 
+use redis::PushKind;
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
 
@@ -166,7 +167,7 @@ impl aio::ConnectionLike for MockConnection {
         0
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }
@@ -197,7 +198,7 @@ impl redis::ConnectionLike for MockConnection {
         true
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }

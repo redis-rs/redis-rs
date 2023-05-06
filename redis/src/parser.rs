@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::types::{
-    make_extension_error, ErrorKind, RedisError, RedisResult, Value, VerbatimFormat,
+    make_extension_error, ErrorKind, PushKind, RedisError, RedisResult, Value, VerbatimFormat,
 };
 
 use combine::{
@@ -79,6 +79,22 @@ fn err_parser(line: &str) -> RedisError {
     match pieces.next() {
         Some(detail) => RedisError::from((kind, desc, detail.to_string())),
         None => RedisError::from((kind, desc)),
+    }
+}
+
+pub fn get_push_kind(kind: String) -> PushKind {
+    match kind.as_str() {
+        "invalidate" => PushKind::Invalidate,
+        "message" => PushKind::Message,
+        "pmessage" => PushKind::PMessage,
+        "smessage" => PushKind::SMessage,
+        "unsubscribe" => PushKind::Unsubscribe,
+        "punsubscribe" => PushKind::PUnsubscribe,
+        "sunsubscribe" => PushKind::SUnsubscribe,
+        "subscribe" => PushKind::Subscribe,
+        "psubscribe" => PushKind::PSubscribe,
+        "ssubscribe" => PushKind::SSubscribe,
+        _ => PushKind::Other(kind),
     }
 }
 
@@ -212,7 +228,7 @@ where
                     int().then_partial(move |&mut length| {
                         if length <= 0 {
                             combine::value(Value::Push {
-                                kind: "".to_string(),
+                                kind: PushKind::Other("".to_string()),
                                 data: vec![],
                             })
                             .map(Ok)
@@ -225,12 +241,12 @@ where
                                     let first = it.next().unwrap_or(Value::Nil);
                                     if let Value::Data(kind) = first {
                                         Ok(Value::Push {
-                                            kind: String::from_utf8(kind)?,
+                                            kind: get_push_kind(String::from_utf8(kind)?),
                                             data: it.collect(),
                                         })
                                     } else if let Value::Status(kind) = first {
                                         Ok(Value::Push {
-                                            kind,
+                                            kind: get_push_kind(kind),
                                             data: it.collect(),
                                         })
                                     } else {
@@ -589,15 +605,12 @@ mod tests {
 
     #[test]
     fn decode_resp3_push() {
-        let val = parse_redis_value(
-            b">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n",
-        )
-        .unwrap();
+        let val = parse_redis_value(b">3\r\n+message\r\n+somechannel\r\n+this is the message\r\n")
+            .unwrap();
         if let Value::Push { ref kind, ref data } = val {
-            assert_eq!(&"pubsub".to_string(), kind);
-            assert_eq!(Value::Status("message".to_string()), data[0]);
-            assert_eq!(Value::Status("somechannel".to_string()), data[1]);
-            assert_eq!(Value::Status("this is the message".to_string()), data[2]);
+            assert_eq!(&PushKind::Message, kind);
+            assert_eq!(Value::Status("somechannel".to_string()), data[0]);
+            assert_eq!(Value::Status("this is the message".to_string()), data[1]);
         } else {
             panic!("Expected Value::Push")
         }

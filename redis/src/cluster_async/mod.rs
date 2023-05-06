@@ -38,8 +38,8 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotAddrs, SlotMap},
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
-    Value,
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushKind, RedisError, RedisFuture,
+    RedisResult, Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -853,7 +853,7 @@ where
         0
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }

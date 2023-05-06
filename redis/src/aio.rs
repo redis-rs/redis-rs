@@ -33,14 +33,16 @@ use pin_project_lite::pin_project;
 
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    get_resp3_hello_command_error, is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo, Msg,
-    RedisConnectionInfo,
+    get_resp3_hello_command_error, resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared,
+    ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo,
 };
 
 use crate::commands::resp3_hello;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{
+    ErrorKind, FromRedisValue, PushKind, RedisError, RedisFuture, RedisResult, Value,
+};
 use crate::{from_redis_value, ToRedisArgs};
 
 /// Enables the async_std compatibility
@@ -377,10 +379,10 @@ where
             while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
                 if data.len() >= 2 {
                     if let Value::Int(num) = data[1] {
-                        if is_pub_sub_state_cleared(
+                        if resp3_is_pub_sub_state_cleared(
                             &mut received_unsub,
                             &mut received_punsub,
-                            kind.as_bytes(),
+                            &kind,
                             num as isize,
                         ) {
                             break;
@@ -391,7 +393,7 @@ where
         } else {
             loop {
                 let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
-                if is_pub_sub_state_cleared(
+                if resp2_is_pub_sub_state_cleared(
                     &mut received_unsub,
                     &mut received_punsub,
                     &res.0,
@@ -570,7 +572,7 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 
     /// Executes received push message from server.
-    fn execute_push_message(&mut self, kind: String, data: Vec<Value>);
+    fn execute_push_message(&mut self, kind: PushKind, data: Vec<Value>);
 }
 
 impl<C> ConnectionLike for Connection<C>
@@ -662,7 +664,7 @@ where
         self.db
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }
@@ -1062,7 +1064,7 @@ impl ConnectionLike for MultiplexedConnection {
         self.db
     }
 
-    fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
         // TODO - implement handling RESP3 push messages
     }
 }
@@ -1252,7 +1254,7 @@ mod connection_manager {
             self.client.connection_info().redis.db
         }
 
-        fn execute_push_message(&mut self, _kind: String, _data: Vec<Value>) {
+        fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
             // TODO - implement handling RESP3 push messages
         }
     }
