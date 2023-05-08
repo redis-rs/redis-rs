@@ -788,7 +788,11 @@ impl FromRedisValue for StreamInfoGroupsReply {
                 g.last_delivered_id = from_redis_value(v)?;
             }
             if let Some(v) = &map.get("entries-read") {
-                g.entries_read = Some(from_redis_value(v)?);
+                g.entries_read = if let Value::Nil = v {
+                    None
+                } else {
+                    Some(from_redis_value(v)?)
+                };
             }
             if let Some(v) = &map.get("lag") {
                 g.lag = if let Value::Nil = v {
