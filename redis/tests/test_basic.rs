@@ -590,6 +590,36 @@ fn test_real_transaction_highlevel_retry() {
 }
 
 #[test]
+fn test_real_transaction_opt_highlevel() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    let key = "the_key";
+
+    // Set initial value to 1
+    let _: () = redis::cmd("SET").arg(key).arg(1).query(&mut con).unwrap();
+
+    // Run transaction
+    let response: Option<(isize,)> = redis::transaction_opt(&mut con, &[key], &mut |con, pipe| {
+        // Modify the value outside of the transaction pipeline. This will trigger the WATCH.
+        let _: () = redis::cmd("SET").arg(key).arg(0).query(con).unwrap();
+
+        // Transaction pipeline that modifies the watched key.
+        pipe.cmd("SET")
+            .arg(key)
+            .arg(2)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
+            .query(con)
+    })
+    .unwrap();
+
+    // Because the watched key was modified outside the transaction pipeline,
+    // we'll get back a `None`.
+    assert_eq!(response, None);
+}
+
+#[test]
 fn test_pubsub() {
     use std::sync::{Arc, Barrier};
     let ctx = TestContext::new();

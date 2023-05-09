@@ -1287,6 +1287,7 @@ impl Msg {
 ///
 /// ```rust,no_run
 /// use redis::Commands;
+///
 /// # fn do_something() -> redis::RedisResult<()> {
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let mut con = client.get_connection().unwrap();
@@ -1300,33 +1301,59 @@ impl Msg {
 /// println!("The incremented number is: {}", new_val);
 /// # Ok(()) }
 /// ```
-pub fn transaction<
+pub fn transaction<C, K, T, F>(con: &mut C, keys: &[K], mut func: F) -> RedisResult<T>
+where
     C: ConnectionLike,
     K: ToRedisArgs,
-    T,
     F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
->(
-    con: &mut C,
-    keys: &[K],
-    func: F,
-) -> RedisResult<T> {
-    let mut func = func;
+{
     loop {
-        cmd("WATCH").arg(keys).query::<()>(con)?;
-        let mut p = pipe();
-        let response: Option<T> = func(con, p.atomic())?;
-        match response {
-            None => {
-                continue;
-            }
-            Some(response) => {
-                // make sure no watch is left in the connection, even if
-                // someone forgot to use the pipeline.
-                cmd("UNWATCH").query::<()>(con)?;
-                return Ok(response);
-            }
+        match transaction_opt(con, keys, &mut func)? {
+            Some(response) => return Ok(response),
+            None => continue,
         }
     }
+}
+
+/// Just like [`transaction`], but on conflict (i.e. if a `WATCH`ed key is
+/// modified by another connection), `None` is returned immediately instead of
+/// retrying.
+///
+/// Additionally, the function must be passed in by reference, not by value.
+///
+/// Example:
+///
+/// ```rust,no_run
+/// use redis::Commands;
+///
+/// # fn do_something() -> redis::RedisResult<()> {
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let mut con = client.get_connection().unwrap();
+/// let key = "the_key";
+/// let opt : Option<(isize,)> = redis::transaction_opt(&mut con, &[key], &mut |con, pipe| {
+///     let old_val : isize = con.get(key)?;
+///     pipe
+///         .set(key, old_val + 1).ignore()
+///         .get(key).query(con)
+/// })?;
+/// println!("The incremented number is: {:?}", opt);
+/// # Ok(()) }
+/// ```
+pub fn transaction_opt<C, K, T, F>(con: &mut C, keys: &[K], func: &mut F) -> RedisResult<Option<T>>
+where
+    C: ConnectionLike,
+    K: ToRedisArgs,
+    F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
+{
+    cmd("WATCH").arg(keys).query::<()>(con)?;
+    let mut p = pipe();
+    let response: Option<T> = func(con, p.atomic())?;
+    if response.is_some() {
+        // make sure no watch is left in the connection, even if
+        // someone forgot to use the pipeline.
+        cmd("UNWATCH").query::<()>(con)?;
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
