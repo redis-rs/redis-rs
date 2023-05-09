@@ -1418,19 +1418,17 @@ mod tests {
             ),
         ];
         for (url, expected) in cases.into_iter() {
-            let res = url_to_tcp_connection_info(url);
+            let res = url_to_tcp_connection_info(url).unwrap_err();
             assert_eq!(
-                res.as_ref().unwrap_err().kind(),
+                res.kind(),
                 crate::ErrorKind::InvalidClientConfig,
                 "{}",
-                res.as_ref().unwrap_err(),
+                &res,
             );
-            assert_eq!(
-                res.as_ref().unwrap_err().to_string(),
-                expected,
-                "{}",
-                res.as_ref().unwrap_err(),
-            );
+            #[allow(deprecated)]
+            let desc = std::error::Error::description(&res);
+            assert_eq!(desc, expected, "{}", &res);
+            assert_eq!(res.detail(), None, "{}", &res);
         }
     }
 
