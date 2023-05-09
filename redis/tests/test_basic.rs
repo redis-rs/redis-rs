@@ -7,6 +7,8 @@ use redis::{
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::vec;
@@ -546,6 +548,45 @@ fn test_real_transaction_highlevel() {
     .unwrap();
 
     assert_eq!(response, (43,));
+}
+
+#[test]
+fn test_real_transaction_highlevel_retry() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    let key = "the_key";
+
+    // Set initial value to 1
+    let _: () = redis::cmd("SET").arg(key).arg(1).query(&mut con).unwrap();
+
+    // Run transaction until it succeeds
+    let counter = AtomicUsize::new(0);
+    let attempts = Rc::new(AtomicUsize::new(0));
+    let conflicts = 3;
+    let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
+        // Register the attempt
+        attempts.fetch_add(1, Ordering::SeqCst);
+
+        // For the first 3 attempts, modify the value outside of the transaction
+        // pipeline. This will trigger the WATCH.
+        if counter.fetch_add(1, Ordering::SeqCst) < conflicts {
+            let _: () = redis::cmd("INCR").arg(key).query(con).unwrap();
+        }
+
+        // Transaction pipeline that modifies the watched key.
+        pipe.cmd("SET")
+            .arg(key)
+            .arg(0)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
+            .query(con)
+    })
+    .unwrap();
+
+    // After a few attempts, the transaction will successfully complete.
+    assert_eq!(response, (0,));
+    assert_eq!(attempts.load(Ordering::SeqCst), conflicts + 1);
 }
 
 #[test]
