@@ -377,9 +377,15 @@ impl error::Error for RedisError {
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.repr {
-            ErrorRepr::WithDescription(_, desc) => desc.fmt(f),
-            ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
+            ErrorRepr::WithDescription(kind, desc) => {
                 desc.fmt(f)?;
+                f.write_str("- ")?;
+                fmt::Debug::fmt(&kind, f)
+            }
+            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
+                desc.fmt(f)?;
+                f.write_str(" - ")?;
+                fmt::Debug::fmt(&kind, f)?;
                 f.write_str(": ")?;
                 detail.fmt(f)
             }
