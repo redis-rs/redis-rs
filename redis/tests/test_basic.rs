@@ -58,7 +58,8 @@ fn test_getset() {
 }
 
 #[test]
-fn test_push() {
+fn test_client_tracking_doesnt_block_execution() {
+    //It checks if the library distinguish a push-type message from the others and continues its normal operation.
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let (k1, k2): (i32, i32) = redis::pipe()
