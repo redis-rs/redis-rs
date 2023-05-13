@@ -98,7 +98,8 @@ fn test_pipeline_transaction() {
 }
 
 #[test]
-fn test_push() {
+fn test_client_tracking_doesnt_block_execution() {
+    //It checks if the library distinguish a push-type message from the others and continues its normal operation.
     let ctx = TestContext::new();
     block_on_all(async move {
         let mut con = ctx.async_connection().await.unwrap();
