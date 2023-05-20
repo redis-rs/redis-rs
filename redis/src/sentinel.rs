@@ -82,9 +82,7 @@ async fn async_try_sentinel_masters(
 ) -> RedisResult<Vec<HashMap<String, String>>> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let mut conn = sentinel_client.get_async_connection().await?;
-    let result: Vec<HashMap<String, String>> =
-        sentinel_masters_cmd().query_async(&mut conn).await?;
-    Ok(result)
+    sentinel_masters_cmd().query_async(&mut conn).await
 }
 
 #[cfg(feature = "aio")]
@@ -94,10 +92,9 @@ async fn async_try_sentinel_replicas(
 ) -> RedisResult<Vec<HashMap<String, String>>> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let mut conn = sentinel_client.get_async_connection().await?;
-    let result: Vec<HashMap<String, String>> = sentinel_replicas_cmd(master_name)
+    sentinel_replicas_cmd(master_name)
         .query_async(&mut conn)
-        .await?;
-    Ok(result)
+        .await
 }
 
 fn try_sentinel_masters(
@@ -105,8 +102,7 @@ fn try_sentinel_masters(
 ) -> RedisResult<Vec<HashMap<String, String>>> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let mut conn = sentinel_client.get_connection()?;
-    let result: Vec<HashMap<String, String>> = sentinel_masters_cmd().query(&mut conn)?;
-    Ok(result)
+    sentinel_masters_cmd().query(&mut conn)
 }
 
 fn try_sentinel_replicas(
@@ -115,9 +111,7 @@ fn try_sentinel_replicas(
 ) -> RedisResult<Vec<HashMap<String, String>>> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let mut conn = sentinel_client.get_connection()?;
-    let result: Vec<HashMap<String, String>> =
-        sentinel_replicas_cmd(master_name).query(&mut conn)?;
-    Ok(result)
+    sentinel_replicas_cmd(master_name).query(&mut conn)
 }
 
 fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str) -> bool {
@@ -171,8 +165,10 @@ fn try_connect_to_first_replica(
         }
     }
 
-    // We can unwrap here because we know there is at least one address.
-    Err(last_err.expect("There should be at least one address"))
+    // We can unwrap here because we know there is at least one error, since there is at
+    // least one address, so we'll either return a client for it or store an error in
+    // last_err.
+    Err(last_err.expect("There should be an error because there is should be at least one address"))
 }
 
 fn valid_addrs<'a>(
@@ -194,9 +190,7 @@ fn check_role_result(result: &RedisResult<Vec<Value>>, target_role: &str) -> boo
     if let Ok(values) = result {
         if !values.is_empty() {
             if let Ok(role) = String::from_redis_value(&values[0]) {
-                if role.to_ascii_lowercase() == target_role {
-                    return true;
-                }
+                return role.to_ascii_lowercase() == target_role;
             }
         }
     }
@@ -207,9 +201,7 @@ fn check_role(ip: &str, port: u16, target_role: &str) -> bool {
     if let Ok(client) = Client::open((ip, port)) {
         if let Ok(mut conn) = client.get_connection() {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query(&mut conn);
-            if check_role_result(&result, target_role) {
-                return true;
-            }
+            return check_role_result(&result, target_role);
         }
     }
     false
@@ -236,9 +228,7 @@ async fn async_check_role(ip: &str, port: u16, target_role: &str) -> bool {
     if let Ok(client) = Client::open((ip, port)) {
         if let Ok(mut conn) = client.get_async_connection().await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
-            if check_role_result(&result, target_role) {
-                return true;
-            }
+            return check_role_result(&result, target_role);
         }
     }
     false
