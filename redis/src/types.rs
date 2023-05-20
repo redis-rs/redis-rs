@@ -125,6 +125,8 @@ pub enum ErrorKind {
     MasterNameNotFound,
     /// No valid replicas found for given master name
     NoValidReplicasFound,
+    /// At least one sentinel connection info is required
+    EmptySentinelList,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -495,6 +497,7 @@ impl RedisError {
             ErrorKind::ReadOnly => "read-only",
             ErrorKind::MasterNameNotFound => "master name not found",
             ErrorKind::NoValidReplicasFound => "no valid replicas found",
+            ErrorKind::EmptySentinelList => "empty sentinel list",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
         }

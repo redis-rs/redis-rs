@@ -386,6 +386,13 @@ impl Sentinel {
     /// Creates a Sentinel client performing some basic
     /// checks on the URLs that might make the operation fail.
     pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Sentinel> {
+        if params.is_empty() {
+            fail!((
+                ErrorKind::EmptySentinelList,
+                "At least one sentinel is required",
+            ))
+        }
+
         Ok(Sentinel {
             sentinels_connection_info: params
                 .into_iter()
