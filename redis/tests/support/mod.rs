@@ -98,13 +98,7 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 // this is technically a race but we can't do better with
                 // the tools that redis gives us :(
-                let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-                let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-                socket.set_reuse_address(true).unwrap();
-                socket.bind(addr).unwrap();
-                socket.listen(1).unwrap();
-                let listener = TcpListener::from(socket);
-                let redis_port = listener.local_addr().unwrap().port();
+                let redis_port = get_random_available_port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
@@ -253,6 +247,21 @@ impl RedisServer {
     pub fn log_file(tempdir: &TempDir) -> PathBuf {
         tempdir.path().join("redis.log")
     }
+}
+
+/// Finds a random open port available for listening at, by spawning a TCP server with
+/// port "zero" (which prompts the OS to just use any available port). Between calling
+/// this function and trying to bind to this port, the port may be given to another
+/// process, so this must be used with care (since here we only use it for tests, it's
+/// mostly okay).
+pub fn get_random_available_port() -> u16 {
+    let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(addr).unwrap();
+    socket.listen(1).unwrap();
+    let listener = TcpListener::from(socket);
+    listener.local_addr().unwrap().port()
 }
 
 impl Drop for RedisServer {

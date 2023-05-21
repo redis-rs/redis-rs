@@ -6,6 +6,7 @@ use std::time::Duration;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
 
+use super::get_random_available_port;
 use super::Module;
 use super::RedisServer;
 
@@ -118,10 +119,10 @@ impl RedisSentinelCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut master_ports = vec![];
-        let start_port = 7000;
 
-        for node in 0..masters {
-            let port = start_port + (node * (replicas_per_master + 1));
+        for _ in 0..masters {
+            let port = get_random_available_port();
+            sleep(Duration::from_millis(25));
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
@@ -130,8 +131,8 @@ impl RedisSentinelCluster {
             folders.push(tempdir);
             master_ports.push(port);
 
-            for replica in 0..replicas_per_master {
-                let replica_port = port + 1 + replica;
+            for _ in 0..replicas_per_master {
+                let replica_port = get_random_available_port();
                 let tempdir = tempfile::Builder::new()
                     .prefix("redis")
                     .tempdir()
@@ -145,9 +146,9 @@ impl RedisSentinelCluster {
         sleep(Duration::from_millis(50));
 
         let mut sentinel_servers = vec![];
-        let start_port = 27000;
-        for node in 0..sentinels {
-            let port = start_port + node;
+        for _ in 0..sentinels {
+            let port = get_random_available_port();
+            sleep(Duration::from_millis(25));
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
