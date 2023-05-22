@@ -27,7 +27,6 @@ fn spawn_master_server(port: u16, dir: &TempDir, modules: &[Module]) -> RedisSer
         |cmd| {
             // Minimize startup delay
             cmd.arg("--repl-diskless-sync-delay").arg("0");
-            // cmd.arg("--repl-ping-replica-period").arg("1");
             cmd.arg("--appendonly").arg("yes");
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
@@ -53,13 +52,7 @@ fn spawn_replica_server(
             cmd.arg("--replicaof")
                 .arg("127.0.0.1")
                 .arg(master_port.to_string());
-            // Minimize startup delay
-            // cmd.arg("--repl-diskless-sync-delay").arg("0");
-            // cmd.arg("--repl-ping-replica-period").arg("1");
             cmd.arg("--appendonly").arg("yes");
-            // cmd.stdout(std::process::Stdio::inherit())
-            //     .stderr(std::process::Stdio::inherit());
-            // cmd.arg("--loglevel").arg("debug");
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
         },
@@ -79,12 +72,6 @@ fn spawn_sentinel_server(
             format!("sentinel monitor master{} 127.0.0.1 {} 1\n", i, master_port).as_bytes(),
         )
         .unwrap();
-        // file.write_all(format!("sentinel down-after-milliseconds master{} 200\n", i).as_bytes())
-        //     .unwrap();
-        // file.write_all(format!("sentinel parallel-syncs master{} 1\n", i).as_bytes())
-        //     .unwrap();
-        // file.write_all(format!("sentinel failover-timeout master{} 5000\n", i).as_bytes())
-        //     .unwrap();
     }
     file.flush().unwrap();
 
@@ -94,9 +81,6 @@ fn spawn_sentinel_server(
         None,
         modules,
         |cmd| {
-            // cmd.stdout(std::process::Stdio::inherit())
-            //     .stderr(std::process::Stdio::inherit());
-            // cmd.arg("--loglevel").arg("debug");
             cmd.arg("--sentinel");
             cmd.arg("--appendonly").arg("yes");
             cmd.current_dir(dir.path());
@@ -122,7 +106,6 @@ impl RedisSentinelCluster {
 
         for _ in 0..masters {
             let port = get_random_available_port();
-            sleep(Duration::from_millis(25));
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
@@ -148,7 +131,6 @@ impl RedisSentinelCluster {
         let mut sentinel_servers = vec![];
         for _ in 0..sentinels {
             let port = get_random_available_port();
-            sleep(Duration::from_millis(25));
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
