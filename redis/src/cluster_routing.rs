@@ -210,7 +210,38 @@ impl<'a> IntoIterator for &'a SlotAddrs {
     }
 }
 
-pub(crate) type SlotMap = BTreeMap<u16, SlotAddrs>;
+#[derive(Debug, Default)]
+pub(crate) struct SlotMap(BTreeMap<u16, SlotAddrs>);
+
+impl SlotMap {
+    pub fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    pub fn from_slots(slots: &[Slot], read_from_replicas: bool) -> Self {
+        Self(
+            slots
+                .iter()
+                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
+                .collect(),
+        )
+    }
+
+    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
+        self.0
+            .range(route.slot()..)
+            .next()
+            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+    }
+
+    pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
+        self.0.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
@@ -254,8 +285,8 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_hashtag, slot, RoutingInfo};
-    use crate::{cmd, parser::parse_redis_value};
+    use super::{get_hashtag, slot, Route, RoutingInfo, Slot, SlotMap};
+    use crate::{cluster_routing::SlotAddr, cmd, parser::parse_redis_value};
 
     #[test]
     fn test_get_hashtag() {
@@ -452,5 +483,72 @@ mod tests {
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
             ]).unwrap()), Some(RoutingInfo::MasterSlot(slot)) if slot == 5210));
+    }
+
+    #[test]
+    fn test_slot_map() {
+        let slot_map = SlotMap::from_slots(
+            &[
+                Slot {
+                    start: 1,
+                    end: 1000,
+                    master: "node1:6379".to_owned(),
+                    replicas: vec!["replica1:6379".to_owned()],
+                },
+                Slot {
+                    start: 1001,
+                    end: 2000,
+                    master: "node2:6379".to_owned(),
+                    replicas: vec!["replica2:6379".to_owned()],
+                },
+            ],
+            true,
+        );
+
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(500, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "replica1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Replica))
+                .unwrap()
+        );
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1001, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1500, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
+                .unwrap()
+        );
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
+            .is_none());
     }
 }
