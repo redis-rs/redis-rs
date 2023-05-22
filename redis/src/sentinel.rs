@@ -76,6 +76,7 @@ fn sentinel_replicas_cmd(master_name: &str) -> crate::Cmd {
     cmd
 }
 
+/// Async version of try_sentinel_masters.
 #[cfg(feature = "aio")]
 async fn async_try_sentinel_masters(
     connection_info: &ConnectionInfo,
@@ -97,6 +98,8 @@ async fn async_try_sentinel_replicas(
         .await
 }
 
+/// Executes the command SENTINEL MASTERS in the given server (which we expect to be
+/// a sentinel server).
 fn try_sentinel_masters(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<Vec<HashMap<String, String>>> {
@@ -207,7 +210,13 @@ fn check_role(ip: &str, port: u16, target_role: &str) -> bool {
     false
 }
 
-fn get_first_valid_master(
+/// Searches for a valid master with the given name in the list of masters returned by
+/// a sentinel. A valid master is one which has a role of "master" (checked by running
+/// the `ROLE` command and by seeing if its flags contains the "master" flag) and which
+/// does not have the flags s_down or o_down set to it (these flags are returned by the
+/// `SENTINEL MASTERS` command, and we expect the `masters` parameter to be the result of
+/// that command).
+fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
 ) -> RedisResult<(String, u16)> {
@@ -234,8 +243,9 @@ async fn async_check_role(ip: &str, port: u16, target_role: &str) -> bool {
     false
 }
 
+/// Async version of `find_valid_master`.
 #[cfg(feature = "aio")]
-async fn async_get_first_valid_master(
+async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
 ) -> RedisResult<(String, u16)> {
@@ -278,6 +288,7 @@ async fn async_get_valid_replicas_addresses(
 // async methods
 #[cfg(feature = "aio")]
 impl Sentinel {
+    /// Async version of try_all_sentinels.
     async fn async_try_all_sentinels<'a, F, T, Fut>(&'a self, f: F) -> RedisResult<T>
     where
         F: Fn(&'a ConnectionInfo) -> Fut,
@@ -300,6 +311,7 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
+    /// Async version of get_sentinel_masters.
     async fn async_get_sentinel_masters(&self) -> RedisResult<Vec<HashMap<String, String>>> {
         self.async_try_all_sentinels(async_try_sentinel_masters)
             .await
@@ -317,7 +329,7 @@ impl Sentinel {
 
     async fn async_find_master_address(&self, service_name: &str) -> RedisResult<(String, u16)> {
         let masters = self.async_get_sentinel_masters().await?;
-        async_get_first_valid_master(masters, service_name).await
+        async_find_valid_master(masters, service_name).await
     }
 
     async fn async_find_valid_replica_addresses(
@@ -392,6 +404,9 @@ impl Sentinel {
         })
     }
 
+    /// Try to execute the given function in each sentinel, returning the result of the
+    /// first one that executes without errors. If all return errors, we return the
+    /// error of the last attempt.
     fn try_all_sentinels<F, T>(&self, f: F) -> RedisResult<T>
     where
         F: Fn(&ConnectionInfo) -> RedisResult<T>,
@@ -413,6 +428,9 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
+    /// Get a list of all masters (using the command SENTINEL MASTERS) from the
+    /// sentinels (we'll return the result of the first sentinel who responds to that
+    /// command without errors).
     fn get_sentinel_masters(&self) -> RedisResult<Vec<HashMap<String, String>>> {
         self.try_all_sentinels(try_sentinel_masters)
     }
@@ -426,7 +444,7 @@ impl Sentinel {
 
     fn find_master_address(&self, service_name: &str) -> RedisResult<(String, u16)> {
         let masters = self.get_sentinel_masters()?;
-        get_first_valid_master(masters, service_name)
+        find_valid_master(masters, service_name)
     }
 
     fn find_valid_replica_addresses(&self, service_name: &str) -> RedisResult<Vec<(String, u16)>> {
