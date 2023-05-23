@@ -54,7 +54,7 @@ use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Route, SlotAddr, SlotAddrs, SlotMap},
+    cluster_routing::{Route, SlotAddr, SlotMap},
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -328,17 +328,8 @@ where
                     )));
                 }
 
-                new_slots = Some(
-                    slots_data
-                        .iter()
-                        .map(|slot| {
-                            (
-                                slot.end(),
-                                SlotAddrs::from_slot(slot, self.read_from_replicas),
-                            )
-                        })
-                        .collect(),
-                );
+                new_slots = Some(SlotMap::from_slots(&slots_data, self.read_from_replicas));
+
                 break;
             }
         }
@@ -376,8 +367,7 @@ where
         route: &Route,
     ) -> RedisResult<(String, &'a mut C)> {
         let slots = self.slots.borrow();
-        if let Some((_, slot_addrs)) = slots.range(route.slot()..).next() {
-            let addr = &slot_addrs.slot_addr(route.slot_addr());
+        if let Some(addr) = slots.slot_addr_for_route(route) {
             Ok((
                 addr.to_string(),
                 self.get_connection_by_addr(connections, addr)?,
@@ -408,11 +398,11 @@ where
         let slots = self.slots.borrow();
 
         let addr_for_slot = |slot: u16, slot_addr: SlotAddr| -> RedisResult<String> {
-            let (_, slot_addrs) = slots
-                .range(&slot..)
-                .next()
+            let route = Route::new(slot, slot_addr);
+            let slot_addr = slots
+                .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(slot_addrs.slot_addr(&slot_addr).to_string())
+            Ok(slot_addr.to_string())
         };
 
         match RoutingInfo::for_routable(cmd) {

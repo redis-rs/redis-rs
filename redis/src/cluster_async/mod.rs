@@ -37,7 +37,7 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
-    cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotAddrs, SlotMap},
+    cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -491,17 +491,14 @@ where
                 format!("Lacks the slots >= {last_slot}"),
             )));
         }
-        let slot_map = slots_data
-            .iter()
-            .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
-            .collect();
+        let slot_map = SlotMap::from_slots(&slots_data, read_from_replicas);
         trace!("{:?}", slot_map);
         Ok(slot_map)
     }
 
     fn get_connection(&mut self, route: &Route) -> (String, ConnectionFuture<C>) {
-        if let Some((_, node_addrs)) = self.slots.range(&route.slot()..).next() {
-            let addr = node_addrs.slot_addr(route.slot_addr()).to_string();
+        if let Some(addr) = self.slots.slot_addr_for_route(route) {
+            let addr = addr.to_string();
             if let Some(conn) = self.connections.get(&addr) {
                 return (addr, conn.clone());
             }
