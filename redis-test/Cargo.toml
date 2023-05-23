@@ -7,7 +7,7 @@ homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
-rust-version = "1.59"
+rust-version = "1.60"
 
 [dependencies]
 redis = { version = "0.23.0", path = "../redis" }

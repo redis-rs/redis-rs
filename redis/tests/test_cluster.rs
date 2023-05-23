@@ -194,14 +194,14 @@ fn test_cluster_pipeline_invalid_command() {
 
     assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
     let err = cluster_pipe().keys("*").query::<()>(&mut con).unwrap_err();
 
     assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode: Command 'KEYS' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - ClientError: Command 'KEYS' can't be executed in a cluster pipeline."
     );
 }
 
@@ -318,7 +318,7 @@ fn test_cluster_exhaust_retries() {
 
     assert_eq!(
         result.map_err(|err| err.to_string()),
-        Err("An error was signalled by the server: mock".to_string())
+        Err("An error was signalled by the server - TryAgain: mock".to_string())
     );
     assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
 }

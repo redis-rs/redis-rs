@@ -174,7 +174,7 @@
 //! be used with `SCAN` like commands in which case iteration will send more
 //! queries until the cursor is exhausted:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();

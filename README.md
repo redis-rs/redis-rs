@@ -20,7 +20,7 @@ redis = "0.23.0"
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
 
-**Note: redis-rs requires at least Rust 1.59.**
+**Note: redis-rs requires at least Rust 1.60.**
 
 ## Basic Operation
 
@@ -47,6 +47,11 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
     con.get("my_key")
 }
 ```
+
+Variables are converted to and from the Redis format for a wide variety of types
+(`String`, num types, tuples, `Vec<u8>`). If you want to use it with your own types,
+you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it with the
+[redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate. 
 
 ## Async support
 
@@ -168,12 +173,15 @@ fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> 
 
     // runs `JSON.SET {key} {path} {b}`
     connection.json_set(key, path, b)?
-    
-    // you'll need to use serde_json (or some other json lib) to deserialize the results from the bytes
-    // It will always be a Vec, if no results were found at the path it'll be an empty Vec
 }
 
 ```
+
+To parse the results, you'll need to use `serde_json` (or some other json lib) to deserialize
+the results from the bytes. It will always be a `Vec`, if no results were found at the path it'll
+be an empty `Vec`. If you want to handle deserialization and `Vec` unwrapping automatically,
+you can use the `Json` wrapper from the
+[redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
 ## Development
 
