@@ -315,6 +315,60 @@ fn test_async_scanning_small_batch() {
 }
 
 #[test]
+fn test_async_batch_scan_api() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        ctx.multiplexed_async_connection()
+            .and_then(|mut con| {
+                async move {
+                    let batch_size = 10_000;
+                    let mut unseen = std::collections::HashSet::new();
+
+                    for x in 0..batch_size {
+                        redis::cmd("SADD")
+                            .arg("foo")
+                            .arg(x)
+                            .query_async(&mut con)
+                            .await?;
+                        unseen.insert(x);
+                    }
+
+                    let (mut iter, mut batch) = redis::cmd("SSCAN")
+                        .arg("foo")
+                        .cursor_arg(0)
+                        .clone()
+                        .iter_async_batched(&mut con)
+                        .await
+                        .unwrap();
+
+                    loop {
+                        while let Some(x) = batch.pop() {
+                            // type inference limitations
+                            let x: usize = x;
+
+                            // if this assertion fails, too many items were returned by the iterator.
+                            unseen.remove(&x);
+                        }
+
+                        if let Some(next_batch) = iter.next_item().await {
+                            batch = next_batch;
+                            continue;
+                        }
+
+                        break;
+                    }
+
+                    assert_eq!(unseen.len(), 0);
+                    Ok(())
+                }
+            })
+            .map_err(|err| panic!("{}", err))
+            .await
+    })
+    .unwrap();
+}
+
+#[test]
 #[cfg(feature = "script")]
 fn test_script() {
     use redis::RedisError;
