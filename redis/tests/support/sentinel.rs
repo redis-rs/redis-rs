@@ -3,12 +3,17 @@ use std::io::Write;
 use std::thread::sleep;
 use std::time::Duration;
 
+use redis::cluster::TlsMode;
+use redis::sentinel::SentinelNodeConnectionInfo;
+use redis::ConnectionAddr;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
 
+use super::build_keys_and_certs_for_tls;
 use super::get_random_available_port;
 use super::Module;
 use super::RedisServer;
+use super::TlsFilePaths;
 
 const LOCALHOST: &str = "127.0.0.1";
 
@@ -18,16 +23,33 @@ pub struct RedisSentinelCluster {
     pub folders: Vec<TempDir>,
 }
 
-fn spawn_master_server(port: u16, dir: &TempDir, modules: &[Module]) -> RedisServer {
+fn get_addr(port: u16) -> ConnectionAddr {
+    let addr = RedisServer::get_addr(port);
+    if let ConnectionAddr::Unix(_) = addr {
+        ConnectionAddr::Tcp(String::from("127.0.0.1"), port)
+    } else {
+        addr
+    }
+}
+
+fn spawn_master_server(
+    port: u16,
+    dir: &TempDir,
+    tlspaths: &TlsFilePaths,
+    modules: &[Module],
+) -> RedisServer {
     RedisServer::new_with_addr(
-        redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
+        get_addr(port),
         None,
-        None,
+        Some(tlspaths.clone()),
         modules,
         |cmd| {
             // Minimize startup delay
             cmd.arg("--repl-diskless-sync-delay").arg("0");
             cmd.arg("--appendonly").arg("yes");
+            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+                cmd.arg("--tls-replication").arg("yes");
+            }
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
         },
@@ -38,20 +60,24 @@ fn spawn_replica_server(
     port: u16,
     master_port: u16,
     dir: &TempDir,
+    tlspaths: &TlsFilePaths,
     modules: &[Module],
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
     File::create(&config_file_path).unwrap();
 
     RedisServer::new_with_addr(
-        redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
+        get_addr(port),
         Some(&config_file_path),
-        None,
+        Some(tlspaths.clone()),
         modules,
         |cmd| {
             cmd.arg("--replicaof")
                 .arg("127.0.0.1")
                 .arg(master_port.to_string());
+            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+                cmd.arg("--tls-replication").arg("yes");
+            }
             cmd.arg("--appendonly").arg("yes");
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
@@ -63,6 +89,7 @@ fn spawn_sentinel_server(
     port: u16,
     master_ports: &[u16],
     dir: &TempDir,
+    tlspaths: &TlsFilePaths,
     modules: &[Module],
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
@@ -76,13 +103,16 @@ fn spawn_sentinel_server(
     file.flush().unwrap();
 
     RedisServer::new_with_addr(
-        redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
+        get_addr(port),
         Some(&config_file_path),
-        None,
+        Some(tlspaths.clone()),
         modules,
         |cmd| {
             cmd.arg("--sentinel");
             cmd.arg("--appendonly").arg("yes");
+            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+                cmd.arg("--tls-replication").arg("yes");
+            }
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
         },
@@ -104,13 +134,20 @@ impl RedisSentinelCluster {
         let mut folders = vec![];
         let mut master_ports = vec![];
 
+        let tempdir = tempfile::Builder::new()
+            .prefix("redistls")
+            .tempdir()
+            .expect("failed to create tempdir");
+        let tlspaths = build_keys_and_certs_for_tls(&tempdir);
+        folders.push(tempdir);
+
         for _ in 0..masters {
             let port = get_random_available_port();
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
                 .expect("failed to create tempdir");
-            servers.push(spawn_master_server(port, &tempdir, modules));
+            servers.push(spawn_master_server(port, &tempdir, &tlspaths, modules));
             folders.push(tempdir);
             master_ports.push(port);
 
@@ -120,13 +157,19 @@ impl RedisSentinelCluster {
                     .prefix("redis")
                     .tempdir()
                     .expect("failed to create tempdir");
-                servers.push(spawn_replica_server(replica_port, port, &tempdir, modules));
+                servers.push(spawn_replica_server(
+                    replica_port,
+                    port,
+                    &tempdir,
+                    &tlspaths,
+                    modules,
+                ));
                 folders.push(tempdir);
             }
         }
 
         // Wait for replicas to sync so that the sentinels discover them on the first try
-        sleep(Duration::from_millis(50));
+        sleep(Duration::from_millis(100));
 
         let mut sentinel_servers = vec![];
         for _ in 0..sentinels {
@@ -140,6 +183,7 @@ impl RedisSentinelCluster {
                 port,
                 &master_ports,
                 &tempdir,
+                &tlspaths,
                 modules,
             ));
             folders.push(tempdir);
@@ -217,12 +261,30 @@ impl TestSentinelContext {
         &self.sentinels_connection_info
     }
 
+    pub fn sentinel_node_connection_info(&self) -> SentinelNodeConnectionInfo {
+        SentinelNodeConnectionInfo {
+            tls_mode: if let ConnectionAddr::TcpTls { insecure, .. } =
+                self.cluster.servers[0].client_addr()
+            {
+                if *insecure {
+                    Some(TlsMode::Insecure)
+                } else {
+                    Some(TlsMode::Secure)
+                }
+            } else {
+                None
+            },
+            redis_connection_info: None,
+        }
+    }
+
     pub fn wait_for_cluster_up(&self) {
         let con = self.sentinel();
         let rolecmd = redis::cmd("ROLE");
+        let node_conn_info = self.sentinel_node_connection_info();
 
         for _ in 0..100 {
-            let master_client = con.master_for("master1");
+            let master_client = con.master_for("master1", Some(&node_conn_info));
             if let Ok(master_client) = master_client {
                 let r: (String, i32, redis::Value) = rolecmd
                     .query(&mut master_client.get_connection().unwrap())
@@ -236,7 +298,7 @@ impl TestSentinelContext {
         }
 
         for _ in 0..200 {
-            let replica_client = con.replica_for("master1");
+            let replica_client = con.replica_for("master1", Some(&node_conn_info));
             if let Ok(client) = replica_client {
                 let r: (String, String, i32, String, i32) = rolecmd
                     .query(&mut client.get_connection().unwrap())

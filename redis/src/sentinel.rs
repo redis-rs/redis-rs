@@ -8,8 +8,8 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let sentinel = Sentinel::build(nodes).unwrap();
-//! let mut master = sentinel.master_for("master_name").unwrap().get_connection().unwrap();
-//! let mut replica = sentinel.replica_for("master_name").unwrap().get_connection().unwrap();
+//! let mut master = sentinel.master_for("master_name", None).unwrap().get_connection().unwrap();
+//! let mut replica = sentinel.replica_for("master_name", None).unwrap().get_connection().unwrap();
 //!
 //! let _: () = master.set("test", "test_data").unwrap();
 //! let rv: String = replica.get("test").unwrap();
@@ -27,8 +27,8 @@
 //! use redis::sentinel::{ SentinelServerType, SentinelClient };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//! let master_client = SentinelClient::build(nodes, "master_name", SentinelServerType::Master).unwrap();
-//! let replica_client = SentinelClient::build(nodes, "master_name", SentinelServerType::Replica).unwrap();
+//! let master_client = SentinelClient::build(nodes, String::from("master_name"), None, SentinelServerType::Master).unwrap();
+//! let replica_client = SentinelClient::build(nodes, String::from("master_name"), None, SentinelServerType::Replica).unwrap();
 //! let mut master_conn = master_client.get_connection().unwrap();
 //! let mut replica_conn = replica_client.get_connection().unwrap();
 //!
@@ -36,6 +36,67 @@
 //! let rv: String = replica_conn.get("test").unwrap();
 //!
 //! assert_eq!(rv, "test_data");
+//! ```
+//!
+//! If the sentinel's nodes are using TLS or require authentication, a full
+//! SentinelNodeConnectionInfo struct may be used instead of just the master's name:
+//!
+//! # Example
+//! ```rust,no_run
+//! use redis::{ Commands, RedisConnectionInfo };
+//! use redis::sentinel::{ Sentinel, SentinelNodeConnectionInfo };
+//!
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let sentinel = Sentinel::build(nodes).unwrap();
+//!
+//! let mut master_with_auth = sentinel
+//!     .master_for(
+//!         "master_name",
+//!         Some(&SentinelNodeConnectionInfo {
+//!             tls_mode: None,
+//!             redis_connection_info: Some(RedisConnectionInfo {
+//!                 db: 1,
+//!                 username: Some(String::from("foo")),
+//!                 password: Some(String::from("bar")),
+//!             }),
+//!         }),
+//!     )
+//!     .unwrap()
+//!     .get_connection()
+//!     .unwrap();
+//!
+//! let mut replica_with_tls = sentinel
+//!     .master_for(
+//!         "master_name",
+//!         Some(&SentinelNodeConnectionInfo {
+//!             tls_mode: Some(redis::cluster::TlsMode::Secure),
+//!             redis_connection_info: None,
+//!         }),
+//!     )
+//!     .unwrap()
+//!     .get_connection()
+//!     .unwrap();
+//! ```
+//!
+//! # Example
+//! ```rust,no_run
+//! use redis::{ Commands, RedisConnectionInfo };
+//! use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+//!
+//! let master_client = SentinelClient::build(
+//!     nodes,
+//!     String::from("master1"),
+//!     Some(SentinelNodeConnectionInfo {
+//!         tls_mode: Some(redis::cluster::TlsMode::Insecure),
+//!         redis_connection_info: Some(RedisConnectionInfo {
+//!             db: 0,
+//!             username: Some(String::from("user")),
+//!             password: Some(String::from("pass")),
+//!         }),
+//!     }),
+//!     redis::sentinel::SentinelServerType::Master,
+//! )
+//! .unwrap();
 //! ```
 //!
 
@@ -51,8 +112,8 @@ use std::future::Future;
 use futures_util::StreamExt;
 
 use crate::{
-    connection::ConnectionInfo, types::RedisResult, Client, Connection, ErrorKind, FromRedisValue,
-    IntoConnectionInfo, Value,
+    cluster::TlsMode, connection::ConnectionInfo, types::RedisResult, Client, Connection,
+    ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -61,6 +122,51 @@ use crate::{
 pub struct Sentinel {
     sentinels_connection_info: Vec<ConnectionInfo>,
     replica_start_index: usize,
+}
+
+/// Holds the connection information that a sentinel should use when connecting to the
+/// servers (masters and replicas) belonging to it.
+#[derive(Clone, Default)]
+pub struct SentinelNodeConnectionInfo {
+    /// The TLS mode of the connection, or None if we do not want to connect using TLS
+    /// (just a plain TCP connection).
+    pub tls_mode: Option<TlsMode>,
+
+    /// The Redis specific/connection independent information to be used.
+    pub redis_connection_info: Option<RedisConnectionInfo>,
+}
+
+impl SentinelNodeConnectionInfo {
+    fn create_connection_info(&self, ip: String, port: u16) -> ConnectionInfo {
+        let addr = match self.tls_mode {
+            None => crate::ConnectionAddr::Tcp(ip, port),
+            Some(TlsMode::Secure) => crate::ConnectionAddr::TcpTls {
+                host: ip,
+                port,
+                insecure: false,
+            },
+            Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
+                host: ip,
+                port,
+                insecure: true,
+            },
+        };
+
+        ConnectionInfo {
+            addr,
+            redis: self.redis_connection_info.clone().unwrap_or_default(),
+        }
+    }
+}
+
+impl Default for &SentinelNodeConnectionInfo {
+    fn default() -> Self {
+        static DEFAULT_VALUE: SentinelNodeConnectionInfo = SentinelNodeConnectionInfo {
+            tls_mode: None,
+            redis_connection_info: None,
+        };
+        &DEFAULT_VALUE
+    }
 }
 
 fn sentinel_masters_cmd() -> crate::Cmd {
@@ -76,7 +182,7 @@ fn sentinel_replicas_cmd(master_name: &str) -> crate::Cmd {
     cmd
 }
 
-/// Async version of try_sentinel_masters.
+/// Async version of [try_sentinel_masters].
 #[cfg(feature = "aio")]
 async fn async_try_sentinel_masters(
     connection_info: &ConnectionInfo,
@@ -149,7 +255,7 @@ fn random_replica_index(max: usize) -> usize {
 }
 
 fn try_connect_to_first_replica(
-    addresses: &Vec<(String, u16)>,
+    addresses: &Vec<ConnectionInfo>,
     start_index: usize,
 ) -> Result<Client, crate::RedisError> {
     if addresses.is_empty() {
@@ -200,8 +306,8 @@ fn check_role_result(result: &RedisResult<Vec<Value>>, target_role: &str) -> boo
     false
 }
 
-fn check_role(ip: &str, port: u16, target_role: &str) -> bool {
-    if let Ok(client) = Client::open((ip, port)) {
+fn check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
+    if let Ok(client) = Client::open(connection_info.clone()) {
         if let Ok(mut conn) = client.get_connection() {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query(&mut conn);
             return check_role_result(&result, target_role);
@@ -219,10 +325,12 @@ fn check_role(ip: &str, port: u16, target_role: &str) -> bool {
 fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
-) -> RedisResult<(String, u16)> {
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
-        if check_role(ip.as_str(), port, "master") {
-            return Ok((ip, port));
+        let connection_info = node_connection_info.create_connection_info(ip, port);
+        if check_role(&connection_info, "master") {
+            return Ok(connection_info);
         }
     }
 
@@ -233,8 +341,8 @@ fn find_valid_master(
 }
 
 #[cfg(feature = "aio")]
-async fn async_check_role(ip: &str, port: u16, target_role: &str) -> bool {
-    if let Ok(client) = Client::open((ip, port)) {
+async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
+    if let Ok(client) = Client::open(connection_info.clone()) {
         if let Ok(mut conn) = client.get_async_connection().await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
             return check_role_result(&result, target_role);
@@ -243,15 +351,17 @@ async fn async_check_role(ip: &str, port: u16, target_role: &str) -> bool {
     false
 }
 
-/// Async version of `find_valid_master`.
+/// Async version of [find_valid_master].
 #[cfg(feature = "aio")]
 async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
-) -> RedisResult<(String, u16)> {
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
-        if async_check_role(ip.as_str(), port, "master").await {
-            return Ok((ip, port));
+        let connection_info = node_connection_info.create_connection_info(ip, port);
+        if async_check_role(&connection_info, "master").await {
+            return Ok(connection_info);
         }
     }
 
@@ -261,25 +371,31 @@ async fn async_find_valid_master(
     ))
 }
 
-fn get_valid_replicas_addresses(replicas: Vec<HashMap<String, String>>) -> Vec<(String, u16)> {
+fn get_valid_replicas_addresses(
+    replicas: Vec<HashMap<String, String>>,
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> Vec<ConnectionInfo> {
     valid_addrs(replicas, is_replica_valid)
-        .filter(|(ip, port)| check_role(ip.as_str(), *port, "slave"))
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
+        .filter(|connection_info| check_role(connection_info, "slave"))
         .collect()
 }
 
 #[cfg(feature = "aio")]
-async fn async_get_valid_replicas_addresses(
+async fn async_get_valid_replicas_addresses<'a>(
     replicas: Vec<HashMap<String, String>>,
-) -> Vec<(String, u16)> {
-    async fn is_replica_role_valid((ip, port): (String, u16)) -> Option<(String, u16)> {
-        if async_check_role(ip.clone().as_str(), port, "slave").await {
-            Some((ip, port))
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> Vec<ConnectionInfo> {
+    async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
+        if async_check_role(&connection_info, "slave").await {
+            Some(connection_info)
         } else {
             None
         }
     }
 
     futures_util::stream::iter(valid_addrs(replicas, is_replica_valid))
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
         .filter_map(is_replica_role_valid)
         .collect()
         .await
@@ -288,7 +404,7 @@ async fn async_get_valid_replicas_addresses(
 // async methods
 #[cfg(feature = "aio")]
 impl Sentinel {
-    /// Async version of try_all_sentinels.
+    /// Async version of [Sentinel::try_all_sentinels].
     async fn async_try_all_sentinels<'a, F, T, Fut>(&'a self, f: F) -> RedisResult<T>
     where
         F: Fn(&'a ConnectionInfo) -> Fut,
@@ -311,7 +427,7 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
-    /// Async version of get_sentinel_masters.
+    /// Async version of [Sentinel::get_sentinel_masters].
     async fn async_get_sentinel_masters(&self) -> RedisResult<Vec<HashMap<String, String>>> {
         self.async_try_all_sentinels(async_try_sentinel_masters)
             .await
@@ -327,17 +443,22 @@ impl Sentinel {
         .await
     }
 
-    async fn async_find_master_address(&self, service_name: &str) -> RedisResult<(String, u16)> {
-        let masters = self.async_get_sentinel_masters().await?;
-        async_find_valid_master(masters, service_name).await
-    }
-
-    async fn async_find_valid_replica_addresses(
+    async fn async_find_master_address<'a>(
         &self,
         service_name: &str,
-    ) -> RedisResult<Vec<(String, u16)>> {
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<ConnectionInfo> {
+        let masters = self.async_get_sentinel_masters().await?;
+        async_find_valid_master(masters, service_name, node_connection_info).await
+    }
+
+    async fn async_find_valid_replica_addresses<'a>(
+        &self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.async_get_sentinel_replicas(service_name).await?;
-        Ok(async_get_valid_replicas_addresses(replicas).await)
+        Ok(async_get_valid_replicas_addresses(replicas, node_connection_info).await)
     }
 
     /// Determines the masters address for the given name, and returns a client for that
@@ -346,9 +467,16 @@ impl Sentinel {
     /// To determine the master we ask the sentinels one by one until one of
     /// then correctly responds to the SENTINEL MASTERS command, and then we check to
     /// see if there is a master with the given name; if there is, we create a
-    /// client with that address (ip and port).
-    pub async fn async_master_for(&self, service_name: &str) -> RedisResult<Client> {
-        let address = self.async_find_master_address(service_name).await?;
+    /// client with that address (ip and port) and the extra information from the
+    /// `node_connection_info` parameter.
+    pub async fn async_master_for(
+        &self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
+        let address = self
+            .async_find_master_address(service_name, node_connection_info.unwrap_or_default())
+            .await?;
         Client::open(address)
     }
 
@@ -358,9 +486,16 @@ impl Sentinel {
     /// given master name, we start trying to connect to then one by one, starting at a
     /// random index (simple random derived from the nanoseconds part of the current
     /// unix timestamp).
-    pub async fn async_replica_for(&self, service_name: &str) -> RedisResult<Client> {
+    pub async fn async_replica_for(
+        &self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
         let addresses = self
-            .async_find_valid_replica_addresses(service_name)
+            .async_find_valid_replica_addresses(
+                service_name,
+                node_connection_info.unwrap_or_default(),
+            )
             .await?;
         let start_index = random_replica_index(addresses.len());
         try_connect_to_first_replica(&addresses, start_index)
@@ -372,9 +507,16 @@ impl Sentinel {
     /// After listing the valid replicas (those without a sdown or odown flag) for the
     /// given master name, we start trying to connect to then one by one, starting at a
     /// rotating index which gets incremented on each call to this function.
-    pub async fn async_replica_rotate_for(&mut self, service_name: &str) -> RedisResult<Client> {
+    pub async fn async_replica_rotate_for<'a>(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
         let addresses = self
-            .async_find_valid_replica_addresses(service_name)
+            .async_find_valid_replica_addresses(
+                service_name,
+                node_connection_info.unwrap_or_default(),
+            )
             .await?;
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
@@ -442,14 +584,22 @@ impl Sentinel {
         self.try_all_sentinels(|conn_info| try_sentinel_replicas(conn_info, service_name))
     }
 
-    fn find_master_address(&self, service_name: &str) -> RedisResult<(String, u16)> {
+    fn find_master_address(
+        &self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<ConnectionInfo> {
         let masters = self.get_sentinel_masters()?;
-        find_valid_master(masters, service_name)
+        find_valid_master(masters, service_name, node_connection_info)
     }
 
-    fn find_valid_replica_addresses(&self, service_name: &str) -> RedisResult<Vec<(String, u16)>> {
+    fn find_valid_replica_addresses(
+        &self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.get_sentinel_replicas(service_name)?;
-        Ok(get_valid_replicas_addresses(replicas))
+        Ok(get_valid_replicas_addresses(replicas, node_connection_info))
     }
 
     /// Determines the masters address for the given name, and returns a client for that
@@ -458,10 +608,16 @@ impl Sentinel {
     /// To determine the master we ask the sentinels one by one until one of
     /// then correctly responds to the SENTINEL MASTERS command, and then we check to
     /// see if there is a master with the given name; if there is, we create a
-    /// client with that address (ip and port).
-    pub fn master_for(&self, service_name: &str) -> RedisResult<Client> {
-        let address = self.find_master_address(service_name)?;
-        Client::open(address)
+    /// client with that address (ip and port) and the extra information from the
+    /// `node_connection_info` parameter.
+    pub fn master_for(
+        &self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
+        let connection_info =
+            self.find_master_address(service_name, node_connection_info.unwrap_or_default())?;
+        Client::open(connection_info)
     }
 
     /// Connects to the first available replica of the given master name.
@@ -470,8 +626,13 @@ impl Sentinel {
     /// given master name, we start trying to connect to then one by one, starting at a
     /// random index (simple random derived from the nanoseconds part of the current
     /// unix timestamp).
-    pub fn replica_for(&self, service_name: &str) -> RedisResult<Client> {
-        let addresses = self.find_valid_replica_addresses(service_name)?;
+    pub fn replica_for(
+        &self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
+        let addresses = self
+            .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
         let start_index = random_replica_index(addresses.len());
         try_connect_to_first_replica(&addresses, start_index)
     }
@@ -482,8 +643,13 @@ impl Sentinel {
     /// After listing the valid replicas (those without a sdown or odown flag) for the
     /// given master name, we start trying to connect to then one by one, starting at a
     /// rotating index which gets incremented on each call to this function.
-    pub fn replica_rotate_for(&mut self, service_name: &str) -> RedisResult<Client> {
-        let addresses = self.find_valid_replica_addresses(service_name)?;
+    pub fn replica_rotate_for(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Client> {
+        let addresses = self
+            .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
         }
@@ -505,10 +671,11 @@ pub enum SentinelServerType {
 /// internally. This is basic an utility to help make it easier to use sentinels but
 /// with an interface similar to the client (`get_connection` and
 /// `get_async_connection`).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SentinelClient {
     sentinel: Sentinel,
     service_name: String,
+    node_connection_info: SentinelNodeConnectionInfo,
     server_type: SentinelServerType,
 }
 
@@ -518,19 +685,25 @@ impl SentinelClient {
     pub fn build<T: IntoConnectionInfo>(
         params: Vec<T>,
         service_name: String,
+        node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
     ) -> RedisResult<Self> {
         Ok(SentinelClient {
             sentinel: Sentinel::build(params)?,
             service_name,
+            node_connection_info: node_connection_info.unwrap_or_default(),
             server_type,
         })
     }
 
     fn get_client(&self) -> RedisResult<Client> {
         match self.server_type {
-            SentinelServerType::Master => self.sentinel.master_for(self.service_name.as_str()),
-            SentinelServerType::Replica => self.sentinel.replica_for(self.service_name.as_str()),
+            SentinelServerType::Master => self
+                .sentinel
+                .master_for(self.service_name.as_str(), Some(&self.node_connection_info)),
+            SentinelServerType::Replica => self
+                .sentinel
+                .replica_for(self.service_name.as_str(), Some(&self.node_connection_info)),
         }
     }
 
@@ -552,12 +725,12 @@ impl SentinelClient {
         match self.server_type {
             SentinelServerType::Master => {
                 self.sentinel
-                    .async_master_for(self.service_name.as_str())
+                    .async_master_for(self.service_name.as_str(), Some(&self.node_connection_info))
                     .await
             }
             SentinelServerType::Replica => {
                 self.sentinel
-                    .async_replica_for(self.service_name.as_str())
+                    .async_replica_for(self.service_name.as_str(), Some(&self.node_connection_info))
                     .await
             }
         }

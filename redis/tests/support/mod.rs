@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::Value;
+use redis::{ConnectionAddr, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -92,21 +92,18 @@ impl RedisServer {
         RedisServer::with_modules(&[])
     }
 
-    pub fn with_modules(modules: &[Module]) -> RedisServer {
+    pub fn get_addr(port: u16) -> ConnectionAddr {
         let server_type = ServerType::get_intended();
-        let addr = match server_type {
+        match server_type {
             ServerType::Tcp { tls } => {
-                // this is technically a race but we can't do better with
-                // the tools that redis gives us :(
-                let redis_port = get_random_available_port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
-                        port: redis_port,
+                        port,
                         insecure: true,
                     }
                 } else {
-                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port)
+                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
                 }
             }
             ServerType::Unix => {
@@ -114,8 +111,19 @@ impl RedisServer {
                 let path = format!("/tmp/redis-rs-test-{a}-{b}.sock");
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
-        };
-        RedisServer::new_with_addr_and_modules(addr, modules)
+        }
+    }
+
+    pub fn with_modules(modules: &[Module]) -> RedisServer {
+        // this is technically a race but we can't do better with
+        // the tools that redis gives us :(
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+        })
     }
 
     pub fn new_with_addr_and_modules(
