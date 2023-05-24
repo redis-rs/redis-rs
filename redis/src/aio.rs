@@ -1114,7 +1114,10 @@ mod connection_manager {
             // Create a MultiplexedConnection and wait for it to be established
 
             let runtime = Runtime::locate();
-            let connection = client.get_multiplexed_async_connection().await?;
+            let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+            let connection =
+                Self::new_connection(client.clone(), retry_strategy.clone(), number_of_retries)
+                    .await?;
 
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
@@ -1124,8 +1127,17 @@ mod connection_manager {
                 )),
                 runtime,
                 number_of_retries,
-                retry_strategy: ExponentialBackoff::from_millis(exponent_base).factor(factor),
+                retry_strategy,
             })
+        }
+
+        async fn new_connection(
+            client: Client,
+            exponential_backoff: ExponentialBackoff,
+            number_of_retries: usize,
+        ) -> RedisResult<MultiplexedConnection> {
+            let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
+            Retry::spawn(retry_strategy, || client.get_multiplexed_async_connection()).await
         }
 
         /// Reconnect and overwrite the old connection.
@@ -1137,16 +1149,10 @@ mod connection_manager {
             current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
             let client = self.client.clone();
-            let retry_strategy = self
-                .retry_strategy
-                .clone()
-                .map(jitter)
-                .take(self.number_of_retries);
+            let retry_strategy = self.retry_strategy.clone();
+            let number_of_retries = self.number_of_retries;
             let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-                Ok(
-                    Retry::spawn(retry_strategy, || client.get_multiplexed_async_connection())
-                        .await?,
-                )
+                Ok(Self::new_connection(client, retry_strategy, number_of_retries).await?)
             }
             .boxed()
             .shared();
