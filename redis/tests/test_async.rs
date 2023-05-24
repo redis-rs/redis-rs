@@ -639,9 +639,9 @@ mod pub_sub {
     }
 }
 
-#[cfg(all(not(feature = "tls-rustls"), feature = "connection-manager"))]
+#[cfg(feature = "connection-manager")]
 async fn wait_for_server_to_become_ready(client: redis::Client) {
-    let millisecond = Duration::from_millis(1);
+    let millisecond = std::time::Duration::from_millis(1);
     let mut retries = 0;
     loop {
         match client.get_multiplexed_async_connection().await {
@@ -665,22 +665,21 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 }
 
 #[test]
-#[cfg(all(not(feature = "tls-rustls"), feature = "connection-manager"))] // TODO - investigate why the test doesn't work with rust-tls
+#[cfg(feature = "connection-manager")] // TODO - investigate why the test doesn't work with rust-tls
 fn test_connection_manager_reconnect_after_delay() {
     let ctx = TestContext::new();
 
     block_on_all(async move {
-        let mut manager =
-            redis::aio::ConnectionManager::new_with_backoff(ctx.client.clone(), 1, 10, 100)
-                .await
-                .unwrap();
+        let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
+            .await
+            .unwrap();
         let server = ctx.server;
         let addr = server.client_addr().clone();
         drop(server);
 
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
