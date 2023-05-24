@@ -208,9 +208,7 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
-    #[deprecated = "use get_tokio_connection_manager_with_backoff"]
     pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
-        #[allow(deprecated)]
         crate::aio::ConnectionManager::new(self.clone()).await
     }
 

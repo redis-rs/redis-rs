@@ -14,7 +14,7 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
 
     #[cfg(feature = "aio")]
-    builder.enable_all();
+    builder.enable_io();
 
     builder.enable_time();
 

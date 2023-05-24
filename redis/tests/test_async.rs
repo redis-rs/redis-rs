@@ -1,6 +1,5 @@
 use futures::{future, prelude::*, StreamExt};
 use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
-use std::time::Duration;
 
 use crate::support::*;
 

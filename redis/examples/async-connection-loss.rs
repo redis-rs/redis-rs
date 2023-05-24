@@ -81,14 +81,7 @@ async fn main() -> RedisResult<()> {
     match mode {
         Mode::Default => run_single(client.get_async_connection().await?).await?,
         Mode::Multiplexed => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
-        Mode::Reconnect => {
-            run_multi(
-                client
-                    .get_tokio_connection_manager_with_backoff(2, 100, 5)
-                    .await?,
-            )
-            .await?
-        }
+        Mode::Reconnect => run_multi(client.get_tokio_connection_manager().await?).await?,
     };
     Ok(())
 }

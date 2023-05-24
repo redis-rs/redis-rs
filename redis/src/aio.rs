@@ -1079,13 +1079,22 @@ mod connection_manager {
     }
 
     impl ConnectionManager {
+        const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
+        const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+        const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
         ///
         /// This requires the `connection-manager` feature, which will also pull in
         /// the Tokio executor.
-        #[deprecated = "use new_with_backoff"]
         pub async fn new(client: Client) -> RedisResult<Self> {
-            Self::new_with_backoff(client, 1, 1, 0).await
+            Self::new_with_backoff(
+                client,
+                Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+                Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+                Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            )
+            .await
         }
 
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
