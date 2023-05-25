@@ -101,9 +101,9 @@ fn assert_connect_to_known_replicas(
 
 #[test]
 fn test_sentinel_connect_to_random_replica() {
-    let cluster = TestSentinelContext::new(2, 3, 3);
-    let sentinel = cluster.sentinel();
-    let node_conn_info = cluster.sentinel_node_connection_info();
+    let mut context = TestSentinelContext::new(2, 3, 3);
+    let node_conn_info: SentinelNodeConnectionInfo = context.sentinel_node_connection_info();
+    let sentinel = context.sentinel_mut();
 
     let master_client = sentinel
         .master_for("master1", Some(&node_conn_info))
@@ -188,7 +188,7 @@ fn test_sentinel_server_down() {
 #[test]
 fn test_sentinel_client() {
     let mut context = TestSentinelContext::new(2, 3, 3);
-    let master_client = SentinelClient::build(
+    let mut master_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
         String::from("master1"),
         Some(context.sentinel_node_connection_info()),
@@ -196,7 +196,7 @@ fn test_sentinel_client() {
     )
     .unwrap();
 
-    let replica_client = SentinelClient::build(
+    let mut replica_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
         String::from("master1"),
         Some(context.sentinel_node_connection_info()),
@@ -303,9 +303,9 @@ pub mod async_tests {
 
     #[test]
     fn test_sentinel_connect_to_random_replica_async() {
-        let cluster = TestSentinelContext::new(2, 3, 3);
-        let node_conn_info = cluster.sentinel_node_connection_info();
-        let sentinel = cluster.sentinel();
+        let mut context = TestSentinelContext::new(2, 3, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        let sentinel = context.sentinel_mut();
 
         block_on_all(async move {
             let master_client = sentinel
@@ -411,7 +411,7 @@ pub mod async_tests {
     #[test]
     fn test_sentinel_client_async() {
         let mut context = TestSentinelContext::new(2, 3, 3);
-        let master_client = SentinelClient::build(
+        let mut master_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
             String::from("master1"),
             Some(context.sentinel_node_connection_info()),
@@ -419,7 +419,7 @@ pub mod async_tests {
         )
         .unwrap();
 
-        let replica_client = SentinelClient::build(
+        let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
             String::from("master1"),
             Some(context.sentinel_node_connection_info()),

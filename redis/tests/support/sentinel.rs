@@ -240,7 +240,7 @@ impl TestSentinelContext {
         let sentinel = redis::sentinel::Sentinel::build(initial_nodes.clone());
         let sentinel = sentinel.unwrap();
 
-        let context = TestSentinelContext {
+        let mut context = TestSentinelContext {
             cluster,
             sentinel,
             sentinels_connection_info: initial_nodes,
@@ -278,10 +278,10 @@ impl TestSentinelContext {
         }
     }
 
-    pub fn wait_for_cluster_up(&self) {
-        let con = self.sentinel();
-        let rolecmd = redis::cmd("ROLE");
+    pub fn wait_for_cluster_up(&mut self) {
         let node_conn_info = self.sentinel_node_connection_info();
+        let con = self.sentinel_mut();
+        let rolecmd = redis::cmd("ROLE");
 
         for _ in 0..100 {
             let master_client = con.master_for("master1", Some(&node_conn_info));
