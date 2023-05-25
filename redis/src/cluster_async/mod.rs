@@ -960,7 +960,7 @@ where
     Ok(())
 }
 
-// FIXME -- This function can panic and should probably
+// TODO: This function can panic and should probably
 // return an Option instead:
 fn get_random_connection<C>(connections: &ConnectionMap<C>) -> (String, ConnectionFuture<C>)
 where

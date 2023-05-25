@@ -591,7 +591,6 @@ impl RedisError {
     #[cfg(feature = "cluster")] // Used to avoid "unused method" warning
     pub(crate) fn is_retryable(&self) -> bool {
         match self.kind() {
-            ErrorKind::ExecAbortError => true,
             ErrorKind::BusyLoadingError => true,
             ErrorKind::Moved => true,
             ErrorKind::Ask => true,
@@ -602,6 +601,7 @@ impl RedisError {
             ErrorKind::ReadOnly => true,
             ErrorKind::ClusterDown => true,
 
+            ErrorKind::ExecAbortError => false,
             ErrorKind::ResponseError => false,
             ErrorKind::AuthenticationFailed => false,
             ErrorKind::TypeError => false,

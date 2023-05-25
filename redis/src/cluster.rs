@@ -279,9 +279,6 @@ where
 
                 if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
-                        conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
-                        conn.set_write_timeout(*self.write_timeout.borrow())
-                            .unwrap();
                         return Some((addr.to_string(), conn));
                     }
                 }
@@ -357,6 +354,8 @@ where
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
+        conn.set_read_timeout(*self.read_timeout.borrow())?;
+        conn.set_write_timeout(*self.write_timeout.borrow())?;
         Ok(conn)
     }
 
@@ -523,11 +522,7 @@ where
                         ErrorKind::IoError => {
                             if *self.auto_reconnect.borrow() {
                                 if let Ok(mut conn) = self.connect(&addr) {
-                                    // FIXME: Duplicated from `refresh_slots`
                                     if conn.check_connection() {
-                                        conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
-                                        conn.set_write_timeout(*self.write_timeout.borrow())
-                                            .unwrap();
                                         self.connections.borrow_mut().insert(addr, conn);
                                     }
                                 }
@@ -716,7 +711,7 @@ pub enum TlsMode {
     Insecure,
 }
 
-// FIXME -- This function can panic and should probably
+// TODO: This function can panic and should probably
 // return an Option instead:
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     connections: &mut HashMap<String, C>,
