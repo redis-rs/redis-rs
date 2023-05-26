@@ -320,10 +320,10 @@ fn test_cluster_exhaust_retries() {
     let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
     match result {
-        Ok(_) => panic!("This is not ok, man"),
+        Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
             ErrorKind::TryAgain => {}
-            _ => panic!("Unpexected error type"),
+            _ => panic!("Expected TryAgain but got {:?}", e.kind()),
         },
     }
     assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
@@ -499,10 +499,10 @@ fn test_cluster_non_retryable_error_should_not_retry() {
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
     match value {
-        Ok(_) => panic!("This is not ok, man"),
+        Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
             ErrorKind::ResponseError => {}
-            _ => panic!("Unpexected error type"),
+            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);

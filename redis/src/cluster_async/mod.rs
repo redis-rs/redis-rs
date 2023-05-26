@@ -411,18 +411,20 @@ where
         &mut self,
         addrs: Vec<String>,
     ) -> impl Future<Output = ConnectionMap<C>> {
-        let mut connections = mem::take(&mut self.connections);
+        let connections = mem::take(&mut self.connections);
         let params = self.cluster_params.clone();
         async move {
-            for addr in addrs {
-                let conn =
-                    Self::get_or_create_conn(&addr, connections.remove(&addr), params.clone())
-                        .await;
-                if let Ok(conn) = conn {
-                    connections.insert(addr, async { conn }.boxed().shared());
-                }
-            }
-            connections
+            stream::iter(addrs)
+                .fold(connections, |mut connections, addr| async {
+                    let conn =
+                        Self::get_or_create_conn(&addr, connections.remove(&addr), params.clone())
+                            .await;
+                    if let Ok(conn) = conn {
+                        connections.insert(addr, async { conn }.boxed().shared());
+                    }
+                    connections
+                })
+                .await
         }
     }
 
@@ -463,21 +465,20 @@ where
             nodes.sort_unstable();
             nodes.dedup();
 
-            // Remove dead connections and connect to new nodes if necessary
-            let mut new_connections = HashMap::with_capacity(slots.len());
-
-            // TODO: Parallelize this again:
-            for addr in nodes {
-                let conn = Self::get_or_create_conn(
-                    addr,
-                    connections.remove(addr),
-                    cluster_params.clone(),
-                )
+            let new_connections = stream::iter(nodes)
+                .fold(connections, |mut connections, addr| async {
+                    let conn = Self::get_or_create_conn(
+                        addr,
+                        connections.remove(addr),
+                        cluster_params.clone(),
+                    )
+                    .await;
+                    if let Ok(conn) = conn {
+                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                    }
+                    connections
+                })
                 .await;
-                if let Ok(conn) = conn {
-                    new_connections.insert(addr.to_string(), async { conn }.boxed().shared());
-                }
-            }
 
             Ok((slots, new_connections))
         }

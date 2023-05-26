@@ -597,10 +597,10 @@ impl RedisError {
             ErrorKind::TryAgain => true,
             ErrorKind::MasterDown => true,
             ErrorKind::IoError => true,
-            ErrorKind::ExtensionError => true,
             ErrorKind::ReadOnly => true,
             ErrorKind::ClusterDown => true,
 
+            ErrorKind::ExtensionError => false,
             ErrorKind::ExecAbortError => false,
             ErrorKind::ResponseError => false,
             ErrorKind::AuthenticationFailed => false,

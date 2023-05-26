@@ -367,10 +367,10 @@ fn test_async_cluster_tryagain_exhaust_retries() {
     );
 
     match result {
-        Ok(_) => panic!("This is not ok, man"),
+        Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
             ErrorKind::TryAgain => {}
-            _ => panic!("Unpexected error type"),
+            _ => panic!("Expected TryAgain but got {:?}", e.kind()),
         },
     }
     assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
@@ -596,10 +596,10 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
     );
 
     match value {
-        Ok(_) => panic!("This is not ok, man"),
+        Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
             ErrorKind::ResponseError => {}
-            _ => panic!("Unpexected error type"),
+            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
