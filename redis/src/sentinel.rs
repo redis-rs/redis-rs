@@ -359,6 +359,7 @@ async fn async_get_valid_replicas_addresses<'a>(
         .await
 }
 
+#[cfg(feature = "aio")]
 async fn async_reconnect(
     connection: &mut Option<AsyncConnection>,
     connection_info: &ConnectionInfo,
@@ -369,6 +370,7 @@ async fn async_reconnect(
     Ok(())
 }
 
+#[cfg(feature = "aio")]
 async fn async_try_single_sentinel<T: FromRedisValue>(
     cmd: Cmd,
     connection_info: &ConnectionInfo,
