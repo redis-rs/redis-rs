@@ -109,9 +109,8 @@ use std::{
 use futures_util::StreamExt;
 
 use crate::{
-    aio::Connection as AsyncConnection, cluster::TlsMode, connection::ConnectionInfo,
-    types::RedisResult, Client, Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo,
-    RedisConnectionInfo, Value,
+    aio::Connection as AsyncConnection, connection::ConnectionInfo, types::RedisResult, Client,
+    Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -121,6 +120,16 @@ pub struct Sentinel {
     connections_cache: Vec<Option<Connection>>,
     async_connections_cache: Vec<Option<AsyncConnection>>,
     replica_start_index: usize,
+}
+
+/// TlsMode indicates use or do not use verification of certification.
+/// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
+#[derive(Clone, Copy)]
+pub enum TlsMode {
+    /// Secure verify certification.
+    Secure,
+    /// Insecure do not verify certification.
+    Insecure,
 }
 
 /// Holds the connection information that a sentinel should use when connecting to the
