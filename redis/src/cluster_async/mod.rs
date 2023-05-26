@@ -37,7 +37,7 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
-    cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotMap},
+    cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotAddr, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -200,6 +200,7 @@ impl<C> fmt::Debug for ConnectionState<C> {
 struct RequestInfo<C> {
     cmd: CmdArg<C>,
     route: Option<Route>,
+    redirect: Option<Redirect>,
 }
 
 pin_project! {
@@ -288,11 +289,20 @@ where
                 request.retry = request.retry.saturating_add(1);
 
                 match err.kind() {
-                    // TODO: Proper Ask implementation
-                    ErrorKind::Moved | ErrorKind::Ask => Next::RefreshSlots {
-                        request: this.request.take().unwrap(),
+                    ErrorKind::Ask => {
+                        let mut request = this.request.take().unwrap();
+                        request.info.redirect = err
+                            .redirect_node()
+                            .map(|(node, _slot)| Redirect::Ask(node.to_string()));
+                        Next::Retry { request }.into()
                     }
-                    .into(),
+                    ErrorKind::Moved => {
+                        let mut request = this.request.take().unwrap();
+                        request.info.redirect = err
+                            .redirect_node()
+                            .map(|(node, _slot)| Redirect::Moved(node.to_string()));
+                        Next::RefreshSlots { request }.into()
+                    }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                         // Sleep and retry.
                         let sleep_duration =
@@ -520,22 +530,52 @@ where
 
     fn try_request(
         &mut self,
-        info: &RequestInfo<C>,
+        info: &mut RequestInfo<C>,
     ) -> impl Future<Output = (String, RedisResult<Response>)> {
         // TODO remove clone by changing the ConnectionLike trait
         let cmd = info.cmd.clone();
-        let (addr, conn) = info
+        let mut asking = false;
+        // Ideally we would get a random conn only after other means failed,
+        // but referencing self in the async block is problematic:
+        let random_conn = get_random_connection(&self.connections);
+
+        let route_addr = info
             .route
             .as_ref()
-            .and_then(|route| self.slots.slot_addr_for_route(route))
-            .and_then(|addr| {
-                self.connections
-                    .get(addr)
-                    .map(|conn| (addr.to_string(), conn.clone()))
-            })
-            .unwrap_or_else(|| get_random_connection(&self.connections));
+            .and_then(|route| self.slots.slot_addr_for_route(route));
+
+        let conn_future = match route_addr {
+            Some(route_addr) => {
+                let addr = match info.redirect.take() {
+                    Some(Redirect::Moved(moved_addr)) => moved_addr,
+                    Some(Redirect::Ask(ask_addr)) => {
+                        asking = true;
+                        ask_addr
+                    }
+                    None => route_addr.to_string(),
+                };
+
+                let conn = self.connections.get(&addr).cloned();
+                let params = self.cluster_params.clone();
+
+                async move { (Self::get_or_create_conn(&addr, conn, params).await, addr) }
+                    .map(|(result, addr)| {
+                        result
+                            .map(|conn| (addr, async { conn }.boxed().shared()))
+                            .unwrap_or(random_conn)
+                    })
+                    .boxed()
+                    .shared()
+            }
+            None => async move { random_conn }.boxed().shared(),
+        };
+
         async move {
-            let conn = conn.await;
+            let (addr, conn) = conn_future.await;
+            let mut conn = conn.await;
+            if asking {
+                let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
+            }
             let result = cmd.exec(conn).await;
             (addr, result)
         }
@@ -589,7 +629,7 @@ where
 
         if !self.pending_requests.is_empty() {
             let mut pending_requests = mem::take(&mut self.pending_requests);
-            for request in pending_requests.drain(..) {
+            for mut request in pending_requests.drain(..) {
                 // Drop the request if noone is waiting for a response to free up resources for
                 // requests callers care about (load shedding). It will be ambigous whether the
                 // request actually goes through regardless.
@@ -597,7 +637,7 @@ where
                     continue;
                 }
 
-                let future = self.try_request(&request.info);
+                let future = self.try_request(&mut request.info);
                 self.in_flight_requests.push(Box::pin(Request {
                     max_retries: self.cluster_params.retries,
                     request: Some(request),
@@ -616,8 +656,8 @@ where
             };
             match result {
                 Next::Done => {}
-                Next::Retry { request } => {
-                    let future = self.try_request(&request.info);
+                Next::Retry { mut request } => {
+                    let future = self.try_request(&mut request.info);
                     self.in_flight_requests.push(Box::pin(Request {
                         max_retries: self.cluster_params.retries,
                         request: Some(request),
@@ -626,10 +666,17 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots { request } => {
+                Next::RefreshSlots { mut request } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    self.pending_requests.push(request);
+                    let future = self.try_request(&mut request.info);
+                    self.in_flight_requests.push(Box::pin(Request {
+                        max_retries: self.cluster_params.retries,
+                        request: Some(request),
+                        future: RequestState::Future {
+                            future: Box::pin(future),
+                        },
+                    }));
                 }
                 Next::Reconnect { request, addr, .. } => {
                     poll_flush_action =
@@ -746,8 +793,12 @@ where
         let Message { cmd, sender } = msg;
 
         let route = cmd.route();
-
-        let info = RequestInfo { cmd, route };
+        let redirect = None;
+        let info = RequestInfo {
+            cmd,
+            route,
+            redirect,
+        };
 
         self.pending_requests.push(PendingRequest {
             retry: 0,
