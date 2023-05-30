@@ -466,18 +466,21 @@ where
             nodes.dedup();
 
             let new_connections = stream::iter(nodes)
-                .fold(connections, |mut connections, addr| async {
-                    let conn = Self::get_or_create_conn(
-                        addr,
-                        connections.remove(addr),
-                        cluster_params.clone(),
-                    )
-                    .await;
-                    if let Ok(conn) = conn {
-                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
-                    }
-                    connections
-                })
+                .fold(
+                    HashMap::with_capacity(slots.len()),
+                    |mut connections, addr| async {
+                        let conn = Self::get_or_create_conn(
+                            addr,
+                            connections.remove(addr),
+                            cluster_params.clone(),
+                        )
+                        .await;
+                        if let Ok(conn) = conn {
+                            connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        }
+                        connections
+                    },
+                )
                 .await;
 
             Ok((slots, new_connections))
