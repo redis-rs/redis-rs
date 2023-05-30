@@ -520,21 +520,16 @@ where
     ) -> impl Future<Output = (String, RedisResult<Response>)> {
         // TODO remove clone by changing the ConnectionLike trait
         let cmd = info.cmd.clone();
-        let (addr, conn) = if info.route.is_none() {
-            get_random_connection(&self.connections)
-        } else {
-            let route = info.route.as_ref().unwrap();
-            if let Some(addr) = self.slots.slot_addr_for_route(route) {
-                let addr = addr.to_string();
-                if let Some(conn) = self.connections.get(&addr) {
-                    (addr, conn.clone())
-                } else {
-                    get_random_connection(&self.connections)
-                }
-            } else {
-                get_random_connection(&self.connections)
-            }
-        };
+        let (addr, conn) = info
+            .route
+            .as_ref()
+            .and_then(|route| self.slots.slot_addr_for_route(route))
+            .and_then(|addr| {
+                self.connections
+                    .get(addr)
+                    .map(|conn| (addr.to_string(), conn.clone()))
+            })
+            .unwrap_or_else(|| get_random_connection(&self.connections));
         async move {
             let conn = conn.await;
             let result = cmd.exec(conn).await;
