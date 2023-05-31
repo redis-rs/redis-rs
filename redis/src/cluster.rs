@@ -50,7 +50,7 @@ use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
-use crate::types::{ErrorKind, HashMap, HashSet, RedisError, RedisResult, Value};
+use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
@@ -279,9 +279,6 @@ where
 
                 if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
-                        conn.set_read_timeout(*self.read_timeout.borrow()).unwrap();
-                        conn.set_write_timeout(*self.write_timeout.borrow())
-                            .unwrap();
                         return Some((addr.to_string(), conn));
                     }
                 }
@@ -329,7 +326,6 @@ where
                 }
 
                 new_slots = Some(SlotMap::from_slots(&slots_data, self.read_from_replicas));
-
                 break;
             }
         }
@@ -358,6 +354,8 @@ where
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
+        conn.set_read_timeout(*self.read_timeout.borrow())?;
+        conn.set_write_timeout(*self.write_timeout.borrow())?;
         Ok(conn)
     }
 
@@ -375,7 +373,7 @@ where
         } else {
             // try a random node next.  This is safe if slots are involved
             // as a wrong node would reject the request.
-            Ok(get_random_connection(connections, None))
+            Ok(get_random_connection(connections))
         }
     }
 
@@ -472,7 +470,6 @@ where
         };
 
         let mut retries = self.retries;
-        let mut excludes = HashSet::new();
         let mut redirected = None::<String>;
         let mut is_asking = false;
         loop {
@@ -489,8 +486,8 @@ where
                         is_asking = false;
                     }
                     (addr.to_string(), conn)
-                } else if !excludes.is_empty() || route.is_none() {
-                    get_random_connection(&mut connections, Some(&excludes))
+                } else if route.is_none() {
+                    get_random_connection(&mut connections)
                 } else {
                     self.get_connection(&mut connections, route.as_ref().unwrap())?
                 };
@@ -505,41 +502,37 @@ where
                     }
                     retries -= 1;
 
-                    if err.is_cluster_error() {
-                        let kind = err.kind();
-
-                        if kind == ErrorKind::Ask {
+                    match err.kind() {
+                        ErrorKind::Ask => {
                             redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = true;
-                        } else if kind == ErrorKind::Moved {
+                        }
+                        ErrorKind::Moved => {
                             // Refresh slots.
                             self.refresh_slots()?;
-                            excludes.clear();
-
                             // Request again.
                             redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
                             is_asking = false;
-                            continue;
-                        } else if kind == ErrorKind::TryAgain || kind == ErrorKind::ClusterDown {
+                        }
+                        ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
                             let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
                             thread::sleep(Duration::from_millis(sleep_time));
-                            excludes.clear();
-                            continue;
                         }
-                    } else if *self.auto_reconnect.borrow() && err.is_io_error() {
-                        self.create_initial_connections()?;
-                        excludes.clear();
-                        continue;
-                    } else {
-                        return Err(err);
-                    }
-
-                    excludes.insert(addr);
-
-                    let connections = self.connections.borrow();
-                    if excludes.len() >= connections.len() {
-                        return Err(err);
+                        ErrorKind::IoError => {
+                            if *self.auto_reconnect.borrow() {
+                                if let Ok(mut conn) = self.connect(&addr) {
+                                    if conn.check_connection() {
+                                        self.connections.borrow_mut().insert(addr, conn);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            if !err.is_retryable() {
+                                return Err(err);
+                            }
+                        }
                     }
                 }
             }
@@ -718,22 +711,17 @@ pub enum TlsMode {
     Insecure,
 }
 
-fn get_random_connection<'a, C: ConnectionLike + Connect + Sized>(
-    connections: &'a mut HashMap<String, C>,
-    excludes: Option<&'a HashSet<String>>,
-) -> (String, &'a mut C) {
-    let mut rng = thread_rng();
-    let addr = match excludes {
-        Some(excludes) if excludes.len() < connections.len() => connections
-            .keys()
-            .filter(|key| !excludes.contains(*key))
-            .choose(&mut rng)
-            .unwrap()
-            .to_string(),
-        _ => connections.keys().choose(&mut rng).unwrap().to_string(),
-    };
-
-    let con = connections.get_mut(&addr).unwrap();
+// TODO: This function can panic and should probably
+// return an Option instead:
+fn get_random_connection<C: ConnectionLike + Connect + Sized>(
+    connections: &mut HashMap<String, C>,
+) -> (String, &mut C) {
+    let addr = connections
+        .keys()
+        .choose(&mut thread_rng())
+        .expect("Connections is empty")
+        .to_string();
+    let con = connections.get_mut(&addr).expect("Connections is empty");
     (addr, con)
 }
 

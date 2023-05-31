@@ -13,8 +13,8 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, parse_redis_value, AsyncCommands, Cmd, InfoDict, IntoConnectionInfo, RedisError,
-    RedisFuture, RedisResult, Script, Value,
+    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
+    RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -366,10 +366,13 @@ fn test_async_cluster_tryagain_exhaust_retries() {
             .query_async::<_, Option<i32>>(&mut connection),
     );
 
-    assert_eq!(
-        result.map_err(|err| err.to_string()),
-        Err("An error was signalled by the server - TryAgain: mock".to_string())
-    );
+    match result {
+        Ok(_) => panic!("result should be an error"),
+        Err(e) => match e.kind() {
+            ErrorKind::TryAgain => {}
+            _ => panic!("Expected TryAgain but got {:?}", e.kind()),
+        },
+    }
     assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
 }
 
@@ -522,4 +525,82 @@ fn test_async_cluster_with_username_and_password() {
         Ok::<_, RedisError>(())
     })
     .unwrap();
+}
+
+#[test]
+fn test_async_cluster_io_error() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_two_nodes(name, cmd)?;
+            // Error twice with io-error, ensure connection is reestablished w/out calling
+            // other node (i.e., not doing a full slot rebuild)
+            match port {
+                6380 => panic!("Node should not be called"),
+                _ => match completed.fetch_add(1, Ordering::SeqCst) {
+                    0..=1 => Err(Err(RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "mock-io-error",
+                    )))),
+                    _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                },
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_non_retryable_error_should_not_retry() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            let completed = completed.clone();
+            move |cmd: &[u8], _| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                completed.fetch_add(1, Ordering::SeqCst);
+                Err(parse_redis_value(b"-ERR mock\r\n"))
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    match value {
+        Ok(_) => panic!("result should be an error"),
+        Err(e) => match e.kind() {
+            ErrorKind::ResponseError => {}
+            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
+        },
+    }
+    assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
