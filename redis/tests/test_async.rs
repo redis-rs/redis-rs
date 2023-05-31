@@ -665,7 +665,7 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 }
 
 #[test]
-#[cfg(feature = "connection-manager")] // TODO - investigate why the test doesn't work with rust-tls
+#[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
     let ctx = TestContext::new();
 
