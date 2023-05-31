@@ -530,7 +530,9 @@ impl RedisError {
         match self.repr {
             ErrorRepr::IoError(ref err) => matches!(
                 err.kind(),
-                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::UnexpectedEof
             ),
             _ => false,
         }

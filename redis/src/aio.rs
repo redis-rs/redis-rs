@@ -1003,6 +1003,8 @@ mod connection_manager {
     use arc_swap::{self, ArcSwap};
     use futures::future::{self, Shared};
     use futures_util::future::BoxFuture;
+    use tokio_retry::strategy::{jitter, ExponentialBackoff};
+    use tokio_retry::Retry;
 
     use crate::Client;
 
@@ -1041,6 +1043,8 @@ mod connection_manager {
         /// without making the `ConnectionManager` mutable.
         connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
+        retry_strategy: ExponentialBackoff,
+        number_of_retries: usize,
         runtime: Runtime,
     }
 
@@ -1075,15 +1079,45 @@ mod connection_manager {
     }
 
     impl ConnectionManager {
+        const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
+        const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+        const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+
         /// Connect to the server and store the connection inside the returned `ConnectionManager`.
         ///
         /// This requires the `connection-manager` feature, which will also pull in
         /// the Tokio executor.
         pub async fn new(client: Client) -> RedisResult<Self> {
+            Self::new_with_backoff(
+                client,
+                Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+                Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+                Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            )
+            .await
+        }
+
+        /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+        ///
+        /// This requires the `connection-manager` feature, which will also pull in
+        /// the Tokio executor.
+        ///
+        /// In case of reconnection issues, the manager will retry reconnection
+        /// number_of_retries times, with an exponentially increasing delay, calculated as
+        /// rand(0 .. factor * (exponent_base ^ current-try)).
+        pub async fn new_with_backoff(
+            client: Client,
+            exponent_base: u64,
+            factor: u64,
+            number_of_retries: usize,
+        ) -> RedisResult<Self> {
             // Create a MultiplexedConnection and wait for it to be established
 
             let runtime = Runtime::locate();
-            let connection = client.get_multiplexed_async_connection().await?;
+            let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+            let connection =
+                Self::new_connection(client.clone(), retry_strategy.clone(), number_of_retries)
+                    .await?;
 
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
             Ok(Self {
@@ -1092,7 +1126,18 @@ mod connection_manager {
                     future::ok(connection).boxed().shared(),
                 )),
                 runtime,
+                number_of_retries,
+                retry_strategy,
             })
+        }
+
+        async fn new_connection(
+            client: Client,
+            exponential_backoff: ExponentialBackoff,
+            number_of_retries: usize,
+        ) -> RedisResult<MultiplexedConnection> {
+            let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
+            Retry::spawn(retry_strategy, || client.get_multiplexed_async_connection()).await
         }
 
         /// Reconnect and overwrite the old connection.
@@ -1104,10 +1149,13 @@ mod connection_manager {
             current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>,
         ) {
             let client = self.client.clone();
-            let new_connection: SharedRedisFuture<MultiplexedConnection> =
-                async move { Ok(client.get_multiplexed_async_connection().await?) }
-                    .boxed()
-                    .shared();
+            let retry_strategy = self.retry_strategy.clone();
+            let number_of_retries = self.number_of_retries;
+            let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+                Ok(Self::new_connection(client, retry_strategy, number_of_retries).await?)
+            }
+            .boxed()
+            .shared();
 
             // Update the connection in the connection manager
             let new_connection_arc = Arc::new(new_connection.clone());
