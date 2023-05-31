@@ -588,6 +588,9 @@ impl RedisError {
         Self { repr }
     }
 
+    // TODO: In addition to/instead of returning a bool here, consider a method
+    // that returns an enum with more detail about _how_ to retry errors, e.g.,
+    // `RetryImmediately`, `WaitAndRetry`, etc.
     #[cfg(feature = "cluster")] // Used to avoid "unused method" warning
     pub(crate) fn is_retryable(&self) -> bool {
         match self.kind() {
