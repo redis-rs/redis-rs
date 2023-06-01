@@ -1,15 +1,13 @@
-use super::{async_trait, AsyncStream, RedisResult, RedisRuntime, SocketAddr};
-
+use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr};
+use async_trait::async_trait;
 use std::{
     future::Future,
     io,
     pin::Pin,
     task::{self, Poll},
 };
-
 #[cfg(unix)]
 use tokio::net::UnixStream as UnixStreamTokio;
-
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream as TcpStreamTokio,
