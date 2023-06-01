@@ -59,6 +59,7 @@ fn assert_connection_is_replica_of_correct_master(conn: &mut Connection, master_
 /// indeed replicas of the given master, and returning a list of their addresses.
 fn connect_to_all_replicas(
     sentinel: &mut Sentinel,
+    master_name: &str,
     master_client: &Client,
     node_conn_info: &SentinelNodeConnectionInfo,
     number_of_replicas: u16,
@@ -67,7 +68,7 @@ fn connect_to_all_replicas(
 
     for _ in 0..number_of_replicas {
         let replica_client = sentinel
-            .replica_rotate_for("master1", Some(node_conn_info))
+            .replica_rotate_for(master_name, Some(node_conn_info))
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
@@ -82,14 +83,15 @@ fn connect_to_all_replicas(
 
 fn assert_connect_to_known_replicas(
     sentinel: &mut Sentinel,
-    replica_conn_infos: Vec<ConnectionAddr>,
+    replica_conn_infos: &Vec<ConnectionAddr>,
+    master_name: &str,
     master_client: &Client,
     node_conn_info: &SentinelNodeConnectionInfo,
     number_of_connections: u32,
 ) {
     for _ in 0..number_of_connections {
         let replica_client = sentinel
-            .replica_rotate_for("master1", Some(node_conn_info))
+            .replica_rotate_for(master_name, Some(node_conn_info))
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
@@ -101,17 +103,18 @@ fn assert_connect_to_known_replicas(
 
 #[test]
 fn test_sentinel_connect_to_random_replica() {
+    let master_name = "master1";
     let mut context = TestSentinelContext::new(2, 3, 3);
     let node_conn_info: SentinelNodeConnectionInfo = context.sentinel_node_connection_info();
     let sentinel = context.sentinel_mut();
 
     let master_client = sentinel
-        .master_for("master1", Some(&node_conn_info))
+        .master_for(master_name, Some(&node_conn_info))
         .unwrap();
     let mut master_con = master_client.get_connection().unwrap();
 
     let mut replica_con = sentinel
-        .replica_for("master1", Some(&node_conn_info))
+        .replica_for(master_name, Some(&node_conn_info))
         .unwrap()
         .get_connection()
         .unwrap();
@@ -123,12 +126,13 @@ fn test_sentinel_connect_to_random_replica() {
 #[test]
 fn test_sentinel_connect_to_multiple_replicas() {
     let number_of_replicas = 3;
+    let master_name = "master1";
     let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
     let node_conn_info = cluster.sentinel_node_connection_info();
     let sentinel = cluster.sentinel_mut();
 
     let master_client = sentinel
-        .master_for("master1", Some(&node_conn_info))
+        .master_for(master_name, Some(&node_conn_info))
         .unwrap();
     let mut master_con = master_client.get_connection().unwrap();
 
@@ -136,6 +140,7 @@ fn test_sentinel_connect_to_multiple_replicas() {
 
     let replica_conn_infos = connect_to_all_replicas(
         sentinel,
+        master_name,
         &master_client,
         &node_conn_info,
         number_of_replicas,
@@ -143,7 +148,8 @@ fn test_sentinel_connect_to_multiple_replicas() {
 
     assert_connect_to_known_replicas(
         sentinel,
-        replica_conn_infos,
+        &replica_conn_infos,
+        master_name,
         &master_client,
         &node_conn_info,
         10,
@@ -153,12 +159,13 @@ fn test_sentinel_connect_to_multiple_replicas() {
 #[test]
 fn test_sentinel_server_down() {
     let number_of_replicas = 3;
+    let master_name = "master1";
     let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
     let node_conn_info = context.sentinel_node_connection_info();
     let sentinel = context.sentinel_mut();
 
     let master_client = sentinel
-        .master_for("master1", Some(&node_conn_info))
+        .master_for(master_name, Some(&node_conn_info))
         .unwrap();
     let mut master_con = master_client.get_connection().unwrap();
 
@@ -171,6 +178,7 @@ fn test_sentinel_server_down() {
 
     let replica_conn_infos = connect_to_all_replicas(
         sentinel,
+        master_name,
         &master_client,
         &node_conn_info,
         number_of_replicas,
@@ -178,7 +186,8 @@ fn test_sentinel_server_down() {
 
     assert_connect_to_known_replicas(
         sentinel,
-        replica_conn_infos,
+        &replica_conn_infos,
+        master_name,
         &master_client,
         &node_conn_info,
         10,
@@ -187,10 +196,11 @@ fn test_sentinel_server_down() {
 
 #[test]
 fn test_sentinel_client() {
+    let master_name = "master1";
     let mut context = TestSentinelContext::new(2, 3, 3);
     let mut master_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
-        String::from("master1"),
+        String::from(master_name),
         Some(context.sentinel_node_connection_info()),
         redis::sentinel::SentinelServerType::Master,
     )
@@ -198,7 +208,7 @@ fn test_sentinel_client() {
 
     let mut replica_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
-        String::from("master1"),
+        String::from(master_name),
         Some(context.sentinel_node_connection_info()),
         redis::sentinel::SentinelServerType::Replica,
     )
@@ -211,7 +221,7 @@ fn test_sentinel_client() {
     let node_conn_info = context.sentinel_node_connection_info();
     let sentinel = context.sentinel_mut();
     let master_client = sentinel
-        .master_for("master1", Some(&node_conn_info))
+        .master_for(master_name, Some(&node_conn_info))
         .unwrap();
 
     for _ in 0..20 {
@@ -257,6 +267,7 @@ pub mod async_tests {
     /// Async version of connect_to_all_replicas
     async fn async_connect_to_all_replicas(
         sentinel: &mut Sentinel,
+        master_name: &str,
         master_client: &Client,
         node_conn_info: &SentinelNodeConnectionInfo,
         number_of_replicas: u16,
@@ -265,7 +276,7 @@ pub mod async_tests {
 
         for _ in 0..number_of_replicas {
             let replica_client = sentinel
-                .async_replica_rotate_for("master1", Some(node_conn_info))
+                .async_replica_rotate_for(master_name, Some(node_conn_info))
                 .await
                 .unwrap();
             let mut replica_con = replica_client.get_async_connection().await.unwrap();
@@ -282,14 +293,15 @@ pub mod async_tests {
 
     async fn async_assert_connect_to_known_replicas(
         sentinel: &mut Sentinel,
-        replica_conn_infos: Vec<ConnectionAddr>,
+        replica_conn_infos: &Vec<ConnectionAddr>,
+        master_name: &str,
         master_client: &Client,
         node_conn_info: &SentinelNodeConnectionInfo,
         number_of_connections: u32,
     ) {
         for _ in 0..number_of_connections {
             let replica_client = sentinel
-                .async_replica_rotate_for("master1", Some(node_conn_info))
+                .async_replica_rotate_for(master_name, Some(node_conn_info))
                 .await
                 .unwrap();
             let mut replica_con = replica_client.get_async_connection().await.unwrap();
@@ -303,18 +315,19 @@ pub mod async_tests {
 
     #[test]
     fn test_sentinel_connect_to_random_replica_async() {
+        let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let node_conn_info = context.sentinel_node_connection_info();
         let sentinel = context.sentinel_mut();
 
         block_on_all(async move {
             let master_client = sentinel
-                .async_master_for("master1", Some(&node_conn_info))
+                .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
             let mut master_con = master_client.get_async_connection().await?;
 
             let mut replica_con = sentinel
-                .async_replica_for("master1", Some(&node_conn_info))
+                .async_replica_for(master_name, Some(&node_conn_info))
                 .await?
                 .get_async_connection()
                 .await?;
@@ -331,13 +344,14 @@ pub mod async_tests {
     #[test]
     fn test_sentinel_connect_to_multiple_replicas_async() {
         let number_of_replicas = 3;
+        let master_name = "master1";
         let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
         let node_conn_info = cluster.sentinel_node_connection_info();
         let sentinel = cluster.sentinel_mut();
 
         block_on_all(async move {
             let master_client = sentinel
-                .async_master_for("master1", Some(&node_conn_info))
+                .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
             let mut master_con = master_client.get_async_connection().await?;
 
@@ -345,6 +359,7 @@ pub mod async_tests {
 
             let replica_conn_infos = async_connect_to_all_replicas(
                 sentinel,
+                master_name,
                 &master_client,
                 &node_conn_info,
                 number_of_replicas,
@@ -353,7 +368,8 @@ pub mod async_tests {
 
             async_assert_connect_to_known_replicas(
                 sentinel,
-                replica_conn_infos,
+                &replica_conn_infos,
+                master_name,
                 &master_client,
                 &node_conn_info,
                 10,
@@ -368,6 +384,7 @@ pub mod async_tests {
     #[test]
     fn test_sentinel_server_down_async() {
         let number_of_replicas = 3;
+        let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
         let node_conn_info = context.sentinel_node_connection_info();
 
@@ -375,7 +392,7 @@ pub mod async_tests {
             let sentinel = context.sentinel_mut();
 
             let master_client = sentinel
-                .async_master_for("master1", Some(&node_conn_info))
+                .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
             let mut master_con = master_client.get_async_connection().await?;
 
@@ -388,6 +405,7 @@ pub mod async_tests {
 
             let replica_conn_infos = async_connect_to_all_replicas(
                 sentinel,
+                master_name,
                 &master_client,
                 &node_conn_info,
                 number_of_replicas,
@@ -396,7 +414,8 @@ pub mod async_tests {
 
             async_assert_connect_to_known_replicas(
                 sentinel,
-                replica_conn_infos,
+                &replica_conn_infos,
+                master_name,
                 &master_client,
                 &node_conn_info,
                 10,
@@ -410,10 +429,11 @@ pub mod async_tests {
 
     #[test]
     fn test_sentinel_client_async() {
+        let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
-            String::from("master1"),
+            String::from(master_name),
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
@@ -421,7 +441,7 @@ pub mod async_tests {
 
         let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
-            String::from("master1"),
+            String::from(master_name),
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Replica,
         )
@@ -435,7 +455,7 @@ pub mod async_tests {
             let node_conn_info = context.sentinel_node_connection_info();
             let sentinel = context.sentinel_mut();
             let master_client = sentinel
-                .async_master_for("master1", Some(&node_conn_info))
+                .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
 
             // Read commands to the replica node
