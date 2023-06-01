@@ -599,3 +599,34 @@ fn test_cluster_non_retryable_error_should_not_retry() {
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn test_cluster_fan_out() {
+    let name = "node";
+    let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ports_clone = found_ports.clone();
+    // requests should route to replica
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+            if (cmd[8..]).starts_with("FLUSHALL".as_bytes()) {
+                ports_clone.lock().unwrap().push(port);
+                return Err(Ok(Value::Status("OK".into())));
+            }
+            Ok(())
+        },
+    );
+
+    let _ = cmd("FLUSHALL").query::<Option<()>>(&mut connection);
+    found_ports.lock().unwrap().sort();
+    // MockEnv creates 2 mock connections.
+    assert_eq!(*found_ports.lock().unwrap(), vec![6379, 6381]);
+}
