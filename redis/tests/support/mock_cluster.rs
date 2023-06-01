@@ -121,65 +121,81 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
     }
 }
 
-pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
-    } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![
-            Value::Bulk(vec![
-                Value::Int(0),
-                Value::Int(8191),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6379),
-                ]),
-            ]),
-            Value::Bulk(vec![
-                Value::Int(8192),
-                Value::Int(16383),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6380),
-                ]),
-            ]),
-        ])))
-    } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
-    } else {
-        Ok(())
-    }
+#[derive(Clone)]
+pub struct MockSlotRange {
+    pub primary_port: u16,
+    pub replica_ports: Vec<u16>,
+    pub slot_range: std::ops::Range<u16>,
 }
 
 pub fn respond_startup_with_replica(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
+    respond_startup_with_replica_using_config(name, cmd, None)
+}
+
+pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
+    respond_startup_with_replica_using_config(
+        name,
+        cmd,
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![],
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6380,
+                replica_ports: vec![],
+                slot_range: (8192..16383),
+            },
+        ]),
+    )
+}
+
+pub fn respond_startup_with_replica_using_config(
+    name: &str,
+    cmd: &[u8],
+    slots_config: Option<Vec<MockSlotRange>>,
+) -> Result<(), RedisResult<Value>> {
+    let slots_config = slots_config.unwrap_or(vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![6380],
+            slot_range: (0..8191),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![6382],
+            slot_range: (8192..16383),
+        },
+    ]);
     if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![
-            Value::Bulk(vec![
-                Value::Int(0),
-                Value::Int(8191),
+        let slots = slots_config
+            .into_iter()
+            .map(|slot_config| {
+                let replicas = slot_config
+                    .replica_ports
+                    .into_iter()
+                    .flat_map(|replica_port| {
+                        vec![
+                            Value::Data(name.as_bytes().to_vec()),
+                            Value::Int(replica_port as i64),
+                        ]
+                    })
+                    .collect();
                 Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6379),
-                ]),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6380),
-                ]),
-            ]),
-            Value::Bulk(vec![
-                Value::Int(8192),
-                Value::Int(16383),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6381),
-                ]),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
-                    Value::Int(6382),
-                ]),
-            ]),
-        ])))
+                    Value::Int(slot_config.slot_range.start as i64),
+                    Value::Int(slot_config.slot_range.end as i64),
+                    Value::Bulk(vec![
+                        Value::Data(name.as_bytes().to_vec()),
+                        Value::Int(slot_config.primary_port as i64),
+                    ]),
+                    Value::Bulk(replicas),
+                ])
+            })
+            .collect();
+        Err(Ok(Value::Bulk(slots)))
     } else if contains_slice(cmd, b"READONLY") {
         Err(Ok(Value::Status("OK".into())))
     } else {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::iter::Iterator;
 
 use rand::seq::SliceRandom;
@@ -240,6 +240,18 @@ impl SlotMap {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
+        let mut addresses = HashSet::new();
+        for slot in self.values() {
+            addresses.insert(slot.slot_addr(&SlotAddr::Master));
+
+            if !only_primaries {
+                addresses.insert(slot.slot_addr(&SlotAddr::Replica));
+            }
+        }
+        addresses
     }
 }
 
