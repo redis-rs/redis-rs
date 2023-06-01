@@ -121,10 +121,10 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
-    /// Requested name not found among masters
-    MasterNameNotFound,
-    /// No valid replicas found for given master name
-    NoValidReplicasFound,
+    /// Requested name not found among masters returned by the sentinels
+    MasterNameNotFoundBySentinel,
+    /// No valid replicas found in the sentinels, for a given master name
+    NoValidReplicasFoundBySentinel,
     /// At least one sentinel connection info is required
     EmptySentinelList,
 
@@ -495,8 +495,8 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
-            ErrorKind::MasterNameNotFound => "master name not found",
-            ErrorKind::NoValidReplicasFound => "no valid replicas found",
+            ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
+            ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",

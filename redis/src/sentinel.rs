@@ -227,7 +227,7 @@ fn try_connect_to_first_replica(
 ) -> Result<Client, crate::RedisError> {
     if addresses.is_empty() {
         fail!((
-            ErrorKind::NoValidReplicasFound,
+            ErrorKind::NoValidReplicasFoundBySentinel,
             "No valid replica found in sentinel for given name",
         ));
     }
@@ -302,7 +302,7 @@ fn find_valid_master(
     }
 
     fail!((
-        ErrorKind::MasterNameNotFound,
+        ErrorKind::MasterNameNotFoundBySentinel,
         "Master with given name not found in sentinel",
     ))
 }
@@ -333,7 +333,7 @@ async fn async_find_valid_master(
     }
 
     fail!((
-        ErrorKind::MasterNameNotFound,
+        ErrorKind::MasterNameNotFoundBySentinel,
         "Master with given name not found in sentinel",
     ))
 }
