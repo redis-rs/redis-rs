@@ -436,17 +436,28 @@ where
         Ok(result)
     }
 
-    fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
+    fn execute_on_all_nodes<T, F>(&self, mut func: F, only_primaries: bool) -> RedisResult<T>
     where
         T: MergeResults,
         F: FnMut(&mut C) -> RedisResult<T>,
     {
         let mut connections = self.connections.borrow_mut();
+        let slots = self.slots.borrow_mut();
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        for (addr, connection) in connections.iter_mut() {
-            results.insert(addr.as_str(), func(connection)?);
+        for slot in slots.values() {
+            let addr = slot.slot_addr(&SlotAddr::Master).to_string();
+            if let Some(connection) = connections.get_mut(&addr) {
+                results.insert(addr, func(connection)?);
+            }
+
+            if !only_primaries {
+                let addr = slot.slot_addr(&SlotAddr::Replica).to_string();
+                if let Some(connection) = connections.get_mut(&addr) {
+                    results.insert(addr, func(connection)?);
+                }
+            }
         }
 
         Ok(T::merge_results(results))
@@ -463,8 +474,11 @@ where
             Some(RoutingInfo::Random) => None,
             Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
             Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
-            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
-                return self.execute_on_all_nodes(func);
+            Some(RoutingInfo::AllMasters) => {
+                return self.execute_on_all_nodes(func, true);
+            }
+            Some(RoutingInfo::AllNodes) => {
+                return self.execute_on_all_nodes(func, false);
             }
             None => fail!(UNROUTABLE_ERROR),
         };
@@ -659,26 +673,23 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
 }
 
 trait MergeResults {
-    fn merge_results(_values: HashMap<&str, Self>) -> Self
+    fn merge_results(_values: HashMap<String, Self>) -> Self
     where
         Self: Sized;
 }
 
 impl MergeResults for Value {
-    fn merge_results(values: HashMap<&str, Value>) -> Value {
+    fn merge_results(values: HashMap<String, Value>) -> Value {
         let mut items = vec![];
         for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
-                Value::Data(addr.as_bytes().to_vec()),
-                value,
-            ]));
+            items.push(Value::Bulk(vec![Value::Data(addr.into_bytes()), value]));
         }
         Value::Bulk(items)
     }
 }
 
 impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+    fn merge_results(_values: HashMap<String, Vec<Value>>) -> Vec<Value> {
         unreachable!("attempted to merge a pipeline. This should not happen");
     }
 }
