@@ -1,12 +1,15 @@
+use bytes::BufMut;
+#[cfg(feature = "aio")]
+use bytes::{Bytes, BytesMut};
 #[cfg(feature = "aio")]
 use futures_util::{
     future::BoxFuture,
     task::{Context, Poll},
     Stream, StreamExt,
 };
+use std::fmt;
 #[cfg(feature = "aio")]
 use std::pin::Pin;
-use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
@@ -239,19 +242,16 @@ where
 
     cmd.reserve(totlen);
 
-    write_command(cmd, args, cursor).unwrap()
+    write_command(cmd, args, cursor)
 }
 
-fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u64) -> io::Result<()>
+fn write_command<'a, I>(cmd: &mut impl BufMut, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     let mut buf = ::itoa::Buffer::new();
 
-    cmd.write_all(b"*")?;
-    let s = buf.format(args.len());
-    cmd.write_all(s.as_bytes())?;
-    cmd.write_all(b"\r\n")?;
+    write_header(args.len(), cmd, &mut buf);
 
     let mut cursor_bytes = itoa::Buffer::new();
     for item in args {
@@ -260,15 +260,25 @@ where
             Arg::Simple(val) => val,
         };
 
-        cmd.write_all(b"$")?;
-        let s = buf.format(bytes.len());
-        cmd.write_all(s.as_bytes())?;
-        cmd.write_all(b"\r\n")?;
-
-        cmd.write_all(bytes)?;
-        cmd.write_all(b"\r\n")?;
+        write_arg(cmd, bytes, &mut buf);
     }
-    Ok(())
+}
+
+fn write_arg(cmd: &mut impl BufMut, bytes: &[u8], num_to_string: &mut ::itoa::Buffer) {
+    cmd.put(b"$".as_ref());
+    let s = num_to_string.format(bytes.len());
+    cmd.put(s.as_bytes());
+    cmd.put(b"\r\n".as_ref());
+
+    cmd.put(bytes);
+    cmd.put(b"\r\n".as_ref())
+}
+
+fn write_header(length: usize, cmd: &mut impl BufMut, num_to_string: &mut ::itoa::Buffer) {
+    cmd.put(b"*".as_ref());
+    let s = num_to_string.format(length);
+    cmd.put(s.as_bytes());
+    cmd.put(b"\r\n".as_ref())
 }
 
 impl RedisWrite for Cmd {
@@ -386,12 +396,23 @@ impl Cmd {
         cmd
     }
 
+    /// Returns the packed command as a `Bytes` object.
+    #[cfg(feature = "aio")]
+    #[inline]
+    pub fn pack_command_to_bytes(&self) -> Bytes {
+        let totlen = cmd_len(self);
+
+        let mut bytes = BytesMut::with_capacity(totlen);
+        write_command(&mut bytes, self.args_iter(), self.cursor.unwrap_or(0));
+        bytes.freeze()
+    }
+
     pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
-        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
+        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     /// Like `get_packed_command` but replaces the cursor with the
@@ -581,10 +602,11 @@ pub fn cmd(name: &str) -> Cmd {
     rv
 }
 
-/// Packs a bunch of commands into a request.  This is generally a quite
-/// useless function as this functionality is nicely wrapped through the
-/// `Cmd` object, but in some cases it can be useful.  The return value
-/// of this can then be send to the low level `ConnectionLike` methods.
+/// Packs a bunch of arguments into a vector containing request bytes.
+/// This is generally a quite useless function as this functionality is
+/// nicely wrapped through the `Cmd` object, but in some cases it can be
+/// useful.  The return value of this can then be send to the low level
+/// `ConnectionLike` methods.
 ///
 /// Example:
 ///
@@ -597,8 +619,49 @@ pub fn cmd(name: &str) -> Cmd {
 /// let cmd = redis::pack_command(&args);
 /// assert_eq!(cmd, b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n".to_vec());
 /// ```
-pub fn pack_command(args: &[Vec<u8>]) -> Vec<u8> {
-    encode_command(args.iter().map(|x| Arg::Simple(&x[..])), 0)
+pub fn pack_command<T: AsRef<[u8]>>(args: &[T]) -> Vec<u8> {
+    encode_command(args.iter().map(|x| Arg::Simple(x.as_ref())), 0)
+}
+
+#[cfg(feature = "aio")]
+/// Packs a bunch of arguments into a `Bytes` object containing request bytes.
+/// This is generally a quite useless function as this functionality is
+/// nicely wrapped through the `Cmd` object, but in some cases it can be
+/// useful.  The return value of this can then be send to the low level
+/// `aio::ConnectionLike` methods.
+///
+/// Example:
+///
+/// ```rust
+/// # use redis::ToRedisArgs;
+/// let mut args = vec![];
+/// args.push("SET");
+/// args.push("my_key");
+/// args.push("42");
+/// let cmd = redis::pack_command_to_bytes(args.iter());
+/// let expected: bytes::Bytes = (&b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n"[..]).into();
+/// assert_eq!(cmd, expected);
+/// ```
+pub fn pack_command_to_bytes<T, I>(args: I) -> Bytes
+where
+    T: AsRef<[u8]>,
+    I: IntoIterator<Item = T> + Clone + ExactSizeIterator<Item = T>,
+{
+    let mut buf = ::itoa::Buffer::new();
+
+    let mut totlen = 1 + countdigits(args.len()) + 2;
+    for item in args.clone() {
+        totlen += bulklen(item.as_ref().len());
+    }
+
+    let mut bytes = BytesMut::with_capacity(totlen);
+
+    write_header(args.len(), &mut bytes, &mut buf);
+
+    for item in args {
+        write_arg(&mut bytes, item.as_ref(), &mut buf);
+    }
+    bytes.freeze()
 }
 
 /// Shortcut for creating a new pipeline.
