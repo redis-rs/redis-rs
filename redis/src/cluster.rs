@@ -42,7 +42,6 @@ use std::thread;
 use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
-
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,

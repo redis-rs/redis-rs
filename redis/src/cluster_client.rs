@@ -1,10 +1,8 @@
-use std::time::Duration;
-
-use rand::Rng;
-
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
-use crate::{cluster, TlsMode};
+use crate::{cluster, cluster::TlsMode};
+use rand::Rng;
+use std::time::Duration;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
@@ -30,6 +28,8 @@ struct BuilderParams {
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
     retries_configuration: RetryParams,
+    connection_timeout: Option<Duration>,
+    response_timeout: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -81,6 +81,8 @@ pub(crate) struct ClusterParams {
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
     pub(crate) tls_params: Option<TlsConnParams>,
+    pub(crate) connection_timeout: Duration,
+    pub(crate) response_timeout: Duration,
 }
 
 impl ClusterParams {
@@ -102,6 +104,8 @@ impl ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
+            connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
+            response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
         })
     }
 }
@@ -286,6 +290,22 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = true;
+        self
+    }
+
+    /// Enables timing out on slow connection time.
+    ///
+    /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
+    pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Enables timing out on slow responses.
+    ///
+    /// If enabled, the cluster will only wait the given time to each response from each node.
+    pub fn response_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.response_timeout = Some(connection_timeout);
         self
     }
 

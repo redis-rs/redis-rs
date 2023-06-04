@@ -30,6 +30,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{self, Poll},
+    time::Duration,
 };
 
 use crate::{
@@ -1215,25 +1216,33 @@ where
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(
+        info: T,
+        response_timeout: Duration,
+        connection_timeout: Duration,
+    ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
 
 impl Connect for MultiplexedConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, MultiplexedConnection>
+    fn connect<'a, T>(
+        info: T,
+        response_timeout: Duration,
+        connection_timeout: Duration,
+    ) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-
-            #[cfg(feature = "tokio-comp")]
-            return client.get_multiplexed_tokio_connection().await;
-
-            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            return client.get_multiplexed_async_std_connection().await;
+            client
+                .get_multiplexed_async_connection_with_timeouts(
+                    response_timeout,
+                    connection_timeout,
+                )
+                .await
         }
         .boxed()
     }
@@ -1244,8 +1253,10 @@ where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
+    let connection_timeout = params.connection_timeout;
+    let response_timeout = params.response_timeout;
     let info = get_connection_info(node, params)?;
-    let mut conn = C::connect(info).await?;
+    let mut conn: C = C::connect(info, response_timeout, connection_timeout).await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
