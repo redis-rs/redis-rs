@@ -138,16 +138,14 @@ fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
         }
     }
 
-    let mut iter = pipeline.cmd_iter();
-    let slot = iter.next().map(route_for_command)?;
-    for cmd in iter {
-        if slot != route_for_command(cmd) {
-            return None;
-        }
-    }
-    slot
+    // Find first specific slot and send to it. There's no need to check If later commands
+    // should be routed to a different slot, since the server will return an error indicating this.
+    pipeline
+        .cmd_iter()
+        .map(route_for_command)
+        .find(|route| route.is_some())
+        .flatten()
 }
-
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -1133,4 +1131,43 @@ where
         .expect("Connections is empty")
         .clone();
     (addr, conn)
+}
+
+#[cfg(test)]
+mod pipeline_routing_tests {
+    use super::route_pipeline;
+    use crate::{
+        cluster_routing::{Route, SlotAddr},
+        cmd,
+    };
+
+    #[test]
+    fn test_first_route_is_found() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .add_command(cmd("FLUSHALL")) // route to all masters
+            .get("foo") // route to slot 12182
+            .add_command(cmd("EVAL")); // route randomly
+
+        assert_eq!(
+            route_pipeline(&pipeline),
+            Some(Route::new(12182, SlotAddr::Replica))
+        );
+    }
+
+    #[test]
+    fn test_ignore_conflicting_slots() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .add_command(cmd("FLUSHALL")) // route to all masters
+            .set("baz", "bar") // route to slot 4813
+            .get("foo"); // route to slot 12182
+
+        assert_eq!(
+            route_pipeline(&pipeline),
+            Some(Route::new(4813, SlotAddr::Master))
+        );
+    }
 }
