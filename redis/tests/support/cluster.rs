@@ -156,6 +156,8 @@ impl RedisCluster {
         if replicas > 0 {
             cluster.wait_for_replicas(replicas);
         }
+
+        wait_for_status_ok(&cluster);
         cluster
     }
 
@@ -195,6 +197,23 @@ impl RedisCluster {
 
     pub fn iter_servers(&self) -> impl Iterator<Item = &RedisServer> {
         self.servers.iter()
+    }
+}
+
+fn wait_for_status_ok(cluster: &RedisCluster) {
+    'servers: for server in &cluster.servers {
+        let log_file = RedisServer::log_file(&server.tempdir);
+
+        for _ in 1..500 {
+            let contents =
+                std::fs::read_to_string(&log_file).expect("Should have been able to read the file");
+
+            if contents.contains("Cluster state changed: ok") {
+                break 'servers;
+            }
+            sleep(Duration::from_millis(20));
+        }
+        panic!("failed to reach state change: OK");
     }
 }
 
