@@ -114,13 +114,22 @@ impl RedisServer {
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
         };
-        RedisServer::new_with_addr(addr, None, modules, |cmd| {
+        RedisServer::new_with_addr_and_modules(addr, modules)
+    }
+
+    pub fn new_with_addr_and_modules(
+        addr: redis::ConnectionAddr,
+        modules: &[Module],
+    ) -> RedisServer {
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, modules, |cmd| {
             cmd.spawn()
                 .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
         })
     }
 
-    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
+    pub fn new_with_addr_tls_modules_and_spawner<
+        F: FnOnce(&mut process::Command) -> process::Child,
+    >(
         addr: redis::ConnectionAddr,
         tls_paths: Option<TlsFilePaths>,
         modules: &[Module],

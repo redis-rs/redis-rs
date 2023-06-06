@@ -95,7 +95,7 @@ impl RedisCluster {
         for node in 0..nodes {
             let port = start_port + node;
 
-            servers.push(RedisServer::new_with_addr(
+            servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
                 tls_paths.clone(),
                 modules,

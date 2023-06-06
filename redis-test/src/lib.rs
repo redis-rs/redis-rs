@@ -293,10 +293,6 @@ impl AioConnectionLike for MockRedisConnection {
     fn get_db(&self) -> i64 {
         0
     }
-
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
-    }
 }
 
 #[cfg(test)]
