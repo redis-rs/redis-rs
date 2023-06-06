@@ -1,11 +1,13 @@
+use std::time::Duration;
+
+use rand::Rng;
+
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
-
-const DEFAULT_RETRIES: u32 = 16;
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -16,7 +18,44 @@ struct BuilderParams {
     username: Option<String>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
-    retries: Option<u32>,
+    retries_configuration: RetryParams,
+}
+
+#[derive(Clone)]
+pub(crate) struct RetryParams {
+    pub(crate) number_of_retries: u32,
+    max_wait_time: u64,
+    min_wait_time: u64,
+    exponent_base: u64,
+    factor: u64,
+}
+
+impl Default for RetryParams {
+    fn default() -> Self {
+        const DEFAULT_RETRIES: u32 = 16;
+        const DEFAULT_MAX_RETRY_WAIT_TIME: u64 = 655360;
+        const DEFAULT_MIN_RETRY_WAIT_TIME: u64 = 1280;
+        const DEFAULT_EXPONENT_BASE: u64 = 2;
+        const DEFAULT_FACTOR: u64 = 10;
+        Self {
+            number_of_retries: DEFAULT_RETRIES,
+            max_wait_time: DEFAULT_MAX_RETRY_WAIT_TIME,
+            min_wait_time: DEFAULT_MIN_RETRY_WAIT_TIME,
+            exponent_base: DEFAULT_EXPONENT_BASE,
+            factor: DEFAULT_FACTOR,
+        }
+    }
+}
+
+impl RetryParams {
+    pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
+        let base_wait = self.exponent_base.pow(retry) * self.factor;
+        let clamped_wait = base_wait
+            .min(self.max_wait_time)
+            .max(self.min_wait_time + 1);
+        let jittered_wait = rand::thread_rng().gen_range(self.min_wait_time..clamped_wait);
+        Duration::from_millis(jittered_wait)
+    }
 }
 
 /// Redis cluster specific parameters.
@@ -29,7 +68,7 @@ pub(crate) struct ClusterParams {
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
-    pub(crate) retries: u32,
+    pub(crate) retry_params: RetryParams,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -39,7 +78,7 @@ impl From<BuilderParams> for ClusterParams {
             username: value.username,
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
-            retries: value.retries.unwrap_or(DEFAULT_RETRIES),
+            retry_params: value.retries_configuration,
         }
     }
 }
@@ -157,7 +196,27 @@ impl ClusterClientBuilder {
 
     /// Sets number of retries for the new ClusterClient.
     pub fn retries(mut self, retries: u32) -> ClusterClientBuilder {
-        self.builder_params.retries = Some(retries);
+        self.builder_params.retries_configuration.number_of_retries = retries;
+        self
+    }
+
+    /// Sets maximal wait time in millisceonds between retries for the new ClusterClient.
+    pub fn max_retry_wait(mut self, max_wait: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.max_wait_time = max_wait;
+        self
+    }
+
+    /// Sets minimal wait time in millisceonds between retries for the new ClusterClient.
+    pub fn min_retry_wait(mut self, min_wait: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.min_wait_time = min_wait;
+        self
+    }
+
+    /// Sets the factor and exponent base for the retry wait time.
+    /// The formula for the wait is rand(min_wait_retry .. min(max_retry_wait , factor * exponent_base ^ retry))ms.
+    pub fn retry_wait_formula(mut self, factor: u64, exponent_base: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.factor = factor;
+        self.builder_params.retries_configuration.exponent_base = exponent_base;
         self
     }
 
