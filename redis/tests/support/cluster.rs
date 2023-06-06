@@ -49,6 +49,7 @@ impl ClusterType {
                 host: "127.0.0.1".into(),
                 port,
                 insecure: true,
+                tls_params: None,
             },
         }
     }

@@ -104,6 +104,7 @@ impl RedisServer {
                         host: "127.0.0.1".to_string(),
                         port,
                         insecure: true,
+                        tls_params: None,
                     }
                 } else {
                     redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
@@ -213,6 +214,7 @@ impl RedisServer {
                     host: host.clone(),
                     port,
                     insecure: true,
+                    tls_params: None,
                 };
 
                 RedisServer {

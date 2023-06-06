@@ -991,11 +991,13 @@ fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> Connect
             host,
             port,
             insecure: false,
+            tls_params: None,
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: true,
+            tls_params: None,
         },
         _ => ConnectionAddr::Tcp(host, port),
     }

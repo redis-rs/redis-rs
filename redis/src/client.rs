@@ -11,7 +11,7 @@ use crate::{
 /// The client type.
 #[derive(Debug, Clone)]
 pub struct Client {
-    connection_info: ConnectionInfo,
+    pub(crate) connection_info: ConnectionInfo,
 }
 
 /// The client acts as connector to the redis server.  By itself it does not
