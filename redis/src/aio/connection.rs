@@ -224,7 +224,7 @@ where
             }
             loop {
                 match self.read_response().await? {
-                    Value::Push { kind, data } => {
+                    Value::Push { .. } => {
                         //self.execute_push_message(kind, data) //TODO
                     }
                     val => return Ok(val),
@@ -263,12 +263,12 @@ where
             let mut rv = Vec::with_capacity(count);
             let mut count = count;
             let mut idx = 0;
-            for _ in 0..count {
+            while idx < count {
                 let response = self.read_response().await;
                 match response {
                     Ok(item) => {
                         // RESP3 can insert push data between command replies
-                        if let Value::Push { kind, data } = item {
+                        if let Value::Push { .. } = item {
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
                             // self.execute_push_message(kind, data); //TODO
