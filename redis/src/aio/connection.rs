@@ -2,7 +2,7 @@
 use super::async_std;
 use super::ConnectionLike;
 use super::{authenticate, AsyncStream, RedisRuntime};
-use crate::cmd::{cmd, Cmd};
+use crate::cmd::cmd;
 use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -13,6 +13,7 @@ use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "tokio-comp")]
 use ::tokio::net::lookup_host;
+use bytes::{BufMut, Bytes};
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 use futures_util::{
     future::FutureExt,
@@ -187,32 +188,32 @@ impl<C> ConnectionLike for Connection<C>
 where
     C: Unpin + AsyncRead + AsyncWrite + Send,
 {
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_packed_command(&mut self, cmd: Bytes) -> RedisFuture<Value> {
         (async move {
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
             self.buf.clear();
-            cmd.write_packed_command(&mut self.buf);
+            self.buf.put_slice(&cmd[..]);
             self.con.write_all(&self.buf).await?;
             self.read_response().await
         })
         .boxed()
     }
 
-    fn req_pipeline<'a>(
-        &'a mut self,
-        cmd: &'a crate::Pipeline,
+    fn req_packed_commands(
+        &mut self,
+        cmd: bytes::Bytes,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>> {
+    ) -> RedisFuture<Vec<Value>> {
         (async move {
             if self.pubsub {
                 self.exit_pubsub().await?;
             }
 
             self.buf.clear();
-            cmd.write_packed_pipeline(&mut self.buf);
+            self.buf.put_slice(&cmd[..]);
             self.con.write_all(&self.buf).await?;
 
             let mut first_err = None;

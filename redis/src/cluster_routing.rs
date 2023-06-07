@@ -21,7 +21,7 @@ pub(crate) enum Redirect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RoutingInfo {
+pub enum RoutingInfo {
     AllNodes,
     AllMasters,
     Random,
@@ -270,7 +270,7 @@ impl SlotMap {
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-pub(crate) struct Route(u16, SlotAddr);
+pub struct Route(u16, SlotAddr);
 
 impl Route {
     pub(crate) fn new(slot: u16, slot_addr: SlotAddr) -> Self {

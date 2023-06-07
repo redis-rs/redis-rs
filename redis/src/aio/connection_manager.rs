@@ -1,13 +1,11 @@
 use super::RedisFuture;
-use crate::cmd::Cmd;
 use crate::types::{RedisError, RedisResult, Value};
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     Client,
 };
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use arc_swap::{self, ArcSwap};
+use bytes::Bytes;
 use futures::{
     future::{self, Shared},
     FutureExt,
@@ -177,7 +175,7 @@ impl ConnectionManager {
 
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+    pub async fn send_packed_command(&mut self, cmd: Bytes) -> RedisResult<Value> {
         // Clone connection to avoid having to lock the ArcSwap in write mode
         let guard = self.connection.load();
         let connection_result = (**guard)
@@ -195,7 +193,7 @@ impl ConnectionManager {
     /// pipelining.
     pub async fn send_packed_commands(
         &mut self,
-        cmd: &crate::Pipeline,
+        cmd: Bytes,
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
@@ -215,16 +213,16 @@ impl ConnectionManager {
 }
 
 impl ConnectionLike for ConnectionManager {
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_packed_command(&mut self, cmd: Bytes) -> RedisFuture<Value> {
         (async move { self.send_packed_command(cmd).await }).boxed()
     }
 
-    fn req_pipeline<'a>(
-        &'a mut self,
-        cmd: &'a crate::Pipeline,
+    fn req_packed_commands(
+        &mut self,
+        cmd: bytes::Bytes,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>> {
+    ) -> RedisFuture<Vec<Value>> {
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 

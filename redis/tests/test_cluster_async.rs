@@ -13,8 +13,8 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, parse_redis_value, AsyncCommands, ErrorKind, InfoDict, IntoConnectionInfo, RedisError,
+    RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -233,21 +233,21 @@ impl Connect for ErrorConnection {
 }
 
 impl ConnectionLike for ErrorConnection {
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_packed_command(&mut self, cmd: bytes::Bytes) -> RedisFuture<Value> {
         if ERROR.load(Ordering::SeqCst) {
             Box::pin(async move { Err(RedisError::from((redis::ErrorKind::Moved, "ERROR"))) })
         } else {
-            self.inner.req_command(cmd)
+            self.inner.req_packed_command(cmd)
         }
     }
 
-    fn req_pipeline<'a>(
-        &'a mut self,
-        pipeline: &'a redis::Pipeline,
+    fn req_packed_commands(
+        &mut self,
+        cmd: bytes::Bytes,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>> {
-        self.inner.req_pipeline(pipeline, offset, count)
+    ) -> RedisFuture<Vec<Value>> {
+        self.inner.req_packed_commands(cmd, offset, count)
     }
 
     fn get_db(&self) -> i64 {

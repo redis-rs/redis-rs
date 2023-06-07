@@ -2,10 +2,9 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::RedisConnectionInfo;
 use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures_util::Future;
 use std::net::SocketAddr;
 #[cfg(unix)]
@@ -53,18 +52,35 @@ impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
 
 /// An async abstraction over connections.
 pub trait ConnectionLike {
-    /// Sends an already encoded (packed) command into the TCP socket and
-    /// reads the single response from it.
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
+    /// Sends an already encoded (packed) command into the TCP socket and reads
+    /// the single response from it.
+    fn req_packed_command(&mut self, cmd: Bytes) -> RedisFuture<Value>;
+
+    /// Sends multiple encoded (packed) commands into the TCP socket, skips `offset`
+    /// responses and reads `count` responses from it.
+    /// This is used to implement pipelining.
+    fn req_packed_commands(
+        &mut self,
+        pipeline: Bytes,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<Vec<Value>>;
+
+    /// Sends a command into the TCP socket and reads the single response from it.
+    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+        self.req_packed_command(cmd.pack_command_to_bytes())
+    }
 
     /// Sends multiple commands into the TCP socket, skips `offset` responses and reads `count` responses from it.
     /// This is used to implement pipelining.
     fn req_pipeline<'a>(
         &'a mut self,
-        cmd: &'a crate::Pipeline,
+        pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>>;
+    ) -> RedisFuture<'a, Vec<Value>> {
+        self.req_packed_commands(pipeline.get_packed_pipeline_as_bytes(), offset, count)
+    }
 
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and

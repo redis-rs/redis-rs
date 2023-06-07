@@ -1,5 +1,7 @@
 use futures::{future, prelude::*, StreamExt};
-use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
+use redis::{
+    aio::MultiplexedConnection, cmd, pack_command_to_bytes, AsyncCommands, ErrorKind, RedisResult,
+};
 
 use crate::support::*;
 
@@ -26,6 +28,28 @@ fn test_args() {
             .await;
         assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
         result
+    }))
+    .unwrap();
+}
+
+#[test]
+fn test_args_in_bytes() {
+    use redis::aio::ConnectionLike;
+
+    let ctx = TestContext::new();
+    let connect = ctx.multiplexed_async_connection();
+
+    block_on_all(connect.and_then(|mut con| async move {
+        let bytes = pack_command_to_bytes(vec!["SET", "key1", "foo"].iter());
+        con.req_packed_command(bytes).await?;
+        let bytes = pack_command_to_bytes(vec!["SET", "key2", "bar"].iter());
+        con.req_packed_command(bytes).await?;
+        let bytes = pack_command_to_bytes(vec!["MGET", "key1", "key2"].iter());
+        let result = con.req_packed_command(bytes).await.unwrap();
+        let result: (String, Vec<u8>) = redis::from_redis_value(&result).unwrap();
+
+        assert_eq!(result, ("foo".to_string(), b"bar".to_vec()));
+        Ok(())
     }))
     .unwrap();
 }

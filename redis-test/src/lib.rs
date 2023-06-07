@@ -27,6 +27,8 @@ use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "aio")]
+use bytes::Bytes;
 use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, Value};
 
 #[cfg(feature = "aio")]
@@ -261,25 +263,21 @@ impl ConnectionLike for MockRedisConnection {
 
 #[cfg(feature = "aio")]
 impl AioConnectionLike for MockRedisConnection {
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        let packed_cmd = cmd.get_packed_command();
-        let response = <MockRedisConnection as ConnectionLike>::req_packed_command(
-            self,
-            packed_cmd.as_slice(),
-        );
+    fn req_packed_command(&mut self, cmd: Bytes) -> RedisFuture<Value> {
+        let response =
+            <MockRedisConnection as ConnectionLike>::req_packed_command(self, cmd.as_ref());
         future::ready(response).boxed()
     }
 
-    fn req_pipeline<'a>(
-        &'a mut self,
-        cmd: &'a Pipeline,
+    fn req_packed_commands(
+        &mut self,
+        cmd: Bytes,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>> {
-        let packed_cmd = cmd.get_packed_pipeline();
+    ) -> RedisFuture<Vec<Value>> {
         let response = <MockRedisConnection as ConnectionLike>::req_packed_commands(
             self,
-            packed_cmd.as_slice(),
+            cmd.as_ref(),
             offset,
             count,
         );

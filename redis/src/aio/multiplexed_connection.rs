@@ -1,16 +1,14 @@
 use super::ConnectionLike;
 use crate::aio::authenticate;
-use crate::cmd::Cmd;
 use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+use bytes::Bytes;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -309,7 +307,7 @@ where
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
+    pipeline: Pipeline<Bytes, Value, RedisError>,
     db: i64,
 }
 
@@ -369,14 +367,10 @@ impl MultiplexedConnection {
 
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let value = self
-            .pipeline
-            .send(cmd.get_packed_command())
-            .await
-            .map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
+    pub async fn send_packed_command(&mut self, cmd: Bytes) -> RedisResult<Value> {
+        let value = self.pipeline.send(cmd).await.map_err(|err| {
+            err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+        })?;
         Ok(value)
     }
 
@@ -385,13 +379,13 @@ impl MultiplexedConnection {
     /// pipelining.
     pub async fn send_packed_commands(
         &mut self,
-        cmd: &crate::Pipeline,
+        cmd: Bytes,
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
         let mut value = self
             .pipeline
-            .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
+            .send_recv_multiple(cmd, offset + count)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
@@ -403,17 +397,17 @@ impl MultiplexedConnection {
 }
 
 impl ConnectionLike for MultiplexedConnection {
-    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        (async move { self.send_packed_command(cmd).await }).boxed()
+    fn req_packed_command(&mut self, cmd: bytes::Bytes) -> RedisFuture<Value> {
+        self.send_packed_command(cmd).boxed()
     }
 
-    fn req_pipeline<'a>(
-        &'a mut self,
-        cmd: &'a crate::Pipeline,
+    fn req_packed_commands(
+        &mut self,
+        cmd: bytes::Bytes,
         offset: usize,
         count: usize,
-    ) -> RedisFuture<'a, Vec<Value>> {
-        (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
+    ) -> RedisFuture<Vec<Value>> {
+        self.send_packed_commands(cmd, offset, count).boxed()
     }
 
     fn get_db(&self) -> i64 {
