@@ -5,6 +5,9 @@ use crate::connection::ConnectionLike;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
+use bytes::BufMut;
+#[cfg(feature = "aio")]
+use bytes::{Bytes, BytesMut};
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]
@@ -76,8 +79,9 @@ impl Pipeline {
     }
 
     #[cfg(feature = "aio")]
-    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
-        write_pipeline(out, &self.commands, self.transaction_mode)
+    /// Returns the encoded pipeline commands as bytes.
+    pub fn get_packed_pipeline_as_bytes(&self) -> Bytes {
+        encode_pipeline_to_bytes(&self.commands, self.transaction_mode)
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
@@ -213,22 +217,43 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
     rv
 }
 
-fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
+#[cfg(feature = "aio")]
+pub(crate) fn encode_pipeline_to_bytes(cmds: &[Cmd], atomic: bool) -> Bytes {
+    let capacity = pipeline_length(cmds, atomic);
+    let mut rv = BytesMut::with_capacity(capacity);
+    write_pipeline_to_buf(&mut rv, cmds, atomic);
+    assert_eq!(capacity, rv.len());
+    rv.freeze()
+}
+
+const MULTI_COMMAND: &[u8] = "*1\r\n$5\r\nMULTI\r\n".as_bytes();
+const EXEC_COMMAND: &[u8] = "*1\r\n$4\r\nEXEC\r\n".as_bytes();
+
+fn pipeline_length(cmds: &[Cmd], atomic: bool) -> usize {
     let cmds_len = cmds.iter().map(cmd_len).sum();
-
     if atomic {
-        let multi = cmd("MULTI");
-        let exec = cmd("EXEC");
-        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
+        const MULTI_LENGTH: usize = MULTI_COMMAND.len();
+        const EXEC_LENGTH: usize = EXEC_COMMAND.len();
+        cmds_len + MULTI_LENGTH + EXEC_LENGTH
+    } else {
+        cmds_len
+    }
+}
 
-        multi.write_packed_command_preallocated(rv);
+fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
+    rv.reserve(pipeline_length(cmds, atomic));
+
+    write_pipeline_to_buf(rv, cmds, atomic)
+}
+
+fn write_pipeline_to_buf(rv: &mut impl BufMut, cmds: &[Cmd], atomic: bool) {
+    if atomic {
+        rv.put(MULTI_COMMAND);
         for cmd in cmds {
             cmd.write_packed_command_preallocated(rv);
         }
-        exec.write_packed_command_preallocated(rv);
+        rv.put(EXEC_COMMAND);
     } else {
-        rv.reserve(cmds_len);
-
         for cmd in cmds {
             cmd.write_packed_command_preallocated(rv);
         }

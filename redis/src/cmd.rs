@@ -411,7 +411,7 @@ impl Cmd {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
-    pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
+    pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut impl BufMut) {
         write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
