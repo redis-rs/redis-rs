@@ -116,10 +116,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 return None;
             }
 
-            let rv = unwrap_or!(
-                self.con.req_packed_command(&self.cmd).await.ok(),
-                return None
-            );
+            let rv = unwrap_or!(self.con.req_command(&self.cmd).await.ok(), return None);
             let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
 
             self.cmd.cursor = Some(cur);
@@ -451,7 +448,7 @@ impl Cmd {
     where
         C: crate::aio::ConnectionLike,
     {
-        let val = con.req_packed_command(self).await?;
+        let val = con.req_command(self).await?;
         from_redis_value(&val)
     }
 
@@ -508,7 +505,7 @@ impl Cmd {
         mut self,
         con: &'a mut (dyn AsyncConnection + Send),
     ) -> RedisResult<AsyncIter<'a, T>> {
-        let rv = con.req_packed_command(&self).await?;
+        let rv = con.req_command(&self).await?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
             from_redis_value::<(u64, Vec<T>)>(&rv)?

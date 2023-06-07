@@ -233,21 +233,21 @@ impl Connect for ErrorConnection {
 }
 
 impl ConnectionLike for ErrorConnection {
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         if ERROR.load(Ordering::SeqCst) {
             Box::pin(async move { Err(RedisError::from((redis::ErrorKind::Moved, "ERROR"))) })
         } else {
-            self.inner.req_packed_command(cmd)
+            self.inner.req_command(cmd)
         }
     }
 
-    fn req_packed_commands<'a>(
+    fn req_pipeline<'a>(
         &'a mut self,
         pipeline: &'a redis::Pipeline,
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        self.inner.req_packed_commands(pipeline, offset, count)
+        self.inner.req_pipeline(pipeline, offset, count)
     }
 
     fn get_db(&self) -> i64 {

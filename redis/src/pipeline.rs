@@ -149,9 +149,7 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
-        let value = con
-            .req_packed_commands(self, 0, self.commands.len())
-            .await?;
+        let value = con.req_pipeline(self, 0, self.commands.len()).await?;
         Ok(self.make_pipeline_results(value))
     }
 
@@ -160,9 +158,7 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
-        let mut resp = con
-            .req_packed_commands(self, self.commands.len() + 1, 1)
-            .await?;
+        let mut resp = con.req_pipeline(self, self.commands.len() + 1, 1).await?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),

@@ -403,11 +403,11 @@ impl MultiplexedConnection {
 }
 
 impl ConnectionLike for MultiplexedConnection {
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move { self.send_packed_command(cmd).await }).boxed()
     }
 
-    fn req_packed_commands<'a>(
+    fn req_pipeline<'a>(
         &'a mut self,
         cmd: &'a crate::Pipeline,
         offset: usize,

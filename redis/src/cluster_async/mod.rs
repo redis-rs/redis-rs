@@ -453,7 +453,7 @@ where
             let mut result = Ok(());
             for (_, conn) in connections.iter_mut() {
                 let mut conn = conn.clone().await;
-                let value = match conn.req_packed_command(&slot_cmd()).await {
+                let value = match conn.req_command(&slot_cmd()).await {
                     Ok(value) => value,
                     Err(err) => {
                         result = Err(err);
@@ -979,7 +979,7 @@ impl<C> ConnectionLike for ClusterConnection<C>
 where
     C: ConnectionLike + Send + 'static,
 {
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         trace!("req_packed_command");
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
@@ -988,9 +988,9 @@ where
                     cmd: CmdArg::Cmd {
                         cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
                         func: |mut conn, cmd| {
-                            Box::pin(async move {
-                                conn.req_packed_command(&cmd).await.map(Response::Single)
-                            })
+                            Box::pin(
+                                async move { conn.req_command(&cmd).await.map(Response::Single) },
+                            )
                         },
                         routing: RoutingInfo::for_routable(cmd),
                     },
@@ -1018,7 +1018,7 @@ where
         })
     }
 
-    fn req_packed_commands<'a>(
+    fn req_pipeline<'a>(
         &'a mut self,
         pipeline: &'a crate::Pipeline,
         offset: usize,
@@ -1034,7 +1034,7 @@ where
                         count,
                         func: |mut conn, pipeline, offset, count| {
                             Box::pin(async move {
-                                conn.req_packed_commands(&pipeline, offset, count)
+                                conn.req_pipeline(&pipeline, offset, count)
                                     .await
                                     .map(Response::Multiple)
                             })

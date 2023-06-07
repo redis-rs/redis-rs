@@ -55,12 +55,11 @@ impl<S> AsyncStream for S where S: AsyncRead + AsyncWrite {}
 pub trait ConnectionLike {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
-    fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
+    fn req_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value>;
 
-    /// Sends multiple already encoded (packed) command into the TCP socket
-    /// and reads `count` responses from it.  This is used to implement
-    /// pipelining.
-    fn req_packed_commands<'a>(
+    /// Sends multiple commands into the TCP socket, skips `offset` responses and reads `count` responses from it.
+    /// This is used to implement pipelining.
+    fn req_pipeline<'a>(
         &'a mut self,
         cmd: &'a crate::Pipeline,
         offset: usize,
