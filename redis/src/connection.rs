@@ -10,14 +10,17 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
+    Value,
 };
 
 #[cfg(unix)]
 use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+use std::vec::IntoIter;
 
+use crate::commands::resp3_hello;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::{TlsConnector, TlsStream};
 
@@ -127,6 +130,8 @@ pub struct RedisConnectionInfo {
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub password: Option<String>,
+    /// Use RESP 3 mode, Redis 6 or newer is required.
+    pub use_resp3: bool,
 }
 
 impl FromStr for ConnectionInfo {
@@ -233,6 +238,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     } else {
         ConnectionAddr::Tcp(host, port)
     };
+    let query: HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr,
         redis: RedisConnectionInfo {
@@ -264,6 +270,10 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 },
                 None => None,
             },
+            use_resp3: match query.get("resp3") {
+                Some(v) => v == "true",
+                _ => false,
+            },
         },
     })
 }
@@ -286,6 +296,10 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
+            use_resp3: match query.get("resp3") {
+                Some(v) => v == "true",
+                _ => false,
+            },
         },
     })
 }
@@ -373,6 +387,9 @@ pub struct Connection {
     /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    // Flag indicating whether resp3 mode is enabled.
+    resp3: bool,
 }
 
 /// Represents a pubsub connection.
@@ -769,12 +786,18 @@ fn setup_connection(
         parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
+        resp3: connection_info.use_resp3,
     };
 
-    if connection_info.password.is_some() {
+    if connection_info.use_resp3 {
+        let hello_cmd = resp3_hello(connection_info);
+        let val: RedisResult<Value> = hello_cmd.query(&mut rv);
+        if let Err(err) = val {
+            return Err(get_resp3_hello_command_error(err));
+        }
+    } else if connection_info.password.is_some() {
         connect_auth(&mut rv, connection_info)?;
     }
-
     if connection_info.db != 0 {
         match cmd("SELECT")
             .arg(connection_info.db)
@@ -845,6 +868,9 @@ pub trait ConnectionLike {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
+
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, kind: PushKind, data: Vec<Value>);
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -939,17 +965,32 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
-
-            match res.0.first() {
-                Some(&b'u') => received_unsub = true,
-                Some(&b'p') => received_punsub = true,
-                _ => (),
+        if self.resp3 {
+            while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
+                if data.len() >= 2 {
+                    if let Value::Int(num) = data[1] {
+                        if resp3_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &kind,
+                            num as isize,
+                        ) {
+                            break;
+                        }
+                    }
+                }
             }
-
-            if received_unsub && received_punsub && res.2 == 0 {
-                break;
+        } else {
+            loop {
+                let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
+                if resp2_is_pub_sub_state_cleared(
+                    &mut received_unsub,
+                    &mut received_punsub,
+                    &res.0,
+                    res.2,
+                ) {
+                    break;
+                }
             }
         }
 
@@ -1014,13 +1055,36 @@ impl Connection {
 }
 
 impl ConnectionLike for Connection {
+    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        if self.pubsub {
+            self.exit_pubsub()?;
+        }
+
+        self.con.send_bytes(&pcmd)?;
+        if cmd.is_no_response() {
+            return Ok(Value::Nil);
+        }
+        loop {
+            match self.read_response()? {
+                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                val => return Ok(val),
+            }
+        }
+    }
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         if self.pubsub {
             self.exit_pubsub()?;
         }
 
         self.con.send_bytes(cmd)?;
-        self.read_response()
+        loop {
+            match self.read_response()? {
+                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                val => return Ok(val),
+            }
+        }
     }
 
     fn req_packed_commands(
@@ -1035,7 +1099,9 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
-        for idx in 0..(offset + count) {
+        let mut count = count;
+        let mut idx = 0;
+        while idx < (offset + count) {
             // When processing a transaction, some responses may be errors.
             // We need to keep processing the rest of the responses in that case,
             // so bailing early with `?` would not be correct.
@@ -1043,7 +1109,12 @@ impl ConnectionLike for Connection {
             let response = self.read_response();
             match response {
                 Ok(item) => {
-                    if idx >= offset {
+                    // RESP3 can insert push data between command replies
+                    if let Value::Push { kind, data } = item {
+                        // if that is the case we have to extend the loop and handle push data
+                        count += 1;
+                        self.execute_push_message(kind, data);
+                    } else if idx >= offset {
                         rv.push(item);
                     }
                 }
@@ -1053,6 +1124,7 @@ impl ConnectionLike for Connection {
                     }
                 }
             }
+            idx += 1;
         }
 
         first_err.map_or(Ok(rv), Err)
@@ -1062,12 +1134,17 @@ impl ConnectionLike for Connection {
         self.db
     }
 
+    fn check_connection(&mut self) -> bool {
+        cmd("PING").query::<String>(self).is_ok()
+    }
+
     fn is_open(&self) -> bool {
         self.con.is_open()
     }
 
-    fn check_connection(&mut self) -> bool {
-        cmd("PING").query::<String>(self).is_ok()
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push message
     }
 }
 
@@ -1108,6 +1185,11 @@ where
     fn is_open(&self) -> bool {
         self.deref().is_open()
     }
+
+    /// Executes received push message from server.
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 /// The pubsub object provides convenient access to the redis pubsub
@@ -1138,22 +1220,42 @@ impl<'a> PubSub<'a> {
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("SUBSCRIBE").arg(channel).query(self.con)
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PSUBSCRIBE").arg(pchannel).query(self.con)
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("UNSUBSCRIBE").arg(channel).query(self.con)
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.con.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query(self.con)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -1192,25 +1294,39 @@ impl<'a> Drop for PubSub<'a> {
 /// connection.  It only contains actual message data.
 impl Msg {
     /// Tries to convert provided [`Value`] into [`Msg`].
+    #[allow(clippy::unnecessary_to_owned)]
     pub fn from_value(value: &Value) -> Option<Self> {
-        let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
-        let mut iter = raw_msg.into_iter();
-        let msg_type: String = from_redis_value(&iter.next()?).ok()?;
         let mut pattern = None;
         let payload;
         let channel;
 
-        if msg_type == "message" {
-            channel = iter.next()?;
-            payload = iter.next()?;
-        } else if msg_type == "pmessage" {
-            pattern = Some(iter.next()?);
-            channel = iter.next()?;
-            payload = iter.next()?;
+        if let Value::Push { kind, data } = value {
+            let mut iter: IntoIter<Value> = data.to_vec().into_iter();
+            if kind == &PushKind::Message {
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else if kind == &PushKind::PMessage {
+                pattern = Some(iter.next()?);
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else {
+                return None;
+            }
         } else {
-            return None;
-        }
-
+            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
+            let mut iter = raw_msg.into_iter();
+            let msg_type: String = from_redis_value(&iter.next()?).ok()?;
+            if msg_type == "message" {
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else if msg_type == "pmessage" {
+                pattern = Some(iter.next()?);
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else {
+                return None;
+            }
+        };
         Some(Msg {
             payload,
             channel,
@@ -1328,6 +1444,51 @@ pub fn transaction<
         }
     }
 }
+//TODO: for both clearing logic support sharded channels.
+
+/// Common logic for clearing subscriptions in RESP2 async/sync
+pub fn resp2_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    kind: &[u8],
+    num: isize,
+) -> bool {
+    match kind.first() {
+        Some(&b'u') => *received_unsub = true,
+        Some(&b'p') => *received_punsub = true,
+        _ => (),
+    };
+    *received_unsub && *received_punsub && num == 0
+}
+
+/// Common logic for clearing subscriptions in RESP3 async/sync
+pub fn resp3_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    kind: &PushKind,
+    num: isize,
+) -> bool {
+    match kind {
+        PushKind::Unsubscribe => *received_unsub = true,
+        PushKind::PUnsubscribe => *received_punsub = true,
+        _ => (),
+    };
+    *received_unsub && *received_punsub && num == 0
+}
+
+/// Common logic for checking real cause of hello3 command error
+pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
+    if let Some(detail) = err.detail() {
+        if detail.starts_with("unknown command `HELLO`") {
+            return (
+                ErrorKind::RESP3NotSupported,
+                "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+            )
+                .into();
+        }
+    }
+    err
+}
 
 #[cfg(test)]
 mod tests {
@@ -1378,6 +1539,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1444,6 +1606,7 @@ mod tests {
                         db: 0,
                         username: None,
                         password: None,
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1455,6 +1618,7 @@ mod tests {
                         db: 1,
                         username: None,
                         password: None,
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1469,6 +1633,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),
@@ -1483,6 +1648,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
+                        use_resp3: false,
                     },
                 },
             ),

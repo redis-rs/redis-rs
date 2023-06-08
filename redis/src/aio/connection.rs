@@ -3,7 +3,10 @@ use super::async_std;
 use super::ConnectionLike;
 use super::{authenticate, AsyncStream, RedisRuntime};
 use crate::cmd::{cmd, Cmd};
-use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo};
+use crate::connection::{
+    resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
+    Msg, RedisConnectionInfo,
+};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
@@ -35,6 +38,9 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     // This flag is checked when attempting to send a command, and if it's raised, we attempt to
     // exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    // Flag indicating whether resp3 mode is enabled.
+    resp3: bool,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -52,6 +58,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            resp3,
         } = self;
         Connection {
             con: f(con),
@@ -59,6 +66,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
+            resp3,
         }
     }
 }
@@ -76,6 +84,7 @@ where
             decoder: combine::stream::Decoder::new(),
             db: connection_info.db,
             pubsub: false,
+            resp3: connection_info.use_resp3,
         };
         authenticate(connection_info, &mut rv).await?;
         Ok(rv)
@@ -142,17 +151,32 @@ where
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
-
-            match res.0.first() {
-                Some(&b'u') => received_unsub = true,
-                Some(&b'p') => received_punsub = true,
-                _ => (),
+        if self.resp3 {
+            while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
+                if data.len() >= 2 {
+                    if let Value::Int(num) = data[1] {
+                        if resp3_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &kind,
+                            num as isize,
+                        ) {
+                            break;
+                        }
+                    }
+                }
             }
-
-            if received_unsub && received_punsub && res.2 == 0 {
-                break;
+        } else {
+            loop {
+                let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
+                if resp2_is_pub_sub_state_cleared(
+                    &mut received_unsub,
+                    &mut received_punsub,
+                    &res.0,
+                    res.2,
+                ) {
+                    break;
+                }
             }
         }
 
@@ -195,7 +219,17 @@ where
             self.buf.clear();
             cmd.write_packed_command(&mut self.buf);
             self.con.write_all(&self.buf).await?;
-            self.read_response().await
+            if cmd.is_no_response() {
+                return Ok(Value::Nil);
+            }
+            loop {
+                match self.read_response().await? {
+                    Value::Push { .. } => {
+                        //self.execute_push_message(kind, data) //TODO
+                    }
+                    val => return Ok(val),
+                }
+            }
         })
         .boxed()
     }
@@ -227,11 +261,20 @@ where
             }
 
             let mut rv = Vec::with_capacity(count);
-            for _ in 0..count {
+            let mut count = count;
+            let mut idx = 0;
+            while idx < count {
                 let response = self.read_response().await;
                 match response {
                     Ok(item) => {
-                        rv.push(item);
+                        // RESP3 can insert push data between command replies
+                        if let Value::Push { .. } = item {
+                            // if that is the case we have to extend the loop and handle push data
+                            count += 1;
+                            // self.execute_push_message(kind, data); //TODO
+                        } else {
+                            rv.push(item);
+                        }
                     }
                     Err(err) => {
                         if first_err.is_none() {
@@ -239,6 +282,7 @@ where
                         }
                     }
                 }
+                idx += 1;
             }
 
             if let Some(err) = first_err {
@@ -271,31 +315,42 @@ where
 
     /// Subscribes to a new channel.
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("SUBSCRIBE").arg(channel).query_async(&mut self.0).await
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Subscribes to a new channel with a pattern.
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PSUBSCRIBE")
-            .arg(pchannel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Unsubscribes from a channel.
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("UNSUBSCRIBE")
-            .arg(channel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PUNSUBSCRIBE")
-            .arg(pchannel)
-            .query_async(&mut self.0)
-            .await
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(pchannel);
+        if self.0.resp3 {
+            cmd.set_no_response(true);
+        }
+        cmd.query_async(&mut self.0).await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.

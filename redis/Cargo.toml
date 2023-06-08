@@ -73,6 +73,7 @@ serde_json = { version = "1.0.82", optional = true }
 
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
+num-bigint = "0.4.3"
 
 log = { version = "0.4", optional = true }
 

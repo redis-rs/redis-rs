@@ -58,6 +58,43 @@ fn test_getset() {
 }
 
 #[test]
+fn test_client_tracking_doesnt_block_execution() {
+    //It checks if the library distinguish a push-type message from the others and continues its normal operation.
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    let (k1, k2): (i32, i32) = redis::pipe()
+        .cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .ignore()
+        .cmd("GET")
+        .arg("key_1")
+        .ignore()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore()
+        .cmd("SET")
+        .arg("key_2")
+        .arg(43)
+        .ignore()
+        .cmd("GET")
+        .arg("key_1")
+        .cmd("GET")
+        .arg("key_2")
+        .cmd("SET")
+        .arg("key_1")
+        .arg(45)
+        .ignore()
+        .query(&mut con)
+        .unwrap();
+    assert_eq!(k1, 42);
+    assert_eq!(k2, 43);
+    let num: i32 = con.get("key_1").unwrap();
+    assert_eq!(num, 45);
+}
+
+#[test]
 fn test_incr() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -1003,6 +1040,15 @@ fn test_zunionstore_weights() {
             ("two".to_string(), "10".to_string())
         ])
     );
+    // test converting to double
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), 5.0),
+            ("three".to_string(), 9.0),
+            ("two".to_string(), 10.0)
+        ])
+    );
 
     // zunionstore_min_weights
     assert_eq!(
@@ -1100,11 +1146,19 @@ fn test_zrandmember() {
     let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
     assert_eq!(results.len(), 5);
 
-    let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
-    assert_eq!(results.len(), 10);
+    if !ctx.use_resp3 {
+        let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
+        assert_eq!(results.len(), 10);
 
-    let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
-    assert_eq!(results.len(), 10);
+        let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
+        assert_eq!(results.len(), 10);
+    }
+
+    let results: Vec<(String, f64)> = con.zrandmember_withscores(setname, 5).unwrap();
+    assert_eq!(results.len(), 5);
+
+    let results: Vec<(String, f64)> = con.zrandmember_withscores(setname, -5).unwrap();
+    assert_eq!(results.len(), 5);
 }
 
 #[test]

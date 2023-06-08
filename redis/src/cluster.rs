@@ -51,11 +51,11 @@ use crate::connection::{
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
-use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Route, SlotAddr, SlotMap},
 };
+use crate::{IntoConnectionInfo, PushKind};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -655,6 +655,10 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             }
         }
         true
+    }
+
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 

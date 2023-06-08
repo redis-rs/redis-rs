@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::Value;
+use redis::{RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -247,6 +247,7 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
+    pub use_resp3: bool,
 }
 
 impl TestContext {
@@ -256,8 +257,15 @@ impl TestContext {
 
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
-
-        let client = redis::Client::open(server.connection_info()).unwrap();
+        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
+        let client = redis::Client::open(redis::ConnectionInfo {
+            addr: server.client_addr().clone(),
+            redis: RedisConnectionInfo {
+                use_resp3,
+                ..Default::default()
+            },
+        })
+        .unwrap();
         let mut con;
 
         let millisecond = Duration::from_millis(1);
@@ -283,7 +291,11 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext { server, client }
+        TestContext {
+            server,
+            client,
+            use_resp3,
+        }
     }
 
     pub fn connection(&self) -> redis::Connection {
@@ -327,6 +339,27 @@ impl TestContext {
     }
 }
 
+fn encode_iter<W>(values: &Vec<Value>, writer: &mut W, prefix: &str) -> io::Result<()>
+where
+    W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for val in values.iter() {
+        encode_value(val, writer)?;
+    }
+    Ok(())
+}
+fn encode_map<W>(values: &Vec<(Value, Value)>, writer: &mut W, prefix: &str) -> io::Result<()>
+where
+    W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for (k, v) in values.iter() {
+        encode_value(k, writer)?;
+        encode_value(v, writer)?;
+    }
+    Ok(())
+}
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
 where
     W: io::Write,
@@ -340,15 +373,43 @@ where
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
-        Value::Bulk(ref values) => {
-            write!(writer, "*{}\r\n", values.len())?;
-            for val in values.iter() {
+        Value::Bulk(ref values) => encode_iter(values, writer, "*"),
+        Value::Okay => write!(writer, "+OK\r\n"),
+        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
+        Value::Map(ref values) => encode_map(values, writer, "%"),
+        Value::Attribute {
+            ref data,
+            ref attributes,
+        } => {
+            encode_map(attributes, writer, "|")?;
+            encode_value(data, writer)?;
+            Ok(())
+        }
+        Value::Set(ref values) => encode_iter(values, writer, "~"),
+        // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
+        Value::Double(val) => write!(writer, ",{}\r\n", val),
+        Value::Boolean(v) => {
+            if v {
+                write!(writer, "#t\r\n")
+            } else {
+                write!(writer, "#f\r\n")
+            }
+        }
+        Value::VerbatimString {
+            ref format,
+            ref text,
+        } => {
+            // format is always 3 bytes
+            write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
+        }
+        Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
+        Value::Push { ref kind, ref data } => {
+            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
+            for val in data.iter() {
                 encode_value(val, writer)?;
             }
             Ok(())
         }
-        Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
     }
 }
 
