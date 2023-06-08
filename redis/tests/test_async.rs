@@ -1,6 +1,7 @@
 use futures::{future, prelude::*, StreamExt};
 use redis::{
     aio::MultiplexedConnection, cmd, pack_command_to_bytes, AsyncCommands, ErrorKind, RedisResult,
+    Value,
 };
 
 use crate::support::*;
@@ -40,15 +41,58 @@ fn test_args_in_bytes() {
     let connect = ctx.multiplexed_async_connection();
 
     block_on_all(connect.and_then(|mut con| async move {
-        let bytes = pack_command_to_bytes(vec!["SET", "key1", "foo"].iter());
+        let bytes = pack_command_to_bytes(vec!["SET", "key1", "foo"].iter(), None);
         con.req_packed_command(bytes).await?;
-        let bytes = pack_command_to_bytes(vec!["SET", "key2", "bar"].iter());
+        let bytes = pack_command_to_bytes(vec!["SET", "key2", "bar"].iter(), None);
         con.req_packed_command(bytes).await?;
-        let bytes = pack_command_to_bytes(vec!["MGET", "key1", "key2"].iter());
+        let bytes = pack_command_to_bytes(vec!["MGET", "key1", "key2"].iter(), None);
         let result = con.req_packed_command(bytes).await.unwrap();
         let result: (String, Vec<u8>) = redis::from_redis_value(&result).unwrap();
 
         assert_eq!(result, ("foo".to_string(), b"bar".to_vec()));
+        Ok(())
+    }))
+    .unwrap();
+}
+
+#[test]
+fn test_sending_pipeline_in_bytes() {
+    use redis::aio::ConnectionLike;
+
+    let ctx = TestContext::new();
+    let connect = ctx.multiplexed_async_connection();
+
+    block_on_all(connect.and_then(|mut con| async move {
+        let commands = vec![
+            vec!["SET", "key1", "foo"],
+            vec!["SET", "key2", "bar"],
+            vec!["MGET", "key1", "key2"],
+        ];
+        let args_lengths_iter = commands.iter().map(|args| redis::args_len(args.iter()));
+        let capacity = redis::packed_pipeline_length(args_lengths_iter, true);
+        let mut bytes = bytes::BytesMut::with_capacity(capacity);
+
+        let mut num_to_string = ::itoa::Buffer::new(); // TODO share this instead of allocating a new one.
+        bytes.extend_from_slice(redis::MULTI_COMMAND);
+        for args in commands {
+            redis::pack_command_to_preallocated_bytes(args.iter(), &mut bytes, &mut num_to_string);
+        }
+        bytes.extend_from_slice(redis::EXEC_COMMAND);
+
+        let mut resp = con.req_packed_commands(bytes.freeze(), 0, 5).await?;
+        let result = resp.pop();
+
+        assert_eq!(
+            result,
+            Some(Value::Bulk(vec![
+                Value::Okay,
+                Value::Okay,
+                Value::Bulk(vec![
+                    Value::Data("foo".as_bytes().to_vec()),
+                    Value::Data("bar".as_bytes().to_vec()),
+                ])
+            ]))
+        );
         Ok(())
     }))
     .unwrap();
@@ -701,13 +745,13 @@ fn test_connection_manager_reconnect_after_delay() {
         let addr = server.client_addr().clone();
         drop(server);
 
-        let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+        let _result: RedisResult<Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
-        let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-        assert_eq!(result, redis::Value::Okay);
+        let result: Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(result, Value::Okay);
     });
 }

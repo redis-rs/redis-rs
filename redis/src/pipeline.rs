@@ -222,24 +222,35 @@ pub(crate) fn encode_pipeline_to_bytes(cmds: &[Cmd], atomic: bool) -> Bytes {
     rv.freeze()
 }
 
-const MULTI_COMMAND: &[u8] = "*1\r\n$5\r\nMULTI\r\n".as_bytes();
-const EXEC_COMMAND: &[u8] = "*1\r\n$4\r\nEXEC\r\n".as_bytes();
+/// Packed MULTI command.
+pub const MULTI_COMMAND: &[u8] = "*1\r\n$5\r\nMULTI\r\n".as_bytes();
 
-fn pipeline_length(cmds: &[Cmd], atomic: bool) -> usize {
-    let cmds_len = cmds.iter().map(cmd_len).sum();
+/// Packed EXEC command.
+pub const EXEC_COMMAND: &[u8] = "*1\r\n$4\r\nEXEC\r\n".as_bytes();
+
+/// Returns the total length of a pipeline, given the length of each command in the pipeline.
+pub fn packed_pipeline_length<I>(command_lengths: I, atomic: bool) -> usize
+where
+    I: IntoIterator<Item = usize> + ExactSizeIterator,
+{
+    let command_length = command_lengths.into_iter().sum();
     if atomic {
         const MULTI_LENGTH: usize = MULTI_COMMAND.len();
         const EXEC_LENGTH: usize = EXEC_COMMAND.len();
-        cmds_len + MULTI_LENGTH + EXEC_LENGTH
+        command_length + MULTI_LENGTH + EXEC_LENGTH
     } else {
-        cmds_len
+        command_length
     }
+}
+
+fn pipeline_length(cmds: &[Cmd], atomic: bool) -> usize {
+    packed_pipeline_length(cmds.iter().map(cmd_len), atomic)
 }
 
 fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
     rv.reserve(pipeline_length(cmds, atomic));
 
-    write_pipeline_to_buf(rv, cmds, atomic)
+    write_pipeline_to_buf(rv, cmds, atomic);
 }
 
 fn write_pipeline_to_buf(rv: &mut impl BufMut, cmds: &[Cmd], atomic: bool) {

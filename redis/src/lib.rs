@@ -362,14 +362,14 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 
 // public api
 pub use crate::client::Client;
-pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
+pub use crate::cmd::{args_len, cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{Commands, ControlFlow, Direction, LposOptions, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,
 };
 pub use crate::parser::{parse_redis_value, Parser};
-pub use crate::pipeline::Pipeline;
+pub use crate::pipeline::{packed_pipeline_length, Pipeline, EXEC_COMMAND, MULTI_COMMAND};
 
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
@@ -405,7 +405,7 @@ pub use crate::types::{
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::{
-    cmd::{pack_command_to_bytes, AsyncIter},
+    cmd::{pack_command_to_bytes, pack_command_to_preallocated_bytes, AsyncIter},
     commands::AsyncCommands,
     parser::parse_redis_value_async,
     types::RedisFuture,

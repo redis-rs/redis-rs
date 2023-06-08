@@ -204,7 +204,18 @@ fn bulklen(len: usize) -> usize {
     1 + countdigits(len) + 2 + len + 2
 }
 
-fn args_len<'a, I>(args: I, cursor: u64) -> usize
+/// Returns the length of a packed redis command using the given arguments.
+pub fn args_len<I, T>(args: I) -> usize
+where
+    T: AsRef<[u8]>,
+    I: IntoIterator<Item = T> + ExactSizeIterator<Item = T>,
+{
+    let totlen = 1 + countdigits(args.len()) + 2;
+    args.into_iter()
+        .fold(totlen, |sum, arg| sum + bulklen(arg.as_ref().len()))
+}
+
+fn cmd_args_len<'a, I>(args: I, cursor: u64) -> usize
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + ExactSizeIterator,
 {
@@ -219,7 +230,7 @@ where
 }
 
 pub(crate) fn cmd_len(cmd: &Cmd) -> usize {
-    args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
+    cmd_args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
 }
 
 fn encode_command<'a, I>(args: I, cursor: u64) -> Vec<u8>
@@ -235,7 +246,7 @@ fn write_command_to_vec<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
-    let totlen = args_len(args.clone(), cursor);
+    let totlen = cmd_args_len(args.clone(), cursor);
 
     cmd.reserve(totlen);
 
@@ -635,30 +646,41 @@ pub fn pack_command<T: AsRef<[u8]>>(args: &[T]) -> Vec<u8> {
 /// args.push("SET");
 /// args.push("my_key");
 /// args.push("42");
-/// let cmd = redis::pack_command_to_bytes(args.iter());
+/// let cmd = redis::pack_command_to_bytes(args.iter(), None);
 /// let expected: bytes::Bytes = (&b"*3\r\n$3\r\nSET\r\n$6\r\nmy_key\r\n$2\r\n42\r\n"[..]).into();
 /// assert_eq!(cmd, expected);
 /// ```
-pub fn pack_command_to_bytes<T, I>(args: I) -> Bytes
+pub fn pack_command_to_bytes<T, I>(args: I, num_to_string: Option<::itoa::Buffer>) -> Bytes
 where
     T: AsRef<[u8]>,
     I: IntoIterator<Item = T> + Clone + ExactSizeIterator<Item = T>,
 {
-    let mut buf = ::itoa::Buffer::new();
+    let mut num_to_string = num_to_string.unwrap_or_else(::itoa::Buffer::new);
 
-    let mut totlen = 1 + countdigits(args.len()) + 2;
-    for item in args.clone() {
-        totlen += bulklen(item.as_ref().len());
-    }
+    let length = args_len(args.clone());
 
-    let mut bytes = BytesMut::with_capacity(totlen);
+    let mut bytes = BytesMut::with_capacity(length);
 
-    write_header(args.len(), &mut bytes, &mut buf);
+    pack_command_to_preallocated_bytes(args, &mut bytes, &mut num_to_string);
+    bytes.freeze()
+}
+
+#[cfg(feature = "aio")]
+/// Write the given `args` as a single command into the preallocated
+/// `bytes` buffer, using `num_to_string` to parse argument lengths.
+pub fn pack_command_to_preallocated_bytes<T, I>(
+    args: I,
+    bytes: &mut BytesMut,
+    num_to_string: &mut ::itoa::Buffer,
+) where
+    T: AsRef<[u8]>,
+    I: IntoIterator<Item = T> + ExactSizeIterator<Item = T>,
+{
+    write_header(args.len(), bytes, num_to_string);
 
     for item in args {
-        write_arg(&mut bytes, item.as_ref(), &mut buf);
+        write_arg(bytes, item.as_ref(), num_to_string);
     }
-    bytes.freeze()
 }
 
 /// Shortcut for creating a new pipeline.
