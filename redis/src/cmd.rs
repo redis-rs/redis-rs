@@ -662,6 +662,7 @@ where
     let mut bytes = BytesMut::with_capacity(length);
 
     pack_command_to_preallocated_bytes(args, &mut bytes, &mut num_to_string);
+    assert!(bytes.len() == length);
     bytes.freeze()
 }
 
