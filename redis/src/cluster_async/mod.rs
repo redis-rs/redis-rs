@@ -436,26 +436,18 @@ where
         let mut connections = mem::take(&mut self.connections);
         let cluster_params = self.cluster_params.clone();
         async move {
-            let mut result = Ok(SlotMap::new());
-            for (_, conn) in connections.iter_mut() {
-                let mut conn = conn.clone().await;
-                let value = match conn.req_packed_command(&slot_cmd()).await {
-                    Ok(value) => value,
-                    Err(err) => {
-                        result = Err(err);
-                        continue;
-                    }
-                };
-                match parse_slots(value, cluster_params.tls)
-                    .and_then(|v| Self::build_slot_map(v, cluster_params.read_from_replicas))
-                {
-                    Ok(s) => {
-                        result = Ok(s);
-                        break;
-                    }
-                    Err(err) => result = Err(err),
+            let result = futures::future::select_ok(connections.values().map(|conn| {
+                async {
+                    let mut conn = conn.clone().await;
+                    let value = conn.req_packed_command(&slot_cmd()).await?;
+                    parse_slots(value, cluster_params.tls)
+                        .and_then(|v| Self::build_slot_map(v, cluster_params.read_from_replicas))
                 }
-            }
+                .boxed()
+            }))
+            .await
+            .map(|(slots, _)| slots);
+
             let slots = match result {
                 Ok(slots) => slots,
                 Err(err) => return Err((err, connections)),
