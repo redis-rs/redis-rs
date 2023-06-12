@@ -464,17 +464,18 @@ where
             let mut nodes = slots.values().flatten().collect::<Vec<_>>();
             nodes.sort_unstable();
             nodes.dedup();
+            let nodes_len = nodes.len();
+            let addresses_and_connections_iter = nodes
+                .into_iter()
+                .map(|addr| (addr, connections.remove(addr)));
 
-            let new_connections = stream::iter(nodes)
+            let new_connections = stream::iter(addresses_and_connections_iter)
                 .fold(
-                    HashMap::with_capacity(slots.len()),
-                    |mut connections, addr| async {
-                        let conn = Self::get_or_create_conn(
-                            addr,
-                            connections.remove(addr),
-                            cluster_params.clone(),
-                        )
-                        .await;
+                    HashMap::with_capacity(nodes_len),
+                    |mut connections, (addr, connection)| async {
+                        let conn =
+                            Self::get_or_create_conn(addr, connection, cluster_params.clone())
+                                .await;
                         if let Ok(conn) = conn {
                             connections.insert(addr.to_string(), async { conn }.boxed().shared());
                         }
