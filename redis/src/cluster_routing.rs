@@ -237,10 +237,6 @@ impl SlotMap {
     pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
         self.0.values()
     }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
 }
 
 /// Defines the slot and the [`SlotAddr`] to which
