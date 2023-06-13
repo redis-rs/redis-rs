@@ -600,8 +600,11 @@ fn test_cluster_non_retryable_error_should_not_retry() {
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn test_cluster_fan_out() {
+fn test_cluster_fan_out(
+    command: &'static str,
+    expected_ports: Vec<u16>,
+    slots_config: Option<Vec<MockSlotRange>>,
+) {
     let name = "node";
     let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
     let ports_clone = found_ports.clone();
@@ -616,8 +619,8 @@ fn test_cluster_fan_out() {
             .read_from_replicas(),
         name,
         move |cmd: &[u8], port| {
-            respond_startup_with_replica(name, cmd)?;
-            if (cmd[8..]).starts_with("FLUSHALL".as_bytes()) {
+            respond_startup_with_replica_using_config(name, cmd, slots_config.clone())?;
+            if (cmd[8..]).starts_with(command.as_bytes()) {
                 ports_clone.lock().unwrap().push(port);
                 return Err(Ok(Value::Status("OK".into())));
             }
@@ -625,8 +628,68 @@ fn test_cluster_fan_out() {
         },
     );
 
-    let _ = cmd("FLUSHALL").query::<Option<()>>(&mut connection);
+    let _ = cmd(command).query::<Option<()>>(&mut connection);
     found_ports.lock().unwrap().sort();
     // MockEnv creates 2 mock connections.
-    assert_eq!(*found_ports.lock().unwrap(), vec![6379, 6381]);
+    assert_eq!(*found_ports.lock().unwrap(), expected_ports);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_primaries() {
+    test_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_nodes() {
+    test_cluster_fan_out("ECHO", vec![6379, 6380, 6381, 6382], None);
+}
+
+#[test]
+fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available() {
+    test_cluster_fan_out(
+        "ECHO",
+        vec![6379, 6381],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: Vec::new(),
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: Vec::new(),
+                slot_range: (8192..16383),
+            },
+        ]),
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
+    test_cluster_fan_out(
+        "ECHO",
+        vec![6379, 6380, 6381, 6382],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (0..4000),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (4001..8191),
+            },
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (8192..8200),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (8201..16383),
+            },
+        ]),
+    );
 }

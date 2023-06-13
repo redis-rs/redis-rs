@@ -447,17 +447,10 @@ where
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        for slot in slots.values() {
-            let addr = slot.slot_addr(&SlotAddr::Master).to_string();
+        for addr in slots.all_unique_addresses(only_primaries) {
+            let addr = addr.to_string();
             if let Some(connection) = connections.get_mut(&addr) {
                 results.insert(addr, func(connection)?);
-            }
-
-            if !only_primaries {
-                let addr = slot.slot_addr(&SlotAddr::Replica).to_string();
-                if let Some(connection) = connections.get_mut(&addr) {
-                    results.insert(addr, func(connection)?);
-                }
             }
         }
 
