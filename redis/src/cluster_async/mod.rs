@@ -104,7 +104,9 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<
-        Pin<Box<Request<BoxFuture<'static, (String, RedisResult<Response>)>, Response, C>>>,
+        Pin<
+            Box<Request<BoxFuture<'static, (OperationTarget, RedisResult<Response>)>, Response, C>>,
+        >,
     >,
     refresh_error: Option<RedisError>,
     pending_requests: Vec<PendingRequest<Response, C>>,
@@ -115,57 +117,51 @@ enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
+        routing: Option<RoutingInfo>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
         func: fn(C, Arc<crate::Pipeline>, usize, usize) -> RedisFuture<'static, Response>,
+        route: Option<Route>,
     },
 }
 
-impl<C> CmdArg<C> {
-    fn exec(&self, con: C) -> RedisFuture<'static, Response> {
-        match self {
-            Self::Cmd { cmd, func } => func(con, cmd.clone()),
-            Self::Pipeline {
-                pipeline,
-                offset,
-                count,
-                func,
-            } => func(con, pipeline.clone(), *offset, *count),
+fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
+    fn route_for_command(cmd: &Cmd) -> Option<Route> {
+        match RoutingInfo::for_routable(cmd) {
+            Some(RoutingInfo::Random) => None,
+            Some(RoutingInfo::SpecificNode(route)) => Some(route),
+            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
+            _ => None,
         }
     }
 
-    fn route(&self) -> Option<Route> {
-        fn route_for_command(cmd: &Cmd) -> Option<Route> {
-            match RoutingInfo::for_routable(cmd) {
-                Some(RoutingInfo::Random) => None,
-                Some(RoutingInfo::SpecificNode(route)) => Some(route),
-                Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
-                _ => None,
-            }
-        }
-
-        match self {
-            Self::Cmd { ref cmd, .. } => route_for_command(cmd),
-            Self::Pipeline { ref pipeline, .. } => {
-                let mut iter = pipeline.cmd_iter();
-                let route = iter.next().map(route_for_command)?;
-                for cmd in iter {
-                    if route != route_for_command(cmd) {
-                        return None;
-                    }
-                }
-                route
-            }
+    let mut iter = pipeline.cmd_iter();
+    let slot = iter.next().map(route_for_command)?;
+    for cmd in iter {
+        if slot != route_for_command(cmd) {
+            return None;
         }
     }
+    slot
 }
 
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
+}
+
+enum OperationTarget {
+    Node { address: String },
+    FanOut,
+}
+
+impl From<String> for OperationTarget {
+    fn from(address: String) -> Self {
+        OperationTarget::Node { address }
+    }
 }
 
 struct Message<C> {
@@ -199,7 +195,6 @@ impl fmt::Debug for ConnectionState {
 #[derive(Clone)]
 struct RequestInfo<C> {
     cmd: CmdArg<C>,
-    route: Option<Route>,
     redirect: Option<Redirect>,
 }
 
@@ -240,7 +235,7 @@ enum Next<I, C> {
     },
     Reconnect {
         request: PendingRequest<I, C>,
-        addr: String,
+        target: OperationTarget,
     },
     RefreshSlots {
         request: PendingRequest<I, C>,
@@ -250,7 +245,7 @@ enum Next<I, C> {
 
 impl<F, I, C> Future for Request<F, I, C>
 where
-    F: Future<Output = (String, RedisResult<I>)>,
+    F: Future<Output = (OperationTarget, RedisResult<I>)>,
     C: ConnectionLike,
 {
     type Output = Next<I, C>;
@@ -277,8 +272,17 @@ where
                 self.respond(Ok(item));
                 Next::Done.into()
             }
-            (addr, Err(err)) => {
+            (target, Err(err)) => {
                 trace!("Request error {}", err);
+
+                let address = match target {
+                    OperationTarget::Node { address } => address,
+                    OperationTarget::FanOut => {
+                        // TODO - implement retries on fan-out operations
+                        self.respond(Err(err));
+                        return Next::Done.into();
+                    }
+                };
 
                 let request = this.request.as_mut().unwrap();
 
@@ -317,7 +321,7 @@ where
                     }
                     ErrorKind::IoError => Next::Reconnect {
                         request: this.request.take().unwrap(),
-                        addr,
+                        target: OperationTarget::Node { address },
                     }
                     .into(),
                     _ => {
@@ -339,7 +343,7 @@ where
 
 impl<F, I, C> Request<F, I, C>
 where
-    F: Future<Output = (String, RedisResult<I>)>,
+    F: Future<Output = (OperationTarget, RedisResult<I>)>,
     C: ConnectionLike,
 {
     fn respond(self: Pin<&mut Self>, msg: RedisResult<I>) {
@@ -531,20 +535,126 @@ where
         Ok(())
     }
 
-    async fn try_request(
-        mut info: RequestInfo<C>,
+    async fn execute_on_all_nodes(
+        func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
+        cmd: &Arc<Cmd>,
+        only_primaries: bool,
         core: Core<C>,
-    ) -> (String, RedisResult<Response>) {
-        let cmd = info.cmd;
-        let asking = matches!(info.redirect, Some(Redirect::Ask(_)));
+    ) -> (OperationTarget, RedisResult<Response>) {
+        let read_guard = core.conn_lock.read().await;
+        let results = future::join_all(
+            read_guard
+                .1
+                .all_unique_addresses(only_primaries)
+                .into_iter()
+                .filter_map(|addr| read_guard.0.get(addr).cloned())
+                .map(|conn| {
+                    (async {
+                        let conn = conn.await;
+                        func(conn, cmd.clone()).await
+                    })
+                    .boxed()
+                }),
+        )
+        .await;
+        drop(read_guard);
+        let mut merged_results = Vec::with_capacity(results.len());
 
+        // TODO - we can have better error reporting here if we had an Error variant on Value.
+        for result in results {
+            match result {
+                Ok(response) => match response {
+                    Response::Single(value) => merged_results.push(value),
+                    Response::Multiple(_) => unreachable!(),
+                },
+                Err(_) => {
+                    return (OperationTarget::FanOut, result);
+                }
+            }
+        }
+
+        (
+            OperationTarget::FanOut,
+            Ok(Response::Single(Value::Bulk(merged_results))),
+        )
+    }
+
+    async fn try_cmd_request(
+        cmd: Arc<Cmd>,
+        func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
+        redirect: Option<Redirect>,
+        routing: Option<RoutingInfo>,
+        core: Core<C>,
+        asking: bool,
+    ) -> (OperationTarget, RedisResult<Response>) {
+        let route_option = match routing.as_ref().unwrap_or(&RoutingInfo::Random) {
+            RoutingInfo::AllNodes => {
+                return Self::execute_on_all_nodes(func, &cmd, false, core).await
+            }
+            RoutingInfo::AllMasters => {
+                return Self::execute_on_all_nodes(func, &cmd, true, core).await
+            }
+            RoutingInfo::Random => None,
+            RoutingInfo::SpecificNode(route) => Some(route),
+        };
+        let (addr, conn) = Self::get_connection(redirect, route_option, core, asking).await;
+        let result = func(conn, cmd).await;
+        (addr.into(), result)
+    }
+
+    async fn try_pipeline_request(
+        pipeline: Arc<crate::Pipeline>,
+        offset: usize,
+        count: usize,
+        func: fn(C, Arc<crate::Pipeline>, usize, usize) -> RedisFuture<'static, Response>,
+        conn: impl Future<Output = (String, C)>,
+    ) -> (OperationTarget, RedisResult<Response>) {
+        let (addr, conn) = conn.await;
+        let result = func(conn, pipeline, offset, count).await;
+        (OperationTarget::Node { address: addr }, result)
+    }
+
+    async fn try_request(
+        info: RequestInfo<C>,
+        core: Core<C>,
+    ) -> (OperationTarget, RedisResult<Response>) {
+        let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
+
+        match info.cmd {
+            CmdArg::Cmd { cmd, func, routing } => {
+                Self::try_cmd_request(cmd, func, info.redirect, routing, core, asking).await
+            }
+            CmdArg::Pipeline {
+                pipeline,
+                offset,
+                count,
+                func,
+                route,
+            } => {
+                Self::try_pipeline_request(
+                    pipeline,
+                    offset,
+                    count,
+                    func,
+                    Self::get_connection(info.redirect, route.as_ref(), core, asking),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn get_connection(
+        mut redirect: Option<Redirect>,
+        route: Option<&Route>,
+        core: Core<C>,
+        asking: bool,
+    ) -> (String, C) {
         let read_guard = core.conn_lock.read().await;
 
-        let conn = match info.redirect.take() {
+        let conn = match redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
             Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
-            None => info
-                .route
+            None => route
                 .as_ref()
                 .and_then(|route| read_guard.1.slot_addr_for_route(route))
                 .map(|addr| addr.to_string()),
@@ -576,8 +686,7 @@ where
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
         }
-        let result = cmd.exec(conn).await;
-        (addr, result)
+        (addr, conn)
     }
 
     fn poll_recover(
@@ -671,9 +780,16 @@ where
                         },
                     }));
                 }
-                Next::Reconnect { request, addr, .. } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::Reconnect(vec![addr]));
+                Next::Reconnect {
+                    request, target, ..
+                } => {
+                    poll_flush_action = match target {
+                        OperationTarget::Node { address } => poll_flush_action
+                            .change_state(PollFlushAction::Reconnect(vec![address])),
+                        OperationTarget::FanOut => {
+                            poll_flush_action.change_state(PollFlushAction::RebuildSlots)
+                        }
+                    };
                     self.pending_requests.push(request);
                 }
             }
@@ -785,13 +901,8 @@ where
         trace!("start_send");
         let Message { cmd, sender } = msg;
 
-        let route = cmd.route();
         let redirect = None;
-        let info = RequestInfo {
-            cmd,
-            route,
-            redirect,
-        };
+        let info = RequestInfo { cmd, redirect };
 
         self.pending_requests.push(PendingRequest {
             retry: 0,
@@ -883,6 +994,7 @@ where
                                 conn.req_packed_command(&cmd).await.map(Response::Single)
                             })
                         },
+                        routing: RoutingInfo::for_routable(cmd),
                     },
                     sender,
                 })
@@ -929,6 +1041,7 @@ where
                                     .map(Response::Multiple)
                             })
                         },
+                        route: route_pipeline(pipeline),
                     },
                     sender,
                 })
