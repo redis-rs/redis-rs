@@ -94,14 +94,14 @@ where
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
-struct ConnectionsAndMetadata<C> {
+struct Core<C> {
     connections: Mutex<ConnectionMap<C>>,
     slots: SlotMap,
     cluster_params: ClusterParams,
 }
 
 struct ClusterConnInner<C> {
-    connections_and_metadata: Arc<ConnectionsAndMetadata<C>>,
+    inner: Arc<Core<C>>,
     state: ConnectionState<C>,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<
@@ -367,23 +367,23 @@ where
     ) -> RedisResult<Self> {
         let connections =
             Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
-        let connections_and_metadata = Arc::new(ConnectionsAndMetadata {
+        let inner = Arc::new(Core {
             connections: Mutex::new(connections),
             slots: Default::default(),
             cluster_params,
         });
         let mut connection = ClusterConnInner {
-            connections_and_metadata,
+            inner,
             in_flight_requests: Default::default(),
             refresh_error: None,
             pending_requests: Vec::new(),
             state: ConnectionState::PollComplete,
         };
         let (slots, connections) = connection.refresh_slots().await?;
-        connection.connections_and_metadata = Arc::new(ConnectionsAndMetadata {
+        connection.inner = Arc::new(Core {
             connections: Mutex::new(connections),
             slots,
-            cluster_params: connection.connections_and_metadata.cluster_params.clone(),
+            cluster_params: connection.inner.cluster_params.clone(),
         });
         Ok(connection)
     }
@@ -426,15 +426,15 @@ where
     }
 
     fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
-        let connections_and_metadata = self.connections_and_metadata.clone();
+        let inner = self.inner.clone();
         async move {
-            let connections = connections_and_metadata.connections.lock().await;
+            let connections = inner.connections.lock().await;
             stream::iter(addrs)
                 .fold(connections, |mut connections, addr| async {
                     let conn = Self::get_or_create_conn(
                         &addr,
                         connections.remove(&addr),
-                        connections_and_metadata.cluster_params.clone(),
+                        inner.cluster_params.clone(),
                     )
                     .await;
                     if let Ok(conn) = conn {
@@ -448,10 +448,10 @@ where
 
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<(SlotMap, ConnectionMap<C>)>> {
-        let connections_and_metadata = self.connections_and_metadata.clone();
+        let inner = self.inner.clone();
 
         async move {
-            let mut connections_guard = connections_and_metadata.connections.lock().await;
+            let mut connections_guard = inner.connections.lock().await;
             let mut result = Ok(SlotMap::new());
             for (_, conn) in connections_guard.iter_mut() {
                 let mut conn = conn.clone().await;
@@ -462,14 +462,9 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, connections_and_metadata.cluster_params.tls).and_then(
-                    |v| {
-                        Self::build_slot_map(
-                            v,
-                            connections_and_metadata.cluster_params.read_from_replicas,
-                        )
-                    },
-                ) {
+                match parse_slots(value, inner.cluster_params.tls)
+                    .and_then(|v| Self::build_slot_map(v, inner.cluster_params.read_from_replicas))
+                {
                     Ok(s) => {
                         result = Ok(s);
                         break;
@@ -497,7 +492,7 @@ where
                         let conn = Self::get_or_create_conn(
                             addr,
                             connection,
-                            connections_and_metadata.cluster_params.clone(),
+                            inner.cluster_params.clone(),
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -544,13 +539,13 @@ where
 
     async fn try_request(
         mut info: RequestInfo<C>,
-        connections_and_metadata: Arc<ConnectionsAndMetadata<C>>,
+        core: Arc<Core<C>>,
     ) -> (String, RedisResult<Response>) {
         let cmd = info.cmd;
         let mut asking = false;
         // Ideally we would get a random conn only after other means failed,
         // but referencing self in the async block is problematic:
-        let random_conn = get_random_connection(&connections_and_metadata.connections).await;
+        let random_conn = get_random_connection(&core.connections).await;
 
         let addr = match info.redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
@@ -561,19 +556,14 @@ where
             None => info
                 .route
                 .as_ref()
-                .and_then(|route| connections_and_metadata.slots.slot_addr_for_route(route))
+                .and_then(|route| core.slots.slot_addr_for_route(route))
                 .map(|addr| addr.to_string()),
         };
 
         let conn_future = match addr {
             Some(addr) => {
-                let conn = connections_and_metadata
-                    .connections
-                    .lock()
-                    .await
-                    .get(&addr)
-                    .cloned();
-                let params = connections_and_metadata.cluster_params.clone();
+                let conn = core.connections.lock().await.get(&addr).cloned();
+                let params = core.cluster_params.clone();
 
                 async move { (Self::get_or_create_conn(&addr, conn, params).await, addr) }
                     .map(|(result, addr)| {
@@ -605,10 +595,10 @@ where
             RecoverFuture::RecoverSlots(mut future) => match future.as_mut().poll(cx) {
                 Poll::Ready(Ok((slots, connections))) => {
                     trace!("Recovered with {} connections!", connections.len());
-                    self.connections_and_metadata = Arc::new(ConnectionsAndMetadata {
+                    self.inner = Arc::new(Core {
                         connections: Mutex::new(connections),
                         slots,
-                        cluster_params: self.connections_and_metadata.cluster_params.clone(),
+                        cluster_params: self.inner.cluster_params.clone(),
                     });
                     self.state = ConnectionState::PollComplete;
                     Poll::Ready(Ok(()))
@@ -653,11 +643,9 @@ where
                     continue;
                 }
 
-                let future =
-                    Self::try_request(request.info.clone(), self.connections_and_metadata.clone())
-                        .boxed();
+                let future = Self::try_request(request.info.clone(), self.inner.clone()).boxed();
                 self.in_flight_requests.push(Box::pin(Request {
-                    max_retries: self.connections_and_metadata.cluster_params.retries,
+                    max_retries: self.inner.cluster_params.retries,
                     request: Some(request),
                     future: RequestState::Future { future },
                 }));
@@ -673,12 +661,9 @@ where
             match result {
                 Next::Done => {}
                 Next::Retry { request } => {
-                    let future = Self::try_request(
-                        request.info.clone(),
-                        self.connections_and_metadata.clone(),
-                    );
+                    let future = Self::try_request(request.info.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
-                        max_retries: self.connections_and_metadata.cluster_params.retries,
+                        max_retries: self.inner.cluster_params.retries,
                         request: Some(request),
                         future: RequestState::Future {
                             future: Box::pin(future),
@@ -688,12 +673,9 @@ where
                 Next::RefreshSlots { request } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future = Self::try_request(
-                        request.info.clone(),
-                        self.connections_and_metadata.clone(),
-                    );
+                    let future = Self::try_request(request.info.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
-                        max_retries: self.connections_and_metadata.cluster_params.retries,
+                        max_retries: self.inner.cluster_params.retries,
                         request: Some(request),
                         future: RequestState::Future {
                             future: Box::pin(future),
