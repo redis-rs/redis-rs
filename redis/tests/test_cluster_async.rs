@@ -60,7 +60,6 @@ fn test_async_cluster_basic_eval() {
     .unwrap();
 }
 
-#[ignore] // TODO Handle running SCRIPT LOAD on all masters
 #[test]
 fn test_async_cluster_basic_script() {
     let cluster = TestClusterContext::new(3, 0);
