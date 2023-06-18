@@ -233,11 +233,22 @@ impl SlotMap {
         )
     }
 
+    pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
+        for slot in slots {
+            self.0
+                .insert(slot.end(), SlotAddrs::from_slot(slot, read_from_replicas));
+        }
+    }
+
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
         self.0
             .range(route.slot()..)
             .next()
             .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
     }
 
     pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
