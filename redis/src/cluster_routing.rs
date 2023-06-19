@@ -13,6 +13,10 @@ pub(crate) const SLOT_SIZE: u16 = 16384;
 fn slot(key: &[u8]) -> u16 {
     crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
 }
+pub(crate) enum Redirect {
+    Moved(String),
+    Ask(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RoutingInfo {

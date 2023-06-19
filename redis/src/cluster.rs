@@ -44,7 +44,7 @@ use std::time::Duration;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
+use crate::cluster_routing::{Redirect, Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -470,20 +470,23 @@ where
         };
 
         let mut retries = self.retries;
-        let mut redirected = None::<String>;
-        let mut is_asking = false;
+        let mut redirected = None::<Redirect>;
+
         loop {
             // Get target address and response.
             let (addr, rv) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if let Some(addr) = redirected.take() {
+                let (addr, conn) = if let Some(redirected) = redirected.take() {
+                    let (addr, is_asking) = match redirected {
+                        Redirect::Moved(addr) => (addr, false),
+                        Redirect::Ask(addr) => (addr, true),
+                    };
                     let conn = self.get_connection_by_addr(&mut connections, &addr)?;
                     if is_asking {
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
                         // actually want to execute.
                         conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
-                        is_asking = false;
                     }
                     (addr.to_string(), conn)
                 } else if route.is_none() {
@@ -504,15 +507,17 @@ where
 
                     match err.kind() {
                         ErrorKind::Ask => {
-                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
-                            is_asking = true;
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| Redirect::Ask(node.to_string()));
                         }
                         ErrorKind::Moved => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
-                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
-                            is_asking = false;
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
