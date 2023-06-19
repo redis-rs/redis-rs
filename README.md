@@ -4,10 +4,10 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level redis library for Rust.  It provides convenient access
-to all Redis functionality through a very flexible but low-level API.  It
+Redis-rs is a high level redis library for Rust. It provides convenient access
+to all Redis functionality through a very flexible but low-level API. It
 uses a customizable type conversion trait so that any operation can return
-results in just the type you are expecting.  This makes for a very pleasant
+results in just the type you are expecting. This makes for a very pleasant
 development experience.
 
 The crate is called `redis` and you can depend on it via cargo:
@@ -25,7 +25,7 @@ Documentation on the library can be found at
 ## Basic Operation
 
 To open a connection you need to create a client and then to fetch a
-connection from it.  In the future there will be a connection pool for
+connection from it. In the future there will be a connection pool for
 those, currently each connection is separate and not pooled.
 
 Many commands are implemented through the `Commands` trait but manual
@@ -51,13 +51,12 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 Variables are converted to and from the Redis format for a wide variety of types
 (`String`, num types, tuples, `Vec<u8>`). If you want to use it with your own types,
 you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it with the
-[redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate. 
+[redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
 `tokio-comp` for tokio users or `async-std-comp` for async-std users.
-
 
 ```
 # if you use tokio
@@ -97,6 +96,7 @@ redis = { version = "0.23.0", features = ["async-std-rustls-comp"] }
 ```
 
 With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
+
 - `tls-rustls-insecure`: Allow insecure TLS connections
 - `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
@@ -186,9 +186,11 @@ you can use the `Json` wrapper from the
 ## Development
 
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
-you must set the following environment variables before running the test script
+you must set the following environment variable before running the test script
 
-- `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Usually called `librejson.so`).
+- `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
+
+- Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
 
 <!-- As support for modules are added later, it would be wise to update this list -->
 
@@ -211,7 +213,7 @@ To build the docs (require nightly compiler, see [rust-lang/rust#43781](https://
 
     $ make docs
 
-We encourage you to run `clippy` prior to seeking a merge for your work.  The lints can be quite strict.  Running this on your own workstation can save you time, since Travis CI will fail any build that doesn't satisfy `clippy`:
+We encourage you to run `clippy` prior to seeking a merge for your work. The lints can be quite strict. Running this on your own workstation can save you time, since Travis CI will fail any build that doesn't satisfy `clippy`:
 
     $ cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
 
