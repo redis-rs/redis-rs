@@ -337,7 +337,7 @@ where
     fn connect(&self, node: &str) -> RedisResult<C> {
         let info = get_connection_info(node, self.cluster_params.clone())?;
 
-        let mut conn = C::connect(info, None)?;
+        let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
