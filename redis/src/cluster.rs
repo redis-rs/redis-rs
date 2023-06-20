@@ -43,7 +43,6 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
-use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::SlotAddr;
 use crate::cmd::{cmd, Cmd};
@@ -131,7 +130,6 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     cluster_params: ClusterParams,
-    retry_params: RetryParams,
 }
 
 impl<C> ClusterConnection<C>
@@ -151,7 +149,6 @@ where
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
-            retry_params: cluster_params.retry_params,
         };
         connection.create_initial_connections()?;
 
@@ -495,7 +492,7 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    if retries == self.retry_params.number_of_retries {
+                    if retries == self.cluster_params.retry_params.number_of_retries {
                         return Err(err);
                     }
                     retries += 1;
@@ -516,7 +513,10 @@ where
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
-                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
+                            let sleep_time = self
+                                .cluster_params
+                                .retry_params
+                                .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
                         ErrorKind::IoError => {

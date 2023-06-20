@@ -70,7 +70,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
-    pub(crate) connection_timeout: Option<Duration>,
+    pub(crate) connection_timeout: Duration,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -81,7 +81,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retry_params: value.retries_configuration,
-            connection_timeout: value.connection_timeout,
+            connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
         }
     }
 }
