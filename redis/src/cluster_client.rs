@@ -19,6 +19,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     retries_configuration: RetryParams,
+    connection_timeout: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -69,6 +70,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
+    pub(crate) connection_timeout: Option<Duration>,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -79,6 +81,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retry_params: value.retries_configuration,
+            connection_timeout: value.connection_timeout,
         }
     }
 }
@@ -235,6 +238,14 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = true;
+        self
+    }
+
+    /// Enables timing out on slow connection time.
+    ///
+    /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
+    pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.connection_timeout = Some(connection_timeout);
         self
     }
 

@@ -48,6 +48,7 @@ use futures::{
     prelude::*,
     ready, stream,
 };
+use futures_time::future::FutureExt;
 use log::trace;
 use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
@@ -1095,8 +1096,13 @@ where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
+    let connection_timeout = params.connection_timeout;
     let info = get_connection_info(node, params)?;
-    let mut conn = C::connect(info).await?;
+    let mut conn: C = C::connect(info)
+        .timeout(futures_time::time::Duration::from(
+            connection_timeout.unwrap_or(std::time::Duration::MAX),
+        ))
+        .await??;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
