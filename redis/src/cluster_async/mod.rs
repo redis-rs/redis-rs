@@ -548,10 +548,12 @@ where
 
         let read_guard = core.conn_lock.read().await;
         // Ideally we would get a random conn only after other means failed,
-        // but referencing self in the async block is problematic:
+        // but we have to release the lock before any `await`, otherwise the
+        // operation might be suspended until ending a refresh_slots call,
+        // which will be blocked on the lock:
         let random_conn = get_random_connection(&read_guard.0);
 
-        let addr = match info.redirect.take() {
+        let conn = match info.redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
             Some(Redirect::Ask(ask_addr)) => {
                 asking = true;
@@ -562,17 +564,21 @@ where
                 .as_ref()
                 .and_then(|route| read_guard.1.slot_addr_for_route(route))
                 .map(|addr| addr.to_string()),
-        };
+        }
+        .map(|addr| {
+            let conn = read_guard.0.get(&addr).cloned();
+            (addr, conn)
+        });
+        drop(read_guard);
 
-        let conn_future = match addr {
-            Some(addr) => {
-                let conn = read_guard.0.get(&addr).cloned();
+        let conn_future = match conn {
+            Some((addr, conn)) => {
                 let params = core.cluster_params.clone();
 
                 async move { (Self::get_or_create_conn(&addr, conn, params).await, addr) }
                     .map(|(result, addr)| {
                         result
-                            .map(|conn| (addr, async { conn }.boxed().shared()))
+                            .map(|conn| (addr, async move { conn }.boxed().shared()))
                             .unwrap_or(random_conn)
                     })
                     .boxed()
@@ -580,7 +586,6 @@ where
             }
             None => async move { random_conn }.boxed().shared(),
         };
-        drop(read_guard);
 
         let (addr, conn) = conn_future.await;
         let mut conn = conn.await;
