@@ -539,22 +539,21 @@ where
         // but referencing self in the async block is problematic:
         let random_conn = get_random_connection(&self.connections);
 
-        let route_addr = info
-            .route
-            .as_ref()
-            .and_then(|route| self.slots.slot_addr_for_route(route));
+        let addr = match info.redirect.take() {
+            Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
+            Some(Redirect::Ask(ask_addr)) => {
+                asking = true;
+                Some(ask_addr)
+            }
+            None => info
+                .route
+                .as_ref()
+                .and_then(|route| self.slots.slot_addr_for_route(route))
+                .map(|addr| addr.to_string()),
+        };
 
-        let conn_future = match route_addr {
-            Some(route_addr) => {
-                let addr = match info.redirect.take() {
-                    Some(Redirect::Moved(moved_addr)) => moved_addr,
-                    Some(Redirect::Ask(ask_addr)) => {
-                        asking = true;
-                        ask_addr
-                    }
-                    None => route_addr.to_string(),
-                };
-
+        let conn_future = match addr {
+            Some(addr) => {
                 let conn = self.connections.get(&addr).cloned();
                 let params = self.cluster_params.clone();
 
