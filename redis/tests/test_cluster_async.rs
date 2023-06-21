@@ -498,6 +498,57 @@ fn test_async_cluster_ask_redirect() {
 }
 
 #[test]
+fn test_async_cluster_ask_redirect_even_if_original_call_had_no_route() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                let count = completed.fetch_add(1, Ordering::SeqCst);
+                if count == 0 {
+                    return Err(parse_redis_value(b"-ASK 14000 node:6380\r\n"));
+                }
+                match port {
+                    6380 => match count {
+                        1 => {
+                            assert!(
+                                contains_slice(cmd, b"ASKING"),
+                                "{:?}",
+                                std::str::from_utf8(cmd)
+                            );
+                            Err(Ok(Value::Okay))
+                        }
+                        2 => {
+                            assert!(contains_slice(cmd, b"EVAL"));
+                            Err(Ok(Value::Okay))
+                        }
+                        _ => panic!("Node should not be called now"),
+                    },
+                    _ => panic!("Wrong node"),
+                }
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("EVAL") // Eval command has no directed, and so is redirected randomly
+            .query_async::<_, Value>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Value::Okay));
+}
+
+#[test]
 fn test_async_cluster_ask_error_when_new_node_is_added() {
     let name = "ask_with_extra_nodes";
 
