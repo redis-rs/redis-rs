@@ -368,7 +368,7 @@ async fn get_socket_addrs(
     #[cfg(feature = "tokio-comp")]
     let socket_addrs = lookup_host((host, port)).await?;
     #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-    let mut socket_addrs = (host, port).to_socket_addrs().await?;
+    let socket_addrs = (host, port).to_socket_addrs().await?;
 
     let mut socket_addrs = socket_addrs.peekable();
     match socket_addrs.peek() {
@@ -383,21 +383,24 @@ async fn get_socket_addrs(
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<T> {
-    
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            let mut ret = Err(RedisError::from((
-                ErrorKind::InvalidClientConfig,
-                "No address found for host",
-            )));
-            for socket_addr in socket_addrs {
-                ret = <T>::connect_tcp(socket_addr).await;
-                if ret.is_ok() {
-                    break;
-                }
-            }
-            ret?
+            futures::stream::iter(socket_addrs)
+                .map(|socket_addr| async move { <T>::connect_tcp(socket_addr).await })
+                .fold(
+                    Err(RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "No address found for host",
+                    ))),
+                    |acc, res| async {
+                        match acc {
+                            ok @ Result::Ok(_) => ok,
+                            Err(_) => res.await,
+                        }
+                    },
+                )
+                .await?
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -407,17 +410,23 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            let mut ret = Err(RedisError::from((
-                ErrorKind::InvalidClientConfig,
-                "No address found for host",
-            )));
-            for socket_addr in socket_addrs {
-                ret = <T>::connect_tcp_tls(host, socket_addr, insecure).await;
-                if ret.is_ok() {
-                    break;
-                }
-            }
-            ret?
+            futures::stream::iter(socket_addrs)
+                .map(|socket_addr| async move {
+                    <T>::connect_tcp_tls(host, socket_addr, insecure).await
+                })
+                .fold(
+                    Err(RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "No address found for host",
+                    ))),
+                    |acc, res| async {
+                        match acc {
+                            ok @ Result::Ok(_) => ok,
+                            Err(_) => res.await,
+                        }
+                    },
+                )
+                .await?
         }
 
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
