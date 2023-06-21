@@ -13,6 +13,8 @@ pub(crate) const SLOT_SIZE: u16 = 16384;
 fn slot(key: &[u8]) -> u16 {
     crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
 }
+
+#[derive(Clone)]
 pub(crate) enum Redirect {
     Moved(String),
     Ask(String),
@@ -163,7 +165,7 @@ impl Slot {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 pub(crate) enum SlotAddr {
     Master,
     Replica,
@@ -231,11 +233,22 @@ impl SlotMap {
         )
     }
 
+    pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
+        for slot in slots {
+            self.0
+                .insert(slot.end(), SlotAddrs::from_slot(slot, read_from_replicas));
+        }
+    }
+
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
         self.0
             .range(route.slot()..)
             .next()
             .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
     }
 
     pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
@@ -245,7 +258,7 @@ impl SlotMap {
 
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 pub(crate) struct Route(u16, SlotAddr);
 
 impl Route {
