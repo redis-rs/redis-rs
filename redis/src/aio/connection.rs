@@ -10,6 +10,7 @@ use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResu
 use crate::{from_redis_value, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
+use futures_util::stream;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "tokio-comp")]
 use ::tokio::net::lookup_host;
@@ -386,7 +387,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            futures::stream::iter(socket_addrs)
+            stream::iter(socket_addrs)
                 .map(|socket_addr| async move { <T>::connect_tcp(socket_addr).await })
                 .fold(
                     Err(RedisError::from((
@@ -410,7 +411,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            futures::stream::iter(socket_addrs)
+            stream::iter(socket_addrs)
                 .map(|socket_addr| async move {
                     <T>::connect_tcp_tls(host, socket_addr, insecure).await
                 })
