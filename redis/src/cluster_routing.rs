@@ -13,6 +13,8 @@ pub(crate) const SLOT_SIZE: u16 = 16384;
 fn slot(key: &[u8]) -> u16 {
     crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
 }
+
+#[derive(Clone)]
 pub(crate) enum Redirect {
     Moved(String),
     Ask(String),
@@ -163,7 +165,7 @@ impl Slot {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 pub(crate) enum SlotAddr {
     Master,
     Replica,
@@ -245,7 +247,7 @@ impl SlotMap {
 
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone)]
 pub(crate) struct Route(u16, SlotAddr);
 
 impl Route {
