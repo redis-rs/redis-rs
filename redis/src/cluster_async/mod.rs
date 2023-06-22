@@ -431,6 +431,7 @@ where
                             &addr,
                             connections.remove(&addr),
                             inner.cluster_params.clone(),
+                            true,
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -490,6 +491,7 @@ where
                             addr,
                             connection,
                             inner.cluster_params.clone(),
+                            true,
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -575,14 +577,19 @@ where
             Some((addr, conn)) => {
                 let params = core.cluster_params.clone();
 
-                async move { (Self::get_or_create_conn(&addr, conn, params).await, addr) }
-                    .map(|(result, addr)| {
-                        result
-                            .map(|conn| (addr, async move { conn }.boxed().shared()))
-                            .unwrap_or(random_conn)
-                    })
-                    .boxed()
-                    .shared()
+                async move {
+                    (
+                        Self::get_or_create_conn(&addr, conn, params, false).await,
+                        addr,
+                    )
+                }
+                .map(|(result, addr)| {
+                    result
+                        .map(|conn| (addr, async move { conn }.boxed().shared()))
+                        .unwrap_or(random_conn)
+                })
+                .boxed()
+                .shared()
             }
             None => async move { random_conn }.boxed().shared(),
         };
@@ -727,9 +734,13 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: ClusterParams,
+        should_check_connection: bool,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
+            if !should_check_connection {
+                return Ok(conn);
+            }
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
                 Err(_) => connect_and_check(addr, params.clone()).await,
