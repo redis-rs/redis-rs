@@ -10,14 +10,13 @@ use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResu
 use crate::{from_redis_value, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
-use futures_util::stream;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "tokio-comp")]
 use ::tokio::net::lookup_host;
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 use futures_util::{
     future::FutureExt,
-    stream::{Stream, StreamExt},
+    stream::{self, Stream, StreamExt},
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -388,16 +387,15 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
             stream::iter(socket_addrs)
-                .map(|socket_addr| async move { <T>::connect_tcp(socket_addr).await })
                 .fold(
                     Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "No address found for host",
                     ))),
-                    |acc, res| async {
+                    |acc, socket_addr| async move {
                         match acc {
-                            ok @ Result::Ok(_) => ok,
-                            Err(_) => res.await,
+                            ok @ Ok(_) => ok,
+                            Err(_) => <T>::connect_tcp(socket_addr).await,
                         }
                     },
                 )
@@ -412,18 +410,15 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
             stream::iter(socket_addrs)
-                .map(|socket_addr| async move {
-                    <T>::connect_tcp_tls(host, socket_addr, insecure).await
-                })
                 .fold(
                     Err(RedisError::from((
                         ErrorKind::InvalidClientConfig,
                         "No address found for host",
                     ))),
-                    |acc, res| async {
+                    |acc, socket_addr| async move {
                         match acc {
-                            ok @ Result::Ok(_) => ok,
-                            Err(_) => res.await,
+                            ok @ Ok(_) => ok,
+                            Err(_) => <T>::connect_tcp_tls(host, socket_addr, insecure).await,
                         }
                     },
                 )
