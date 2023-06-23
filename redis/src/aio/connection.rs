@@ -372,7 +372,7 @@ async fn get_socket_addrs(
 
     let mut socket_addrs = socket_addrs.peekable();
     match socket_addrs.peek() {
-        Some(_) => Ok(socket_addrs.into_iter()),
+        Some(_) => Ok(socket_addrs),
         None => Err(RedisError::from((
             ErrorKind::InvalidClientConfig,
             "No address found for host",
