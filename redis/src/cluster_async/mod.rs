@@ -365,8 +365,7 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<Self> {
-        let connections =
-            Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
+        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, Default::default())),
             cluster_params,
@@ -384,7 +383,7 @@ where
 
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
-        params: ClusterParams,
+        params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
@@ -430,7 +429,7 @@ where
                         let conn = Self::get_or_create_conn(
                             &addr,
                             connections.remove(&addr),
-                            inner.cluster_params.clone(),
+                            &inner.cluster_params,
                             true,
                         )
                         .await;
@@ -487,13 +486,9 @@ where
                 .fold(
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
-                        let conn = Self::get_or_create_conn(
-                            addr,
-                            connection,
-                            inner.cluster_params.clone(),
-                            true,
-                        )
-                        .await;
+                        let conn =
+                            Self::get_or_create_conn(addr, connection, &inner.cluster_params, true)
+                                .await;
                         if let Ok(conn) = conn {
                             connections.insert(addr.to_string(), async { conn }.boxed().shared());
                         }
@@ -574,23 +569,19 @@ where
         drop(read_guard);
 
         let conn_future = match conn {
-            Some((addr, conn)) => {
-                let params = core.cluster_params.clone();
-
-                async move {
-                    (
-                        Self::get_or_create_conn(&addr, conn, params, false).await,
-                        addr,
-                    )
-                }
-                .map(|(result, addr)| {
-                    result
-                        .map(|conn| (addr, async move { conn }.boxed().shared()))
-                        .unwrap_or(random_conn)
-                })
-                .boxed()
-                .shared()
+            Some((addr, conn)) => async move {
+                (
+                    Self::get_or_create_conn(&addr, conn, &core.cluster_params, false).await,
+                    addr,
+                )
             }
+            .map(|(result, addr)| {
+                result
+                    .map(|conn| (addr, async move { conn }.boxed().shared()))
+                    .unwrap_or(random_conn)
+            })
+            .boxed()
+            .shared(),
             None => async move { random_conn }.boxed().shared(),
         };
 
@@ -733,7 +724,7 @@ where
     async fn get_or_create_conn(
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
-        params: ClusterParams,
+        params: &ClusterParams,
         should_check_connection: bool,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
