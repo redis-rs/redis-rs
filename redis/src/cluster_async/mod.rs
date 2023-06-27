@@ -430,7 +430,6 @@ where
                             &addr,
                             connections.remove(&addr),
                             &inner.cluster_params,
-                            true,
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -487,8 +486,7 @@ where
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
                         let conn =
-                            Self::get_or_create_conn(addr, connection, &inner.cluster_params, true)
-                                .await;
+                            Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
                         if let Ok(conn) = conn {
                             connections.insert(addr.to_string(), async { conn }.boxed().shared());
                         }
@@ -716,13 +714,9 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: &ClusterParams,
-        should_check_connection: bool,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
-            if !should_check_connection {
-                return Ok(conn);
-            }
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
                 Err(_) => connect_and_check(addr, params.clone()).await,
