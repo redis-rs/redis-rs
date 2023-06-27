@@ -541,21 +541,18 @@ where
         core: Core<C>,
     ) -> (String, RedisResult<Response>) {
         let cmd = info.cmd;
-        let mut asking = false;
+        let asking = matches!(info.redirect, Some(Redirect::Ask(_)));
 
         let read_guard = core.conn_lock.read().await;
         // Ideally we would get a random conn only after other means failed,
         // but we have to release the lock before any `await`, otherwise the
         // operation might be suspended until ending a refresh_slots call,
         // which will be blocked on the lock:
-        let random_conn = get_random_connection(&read_guard.0);
+        let (random_addr, random_conn_future) = get_random_connection(&read_guard.0);
 
         let conn = match info.redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
-            Some(Redirect::Ask(ask_addr)) => {
-                asking = true;
-                Some(ask_addr)
-            }
+            Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
             None => info
                 .route
                 .as_ref()
@@ -568,25 +565,19 @@ where
         });
         drop(read_guard);
 
-        let conn_future = match conn {
-            Some((addr, conn)) => async move {
-                (
-                    Self::get_or_create_conn(&addr, conn, &core.cluster_params, false).await,
-                    addr,
-                )
-            }
-            .map(|(result, addr)| {
-                result
-                    .map(|conn| (addr, async move { conn }.boxed().shared()))
-                    .unwrap_or(random_conn)
-            })
-            .boxed()
-            .shared(),
-            None => async move { random_conn }.boxed().shared(),
+        let addr_conn_option = match conn {
+            Some((addr, Some(conn))) => Some((addr, conn.await)),
+            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone())
+                .await
+                .ok()
+                .map(|conn| (addr, conn)),
+            None => None,
         };
 
-        let (addr, conn) = conn_future.await;
-        let mut conn = conn.await;
+        let (addr, mut conn) = match addr_conn_option {
+            Some(tuple) => tuple,
+            None => (random_addr, random_conn_future.await),
+        };
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
         }
