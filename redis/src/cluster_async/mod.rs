@@ -36,7 +36,7 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
-    cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotAddr, SlotMap},
+    cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -141,8 +141,7 @@ impl<C> CmdArg<C> {
         fn route_for_command(cmd: &Cmd) -> Option<Route> {
             match RoutingInfo::for_routable(cmd) {
                 Some(RoutingInfo::Random) => None,
-                Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
-                Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
+                Some(RoutingInfo::SpecificNode(route)) => Some(route),
                 Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
                 _ => None,
             }

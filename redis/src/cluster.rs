@@ -45,7 +45,7 @@ use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{Redirect, Routable, RoutingInfo, Slot, SLOT_SIZE};
+use crate::cluster_routing::SlotAddr;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -55,7 +55,7 @@ use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Route, SlotAddr, SlotMap},
+    cluster_routing::{Redirect, Routable, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -396,8 +396,7 @@ where
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
         let slots = self.slots.borrow();
 
-        let addr_for_slot = |slot: u16, slot_addr: SlotAddr| -> RedisResult<String> {
-            let route = Route::new(slot, slot_addr);
+        let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
@@ -407,13 +406,12 @@ where
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => {
                 let mut rng = thread_rng();
-                Ok(addr_for_slot(
+                Ok(addr_for_slot(Route::new(
                     rng.gen_range(0..SLOT_SIZE),
                     SlotAddr::Master,
-                )?)
+                ))?)
             }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Master)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Replica)?),
+            Some(RoutingInfo::SpecificNode(route)) => Ok(addr_for_slot(route)?),
             _ => fail!(UNROUTABLE_ERROR),
         }
     }
@@ -466,8 +464,7 @@ where
     {
         let route = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
+            Some(RoutingInfo::SpecificNode(route)) => Some(route),
             Some(RoutingInfo::AllMasters) => {
                 return self.execute_on_all_nodes(func, true);
             }
