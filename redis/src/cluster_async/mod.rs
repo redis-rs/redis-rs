@@ -30,13 +30,12 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
-    time::Duration,
 };
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
-    cluster_client::ClusterParams,
+    cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotAddr, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
@@ -228,7 +227,7 @@ struct PendingRequest<I, C> {
 
 pin_project! {
     struct Request<F, I, C> {
-        max_retries: u32,
+        retry_params: RetryParams,
         request: Option<PendingRequest<I, C>>,
         #[pin]
         future: RequestState<F>,
@@ -284,7 +283,7 @@ where
 
                 let request = this.request.as_mut().unwrap();
 
-                if request.retry >= *this.max_retries {
+                if request.retry >= this.retry_params.number_of_retries {
                     self.respond(Err(err));
                     return Next::Done.into();
                 }
@@ -307,8 +306,7 @@ where
                     }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                         // Sleep and retry.
-                        let sleep_duration =
-                            Duration::from_millis(2u64.pow(request.retry.clamp(7, 16)) * 10);
+                        let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
                         this.future.set(RequestState::Sleep {
                             #[cfg(feature = "tokio-comp")]
                             sleep: Box::pin(tokio::time::sleep(sleep_duration)),
@@ -648,7 +646,7 @@ where
 
                 let future = Self::try_request(request.info.clone(), self.inner.clone()).boxed();
                 self.in_flight_requests.push(Box::pin(Request {
-                    max_retries: self.inner.cluster_params.retries,
+                    retry_params: self.inner.cluster_params.retry_params.clone(),
                     request: Some(request),
                     future: RequestState::Future { future },
                 }));
@@ -666,7 +664,7 @@ where
                 Next::Retry { request } => {
                     let future = Self::try_request(request.info.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
-                        max_retries: self.inner.cluster_params.retries,
+                        retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
                         future: RequestState::Future {
                             future: Box::pin(future),
@@ -678,7 +676,7 @@ where
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
                     let future = Self::try_request(request.info.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
-                        max_retries: self.inner.cluster_params.retries,
+                        retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
                         future: RequestState::Future {
                             future: Box::pin(future),

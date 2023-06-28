@@ -43,6 +43,7 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
+use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{Redirect, Routable, RoutingInfo, Slot, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
@@ -132,7 +133,7 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
-    retries: u32,
+    retry_params: RetryParams,
 }
 
 impl<C> ClusterConnection<C>
@@ -154,7 +155,7 @@ where
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
-            retries: cluster_params.retries,
+            retry_params: cluster_params.retry_params,
         };
         connection.create_initial_connections()?;
 
@@ -469,7 +470,7 @@ where
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = self.retries;
+        let mut retries = 0;
         let mut redirected = None::<Redirect>;
 
         loop {
@@ -500,10 +501,10 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    if retries == 0 {
+                    if retries == self.retry_params.number_of_retries {
                         return Err(err);
                     }
-                    retries -= 1;
+                    retries += 1;
 
                     match err.kind() {
                         ErrorKind::Ask => {
@@ -521,8 +522,8 @@ where
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
-                            let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
-                            thread::sleep(Duration::from_millis(sleep_time));
+                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
+                            thread::sleep(sleep_time);
                         }
                         ErrorKind::IoError => {
                             if *self.auto_reconnect.borrow() {
