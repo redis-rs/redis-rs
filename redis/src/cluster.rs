@@ -12,7 +12,7 @@
 //! let client = ClusterClient::new(nodes).unwrap();
 //! let mut connection = client.get_connection().unwrap();
 //!
-//! let _: () = connection.set("test", "test_data", redis::SetOptions::default()).unwrap();
+//! let _: () = connection.set("test", "test_data").unwrap();
 //! let rv: String = connection.get("test").unwrap();
 //!
 //! assert_eq!(rv, "test_data");

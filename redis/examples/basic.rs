@@ -118,14 +118,14 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    con.set(key, 42, redis::SetOptions::default())?;
+    con.set(key, 42)?;
 
     // run the transaction block.
     let (new_val,): (isize,) = transaction(con, &[key], |con, pipe| {
         // load the old value, so we know what to increment.
         let val: isize = con.get(key)?;
         // increment
-        pipe.set(key, val + 1, redis::SetOptions::default()).ignore().get(key).query(con)
+        pipe.set(key, val + 1).ignore().get(key).query(con)
     })?;
 
     // and print the result

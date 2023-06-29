@@ -83,7 +83,12 @@ implement_commands! {
     }
 
     /// Set the string value of a key.
-    fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) {
+    fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+        cmd("SET").arg(key).arg(value)
+    }
+
+    /// Set the string value of a key with options.
+    fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) {
         cmd("SET").arg(key).arg(value).arg(options)
     }
 
@@ -2068,8 +2073,20 @@ impl ToRedisArgs for Direction {
 /// Options for the [SET](https://redis.io/commands/set) command
 ///
 /// # Example
-/// TODO: update
-///
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// fn set_key_value(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     value: &str,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = SetOptions::default()
+///         .upsert(ExistenceCheck::NX)
+///         .fetch(true)
+///         .with_expiration(SetExpiry::EX(60));
+///     con.set_options(key, value, opts)
+/// }
+/// ```
 #[derive(Default)]
 pub struct SetOptions {
     upsert: Option<ExistenceCheck>,
@@ -2078,16 +2095,19 @@ pub struct SetOptions {
 }
 
 impl SetOptions {
+    /// Set the existence check for the SET command
     pub fn upsert(mut self, existence_check: ExistenceCheck) -> Self {
         self.upsert = Some(existence_check);
         self
     }
 
+    /// Set the GET option for the SET command
     pub fn fetch(mut self, fetch: bool) -> Self {
         self.get = fetch;
         self
     }
 
+    /// Set the expiration for the SET command
     pub fn with_expiration(mut self, expiration: SetExpiry) -> Self {
         self.expiration = Some(expiration);
         self

@@ -127,7 +127,7 @@
 //! use redis::Commands;
 //!
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = con.set("my_key", 42, redis::SetOptions::default())?;
+//!     let _ : () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
 //! ```
@@ -236,8 +236,8 @@
 //! # let mut con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
-//!     .set("key_1", 42, redis::SetOptions::default()).ignore()
-//!     .set("key_2", 43, redis::SetOptions::default()).ignore()
+//!     .set("key_1", 42).ignore()
+//!     .set("key_2", 43).ignore()
 //!     .get("key_1")
 //!     .get("key_2").query(&mut con)?;
 //! # Ok(()) }
@@ -258,7 +258,7 @@
 //! let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 //!     let old_val : isize = con.get(key)?;
 //!     pipe
-//!         .set(key, old_val + 1, redis::SetOptions::default()).ignore()
+//!         .set(key, old_val + 1).ignore()
 //!         .get(key).query(con)
 //! })?;
 //! println!("The incremented number is: {}", new_val);
@@ -338,7 +338,7 @@ use redis::AsyncCommands;
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 let mut con = client.get_async_connection().await?;
 
-con.set("key1", b"foo", redis::SetOptions::default()).await?;
+con.set("key1", b"foo").await?;
 
 redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
 
@@ -391,6 +391,8 @@ pub use crate::types::{
     InfoDict,
     NumericBehavior,
     Expiry,
+    SetExpiry,
+    ExistenceCheck,
 
     // error and result types
     RedisError,

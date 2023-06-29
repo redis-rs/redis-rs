@@ -1,5 +1,5 @@
 use futures::{future, prelude::*, StreamExt};
-use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult, SetOptions};
+use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
 
 use crate::support::*;
 
@@ -104,7 +104,7 @@ fn test_pipeline_transaction_with_errors() {
 
     block_on_all(async move {
         let mut con = ctx.async_connection().await?;
-        con.set::<_, _, ()>("x", 42, SetOptions::default()).await.unwrap();
+        con.set::<_, _, ()>("x", 42).await.unwrap();
 
         // Make Redis a replica of a nonexistent master, thereby making it read-only.
         redis::cmd("slaveof")
@@ -117,7 +117,7 @@ fn test_pipeline_transaction_with_errors() {
         // Ensure that a write command fails with a READONLY error
         let err: RedisResult<()> = redis::pipe()
             .atomic()
-            .set("x", 142, SetOptions::default())
+            .set("x", 142)
             .ignore()
             .get("x")
             .query_async(&mut con)
@@ -489,7 +489,7 @@ async fn test_issue_async_commands_scan_broken() {
     let mut keys: Vec<String> = (0..100).map(|k| format!("async-key{k}")).collect();
     keys.sort();
     for key in &keys {
-        let _: () = con.set(key, b"foo", SetOptions::default()).await.unwrap();
+        let _: () = con.set(key, b"foo").await.unwrap();
     }
 
     let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
@@ -677,13 +677,13 @@ fn test_connection_manager_reconnect_after_delay() {
         let addr = server.client_addr().clone();
         drop(server);
 
-        let _result: RedisResult<redis::Value> = manager.set("foo", "bar", redis::SetOptions::default()).await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+        let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
-        let result: redis::Value = manager.set("foo", "bar", redis::SetOptions::default()).await.unwrap();
+        let result: redis::Value = manager.set("foo", "bar").await.unwrap();
         assert_eq!(result, redis::Value::Okay);
     });
 }

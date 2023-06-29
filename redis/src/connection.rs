@@ -1294,7 +1294,7 @@ impl Msg {
 /// let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 ///     let old_val : isize = con.get(key)?;
 ///     pipe
-///         .set(key, old_val + 1, redis::SetOptions::default()).ignore()
+///         .set(key, old_val + 1).ignore()
 ///         .get(key).query(con)
 /// })?;
 /// println!("The incremented number is: {}", new_val);
