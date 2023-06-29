@@ -16,7 +16,7 @@
 //!     let nodes = vec!["redis://127.0.0.1/"];
 //!     let client = ClusterClient::new(nodes).unwrap();
 //!     let mut connection = client.get_async_connection().await.unwrap();
-//!     let _: () = connection.set("test", "test_data").await.unwrap();
+//!     let _: () = connection.set("test", "test_data", redis::SetOptions::default()).await.unwrap();
 //!     let rv: String = connection.get("test").await.unwrap();
 //!     return rv;
 //! }

@@ -2,7 +2,7 @@
 
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult,
+    RedisResult, SetOptions,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -339,7 +339,7 @@ fn test_pipeline_with_err() {
         .unwrap();
 
     let res = redis::pipe()
-        .set("x", "another-x-value")
+        .set("x", "another-x-value", SetOptions::default())
         .ignore()
         .get("y")
         .query::<()>(&mut con);
@@ -392,7 +392,7 @@ fn test_pipeline_transaction_with_errors() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let _: () = con.set("x", 42).unwrap();
+    let _: () = con.set("x", 42, SetOptions::default()).unwrap();
 
     // Make Redis a replica of a nonexistent master, thereby making it read-only.
     let _: () = redis::cmd("slaveof")
@@ -404,7 +404,7 @@ fn test_pipeline_transaction_with_errors() {
     // Ensure that a write command fails with a READONLY error
     let err: RedisResult<()> = redis::pipe()
         .atomic()
-        .set("x", 142)
+        .set("x", 142, SetOptions::default())
         .ignore()
         .get("x")
         .query(&mut con);
@@ -601,7 +601,7 @@ fn test_pubsub_unsubscribe() {
     }
 
     // Connection should be usable again for non-pubsub commands
-    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let _: redis::Value = con.set("foo", "bar", SetOptions::default()).unwrap();
     let value: String = con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
 }
@@ -616,7 +616,7 @@ fn test_pubsub_unsubscribe_no_subs() {
     }
 
     // Connection should be usable again for non-pubsub commands
-    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let _: redis::Value = con.set("foo", "bar", SetOptions::default()).unwrap();
     let value: String = con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
 }
@@ -632,7 +632,7 @@ fn test_pubsub_unsubscribe_one_sub() {
     }
 
     // Connection should be usable again for non-pubsub commands
-    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let _: redis::Value = con.set("foo", "bar", SetOptions::default()).unwrap();
     let value: String = con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
 }
@@ -649,7 +649,7 @@ fn test_pubsub_unsubscribe_one_sub_one_psub() {
     }
 
     // Connection should be usable again for non-pubsub commands
-    let _: redis::Value = con.set("foo", "bar").unwrap();
+    let _: redis::Value = con.set("foo", "bar", SetOptions::default()).unwrap();
     let value: String = con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
 }
@@ -697,7 +697,7 @@ fn scoped_pubsub() {
     let mut pubsub_con = thread.join().expect("pubsub thread terminates ok");
 
     // Connection should be usable again for non-pubsub commands
-    let _: redis::Value = pubsub_con.set("foo", "bar").unwrap();
+    let _: redis::Value = pubsub_con.set("foo", "bar", SetOptions::default()).unwrap();
     let value: String = pubsub_con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
 }
@@ -768,14 +768,14 @@ fn test_nice_api() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    assert_eq!(con.set("my_key", 42), Ok(()));
+    assert_eq!(con.set("my_key", 42, SetOptions::default()), Ok(()));
     assert_eq!(con.get("my_key"), Ok(42));
 
     let (k1, k2): (i32, i32) = redis::pipe()
         .atomic()
-        .set("key_1", 42)
+        .set("key_1", 42, SetOptions::default())
         .ignore()
-        .set("key_2", 43)
+        .set("key_2", 43, SetOptions::default())
         .ignore()
         .get("key_1")
         .get("key_2")
@@ -1112,8 +1112,8 @@ fn test_object_commands() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let _: () = con.set("object_key_str", "object_value_str").unwrap();
-    let _: () = con.set("object_key_int", 42).unwrap();
+    let _: () = con.set("object_key_str", "object_value_str", SetOptions::default()).unwrap();
+    let _: () = con.set("object_key_int", 42, SetOptions::default()).unwrap();
 
     assert_eq!(
         con.object_encoding::<_, String>("object_key_str").unwrap(),
@@ -1147,11 +1147,11 @@ fn test_mget() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let _: () = con.set(1, "1").unwrap();
+    let _: () = con.set(1, "1", SetOptions::default()).unwrap();
     let data: Vec<String> = con.mget(&[1]).unwrap();
     assert_eq!(data, vec!["1"]);
 
-    let _: () = con.set(2, "2").unwrap();
+    let _: () = con.set(2, "2", SetOptions::default()).unwrap();
     let data: Vec<String> = con.mget(&[1, 2]).unwrap();
     assert_eq!(data, vec!["1", "2"]);
 
@@ -1167,7 +1167,7 @@ fn test_variable_length_get() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let _: () = con.set(1, "1").unwrap();
+    let _: () = con.set(1, "1", SetOptions::default()).unwrap();
     let keys = vec![1];
     assert_eq!(keys.len(), 1);
     let data: Vec<String> = con.get(&keys).unwrap();

@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry, SetExpiry, ExistenceCheck};
 
 #[macro_use]
 mod macros;
@@ -83,8 +83,8 @@ implement_commands! {
     }
 
     /// Set the string value of a key.
-    fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
-        cmd("SET").arg(key).arg(value)
+    fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) {
+        cmd("SET").arg(key).arg(value).arg(options)
     }
 
     /// Sets multiple keys to their values.
@@ -2062,5 +2062,78 @@ impl ToRedisArgs for Direction {
             Direction::Right => b"RIGHT",
         };
         out.write_arg(s);
+    }
+}
+
+/// Options for the [SET](https://redis.io/commands/set) command
+///
+/// # Example
+/// TODO: update
+///
+#[derive(Default)]
+pub struct SetOptions {
+    upsert: Option<ExistenceCheck>,
+    get: bool,
+    expiration: Option<SetExpiry>,
+}
+
+impl SetOptions {
+    pub fn upsert(mut self, existence_check: ExistenceCheck) -> Self {
+        self.upsert = Some(existence_check);
+        self
+    }
+
+    pub fn fetch(mut self, fetch: bool) -> Self {
+        self.get = fetch;
+        self
+    }
+
+    pub fn with_expiration(mut self, expiration: SetExpiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+}
+
+impl ToRedisArgs for SetOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref upsert) = self.upsert {
+            match upsert {
+                ExistenceCheck::NX => {
+                    out.write_arg(b"NX");
+                }
+                ExistenceCheck::XX => {
+                    out.write_arg(b"XX");
+                }
+            }
+        }
+        if let Some(ref expiration) = self.expiration {
+            match expiration {
+                SetExpiry::EX(secs) => {
+                    out.write_arg(b"EX");
+                    out.write_arg(format!("{}", secs).as_bytes());
+                }
+                SetExpiry::PX(millis) => {
+                    out.write_arg(b"PX");
+                    out.write_arg(format!("{}", millis).as_bytes());
+                }
+                SetExpiry::EXAT(unix_time) => {
+                    out.write_arg(b"EXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::PXAT(unix_time) => {
+                    out.write_arg(b"PXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::KEEPTTL => {
+                    out.write_arg(b"KEEPTTL");
+                }
+            }
+        }
+        if self.get {
+            out.write_arg(b"GET");
+        }
     }
 }

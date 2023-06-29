@@ -220,7 +220,7 @@ fn test_cluster_pipeline_command_ordering() {
     for i in 0..100 {
         queries.push(format!("foo{i}"));
         expected.push(format!("bar{i}"));
-        pipe.set(&queries[i], &expected[i]).ignore();
+        pipe.set(&queries[i], &expected[i], redis::SetOptions::default()).ignore();
     }
     pipe.execute(&mut con);
 
@@ -249,7 +249,7 @@ fn test_cluster_pipeline_ordering_with_improper_command() {
         } else {
             let query = format!("foo{i}");
             let r = format!("bar{i}");
-            pipe.set(&query, &r).ignore();
+            pipe.set(&query, &r, redis::SetOptions::default()).ignore();
             queries.push(query);
             expected.push(r);
         }

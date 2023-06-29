@@ -127,7 +127,7 @@
 //! use redis::Commands;
 //!
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = con.set("my_key", 42)?;
+//!     let _ : () = con.set("my_key", 42, redis::SetOptions::default())?;
 //!     Ok(())
 //! }
 //! ```
@@ -236,8 +236,8 @@
 //! # let mut con = client.get_connection().unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
-//!     .set("key_1", 42).ignore()
-//!     .set("key_2", 43).ignore()
+//!     .set("key_1", 42, redis::SetOptions::default()).ignore()
+//!     .set("key_2", 43, redis::SetOptions::default()).ignore()
 //!     .get("key_1")
 //!     .get("key_2").query(&mut con)?;
 //! # Ok(()) }
@@ -258,7 +258,7 @@
 //! let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 //!     let old_val : isize = con.get(key)?;
 //!     pipe
-//!         .set(key, old_val + 1).ignore()
+//!         .set(key, old_val + 1, redis::SetOptions::default()).ignore()
 //!         .get(key).query(con)
 //! })?;
 //! println!("The incremented number is: {}", new_val);
@@ -326,7 +326,7 @@ In addition to the synchronous interface that's been explained above there also 
 asynchronous interface based on [`futures`][] and [`tokio`][].
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
-is enabled) and largely mirrors the synchronous with a few concessions to make it fit the 
+is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
 constraints of `futures`.
 
 ```rust,no_run
@@ -338,7 +338,7 @@ use redis::AsyncCommands;
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 let mut con = client.get_async_connection().await?;
 
-con.set("key1", b"foo").await?;
+con.set("key1", b"foo", redis::SetOptions::default()).await?;
 
 redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
 
@@ -363,7 +363,7 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 // public api
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
-pub use crate::commands::{Commands, ControlFlow, Direction, LposOptions, PubSubCommands};
+pub use crate::commands::{Commands, ControlFlow, Direction, LposOptions, SetOptions, PubSubCommands};
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,

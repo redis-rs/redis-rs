@@ -32,7 +32,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_connection()?;
-        /// con.set("my_key", 42)?;
+        /// con.set("my_key", 42, redis::SetOptions::default())?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```
@@ -149,7 +149,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_async_connection().await?;
-        /// con.set("my_key", 42i32).await?;
+        /// con.set("my_key", 42i32, redis::SetOptions::default()).await?;
         /// assert_eq!(con.get("my_key").await, Ok(42i32));
         /// # Ok(()) }
         /// ```

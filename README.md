@@ -40,7 +40,7 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
     let client = redis::Client::open("redis://127.0.0.1/")?;
     let mut con = client.get_connection()?;
     // throw away the result, just make sure it does not fail
-    let _ : () = con.set("my_key", 42)?;
+    let _ : () = con.set("my_key", 42, redis::commands::SetOptions::default())?;
     // read back the key and return it.  Because the return value
     // from the function is a result for integer this will automatically
     // convert into one.
@@ -126,7 +126,7 @@ fn fetch_an_integer() -> String {
     let nodes = vec!["redis://127.0.0.1/"];
     let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_connection().unwrap();
-    let _: () = connection.set("test", "test_data").unwrap();
+    let _: () = connection.set("test", "test_data", redis::SetOptions::default()).unwrap();
     let rv: String = connection.get("test").unwrap();
     return rv;
 }
@@ -145,7 +145,7 @@ async fn fetch_an_integer() -> String {
     let nodes = vec!["redis://127.0.0.1/"];
     let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_async_connection().await.unwrap();
-    let _: () = connection.set("test", "test_data").await.unwrap();
+    let _: () = connection.set("test", "test_data", SetOptions::default()).await.unwrap();
     let rv: String = connection.get("test").await.unwrap();
     return rv;
 }

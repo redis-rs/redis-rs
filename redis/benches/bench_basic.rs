@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Bencher, Criterion, Throughput};
 use futures::{prelude::*, stream};
-use redis::{RedisError, Value};
+use redis::{RedisError, Value, SetOptions};
 
 use support::*;
 
@@ -93,7 +93,7 @@ fn long_pipeline() -> redis::Pipeline {
     let mut pipe = redis::pipe();
 
     for i in 0..PIPELINE_QUERIES {
-        pipe.set(format!("foo{i}"), "bar").ignore();
+        pipe.set(format!("foo{i}"), "bar", SetOptions::default()).ignore();
     }
     pipe
 }
@@ -213,7 +213,7 @@ fn bench_encode_integer(b: &mut Bencher) {
         let mut pipe = redis::pipe();
 
         for _ in 0..1_000 {
-            pipe.set(123, 45679123).ignore();
+            pipe.set(123, 45679123, SetOptions::default()).ignore();
         }
         pipe.get_packed_pipeline()
     });
@@ -224,7 +224,7 @@ fn bench_encode_pipeline(b: &mut Bencher) {
         let mut pipe = redis::pipe();
 
         for _ in 0..1_000 {
-            pipe.set("foo", "bar").ignore();
+            pipe.set("foo", "bar", SetOptions::default()).ignore();
         }
         pipe.get_packed_pipeline()
     });
@@ -238,6 +238,7 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
             pipe.set(
                 "foo",
                 ("bar", 123, b"1231279712", &["test", "test", "test"][..]),
+                SetOptions::default(),
             )
             .ignore();
         }
