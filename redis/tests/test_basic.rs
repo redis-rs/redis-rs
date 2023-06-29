@@ -2,7 +2,7 @@
 
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult,
+    RedisResult, SetOptions, ToRedisArgs, ExistenceCheck, SetExpiry,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1183,4 +1183,37 @@ fn test_multi_generics() {
     assert_eq!(con.sadd(999_i64, vec![42, 123]), Ok(2));
     let _: () = con.rename(999_i64, b"set2").unwrap();
     assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
+}
+
+#[test]
+fn test_set_options_with_fetch() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let opts = SetOptions::default().fetch(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, None);
+
+    let opts = SetOptions::default().fetch(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, Some("1".to_string()));
+}
+
+#[test]
+fn test_options() {
+    let empty = SetOptions::default();
+    assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+
+    let opts = SetOptions::default()
+        .upsert(ExistenceCheck::NX)
+        .fetch(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(
+        &opts,
+        "NX",
+        "GET",
+        "PX",
+        "1000"
+    );
 }

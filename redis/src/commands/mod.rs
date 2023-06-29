@@ -2129,6 +2129,9 @@ impl ToRedisArgs for SetOptions {
                 }
             }
         }
+        if self.get {
+            out.write_arg(b"GET");
+        }
         if let Some(ref expiration) = self.expiration {
             match expiration {
                 SetExpiry::EX(secs) => {
@@ -2151,9 +2154,6 @@ impl ToRedisArgs for SetOptions {
                     out.write_arg(b"KEEPTTL");
                 }
             }
-        }
-        if self.get {
-            out.write_arg(b"GET");
         }
     }
 }

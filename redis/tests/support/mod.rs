@@ -41,6 +41,8 @@ mod cluster;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 mod mock_cluster;
 
+mod util;
+
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::cluster::*;
 
