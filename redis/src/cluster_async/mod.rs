@@ -540,11 +540,6 @@ where
         let asking = matches!(info.redirect, Some(Redirect::Ask(_)));
 
         let read_guard = core.conn_lock.read().await;
-        // Ideally we would get a random conn only after other means failed,
-        // but we have to release the lock before any `await`, otherwise the
-        // operation might be suspended until ending a refresh_slots call,
-        // which will be blocked on the lock:
-        let (random_addr, random_conn_future) = get_random_connection(&read_guard.0);
 
         let conn = match info.redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
@@ -572,7 +567,12 @@ where
 
         let (addr, mut conn) = match addr_conn_option {
             Some(tuple) => tuple,
-            None => (random_addr, random_conn_future.await),
+            None => {
+                let read_guard = core.conn_lock.read().await;
+                let (random_addr, random_conn_future) = get_random_connection(&read_guard.0);
+                drop(read_guard);
+                (random_addr, random_conn_future.await)
+            }
         };
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
