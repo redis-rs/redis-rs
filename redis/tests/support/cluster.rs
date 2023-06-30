@@ -35,9 +35,10 @@ impl ClusterType {
         {
             Some("tcp") => ClusterType::Tcp,
             Some("tcp+tls") => ClusterType::TcpTls,
-            val => {
+            Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
+            None => ClusterType::Tcp,
         }
     }
 

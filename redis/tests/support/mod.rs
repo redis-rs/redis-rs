@@ -73,9 +73,10 @@ impl ServerType {
             Some("tcp") => ServerType::Tcp { tls: false },
             Some("tcp+tls") => ServerType::Tcp { tls: true },
             Some("unix") => ServerType::Unix,
-            val => {
+            Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
+            None => ServerType::Tcp { tls: false },
         }
     }
 }
