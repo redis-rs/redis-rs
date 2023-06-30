@@ -15,6 +15,9 @@ readme = "../README.md"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[lib]
+bench = false
+
 [dependencies]
 # These two are generally really common simple dependencies so it does not seem
 # much of a point to optimize these, but these could in theory be removed for

@@ -7,13 +7,9 @@ use support::*;
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-fn get_client() -> redis::Client {
-    redis::Client::open("redis://127.0.0.1:6379").unwrap()
-}
-
 fn bench_simple_getsetdel(b: &mut Bencher) {
-    let client = get_client();
-    let mut con = client.get_connection().unwrap();
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
 
     b.iter(|| {
         let key = "test_key";
@@ -24,10 +20,9 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
-    let client = get_client();
+    let ctx = TestContext::new();
     let runtime = current_thread_runtime();
-    let con = client.get_async_connection();
-    let mut con = runtime.block_on(con).unwrap();
+    let mut con = runtime.block_on(ctx.async_connection()).unwrap();
 
     b.iter(|| {
         runtime
@@ -47,8 +42,8 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
-    let client = get_client();
-    let mut con = client.get_connection().unwrap();
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
 
     b.iter(|| {
         let key = "test_key";
@@ -68,8 +63,8 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
-    let client = get_client();
-    let mut con = client.get_connection().unwrap();
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
     let key = "test_key";
     let mut pipe = redis::pipe();
     pipe.cmd("SET")
@@ -99,8 +94,8 @@ fn long_pipeline() -> redis::Pipeline {
 }
 
 fn bench_long_pipeline(b: &mut Bencher) {
-    let client = get_client();
-    let mut con = client.get_connection().unwrap();
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
 
     let pipe = long_pipeline();
 
@@ -110,9 +105,9 @@ fn bench_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_async_long_pipeline(b: &mut Bencher) {
-    let client = get_client();
+    let ctx = TestContext::new();
     let runtime = current_thread_runtime();
-    let mut con = runtime.block_on(client.get_async_connection()).unwrap();
+    let mut con = runtime.block_on(ctx.async_connection()).unwrap();
 
     let pipe = long_pipeline();
 
@@ -124,10 +119,10 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
-    let client = get_client();
+    let ctx = TestContext::new();
     let runtime = current_thread_runtime();
     let mut con = runtime
-        .block_on(client.get_multiplexed_tokio_connection())
+        .block_on(ctx.multiplexed_async_connection_tokio())
         .unwrap();
 
     let pipe = long_pipeline();
@@ -140,10 +135,10 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
-    let client = get_client();
+    let ctx = TestContext::new();
     let runtime = current_thread_runtime();
     let con = runtime
-        .block_on(client.get_multiplexed_tokio_connection())
+        .block_on(ctx.multiplexed_async_connection_tokio())
         .unwrap();
 
     let cmds: Vec<_> = (0..PIPELINE_QUERIES)
