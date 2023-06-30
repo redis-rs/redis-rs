@@ -2082,7 +2082,7 @@ impl ToRedisArgs for Direction {
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = SetOptions::default()
 ///         .conditional_set(ExistenceCheck::NX)
-///         .fetch(true)
+///         .get(true)
 ///         .with_expiration(SetExpiry::EX(60));
 ///     con.set_options(key, value, opts)
 /// }
@@ -2102,8 +2102,8 @@ impl SetOptions {
     }
 
     /// Set the GET option for the SET command
-    pub fn fetch(mut self, fetch: bool) -> Self {
-        self.get = fetch;
+    pub fn get(mut self, get: bool) -> Self {
+        self.get = get;
         self
     }
 

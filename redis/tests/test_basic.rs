@@ -1186,15 +1186,15 @@ fn test_multi_generics() {
 }
 
 #[test]
-fn test_set_options_with_fetch() {
+fn test_set_options_with_get() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let opts = SetOptions::default().fetch(true);
+    let opts = SetOptions::default().get(true);
     let data: Option<String> = con.set_options(1, "1", opts).unwrap();
     assert_eq!(data, None);
 
-    let opts = SetOptions::default().fetch(true);
+    let opts = SetOptions::default().get(true);
     let data: Option<String> = con.set_options(1, "1", opts).unwrap();
     assert_eq!(data, Some("1".to_string()));
 }
@@ -1206,7 +1206,7 @@ fn test_options() {
 
     let opts = SetOptions::default()
         .conditional_set(ExistenceCheck::NX)
-        .fetch(true)
+        .get(true)
         .with_expiration(SetExpiry::PX(1000));
 
     assert_args!(
