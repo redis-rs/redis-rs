@@ -1205,7 +1205,7 @@ fn test_options() {
     assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
     let opts = SetOptions::default()
-        .upsert(ExistenceCheck::NX)
+        .conditional_set(ExistenceCheck::NX)
         .fetch(true)
         .with_expiration(SetExpiry::PX(1000));
 

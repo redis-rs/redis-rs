@@ -2081,7 +2081,7 @@ impl ToRedisArgs for Direction {
 ///     value: &str,
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = SetOptions::default()
-///         .upsert(ExistenceCheck::NX)
+///         .conditional_set(ExistenceCheck::NX)
 ///         .fetch(true)
 ///         .with_expiration(SetExpiry::EX(60));
 ///     con.set_options(key, value, opts)
@@ -2089,15 +2089,15 @@ impl ToRedisArgs for Direction {
 /// ```
 #[derive(Default)]
 pub struct SetOptions {
-    upsert: Option<ExistenceCheck>,
+    conditional_set: Option<ExistenceCheck>,
     get: bool,
     expiration: Option<SetExpiry>,
 }
 
 impl SetOptions {
     /// Set the existence check for the SET command
-    pub fn upsert(mut self, existence_check: ExistenceCheck) -> Self {
-        self.upsert = Some(existence_check);
+    pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
+        self.conditional_set = Some(existence_check);
         self
     }
 
@@ -2119,8 +2119,8 @@ impl ToRedisArgs for SetOptions {
     where
         W: ?Sized + RedisWrite,
     {
-        if let Some(ref upsert) = self.upsert {
-            match upsert {
+        if let Some(ref conditional_set) = self.conditional_set {
+            match conditional_set {
                 ExistenceCheck::NX => {
                     out.write_arg(b"NX");
                 }
