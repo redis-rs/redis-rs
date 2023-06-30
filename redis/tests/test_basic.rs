@@ -1,8 +1,8 @@
 #![allow(clippy::let_unit_value)]
 
 use redis::{
-    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult, SetOptions, ToRedisArgs, ExistenceCheck, SetExpiry,
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
+    PubSubCommands, RedisResult, SetExpiry, SetOptions, ToRedisArgs,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1209,11 +1209,5 @@ fn test_options() {
         .get(true)
         .with_expiration(SetExpiry::PX(1000));
 
-    assert_args!(
-        &opts,
-        "NX",
-        "GET",
-        "PX",
-        "1000"
-    );
+    assert_args!(&opts, "NX", "GET", "PX", "1000");
 }
