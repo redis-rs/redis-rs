@@ -29,16 +29,16 @@ jobs:
     steps:
     - name: Cache redis
       id: cache-redis
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: |
-          /usr/bin/redis-cli
-          /usr/bin/redis-server
-        key: ${{ runner.os }}-redis
+          ~/redis-cli
+          ~/redis-server
+        key: ${{ runner.os }}-${{ matrix.redis }}-redis
 
     - name: Cache RedisJSON
       id: cache-redisjson
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: |
           /tmp/librejson.so
@@ -50,8 +50,12 @@ jobs:
         sudo apt-get update
         wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
         tar -xzvf ${{ matrix.redis }}.tar.gz;
-        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli $HOME && popd;
         echo $PATH
+
+    - name: set PATH
+      run: |
+        echo "$HOME" >> $GITHUB_PATH
 
     - name: Install latest nightly
       uses: actions-rs/toolchain@v1
