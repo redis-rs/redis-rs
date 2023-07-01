@@ -9,6 +9,9 @@ documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
 rust-version = "1.60"
 
+[lib]
+bench = false
+
 [dependencies]
 redis = { version = "0.23.0", path = "../redis" }
 
