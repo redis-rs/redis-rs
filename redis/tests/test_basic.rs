@@ -1200,7 +1200,7 @@ fn test_set_options_with_get() {
 }
 
 #[test]
-fn test_options() {
+fn test_set_options() {
     let empty = SetOptions::default();
     assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
@@ -1210,4 +1210,28 @@ fn test_options() {
         .with_expiration(SetExpiry::PX(1000));
 
     assert_args!(&opts, "NX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .get(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(&opts, "XX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::KEEPTTL);
+
+    assert_args!(&opts, "XX", "KEEPTTL");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::EXAT(100));
+
+    assert_args!(&opts, "XX", "EXAT", "100");
+
+    let opts = SetOptions::default()
+        .with_expiration(SetExpiry::EX(1000));
+
+    assert_args!(&opts, "EX", "1000");
 }
