@@ -1200,7 +1200,7 @@ fn test_set_options_with_get() {
 }
 
 #[test]
-fn test_set_options() {
+fn test_set_options_options() {
     let empty = SetOptions::default();
     assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
