@@ -1230,8 +1230,7 @@ fn test_set_options_options() {
 
     assert_args!(&opts, "XX", "EXAT", "100");
 
-    let opts = SetOptions::default()
-        .with_expiration(SetExpiry::EX(1000));
+    let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
 
     assert_args!(&opts, "EX", "1000");
 }
