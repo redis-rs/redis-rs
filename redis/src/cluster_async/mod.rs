@@ -682,7 +682,9 @@ where
             }
         };
         if asking {
-            let _ = conn.req_packed_command(Bytes::from_static(b"ASKING")).await;
+            let _ = conn
+                .req_packed_command(Bytes::from_static(b"*1\r\n$6\r\nASKING\r\n"))
+                .await;
         }
         (addr, conn)
     }

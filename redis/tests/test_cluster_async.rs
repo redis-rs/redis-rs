@@ -472,7 +472,7 @@ fn test_async_cluster_ask_redirect() {
                     },
                     6380 => match count {
                         1 => {
-                            assert!(contains_slice(cmd, b"ASKING"));
+                            assert!(contains_slice(cmd, b"*1\r\n$6\r\nASKING\r\n"));
                             Err(Ok(Value::Okay))
                         }
                         2 => {
