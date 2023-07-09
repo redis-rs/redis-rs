@@ -45,6 +45,28 @@ pub enum Expiry {
     PERSIST,
 }
 
+/// Helper enum that is used to define expiry time for SET command
+pub enum SetExpiry {
+    /// EX seconds -- Set the specified expire time, in seconds.
+    EX(usize),
+    /// PX milliseconds -- Set the specified expire time, in milliseconds.
+    PX(usize),
+    /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
+    EXAT(usize),
+    /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
+    PXAT(usize),
+    /// KEEPTTL -- Retain the time to live associated with the key.
+    KEEPTTL,
+}
+
+/// Helper enum that is used to define existence checks
+pub enum ExistenceCheck {
+    /// NX -- Only set the key if it does not already exist.
+    NX,
+    /// XX -- Only set the key if it already exists.
+    XX,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]

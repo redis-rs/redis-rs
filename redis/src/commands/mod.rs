@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry, SetExpiry, ExistenceCheck};
 
 #[macro_use]
 mod macros;
@@ -85,6 +85,11 @@ implement_commands! {
     /// Set the string value of a key.
     fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
         cmd("SET").arg(key).arg(value)
+    }
+
+    /// Set the string value of a key with options.
+    fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) {
+        cmd("SET").arg(key).arg(value).arg(options)
     }
 
     /// Sets multiple keys to their values.
@@ -2062,5 +2067,93 @@ impl ToRedisArgs for Direction {
             Direction::Right => b"RIGHT",
         };
         out.write_arg(s);
+    }
+}
+
+/// Options for the [SET](https://redis.io/commands/set) command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// fn set_key_value(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     value: &str,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = SetOptions::default()
+///         .conditional_set(ExistenceCheck::NX)
+///         .get(true)
+///         .with_expiration(SetExpiry::EX(60));
+///     con.set_options(key, value, opts)
+/// }
+/// ```
+#[derive(Default)]
+pub struct SetOptions {
+    conditional_set: Option<ExistenceCheck>,
+    get: bool,
+    expiration: Option<SetExpiry>,
+}
+
+impl SetOptions {
+    /// Set the existence check for the SET command
+    pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
+        self.conditional_set = Some(existence_check);
+        self
+    }
+
+    /// Set the GET option for the SET command
+    pub fn get(mut self, get: bool) -> Self {
+        self.get = get;
+        self
+    }
+
+    /// Set the expiration for the SET command
+    pub fn with_expiration(mut self, expiration: SetExpiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+}
+
+impl ToRedisArgs for SetOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref conditional_set) = self.conditional_set {
+            match conditional_set {
+                ExistenceCheck::NX => {
+                    out.write_arg(b"NX");
+                }
+                ExistenceCheck::XX => {
+                    out.write_arg(b"XX");
+                }
+            }
+        }
+        if self.get {
+            out.write_arg(b"GET");
+        }
+        if let Some(ref expiration) = self.expiration {
+            match expiration {
+                SetExpiry::EX(secs) => {
+                    out.write_arg(b"EX");
+                    out.write_arg(format!("{}", secs).as_bytes());
+                }
+                SetExpiry::PX(millis) => {
+                    out.write_arg(b"PX");
+                    out.write_arg(format!("{}", millis).as_bytes());
+                }
+                SetExpiry::EXAT(unix_time) => {
+                    out.write_arg(b"EXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::PXAT(unix_time) => {
+                    out.write_arg(b"PXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::KEEPTTL => {
+                    out.write_arg(b"KEEPTTL");
+                }
+            }
+        }
     }
 }

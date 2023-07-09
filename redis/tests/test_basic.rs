@@ -1,8 +1,8 @@
 #![allow(clippy::let_unit_value)]
 
 use redis::{
-    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult,
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
+    PubSubCommands, RedisResult, SetExpiry, SetOptions, ToRedisArgs,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1183,4 +1183,54 @@ fn test_multi_generics() {
     assert_eq!(con.sadd(999_i64, vec![42, 123]), Ok(2));
     let _: () = con.rename(999_i64, b"set2").unwrap();
     assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
+}
+
+#[test]
+fn test_set_options_with_get() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let opts = SetOptions::default().get(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, None);
+
+    let opts = SetOptions::default().get(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, Some("1".to_string()));
+}
+
+#[test]
+fn test_set_options_options() {
+    let empty = SetOptions::default();
+    assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::NX)
+        .get(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(&opts, "NX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .get(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(&opts, "XX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::KEEPTTL);
+
+    assert_args!(&opts, "XX", "KEEPTTL");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::EXAT(100));
+
+    assert_args!(&opts, "XX", "EXAT", "100");
+
+    let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
+
+    assert_args!(&opts, "EX", "1000");
 }
