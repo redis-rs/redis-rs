@@ -42,6 +42,7 @@ futures-util = { version = "0.3.15", default-features = false, optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
+socket2 = { version = "0.4", default-features = false, optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.1.0", optional = true }
@@ -100,6 +101,7 @@ tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
 connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
+keep-alive = ["socket2"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
