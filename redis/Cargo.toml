@@ -152,6 +152,11 @@ name = "bench_cluster"
 harness = false
 required-features = ["cluster"]
 
+[[bench]]
+name = "bench_cluster_async"
+harness = false
+required-features = ["cluster-async", "tokio-comp"]
+
 [[example]]
 name = "async-multiplexed"
 required-features = ["tokio-comp"]

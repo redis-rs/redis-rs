@@ -142,7 +142,7 @@ jobs:
           RUSTDOCFLAGS: -Dwarnings
 
   benchmark:
-    name: Benchmark
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     env:
       redis_ver: 7.0.0
@@ -184,8 +184,8 @@ jobs:
     - name: Benchmark
       run: |
         cargo install critcmp
-        cargo bench --all-features -- --save-baseline changes
+        cargo bench --all-features -- --measurement-time 15 --save-baseline changes
         git fetch
         git checkout ${{ github.base_ref }} 
-        cargo bench --all-features -- --save-baseline base
+        cargo bench --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
