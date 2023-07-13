@@ -27,7 +27,7 @@
 //! use redis::sentinel::{ SentinelServerType, SentinelClient };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
-//! let mut master_client = SentinelClient::build(nodes, String::from("master_name"), None, SentinelServerType::Master).unwrap();
+//! let mut master_client = SentinelClient::build(nodes.clone(), String::from("master_name"), None, SentinelServerType::Master).unwrap();
 //! let mut replica_client = SentinelClient::build(nodes, String::from("master_name"), None, SentinelServerType::Replica).unwrap();
 //! let mut master_conn = master_client.get_connection().unwrap();
 //! let mut replica_conn = replica_client.get_connection().unwrap();
@@ -69,7 +69,7 @@
 //!     .master_for(
 //!         "master_name",
 //!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: Some(redis::cluster::TlsMode::Secure),
+//!             tls_mode: Some(redis::sentinel::TlsMode::Secure),
 //!             redis_connection_info: None,
 //!         }),
 //!     )
@@ -83,11 +83,12 @@
 //! use redis::{ Commands, RedisConnectionInfo };
 //! use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
 //!
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let mut master_client = SentinelClient::build(
 //!     nodes,
 //!     String::from("master1"),
 //!     Some(SentinelNodeConnectionInfo {
-//!         tls_mode: Some(redis::cluster::TlsMode::Insecure),
+//!         tls_mode: Some(redis::sentinel::TlsMode::Insecure),
 //!         redis_connection_info: Some(RedisConnectionInfo {
 //!             db: 0,
 //!             username: Some(String::from("user")),

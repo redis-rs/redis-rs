@@ -37,7 +37,7 @@ fn spawn_master_server(
     tlspaths: &TlsFilePaths,
     modules: &[Module],
 ) -> RedisServer {
-    RedisServer::new_with_addr(
+    RedisServer::new_with_addr_tls_modules_and_spawner(
         get_addr(port),
         None,
         Some(tlspaths.clone()),
@@ -65,7 +65,7 @@ fn spawn_replica_server(
     let config_file_path = dir.path().join("redis_config.conf");
     File::create(&config_file_path).unwrap();
 
-    RedisServer::new_with_addr(
+    RedisServer::new_with_addr_tls_modules_and_spawner(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),
@@ -101,7 +101,7 @@ fn spawn_sentinel_server(
     }
     file.flush().unwrap();
 
-    RedisServer::new_with_addr(
+    RedisServer::new_with_addr_tls_modules_and_spawner(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),

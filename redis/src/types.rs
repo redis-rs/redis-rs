@@ -635,6 +635,8 @@ impl RedisError {
             ErrorKind::IoError => true,
             ErrorKind::ReadOnly => true,
             ErrorKind::ClusterDown => true,
+            ErrorKind::MasterNameNotFoundBySentinel => true,
+            ErrorKind::NoValidReplicasFoundBySentinel => true,
 
             ErrorKind::ExtensionError => false,
             ErrorKind::ExecAbortError => false,
@@ -645,6 +647,7 @@ impl RedisError {
             ErrorKind::InvalidClientConfig => false,
             ErrorKind::CrossSlot => false,
             ErrorKind::ClientError => false,
+            ErrorKind::EmptySentinelList => false,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => false,
         }

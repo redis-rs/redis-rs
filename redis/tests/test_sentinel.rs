@@ -83,7 +83,7 @@ fn connect_to_all_replicas(
 
 fn assert_connect_to_known_replicas(
     sentinel: &mut Sentinel,
-    replica_conn_infos: &Vec<ConnectionAddr>,
+    replica_conn_infos: &[ConnectionAddr],
     master_name: &str,
     master_client: &Client,
     node_conn_info: &SentinelNodeConnectionInfo,
@@ -293,7 +293,7 @@ pub mod async_tests {
 
     async fn async_assert_connect_to_known_replicas(
         sentinel: &mut Sentinel,
-        replica_conn_infos: &Vec<ConnectionAddr>,
+        replica_conn_infos: &[ConnectionAddr],
         master_name: &str,
         master_client: &Client,
         node_conn_info: &SentinelNodeConnectionInfo,
