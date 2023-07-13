@@ -669,6 +669,11 @@ fn test_cluster_fan_out(
     let name = "node";
     let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
     let ports_clone = found_ports.clone();
+    let mut cmd = Cmd::new();
+    for arg in command.split_whitespace() {
+        cmd.arg(arg);
+    }
+    let packed_cmd = cmd.get_packed_command();
     // requests should route to replica
     let MockEnv {
         runtime,
@@ -680,9 +685,9 @@ fn test_cluster_fan_out(
             .retries(0)
             .read_from_replicas(),
         name,
-        move |cmd: &[u8], port| {
-            respond_startup_with_replica_using_config(name, cmd, slots_config.clone())?;
-            if (cmd[8..]).starts_with(command.as_bytes()) {
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            if received_cmd == packed_cmd {
                 ports_clone.lock().unwrap().push(port);
                 return Err(Ok(Value::Status("OK".into())));
             }
@@ -690,7 +695,7 @@ fn test_cluster_fan_out(
         },
     );
 
-    let _ = runtime.block_on(cmd(command).query_async::<_, Option<()>>(&mut connection));
+    let _ = runtime.block_on(cmd.query_async::<_, Option<()>>(&mut connection));
     found_ports.lock().unwrap().sort();
     // MockEnv creates 2 mock connections.
     assert_eq!(*found_ports.lock().unwrap(), expected_ports);
@@ -703,13 +708,13 @@ fn test_cluster_fan_out_to_all_primaries() {
 
 #[test]
 fn test_cluster_fan_out_to_all_nodes() {
-    test_cluster_fan_out("ECHO", vec![6379, 6380, 6381, 6382], None);
+    test_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
 }
 
 #[test]
 fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available() {
     test_cluster_fan_out(
-        "ECHO",
+        "CONFIG SET",
         vec![6379, 6381],
         Some(vec![
             MockSlotRange {
@@ -729,7 +734,7 @@ fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available(
 #[test]
 fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
     test_cluster_fan_out(
-        "ECHO",
+        "CONFIG SET",
         vec![6379, 6380, 6381, 6382],
         Some(vec![
             MockSlotRange {
