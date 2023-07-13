@@ -77,7 +77,14 @@ impl RoutingInfo {
                     r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
-            b"XGROUP" | b"XINFO" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            b"XGROUP CREATE"
+            | b"XGROUP CREATECONSUMER"
+            | b"XGROUP DELCONSUMER"
+            | b"XGROUP DESTROY"
+            | b"XGROUP SETID"
+            | b"XINFO CONSUMERS"
+            | b"XINFO GROUPS"
+            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
@@ -109,7 +116,26 @@ pub(crate) trait Routable {
     // Convenience function to return ascii uppercase version of the
     // the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
-        self.arg_idx(0).map(|x| x.to_ascii_uppercase())
+        let primary_command = self.arg_idx(0).map(|x| x.to_ascii_uppercase())?;
+        let mut primary_command = match primary_command.as_slice() {
+            b"XGROUP" | b"OBJECT" | b"SLOWLOG" | b"FUNCTION" | b"MODULE" | b"COMMAND"
+            | b"PUBSUB" | b"CONFIG" | b"MEMORY" | b"XINFO" | b"CLIENT" | b"ACL" | b"SCRIPT"
+            | b"CLUSTER" | b"LATENCY" => primary_command,
+            _ => {
+                return Some(primary_command);
+            }
+        };
+
+        let secondary_command = self.arg_idx(1).map(|x| x.to_ascii_uppercase());
+        Some(match secondary_command {
+            Some(cmd) => {
+                primary_command.reserve(cmd.len() + 1);
+                primary_command.extend(b" ");
+                primary_command.extend(cmd);
+                primary_command
+            }
+            None => primary_command,
+        })
     }
 
     // Returns a reference to the data for the argument at `idx`.
