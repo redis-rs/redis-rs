@@ -101,13 +101,11 @@
 //! ```
 //!
 
-use std::{
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
 
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
+use rand::Rng;
 
 use crate::{
     aio::Connection as AsyncConnection, connection::ConnectionInfo, types::RedisResult, Client,
@@ -211,15 +209,7 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
 }
 
 fn random_replica_index(max: usize) -> usize {
-    if max == 0 {
-        0
-    } else {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        (nanos as usize) % max
-    }
+    rand::thread_rng().gen_range(0..max)
 }
 
 fn try_connect_to_first_replica(
