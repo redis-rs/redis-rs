@@ -36,7 +36,7 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
-    cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotMap},
+    cluster_routing::{Redirect, ResponsePolicy, Route, RoutingInfo, Slot, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -118,6 +118,7 @@ enum CmdArg<C> {
         cmd: Arc<Cmd>,
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
         routing: Option<RoutingInfo>,
+        response_policy: Option<ResponsePolicy>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
@@ -533,48 +534,98 @@ where
         Ok(())
     }
 
-    async fn execute_on_all_nodes(
+    async fn execute_on_multiple_nodes(
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
         cmd: &Arc<Cmd>,
         only_primaries: bool,
         core: Core<C>,
+        response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
-        let results = future::join_all(
-            read_guard
-                .1
-                .all_unique_addresses(only_primaries)
-                .into_iter()
-                .filter_map(|addr| read_guard.0.get(addr).cloned())
-                .map(|conn| {
-                    (async {
-                        let conn = conn.await;
-                        func(conn, cmd.clone()).await
-                    })
-                    .boxed()
-                }),
-        )
-        .await;
+        let connections: Vec<(String, ConnectionFuture<C>)> = read_guard
+            .1
+            .all_unique_addresses(only_primaries)
+            .into_iter()
+            .filter_map(|addr| {
+                read_guard
+                    .0
+                    .get(addr)
+                    .cloned()
+                    .map(|conn| (addr.to_string(), conn))
+            })
+            .collect();
         drop(read_guard);
-        let mut merged_results = Vec::with_capacity(results.len());
 
-        // TODO - we can have better error reporting here if we had an Error variant on Value.
-        for result in results {
-            match result {
-                Ok(response) => match response {
-                    Response::Single(value) => merged_results.push(value),
-                    Response::Multiple(_) => unreachable!(),
-                },
-                Err(_) => {
-                    return (OperationTarget::FanOut, result);
-                }
+        let extract_result = |response| match response {
+            Response::Single(value) => value,
+            Response::Multiple(_) => unreachable!(),
+        };
+
+        let run_func = |(_, conn)| {
+            Box::pin(async move {
+                let conn = conn.await;
+                Ok(extract_result(func(conn, cmd.clone()).await?))
+            })
+        };
+
+        // TODO - once Value::Error will be merged, these will need to be updated to handle this new value.
+        let result = match response_policy {
+            Some(ResponsePolicy::AllSucceeded) => {
+                future::try_join_all(connections.into_iter().map(run_func))
+                    .await
+                    .map(|mut results| results.pop().unwrap()) // unwrap is safe, since at least one function succeeded
+            }
+            Some(ResponsePolicy::OneSucceeded) => {
+                future::select_ok(connections.into_iter().map(run_func))
+                    .await
+                    .map(|(result, _)| result)
+            }
+            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+                future::select_ok(connections.into_iter().map(|tuple| {
+                    Box::pin(async move {
+                        let result = run_func(tuple).await?;
+                        match result {
+                            Value::Nil => Err((ErrorKind::ResponseError, "no value found").into()),
+                            _ => Ok(result),
+                        }
+                    })
+                }))
+                .await
+                .map(|(result, _)| result)
+            }
+            Some(ResponsePolicy::Aggregate(op)) => {
+                future::try_join_all(connections.into_iter().map(run_func))
+                    .await
+                    .and_then(|results| crate::cluster_routing::aggregate(results, op))
+            }
+            Some(ResponsePolicy::AggregateLogical(op)) => {
+                future::try_join_all(connections.into_iter().map(run_func))
+                    .await
+                    .and_then(|results| crate::cluster_routing::logical_aggregate(results, op))
+            }
+            Some(ResponsePolicy::CombineArrays) => {
+                future::try_join_all(connections.into_iter().map(run_func))
+                    .await
+                    .and_then(crate::cluster_routing::combine_array_results)
+            }
+            Some(ResponsePolicy::Special) | None => {
+                // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
+                // TODO - once RESP3 is merged, return a map value here.
+                // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
+                future::try_join_all(connections.into_iter().map(|(addr, conn)| async move {
+                    let conn = conn.await;
+                    Ok(Value::Bulk(vec![
+                        Value::Data(addr.into_bytes()),
+                        extract_result(func(conn, cmd.clone()).await?),
+                    ]))
+                }))
+                .await
+                .map(Value::Bulk)
             }
         }
+        .map(Response::Single);
 
-        (
-            OperationTarget::FanOut,
-            Ok(Response::Single(Value::Bulk(merged_results))),
-        )
+        (OperationTarget::FanOut, result)
     }
 
     async fn try_cmd_request(
@@ -582,15 +633,18 @@ where
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
         redirect: Option<Redirect>,
         routing: Option<RoutingInfo>,
+        response_policy: Option<ResponsePolicy>,
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
         let route_option = match routing.as_ref().unwrap_or(&RoutingInfo::Random) {
             RoutingInfo::AllNodes => {
-                return Self::execute_on_all_nodes(func, &cmd, false, core).await
+                return Self::execute_on_multiple_nodes(func, &cmd, false, core, response_policy)
+                    .await
             }
             RoutingInfo::AllMasters => {
-                return Self::execute_on_all_nodes(func, &cmd, true, core).await
+                return Self::execute_on_multiple_nodes(func, &cmd, true, core, response_policy)
+                    .await
             }
             RoutingInfo::Random => None,
             RoutingInfo::SpecificNode(route) => Some(route),
@@ -619,8 +673,22 @@ where
         let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
 
         match info.cmd {
-            CmdArg::Cmd { cmd, func, routing } => {
-                Self::try_cmd_request(cmd, func, info.redirect, routing, core, asking).await
+            CmdArg::Cmd {
+                cmd,
+                func,
+                routing,
+                response_policy,
+            } => {
+                Self::try_cmd_request(
+                    cmd,
+                    func,
+                    info.redirect,
+                    routing,
+                    response_policy,
+                    core,
+                    asking,
+                )
+                .await
             }
             CmdArg::Pipeline {
                 pipeline,
@@ -993,6 +1061,7 @@ where
                             })
                         },
                         routing: RoutingInfo::for_routable(cmd),
+                        response_policy: RoutingInfo::response_policy(cmd),
                     },
                     sender,
                 })

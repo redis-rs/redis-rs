@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Iterator;
 
@@ -7,6 +8,7 @@ use rand::thread_rng;
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
 use crate::types::Value;
+use crate::{ErrorKind, RedisResult};
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
 
@@ -20,6 +22,30 @@ pub(crate) enum Redirect {
     Ask(String),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LogicalAggregateOp {
+    And,
+    // Or, omitted due to dead code warnings. ATM this value isn't constructed anywhere
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AggregateOp {
+    Min,
+    Sum,
+    // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ResponsePolicy {
+    OneSucceeded,
+    OneSucceededNonEmpty,
+    AllSucceeded,
+    AggregateLogical(LogicalAggregateOp),
+    Aggregate(AggregateOp),
+    CombineArrays,
+    Special,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RoutingInfo {
     AllNodes,
@@ -28,7 +54,139 @@ pub(crate) enum RoutingInfo {
     SpecificNode(Route),
 }
 
+pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
+    let initial_value = match op {
+        AggregateOp::Min => i64::MAX,
+        AggregateOp::Sum => 0,
+    };
+    let result = values
+        .into_iter()
+        .fold(RedisResult::Ok(initial_value), |acc, curr| {
+            let mut acc = acc?;
+            let int = match curr {
+                Value::Int(int) => int,
+                _ => {
+                    return Err((
+                        ErrorKind::TypeError,
+                        "expected array of integers as response",
+                    )
+                        .into());
+                }
+            };
+            acc = match op {
+                AggregateOp::Min => min(acc, int),
+                AggregateOp::Sum => acc + int,
+            };
+            Ok(acc)
+        })?;
+    Ok(Value::Int(result))
+}
+
+pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> RedisResult<Value> {
+    let initial_value = match op {
+        LogicalAggregateOp::And => true,
+    };
+    let results = values
+        .into_iter()
+        .fold(RedisResult::Ok(Vec::new()), |acc, curr| {
+            let acc = acc?;
+            let values = match curr {
+                Value::Bulk(values) => values,
+                _ => {
+                    return Err((
+                        ErrorKind::TypeError,
+                        "expected array of integers as response",
+                    )
+                        .into());
+                }
+            };
+            let mut acc = if acc.is_empty() {
+                vec![initial_value; values.len()]
+            } else {
+                acc
+            };
+            for (index, value) in values.into_iter().enumerate() {
+                let int = match value {
+                    Value::Int(int) => int,
+                    _ => {
+                        return Err((
+                            ErrorKind::TypeError,
+                            "expected array of integers as response",
+                        )
+                            .into());
+                    }
+                };
+                acc[index] = match op {
+                    LogicalAggregateOp::And => acc[index] && (int > 0),
+                };
+            }
+            Ok(acc)
+        })?;
+    Ok(Value::Bulk(
+        results
+            .into_iter()
+            .map(|result| Value::Int(result as i64))
+            .collect(),
+    ))
+}
+
+pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
+    let mut results = Vec::new();
+
+    for value in values {
+        match value {
+            Value::Bulk(values) => results.extend(values),
+            _ => {
+                return Err((ErrorKind::TypeError, "expected array of values as response").into());
+            }
+        }
+    }
+
+    Ok(Value::Bulk(results))
+}
+
 impl RoutingInfo {
+    pub(crate) fn response_policy<R>(r: &R) -> Option<ResponsePolicy>
+    where
+        R: Routable + ?Sized,
+    {
+        use ResponsePolicy::*;
+        let cmd = &r.command()?[..];
+        match cmd {
+            b"SCRIPT EXISTS" => Some(AggregateLogical(LogicalAggregateOp::And)),
+
+            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK" => {
+                Some(Aggregate(AggregateOp::Sum))
+            }
+
+            b"MSETNX" | b"WAIT" => Some(Aggregate(AggregateOp::Min)),
+
+            b"CONFIG SET" | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
+            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"LATENCY RESET" | b"MEMORY PURGE"
+            | b"MSET" | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
+                Some(AllSucceeded)
+            }
+
+            b"KEYS" | b"MGET" | b"SLOWLOG GET" => Some(CombineArrays),
+
+            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(OneSucceeded),
+
+            // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
+            b"RANDOMKEY" => Some(OneSucceededNonEmpty),
+
+            b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
+            | b"LATENCY LATEST" => Some(Special),
+
+            b"FUNCTION STATS" => Some(Special),
+
+            b"MEMORY MALLOC-STATS" | b"MEMORY DOCTOR" | b"MEMORY STATS" => Some(Special),
+
+            b"INFO" => Some(Special),
+
+            _ => None,
+        }
+    }
+
     pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
