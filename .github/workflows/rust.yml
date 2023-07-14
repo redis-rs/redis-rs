@@ -27,6 +27,7 @@ jobs:
           - 1.60.0
 
     steps:
+
     - name: Cache redis
       id: cache-redis
       uses: actions/cache@v3
@@ -57,7 +58,7 @@ jobs:
       run: |
         echo "$HOME" >> $GITHUB_PATH
 
-    - name: Install latest nightly
+    - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
@@ -65,7 +66,8 @@ jobs:
         components: rustfmt
 
     - uses: Swatinem/rust-cache@v1
-    - uses: actions/checkout@v2
+
+    - uses: actions/checkout@v3
 
     - name: Run tests
       run: make test
@@ -138,3 +140,52 @@ jobs:
         run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
+
+  benchmark:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      redis_ver: 7.0.0
+      rust_ver: stable
+    steps:
+
+    - name: Cache redis
+      id: cache-redis
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/redis-cli
+          ~/redis-server
+        key: ${{ runner.os }}-${{ env.redis_ver }}-redis
+
+    - name: Install redis
+      if: steps.cache-redis.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        wget https://github.com/redis/redis/archive/${{ env.redis_ver }}.tar.gz;
+        tar -xzvf ${{ env.redis_ver }}.tar.gz;
+        pushd redis-${{ env.redis_ver }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+        echo $PATH
+
+    - name: set PATH
+      run: |
+        echo "$HOME" >> $GITHUB_PATH
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ env.rust_ver }}
+        override: true
+
+    - uses: Swatinem/rust-cache@v1
+
+    - uses: actions/checkout@v3
+
+    - name: Benchmark
+      run: |
+        cargo install critcmp
+        cargo bench --all-features -- --measurement-time 15 --save-baseline changes
+        git fetch
+        git checkout ${{ github.base_ref }} 
+        cargo bench --all-features -- --measurement-time 15 --save-baseline base
+        critcmp base changes
