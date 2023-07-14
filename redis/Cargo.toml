@@ -102,6 +102,7 @@ connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
 keep-alive = ["socket2"]
+sentinel = []
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead

@@ -1,3 +1,4 @@
+#![cfg(feature = "sentinel")]
 mod support;
 
 use std::collections::HashMap;
