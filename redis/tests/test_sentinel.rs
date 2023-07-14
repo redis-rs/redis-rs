@@ -235,14 +235,14 @@ fn test_sentinel_client() {
 #[cfg(feature = "aio")]
 pub mod async_tests {
     use redis::{
-        aio::Connection,
+        aio::MultiplexedConnection,
         sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
         Client, ConnectionAddr, RedisError,
     };
 
     use crate::{assert_is_master_role, assert_replica_role_and_master_addr, support::*};
 
-    async fn async_assert_is_connection_to_master(conn: &mut Connection) {
+    async fn async_assert_is_connection_to_master(conn: &mut MultiplexedConnection) {
         let info: String = redis::cmd("INFO")
             .arg("REPLICATION")
             .query_async(conn)
@@ -253,7 +253,7 @@ pub mod async_tests {
     }
 
     async fn async_assert_connection_is_replica_of_correct_master(
-        conn: &mut Connection,
+        conn: &mut MultiplexedConnection,
         master_client: &Client,
     ) {
         let info: String = redis::cmd("INFO")
@@ -280,7 +280,10 @@ pub mod async_tests {
                 .async_replica_rotate_for(master_name, Some(node_conn_info))
                 .await
                 .unwrap();
-            let mut replica_con = replica_client.get_async_connection().await.unwrap();
+            let mut replica_con = replica_client
+                .get_multiplexed_async_connection()
+                .await
+                .unwrap();
 
             assert!(!replica_conn_infos.contains(&replica_client.get_connection_info().addr));
             replica_conn_infos.push(replica_client.get_connection_info().addr.clone());
@@ -305,7 +308,10 @@ pub mod async_tests {
                 .async_replica_rotate_for(master_name, Some(node_conn_info))
                 .await
                 .unwrap();
-            let mut replica_con = replica_client.get_async_connection().await.unwrap();
+            let mut replica_con = replica_client
+                .get_multiplexed_async_connection()
+                .await
+                .unwrap();
 
             assert!(replica_conn_infos.contains(&replica_client.get_connection_info().addr));
 
@@ -325,12 +331,12 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection().await?;
 
             let mut replica_con = sentinel
                 .async_replica_for(master_name, Some(&node_conn_info))
                 .await?
-                .get_async_connection()
+                .get_multiplexed_async_connection()
                 .await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
@@ -354,7 +360,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection().await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -395,7 +401,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection().await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 

@@ -108,8 +108,9 @@ use futures_util::StreamExt;
 use rand::Rng;
 
 use crate::{
-    aio::Connection as AsyncConnection, connection::ConnectionInfo, types::RedisResult, Client,
-    Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, Value,
+    aio::MultiplexedConnection as AsyncConnection, connection::ConnectionInfo, types::RedisResult,
+    Client, Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo,
+    Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -365,7 +366,7 @@ async fn async_reconnect(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
-    let new_connection = sentinel_client.get_async_connection().await?;
+    let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
     connection.replace(new_connection);
     Ok(())
 }
@@ -752,8 +753,8 @@ impl SentinelClient {
     /// Returns an async connection from the client, using the same logic from
     /// `SentinelClient::get_connection`.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
-    pub async fn get_async_connection(&mut self) -> RedisResult<crate::aio::Connection> {
+    pub async fn get_async_connection(&mut self) -> RedisResult<AsyncConnection> {
         let client = self.async_get_client().await?;
-        client.get_async_connection().await
+        client.get_multiplexed_async_connection().await
     }
 }
