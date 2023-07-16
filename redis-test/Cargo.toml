@@ -17,6 +17,7 @@ redis = { version = "0.23.0", path = "../redis" }
 
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
+crc16 = "0.4.0"
 
 [features]
 aio = ["futures", "redis/aio"]

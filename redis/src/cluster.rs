@@ -698,6 +698,32 @@ impl NodeCmd {
     }
 }
 
+#[derive(Debug, Eq)]
+struct TopologyView {
+    hash_value: u16,
+    topology_str: String,
+    nodes_count: u16
+}
+
+impl PartialOrd for TopologyView {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.nodes_count.partial_cmp(&other.nodes_count)
+    }
+}
+
+impl Ord for TopologyView {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.nodes_count.cmp(&other.nodes_count)
+    }
+}
+
+impl PartialEq for TopologyView
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.hash_value == other.hash_value
+    }
+}
+
 /// TlsMode indicates use or do not use verification of certification.
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
 #[derive(Clone, Copy)]
@@ -838,6 +864,38 @@ pub(crate) fn slot_cmd() -> Cmd {
     cmd
 }
 
+pub(crate) fn calculate_topology(topology_results: Vec<Result<&str, RedisError>>) -> Option<TopologyView>{
+    const MIN_ACCURACY_RATE: f32 = 0.2;
+    let num_of_nodes = topology_results.len();
+    let mut crc_map = HashMap::new();
+    for view_result in topology_results {
+        if view_result.is_err() {
+            continue;
+        }
+        let view = view_result.unwrap();
+        let hash_value = crc16::State::<crc16::XMODEM>::calculate(view.as_bytes());
+        let topology_entry = crc_map.entry(hash_value).or_insert(TopologyView {hash_value, topology_str: view.to_string(), nodes_count: 0});
+        topology_entry.nodes_count += 1;
+    }
+    let mut max_heap: std::collections::BinaryHeap<TopologyView> = crc_map.drain().map(|(_key, value)| value).collect();
+    println!("max_heap={:?}", max_heap);
+    if max_heap.is_empty() {
+        return None;
+    }
+    let most_frequent_topology = max_heap.pop().unwrap();
+    if max_heap.peek().is_some_and(|view| view.nodes_count == most_frequent_topology.nodes_count) && num_of_nodes >= 3 {
+        // more than a single most frequent view
+        return None;
+    }
+    let accuracy_num = most_frequent_topology.nodes_count as f32 / num_of_nodes as f32;
+    if accuracy_num >= MIN_ACCURACY_RATE {
+        println!("success! accurracy= {accuracy_num}");
+        Some(most_frequent_topology)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,5 +937,21 @@ mod tests {
                 ))),
             );
         }
+    }
+
+    #[test]
+    fn test_rand_hashmap() {
+        let err = Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Slot refresh error.",
+            format!("Lacks the slots >= {last_slot}"),
+        )));
+        let topology_results = vec![Ok("node1"), Ok("node1"), Ok("node2"), err];
+        let topology_view = calculate_topology(topology_results);
+        assert_eq!(topology_view, Some("node1"));
+
+        let topology_results = vec![Ok("node1"), Ok("node2"), Ok("node3"), err, err, err];
+        let topology_view = calculate_topology(topology_results);
+        assert_eq!(topology_view, None);
     }
 }
