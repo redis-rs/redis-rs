@@ -62,6 +62,7 @@
 //! * `cluster-async`: enables async redis cluster support (optional)
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
+//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (optional)
 //!
 //! ## Connection Parameters
 //!
