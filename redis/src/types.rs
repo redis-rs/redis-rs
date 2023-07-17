@@ -1325,6 +1325,17 @@ pub trait RedisWrite {
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.write_arg(arg.to_string().as_bytes())
     }
+
+    /// Start a buffered argument.
+    fn start_buffered_arg(&mut self);
+
+    /// Write to an existing buffered argument. If `start_buffered_arg` wasn't
+    /// called first, this may panic.
+    fn write_buffered_arg(&mut self, arg: &[u8]);
+
+    /// Finalize a buffered argument. If this isn't called after
+    /// `start_buffered_arg`, the command will not be well-formed
+    fn finish_buffered_arg(&mut self);
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1335,6 +1346,14 @@ impl RedisWrite for Vec<Vec<u8>> {
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.push(arg.to_string().into_bytes())
     }
+
+    fn start_buffered_arg(&mut self) {
+        self.push(Vec::new());
+    }
+    fn write_buffered_arg(&mut self, arg: &[u8]) {
+        self.last_mut().unwrap().extend_from_slice(arg);
+    }
+    fn finish_buffered_arg(&mut self) {}
 }
 
 /// Used to convert a value into one or multiple redis argument
