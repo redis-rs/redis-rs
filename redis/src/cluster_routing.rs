@@ -35,12 +35,37 @@ impl RoutingInfo {
     {
         let cmd = &r.command()?[..];
         match cmd {
-            b"FLUSHALL" | b"FLUSHDB" | b"SCRIPT" => Some(RoutingInfo::AllMasters),
-            b"ECHO" | b"CONFIG" | b"CLIENT" | b"SLOWLOG" | b"DBSIZE" | b"LASTSAVE" | b"PING"
-            | b"INFO" | b"BGREWRITEAOF" | b"BGSAVE" | b"CLIENT LIST" | b"SAVE" | b"TIME"
-            | b"KEYS" => Some(RoutingInfo::AllNodes),
-            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF"
-            | b"SCRIPT KILL" | b"MOVE" | b"BITOP" => None,
+            b"RANDOMKEY"
+            | b"KEYS"
+            | b"SCRIPT EXISTS"
+            | b"WAIT"
+            | b"DBSIZE"
+            | b"FLUSHALL"
+            | b"FUNCTION RESTORE"
+            | b"FUNCTION DELETE"
+            | b"FUNCTION FLUSH"
+            | b"FUNCTION LOAD"
+            | b"PING"
+            | b"FLUSHDB"
+            | b"MEMORY PURGE"
+            | b"FUNCTION KILL"
+            | b"SCRIPT KILL"
+            | b"FUNCTION STATS"
+            | b"MEMORY MALLOC-STATS"
+            | b"MEMORY DOCTOR"
+            | b"MEMORY STATS"
+            | b"INFO" => Some(RoutingInfo::AllMasters),
+
+            b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"CONFIG SET"
+            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH"
+            | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
+                Some(RoutingInfo::AllNodes)
+            }
+
+            // TODO - multi shard handling - b"MGET" |b"MSETNX" |b"DEL" |b"EXISTS" |b"UNLINK" |b"TOUCH" |b"MSET"
+            // TODO - special handling - b"SCAN"
+            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE"
+            | b"BITOP" => None,
             b"EVALSHA" | b"EVAL" => {
                 let key_count = r
                     .arg_idx(2)
@@ -52,7 +77,14 @@ impl RoutingInfo {
                     r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
-            b"XGROUP" | b"XINFO" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            b"XGROUP CREATE"
+            | b"XGROUP CREATECONSUMER"
+            | b"XGROUP DELCONSUMER"
+            | b"XGROUP DESTROY"
+            | b"XGROUP SETID"
+            | b"XINFO CONSUMERS"
+            | b"XINFO GROUPS"
+            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
@@ -84,7 +116,26 @@ pub(crate) trait Routable {
     // Convenience function to return ascii uppercase version of the
     // the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
-        self.arg_idx(0).map(|x| x.to_ascii_uppercase())
+        let primary_command = self.arg_idx(0).map(|x| x.to_ascii_uppercase())?;
+        let mut primary_command = match primary_command.as_slice() {
+            b"XGROUP" | b"OBJECT" | b"SLOWLOG" | b"FUNCTION" | b"MODULE" | b"COMMAND"
+            | b"PUBSUB" | b"CONFIG" | b"MEMORY" | b"XINFO" | b"CLIENT" | b"ACL" | b"SCRIPT"
+            | b"CLUSTER" | b"LATENCY" => primary_command,
+            _ => {
+                return Some(primary_command);
+            }
+        };
+
+        let secondary_command = self.arg_idx(1).map(|x| x.to_ascii_uppercase());
+        Some(match secondary_command {
+            Some(cmd) => {
+                primary_command.reserve(cmd.len() + 1);
+                primary_command.extend(b" ");
+                primary_command.extend(cmd);
+                primary_command
+            }
+            None => primary_command,
+        })
     }
 
     // Returns a reference to the data for the argument at `idx`.
@@ -395,30 +446,19 @@ mod tests {
 
         // Assert expected RoutingInfo explicitly:
 
-        for cmd in vec![cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("SCRIPT")] {
+        for cmd in vec![
+            cmd("FLUSHALL"),
+            cmd("FLUSHDB"),
+            cmd("DBSIZE"),
+            cmd("PING"),
+            cmd("INFO"),
+            cmd("KEYS"),
+            cmd("SCRIPT KILL"),
+        ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
                 Some(RoutingInfo::AllMasters)
             );
-        }
-
-        for cmd in vec![
-            cmd("ECHO"),
-            cmd("CONFIG"),
-            cmd("CLIENT"),
-            cmd("SLOWLOG"),
-            cmd("DBSIZE"),
-            cmd("LASTSAVE"),
-            cmd("PING"),
-            cmd("INFO"),
-            cmd("BGREWRITEAOF"),
-            cmd("BGSAVE"),
-            cmd("CLIENT LIST"),
-            cmd("SAVE"),
-            cmd("TIME"),
-            cmd("KEYS"),
-        ] {
-            assert_eq!(RoutingInfo::for_routable(&cmd), Some(RoutingInfo::AllNodes));
         }
 
         for cmd in vec![
@@ -427,11 +467,15 @@ mod tests {
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
-            cmd("SCRIPT KILL"),
             cmd("MOVE"),
             cmd("BITOP"),
         ] {
-            assert_eq!(RoutingInfo::for_routable(&cmd), None,);
+            assert_eq!(
+                RoutingInfo::for_routable(&cmd),
+                None,
+                "{}",
+                std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
+            );
         }
 
         for cmd in vec![
@@ -498,7 +542,12 @@ mod tests {
                 ))),
             ),
         ] {
-            assert_eq!(RoutingInfo::for_routable(cmd), expected,);
+            assert_eq!(
+                RoutingInfo::for_routable(cmd),
+                expected,
+                "{}",
+                std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
+            );
         }
     }
 
