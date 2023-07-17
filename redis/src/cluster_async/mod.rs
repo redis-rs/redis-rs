@@ -34,7 +34,7 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd},
+    cluster::{get_connection_info, parse_slots, slot_cmd, calculate_topology},
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
@@ -442,46 +442,46 @@ where
             write_guard.0 = mem::take(&mut connections);
         }
     }
-
+    
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
+        const MAX_REQUESTED_NODES: usize = 50;
         let inner = self.inner.clone();
-
         async move {
-            let mut write_guard = inner.conn_lock.write().await;
-            let mut connections = mem::take(&mut write_guard.0);
-            let slots = &mut write_guard.1;
-            let mut result = Ok(());
-            for (_, conn) in connections.iter_mut() {
-                let mut conn = conn.clone().await;
-                let value = match conn.req_packed_command(&slot_cmd()).await {
-                    Ok(value) => value,
-                    Err(err) => {
-                        result = Err(err);
-                        continue;
-                    }
+            let read_guard = inner.conn_lock.write().await;
+            let num_of_nodes = read_guard.0.len();
+            let amount = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
+            let mut requested_nodes = {
+                let mut rng = thread_rng();
+                read_guard.0.values().choose_multiple(&mut rng, amount)
+            };
+            let mut cluster_slot_futures = Vec::new();
+            for conn in requested_nodes.iter_mut() {
+                let mut conn: C = conn.clone().await;
+                let slots_future = async move {
+                    conn.req_packed_command(&slot_cmd()).await
                 };
-                match parse_slots(value, inner.cluster_params.tls).and_then(|v| {
-                    Self::build_slot_map(slots, v, inner.cluster_params.read_from_replicas)
-                }) {
-                    Ok(_) => {
-                        result = Ok(());
-                        break;
-                    }
-                    Err(err) => result = Err(err),
-                }
+                #[cfg(feature = "tokio-comp")]
+                cluster_slot_futures.push(tokio::spawn(slots_future));
+                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                cluster_slot_futures.push(AsyncStd::spawn(slots_future));
             }
-            result?;
-
-            let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
+            let mut topology_join_results = futures::future::join_all(cluster_slot_futures).await;
+            let topology_results: Vec<_> = topology_join_results.drain(..).filter_map(|r| r.ok()).collect();
+            let chosen_topology = calculate_topology(topology_results)?;
+            let mut slots = SlotMap::new();
+            parse_slots(chosen_topology.topology_value, inner.cluster_params.tls).and_then(|v| {
+                Self::build_slot_map(&mut slots, v, inner.cluster_params.read_from_replicas)})?;          
+            let connections: &HashMap<String, future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>> = &read_guard.0;
+            let mut nodes = slots.values().flatten().collect::<Vec<_>>();
             nodes.sort_unstable();
             nodes.dedup();
             let nodes_len = nodes.len();
+
             let addresses_and_connections_iter = nodes
                 .into_iter()
-                .map(|addr| (addr, connections.remove(addr)));
-
-            write_guard.0 = stream::iter(addresses_and_connections_iter)
+                .map(|addr| (addr, connections.get(addr).cloned()));
+            let new_connections: HashMap<String, ConnectionFuture<C>> =stream::iter(addresses_and_connections_iter)
                 .fold(
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
@@ -494,7 +494,10 @@ where
                     },
                 )
                 .await;
-
+            drop(read_guard);
+            let mut write_guard = inner.conn_lock.write().await;
+            let _ = mem::replace(&mut write_guard.1, slots);
+            let _ = mem::replace(&mut write_guard.0, new_connections);
             Ok(())
         }
     }
@@ -530,7 +533,7 @@ where
         }
         slot_map.clear();
         slot_map.fill_slots(&slots_data, read_from_replicas);
-        trace!("{:?}", slot_map);
+        println!("slot_map = {:?}", slot_map);
         Ok(())
     }
 
@@ -1111,6 +1114,7 @@ async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration
 where
     C: ConnectionLike + Send + 'static,
 {
+    // TODO: Add a check to re-resolve DNS addresses to verify we that we have a connection to the right node
     crate::cmd("PING")
         .query_async::<_, String>(conn)
         .timeout(timeout)
