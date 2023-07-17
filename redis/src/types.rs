@@ -121,6 +121,8 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+    /// Attempted to kill a script/function while they werent' executing
+    NotBusy,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -462,6 +464,7 @@ impl RedisError {
             ErrorKind::CrossSlot => Some("CROSSSLOT"),
             ErrorKind::MasterDown => Some("MASTERDOWN"),
             ErrorKind::ReadOnly => Some("READONLY"),
+            ErrorKind::NotBusy => Some("NOTBUSY"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(code),
                 _ => None,
@@ -489,6 +492,7 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            ErrorKind::NotBusy => "not busy",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
         }
@@ -636,6 +640,7 @@ impl RedisError {
             ErrorKind::InvalidClientConfig => false,
             ErrorKind::CrossSlot => false,
             ErrorKind::ClientError => false,
+            ErrorKind::NotBusy => false,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => false,
         }
