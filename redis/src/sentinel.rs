@@ -209,8 +209,16 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
         && replica_info["port"].parse::<u16>().is_ok()
 }
 
+/// Generates a random value in the 0..max range. If max is zero, the returned value is
+/// also zero.
 fn random_replica_index(max: usize) -> usize {
-    rand::thread_rng().gen_range(0..max)
+    if max == 0 {
+        // This is just to avoid panicking in the gen_range function, this value does
+        // not have any special meaning, and is not expected to be used.
+        0
+    } else {
+        rand::thread_rng().gen_range(0..max)
+    }
 }
 
 fn try_connect_to_first_replica(
