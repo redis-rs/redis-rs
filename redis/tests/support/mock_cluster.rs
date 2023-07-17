@@ -107,12 +107,12 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
-            Value::Int(0),
-            Value::Int(16383),
-            Value::Bulk(vec![
-                Value::Data(name.as_bytes().to_vec()),
-                Value::Int(6379),
-            ]),
+        Value::Int(0),
+        Value::Int(16383),
+        Value::Bulk(vec![
+            Value::Data(name.as_bytes().to_vec()),
+            Value::Int(6379),
+        ]),
         ])])))
     } else if contains_slice(cmd, b"READONLY") {
         Err(Ok(Value::Status("OK".into())))
@@ -151,27 +151,8 @@ pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResu
     )
 }
 
-pub fn respond_startup_with_replica_using_config(
-    name: &str,
-    cmd: &[u8],
-    slots_config: Option<Vec<MockSlotRange>>,
-) -> Result<(), RedisResult<Value>> {
-    let slots_config = slots_config.unwrap_or(vec![
-        MockSlotRange {
-            primary_port: 6379,
-            replica_ports: vec![6380],
-            slot_range: (0..8191),
-        },
-        MockSlotRange {
-            primary_port: 6381,
-            replica_ports: vec![6382],
-            slot_range: (8192..16383),
-        },
-    ]);
-    if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
-    } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        let slots = slots_config
+pub fn create_topology_from_config(name: &str, slots_config: Vec<MockSlotRange>) -> Value {
+    let slots_vec = slots_config
             .into_iter()
             .map(|slot_config| {
                 let replicas = slot_config
@@ -195,7 +176,31 @@ pub fn respond_startup_with_replica_using_config(
                 ])
             })
             .collect();
-        Err(Ok(Value::Bulk(slots)))
+        Value::Bulk(slots_vec)
+}
+
+pub fn respond_startup_with_replica_using_config(
+    name: &str,
+    cmd: &[u8],
+    slots_config: Option<Vec<MockSlotRange>>,
+) -> Result<(), RedisResult<Value>> {
+    let slots_config = slots_config.unwrap_or(vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![6380],
+            slot_range: (0..8191),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![6382],
+            slot_range: (8192..16383),
+        },
+    ]);
+    if contains_slice(cmd, b"PING") {
+        Err(Ok(Value::Status("OK".into())))
+    } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+        let slots = create_topology_from_config(name, slots_config);
+        Err(Ok(slots))
     } else if contains_slice(cmd, b"READONLY") {
         Err(Ok(Value::Status("OK".into())))
     } else {

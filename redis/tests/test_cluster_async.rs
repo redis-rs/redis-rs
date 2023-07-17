@@ -447,6 +447,139 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
     assert_eq!(value, Ok(Some(123)));
 }
 
+fn test_async_cluster_move_error_refresh_topology(slots_config_vec: Vec<Vec<MockSlotRange>>, ports: Vec<u16>, refresh_only_once: bool) {
+    assert!(!ports.is_empty() && !slots_config_vec.is_empty());
+    let name = "refresh_topology";
+    let requests = atomic::AtomicUsize::new(0);
+    let started = atomic::AtomicBool::new(false);
+    // let refreshed: AtomicBool = atomic::AtomicBool::new(false);
+    let refreshed: Vec<_> = ports.iter().map(|_| atomic::AtomicBool::new(false)).collect();
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        // let topology_view_1 = create_topology_from_config(name, view_1);
+        if !started.load(atomic::Ordering::SeqCst) {
+            respond_startup_with_replica_using_config(name, cmd, Some(slots_config_vec[0].clone()))?;
+        }
+        started.store(true, atomic::Ordering::SeqCst);
+
+        if contains_slice(cmd, b"PING") {
+            return Err(Ok(Value::Status("OK".into())));
+        }
+
+        let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+        // let create_topology_view = |port: u16, name: &str, 
+        let is_get_cmd = contains_slice(cmd, b"GET");
+        let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+        let moved_node = ports[0];
+        match i {
+            // Respond that the key exists on a node that does not yet have a connection:
+            0 => Err(parse_redis_value(
+                format!("-MOVED 123 {name}:{moved_node}\r\n").as_bytes(),
+            )),
+            _ => {
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    let num_of_view = slots_config_vec.len();
+                    let port_index = ports.iter().position(|&p| p == port)
+                        .expect(&format!("CLUSTER SLOTS was called with unknown port: {port}; Known ports: {:?}", ports));
+                    if refresh_only_once {
+                        assert!(!refreshed.get(port_index).unwrap().swap(true, Ordering::SeqCst));
+                    }
+                    // If we have less views than nodes, use the last view
+                    let view_index = if port_index < num_of_view {port_index} else { num_of_view - 1 };
+                    return Err(Ok(create_topology_from_config(name, slots_config_vec[view_index].clone())));
+                } else {
+                    assert_eq!(port, moved_node);
+                    assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
+                    get_response
+                }
+            }
+        }
+    });
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_move_error_refresh_topology_all_nodes_agree() {
+    let topology_view = vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..4000),
+        },
+        MockSlotRange {
+            primary_port: 6380,
+            replica_ports: vec![],
+            slot_range: (4001..8191),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8192..16383),
+        },
+    ];
+    test_async_cluster_move_error_refresh_topology(vec![topology_view], vec![6379, 6380, 6381], true);
+}#[test]
+
+fn test_async_cluster_move_error_refresh_topology_no_majority() {
+    let topology_view_1 = vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..4000),
+        },
+        MockSlotRange {
+            primary_port: 6380,
+            replica_ports: vec![],
+            slot_range: (4001..8191),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8192..16383),
+        },
+    ];
+    let topology_view_2 = vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..4000),
+        },
+        MockSlotRange {
+            primary_port: 6380,
+            replica_ports: vec![],
+            slot_range: (4001..8191),
+        },
+    ];
+    let topology_view_3 = vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..3989),
+        },
+        MockSlotRange {
+            primary_port: 6380,
+            replica_ports: vec![],
+            slot_range: (3990..8191),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8192..16383),
+        },
+    ];
+    test_async_cluster_move_error_refresh_topology(vec![topology_view_1, topology_view_2, topology_view_3], vec![6379, 6380, 6381], false);
+}
 #[test]
 fn test_async_cluster_ask_redirect() {
     let name = "node";
