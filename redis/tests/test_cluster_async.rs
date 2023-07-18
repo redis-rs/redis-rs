@@ -100,6 +100,24 @@ fn test_async_cluster_basic_pipe() {
 }
 
 #[test]
+fn test_async_cluster_multi_shard_commands() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+
+        let res: String = connection
+            .mset(&[("foo", "bar"), ("bar", "foo"), ("baz", "bazz")])
+            .await?;
+        assert_eq!(res, "OK");
+        let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await?;
+        assert_eq!(res, vec!["bazz", "bar", "foo"]);
+        Ok::<_, RedisError>(())
+    })
+    .unwrap()
+}
+
+#[test]
 fn test_async_cluster_basic_failover() {
     block_on_all(async move {
         test_failover(&TestClusterContext::new(6, 1), 10, 123).await;
