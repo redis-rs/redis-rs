@@ -3,7 +3,8 @@ use std::io::Write;
 use std::thread::sleep;
 use std::time::Duration;
 
-use redis::sentinel::{SentinelNodeConnectionInfo, TlsMode};
+use redis::cluster::TlsMode;
+use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
