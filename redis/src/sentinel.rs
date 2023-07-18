@@ -101,7 +101,7 @@
 //! ```
 //!
 
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroUsize};
 
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
@@ -209,21 +209,14 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
         && replica_info["port"].parse::<u16>().is_ok()
 }
 
-/// Generates a random value in the 0..max range. If max is zero, the returned value is
-/// also zero.
-fn random_replica_index(max: usize) -> usize {
-    if max == 0 {
-        // This is just to avoid panicking in the gen_range function, this value does
-        // not have any special meaning, and is not expected to be used.
-        0
-    } else {
-        rand::thread_rng().gen_range(0..max)
-    }
+/// Generates a random value in the 0..max range.
+fn random_replica_index(max: NonZeroUsize) -> usize {
+    rand::thread_rng().gen_range(0..max.into())
 }
 
 fn try_connect_to_first_replica(
     addresses: &Vec<ConnectionInfo>,
-    start_index: usize,
+    start_index: Option<usize>,
 ) -> Result<Client, crate::RedisError> {
     if addresses.is_empty() {
         fail!((
@@ -231,6 +224,8 @@ fn try_connect_to_first_replica(
             "No valid replica found in sentinel for given name",
         ));
     }
+
+    let start_index = start_index.unwrap_or(0);
 
     let mut last_err = None;
     for i in 0..addresses.len() {
@@ -463,7 +458,7 @@ impl Sentinel {
             sentinels_connection_info,
             connections_cache,
             async_connections_cache,
-            replica_start_index: random_replica_index(1000000),
+            replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
         })
     }
 
@@ -549,7 +544,7 @@ impl Sentinel {
     ) -> RedisResult<Client> {
         let addresses = self
             .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
-        let start_index = random_replica_index(addresses.len());
+        let start_index = NonZeroUsize::new(addresses.len()).map(random_replica_index);
         try_connect_to_first_replica(&addresses, start_index)
     }
 
@@ -567,7 +562,7 @@ impl Sentinel {
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
         }
-        try_connect_to_first_replica(&addresses, self.replica_start_index)
+        try_connect_to_first_replica(&addresses, Some(self.replica_start_index))
     }
 }
 
@@ -651,7 +646,7 @@ impl Sentinel {
                 node_connection_info.unwrap_or_default(),
             )
             .await?;
-        let start_index = random_replica_index(addresses.len());
+        let start_index = NonZeroUsize::new(addresses.len()).map(random_replica_index);
         try_connect_to_first_replica(&addresses, start_index)
     }
 
@@ -673,7 +668,7 @@ impl Sentinel {
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
         }
-        try_connect_to_first_replica(&addresses, self.replica_start_index)
+        try_connect_to_first_replica(&addresses, Some(self.replica_start_index))
     }
 }
 
