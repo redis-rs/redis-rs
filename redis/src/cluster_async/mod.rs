@@ -36,7 +36,10 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
-    cluster_routing::{Redirect, ResponsePolicy, Route, RoutingInfo, Slot, SlotMap},
+    cluster_routing::{
+        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+        SingleNodeRoutingInfo, Slot, SlotMap,
+    },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -132,10 +135,12 @@ enum CmdArg<C> {
 fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::SpecificNode(route)) => Some(route),
-            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
-            _ => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
+                Some(route)
+            }
+            Some(RoutingInfo::MultiNode(_)) => None,
+            None => None,
         }
     }
 
@@ -537,14 +542,14 @@ where
     async fn execute_on_multiple_nodes(
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
         cmd: &Arc<Cmd>,
-        only_primaries: bool,
+        routing: &MultipleNodeRoutingInfo,
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
         let connections: Vec<(String, ConnectionFuture<C>)> = read_guard
             .1
-            .all_unique_addresses(only_primaries)
+            .addresses_for_multi_routing(routing)
             .into_iter()
             .filter_map(|addr| {
                 read_guard
@@ -637,18 +642,24 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route_option = match routing.as_ref().unwrap_or(&RoutingInfo::Random) {
-            RoutingInfo::AllNodes => {
-                return Self::execute_on_multiple_nodes(func, &cmd, false, core, response_policy)
-                    .await
+        let route_option = match routing
+            .as_ref()
+            .unwrap_or(&RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        {
+            RoutingInfo::MultiNode(multi_node_routing) => {
+                return Self::execute_on_multiple_nodes(
+                    func,
+                    &cmd,
+                    multi_node_routing,
+                    core,
+                    response_policy,
+                )
+                .await
             }
-            RoutingInfo::AllMasters => {
-                return Self::execute_on_multiple_nodes(func, &cmd, true, core, response_policy)
-                    .await
-            }
-            RoutingInfo::Random => None,
-            RoutingInfo::SpecificNode(route) => Some(route),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random) => None,
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => Some(route),
         };
+
         let (addr, conn) = Self::get_connection(redirect, route_option, core, asking).await;
         let result = func(conn, cmd).await;
         (addr.into(), result)

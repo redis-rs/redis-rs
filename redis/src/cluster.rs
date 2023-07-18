@@ -45,7 +45,7 @@ use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::SlotAddr;
+use crate::cluster_routing::{MultipleNodeRoutingInfo, SingleNodeRoutingInfo, SlotAddr};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -405,14 +405,16 @@ where
         };
 
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => {
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
                 let mut rng = thread_rng();
                 Ok(addr_for_slot(Route::new(
                     rng.gen_range(0..SLOT_SIZE),
                     SlotAddr::Master,
                 ))?)
             }
-            Some(RoutingInfo::SpecificNode(route)) => Ok(addr_for_slot(route)?),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
+                Ok(addr_for_slot(route)?)
+            }
             _ => fail!(UNROUTABLE_ERROR),
         }
     }
@@ -436,7 +438,11 @@ where
         Ok(result)
     }
 
-    fn execute_on_all_nodes<T, F>(&self, mut func: F, only_primaries: bool) -> RedisResult<T>
+    fn execute_on_multiple_nodes<T, F>(
+        &self,
+        mut func: F,
+        routing: MultipleNodeRoutingInfo,
+    ) -> RedisResult<T>
     where
         T: MergeResults,
         F: FnMut(&mut C) -> RedisResult<T>,
@@ -446,7 +452,8 @@ where
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        for addr in slots.all_unique_addresses(only_primaries) {
+        let addresses = slots.addresses_for_multi_routing(&routing);
+        for addr in addresses {
             let addr = addr.to_string();
             if let Some(connection) = connections.get_mut(&addr) {
                 results.insert(addr, func(connection)?);
@@ -464,13 +471,12 @@ where
         F: FnMut(&mut C) -> RedisResult<T>,
     {
         let route = match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::SpecificNode(route)) => Some(route),
-            Some(RoutingInfo::AllMasters) => {
-                return self.execute_on_all_nodes(func, true);
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
+                Some(route)
             }
-            Some(RoutingInfo::AllNodes) => {
-                return self.execute_on_all_nodes(func, false);
+            Some(RoutingInfo::MultiNode(multi_node_routing)) => {
+                return self.execute_on_multiple_nodes(func, multi_node_routing);
             }
             None => fail!(UNROUTABLE_ERROR),
         };
