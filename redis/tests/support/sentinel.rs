@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use redis::cluster::TlsMode;
 use redis::sentinel::SentinelNodeConnectionInfo;
+use redis::Client;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
@@ -119,6 +120,48 @@ fn spawn_sentinel_server(
     )
 }
 
+fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
+    let rolecmd = redis::cmd("ROLE");
+
+    let cluster_size = servers.len() / (masters as usize);
+    let clusters = servers.len() / cluster_size;
+    let replicas = cluster_size - 1;
+
+    for cluster_index in 0..clusters {
+        let master_addr = servers[cluster_index * cluster_size].connection_info();
+        for _ in 0..100 {
+            let master_client = Client::open(master_addr.clone()).unwrap();
+            if let Ok(mut conn) = master_client.get_connection() {
+                let r: (String, i32, redis::Value) = rolecmd.query(&mut conn).unwrap();
+                if r.0.starts_with("master") {
+                    break;
+                }
+            }
+
+            sleep(Duration::from_millis(25));
+        }
+
+        for replica_index in 0..replicas {
+            let replica_addr =
+                servers[(cluster_index * cluster_size) + 1 + replica_index].connection_info();
+
+            for _ in 0..200 {
+                let replica_client = Client::open(replica_addr.clone()).unwrap();
+                if let Ok(mut conn) = replica_client.get_connection() {
+                    let r: (String, String, i32, String, i32) = rolecmd.query(&mut conn).unwrap();
+                    if r.0.starts_with("slave") {
+                        return;
+                    }
+                }
+
+                sleep(Duration::from_millis(25));
+            }
+        }
+    }
+
+    panic!("failed waiting for master and replicas to be ready and in sync");
+}
+
 impl RedisSentinelCluster {
     pub fn new(masters: u16, replicas_per_master: u16, sentinels: u16) -> RedisSentinelCluster {
         RedisSentinelCluster::with_modules(masters, replicas_per_master, sentinels, &[])
@@ -169,7 +212,7 @@ impl RedisSentinelCluster {
         }
 
         // Wait for replicas to sync so that the sentinels discover them on the first try
-        sleep(Duration::from_millis(100));
+        wait_for_replicas_to_sync(&servers, masters);
 
         let mut sentinel_servers = vec![];
         for _ in 0..sentinels {
