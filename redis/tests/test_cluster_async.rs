@@ -1082,9 +1082,47 @@ fn test_cluster_fan_out_and_combine_arrays_of_values() {
     result.sort();
     assert_eq!(
         result,
-        vec![format!("key:6379"), format!("key:6381"),],
+        vec!["key:6379".to_string(), "key:6381".to_string(),],
         "{result:?}"
     );
+}
+
+#[test]
+fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
+    let name = "test_cluster_split_multi_shard_command_and_combine_arrays_of_values";
+    let mut cmd = cmd("MGET");
+    cmd.arg("foo").arg("bar").arg("baz");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            let cmd_str = std::str::from_utf8(received_cmd).unwrap();
+            let results = ["foo", "bar", "baz"]
+                .iter()
+                .filter_map(|expected_key| {
+                    if cmd_str.contains(expected_key) {
+                        Some(Value::Data(format!("{expected_key}-{port}").into_bytes()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Err(Ok(Value::Bulk(results)))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap();
+    assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
 }
 
 #[test]

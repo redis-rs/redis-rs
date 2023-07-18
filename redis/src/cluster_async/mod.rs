@@ -540,24 +540,35 @@ where
         Ok(())
     }
 
-    async fn execute_on_multiple_nodes(
+    async fn execute_on_multiple_nodes<'a>(
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
-        cmd: &Arc<Cmd>,
-        routing: &MultipleNodeRoutingInfo,
+        cmd: &'a Arc<Cmd>,
+        routing: &'a MultipleNodeRoutingInfo,
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
-        let connections: Vec<(String, ConnectionFuture<C>)> = read_guard
+        let connections: Vec<_> = read_guard
             .1
             .addresses_for_multi_routing(routing)
             .into_iter()
-            .filter_map(|addr| {
-                read_guard
-                    .0
-                    .get(addr)
-                    .cloned()
-                    .map(|conn| (addr.to_string(), conn))
+            .enumerate()
+            .filter_map(|(index, addr)| {
+                read_guard.0.get(addr).cloned().map(|conn| {
+                    let cmd = match routing {
+                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                            let mut new_cmd = Cmd::new();
+                            new_cmd.arg(cmd.arg_idx(0));
+                            let (_, indices) = vec.get(index).unwrap();
+                            for index in indices {
+                                new_cmd.arg(cmd.arg_idx(*index));
+                            }
+                            Arc::new(new_cmd)
+                        }
+                        _ => cmd.clone(),
+                    };
+                    (addr.to_string(), conn, cmd)
+                })
             })
             .collect();
         drop(read_guard);
@@ -567,10 +578,10 @@ where
             Response::Multiple(_) => unreachable!(),
         };
 
-        let run_func = |(_, conn)| {
+        let run_func = |(_, conn, cmd)| {
             Box::pin(async move {
                 let conn = conn.await;
-                Ok(extract_result(func(conn, cmd.clone()).await?))
+                Ok(extract_result(func(conn, cmd).await?))
             })
         };
 
@@ -612,17 +623,25 @@ where
             Some(ResponsePolicy::CombineArrays) => {
                 future::try_join_all(connections.into_iter().map(run_func))
                     .await
-                    .and_then(crate::cluster_routing::combine_array_results)
+                    .and_then(|results| match routing {
+                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                            crate::cluster_routing::combine_and_sort_array_results(
+                                results,
+                                vec.iter().map(|(_, indices)| indices),
+                            )
+                        }
+                        _ => crate::cluster_routing::combine_array_results(results),
+                    })
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
                 // TODO - once RESP3 is merged, return a map value here.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
-                future::try_join_all(connections.into_iter().map(|(addr, conn)| async move {
+                future::try_join_all(connections.into_iter().map(|(addr, conn, cmd)| async move {
                     let conn = conn.await;
                     Ok(Value::Bulk(vec![
                         Value::Data(addr.into_bytes()),
-                        extract_result(func(conn, cmd.clone()).await?),
+                        extract_result(func(conn, cmd).await?),
                     ]))
                 }))
                 .await
