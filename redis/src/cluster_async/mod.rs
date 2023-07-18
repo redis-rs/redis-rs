@@ -28,10 +28,11 @@ use std::{
     marker::Unpin,
     mem,
     pin::Pin,
-    sync::Arc,
-    task::{self, Poll},
+    sync::{Arc, atomic},
+    task::{self, Poll}
 };
-
+use tokio_retry::Retry;
+use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd, calculate_topology},
@@ -51,7 +52,7 @@ use futures::{
 use futures_time::future::FutureExt;
 use log::trace;
 use pin_project_lite::pin_project;
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{seq::{IteratorRandom, SliceRandom}, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 const SLOT_SIZE: usize = 16384;
@@ -267,12 +268,12 @@ where
         };
         match ready!(future.poll(cx)) {
             (_, Ok(item)) => {
-                trace!("Ok");
+                println!("Ok");
                 self.respond(Ok(item));
                 Next::Done.into()
             }
             (target, Err(err)) => {
-                trace!("Request error {}", err);
+                println!("Request error {}", err);
 
                 let address = match target {
                     OperationTarget::Node { address } => address,
@@ -284,7 +285,7 @@ where
                 };
 
                 let request = this.request.as_mut().unwrap();
-
+                println!("request.retry={} number_of_retries={}", request.retry, this.retry_params.number_of_retries);
                 if request.retry >= this.retry_params.number_of_retries {
                     self.respond(Err(err));
                     return Next::Done.into();
@@ -325,6 +326,7 @@ where
                     .into(),
                     _ => {
                         if err.is_retryable() {
+                            println!("error is retryable");
                             Next::Retry {
                                 request: this.request.take().unwrap(),
                             }
@@ -365,6 +367,7 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<Self> {
+        const NUM_OF_RETRIES: usize = 3;
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, Default::default())),
@@ -377,7 +380,12 @@ where
             pending_requests: Vec::new(),
             state: ConnectionState::PollComplete,
         };
-        connection.refresh_slots().await?;
+        println!("calling from 3");
+        let retry_strategy = ExponentialBackoff::from_millis(10)
+            .map(jitter) // add jitter to delays
+            .take(NUM_OF_RETRIES);    // limit to 3 retries
+        let retries = Arc::new(atomic::AtomicUsize::new(NUM_OF_RETRIES));
+        Retry::spawn(retry_strategy, || connection.refresh_slots_with_retries(Some(retries.clone()))).await?;
         Ok(connection)
     }
 
@@ -394,7 +402,7 @@ where
                     match result {
                         Ok(conn) => Some((addr, async { conn }.boxed().shared())),
                         Err(e) => {
-                            trace!("Failed to connect to initial node: {:?}", e);
+                            println!("Failed to connect to initial node: {:?}", e);
                             None
                         }
                     }
@@ -445,6 +453,11 @@ where
     
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
+        self.refresh_slots_with_retries(None)
+    }
+    // Query a node to discover slot-> master mappings.
+    fn refresh_slots_with_retries(&mut self, retries: Option<Arc<atomic::AtomicUsize>>) -> impl Future<Output = RedisResult<()>> {
+        println!("refresh_slots was called");
         const MAX_REQUESTED_NODES: usize = 50;
         let inner = self.inner.clone();
         async move {
@@ -467,11 +480,22 @@ where
                 cluster_slot_futures.push(AsyncStd::spawn(slots_future));
             }
             let mut topology_join_results = futures::future::join_all(cluster_slot_futures).await;
-            let topology_results: Vec<_> = topology_join_results.drain(..).filter_map(|r| r.ok()).collect();
-            let chosen_topology = calculate_topology(topology_results)?;
+            let mut topology_results: Vec<_> = topology_join_results.drain(..).filter_map(|r| r.ok()).collect();
+            topology_results.shuffle(&mut thread_rng());
+            let topology_vec = calculate_topology(topology_results, retries.clone())?;
+            println!("chosen topology={:?}", topology_vec);
             let mut slots = SlotMap::new();
-            parse_slots(chosen_topology.topology_value, inner.cluster_params.tls).and_then(|v| {
-                Self::build_slot_map(&mut slots, v, inner.cluster_params.read_from_replicas)})?;          
+            for (idx, topology_view) in topology_vec.iter().enumerate() {
+                match parse_slots(&topology_view.topology_value, inner.cluster_params.tls).and_then(|v| {
+                    Self::build_slot_map(&mut slots, v, inner.cluster_params.read_from_replicas)}) {
+                        Ok(_) => {println!("found view in try {idx}"); break},
+                        Err(e) => {
+                            println!("failed to parse slots for index {idx}: {e}");
+                            // If it's the last view, raise the error.
+                            if idx == topology_vec.len() - 1 { return Err(e) } else { continue }
+                        }
+                    }
+            }
             let connections: &HashMap<String, future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>> = &read_guard.0;
             let mut nodes = slots.values().flatten().collect::<Vec<_>>();
             nodes.sort_unstable();
@@ -533,7 +557,8 @@ where
         }
         slot_map.clear();
         slot_map.fill_slots(&slots_data, read_from_replicas);
-        println!("slot_map = {:?}", slot_map);
+        println!("{:?}", slot_map);
+        println!("slots map={:?}", slot_map);
         Ok(())
     }
 
@@ -699,31 +724,33 @@ where
         match future {
             RecoverFuture::RecoverSlots(mut future) => match future.as_mut().poll(cx) {
                 Poll::Ready(Ok(_)) => {
-                    trace!("Recovered!");
+                    println!("Recovered!");
                     self.state = ConnectionState::PollComplete;
                     Poll::Ready(Ok(()))
                 }
                 Poll::Pending => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(future));
-                    trace!("Recover not ready");
+                    println!("Recover not ready");
                     Poll::Pending
                 }
                 Poll::Ready(Err(err)) => {
+                    println!("calling from 1");
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
                         self.refresh_slots(),
                     )));
+                    println!("self.state={:?}", self.state);
                     Poll::Ready(Err(err))
                 }
             },
             RecoverFuture::Reconnect(mut future) => match future.as_mut().poll(cx) {
                 Poll::Ready(_) => {
-                    trace!("Reconnected connections");
+                    println!("Reconnected connections");
                     self.state = ConnectionState::PollComplete;
                     Poll::Ready(Ok(()))
                 }
                 Poll::Pending => {
                     self.state = ConnectionState::Recover(RecoverFuture::Reconnect(future));
-                    trace!("Recover not ready");
+                    println!("Recover not ready2");
                     Poll::Pending
                 }
             },
@@ -732,7 +759,7 @@ where
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         let mut poll_flush_action = PollFlushAction::None;
-
+        println!("poll_complete(&mut self, cx: &mut task::Context<'_>) -> ");
         if !self.pending_requests.is_empty() {
             let mut pending_requests = mem::take(&mut self.pending_requests);
             for request in pending_requests.drain(..) {
@@ -785,6 +812,7 @@ where
                 Next::Reconnect {
                     request, target, ..
                 } => {
+                    println!("hereee6");
                     poll_flush_action = match target {
                         OperationTarget::Node { address } => poll_flush_action
                             .change_state(PollFlushAction::Reconnect(vec![address])),
@@ -800,12 +828,14 @@ where
         match poll_flush_action {
             PollFlushAction::None => {
                 if self.in_flight_requests.is_empty() {
+                    println!("hereee4");
                     Poll::Ready(poll_flush_action)
                 } else {
+                    println!("hereee5");
                     Poll::Pending
                 }
             }
-            rebuild @ PollFlushAction::RebuildSlots => Poll::Ready(rebuild),
+            rebuild @ PollFlushAction::RebuildSlots => {println!("hereee7");Poll::Ready(rebuild)},
             reestablish @ PollFlushAction::Reconnect(_) => Poll::Ready(reestablish),
         }
     }
@@ -881,6 +911,7 @@ where
                 match ready!(self.as_mut().poll_recover(cx, future)) {
                     Ok(()) => Poll::Ready(Ok(())),
                     Err(err) => {
+                        println!("calling 4");
                         // We failed to reconnect, while we will try again we will report the
                         // error if we can to avoid getting trapped in an infinite loop of
                         // trying to reconnect
@@ -888,8 +919,10 @@ where
                             .iter_pin_mut()
                             .find(|request| request.request.is_some())
                         {
+                            println!("failing");
                             (*request).as_mut().respond(Err(err));
                         } else {
+                            println!("self.refresh_error = Some(err);");
                             self.refresh_error = Some(err);
                         }
                         Poll::Ready(Ok(()))
@@ -900,7 +933,7 @@ where
     }
 
     fn start_send(mut self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
-        trace!("start_send");
+        println!("start_send");
         let Message { cmd, sender } = msg;
 
         let redirect = None;
@@ -918,7 +951,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        trace!("poll_complete: {:?}", self.state);
+        println!("poll_complete: {:?}", self.state);
         loop {
             self.send_refresh_error();
 
@@ -930,6 +963,7 @@ where
                             // We failed to reconnect, while we will try again we will report the
                             // error if we can to avoid getting trapped in an infinite loop of
                             // trying to reconnect
+                            println!("got refresh error={err}");
                             self.refresh_error = Some(err);
 
                             // Give other tasks a chance to progress before we try to recover
@@ -943,6 +977,7 @@ where
                 ConnectionState::PollComplete => match ready!(self.poll_complete(cx)) {
                     PollFlushAction::None => return Poll::Ready(Ok(())),
                     PollFlushAction::RebuildSlots => {
+                        println!("calling from 2");
                         self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(
                             Box::pin(self.refresh_slots()),
                         ));
@@ -962,19 +997,21 @@ where
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
         // Try to drive any in flight requests to completion
+
         match self.poll_complete(cx) {
             Poll::Ready(poll_flush_action) => match poll_flush_action {
-                PollFlushAction::None => (),
-                _ => Err(()).map_err(|_| ())?,
+                PollFlushAction::None =>         println!("PollFlushAction::None"),
+                _ => {println!("Err(()).map_err(|_| ()"); Err(()).map_err(|_| ())?},
             },
-            Poll::Pending => (),
+            Poll::Pending => println!("Poll::Pending"),
         };
         // If we no longer have any requests in flight we are done (skips any reconnection
         // attempts)
         if self.in_flight_requests.is_empty() {
+            println!("self.in_flight_requests.is_empty()e");
             return Poll::Ready(Ok(()));
         }
-
+        println!("poll close");
         self.poll_flush(cx)
     }
 }
@@ -984,7 +1021,7 @@ where
     C: ConnectionLike + Send + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        trace!("req_packed_command");
+        println!("req_packed_command");
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
             self.0

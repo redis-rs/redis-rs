@@ -121,7 +121,7 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MockSlotRange {
     pub primary_port: u16,
     pub replica_ports: Vec<u16>,
