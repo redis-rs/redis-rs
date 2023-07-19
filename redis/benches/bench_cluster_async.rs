@@ -1,6 +1,7 @@
 #![allow(clippy::unit_arg)] // want to allow this for `black_box()`
 #![cfg(feature = "cluster")]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use futures_util::{stream, TryStreamExt};
 use redis::RedisError;
 
 use support::*;
@@ -9,14 +10,12 @@ use tokio::runtime::Runtime;
 #[path = "../tests/support/mod.rs"]
 mod support;
 
-fn bench_basic(
+fn bench_cluster_async(
     c: &mut Criterion,
     con: &mut redis::cluster_async::ClusterConnection,
     runtime: &Runtime,
 ) {
-    let mut group = c.benchmark_group("cluster_async_basic");
-    group.sample_size(1_000);
-    group.measurement_time(std::time::Duration::from_secs(30));
+    let mut group = c.benchmark_group("cluster_async");
     group.bench_function("set_get_and_del", |b| {
         b.iter(|| {
             runtime
@@ -28,9 +27,51 @@ fn bench_basic(
 
                     Ok::<_, RedisError>(())
                 })
-                .unwrap()
+                .unwrap();
+            black_box(())
         })
     });
+
+    group.bench_function("parallel_requests", |b| {
+        let num_parallel = 100;
+        let cmds: Vec<_> = (0..num_parallel)
+            .map(|i| redis::cmd("SET").arg(format!("foo{i}")).arg(i).clone())
+            .collect();
+
+        let mut connections = (0..num_parallel).map(|_| con.clone()).collect::<Vec<_>>();
+
+        b.iter(|| {
+            runtime
+                .block_on(async {
+                    cmds.iter()
+                        .zip(&mut connections)
+                        .map(|(cmd, con)| cmd.query_async::<_, ()>(con))
+                        .collect::<stream::FuturesUnordered<_>>()
+                        .try_for_each(|()| async { Ok(()) })
+                        .await
+                })
+                .unwrap();
+            black_box(())
+        });
+    });
+
+    group.bench_function("pipeline", |b| {
+        let num_queries = 100;
+
+        let mut pipe = redis::pipe();
+
+        for _ in 0..num_queries {
+            pipe.set("foo".to_string(), "bar").ignore();
+        }
+
+        b.iter(|| {
+            runtime
+                .block_on(async { pipe.query_async::<_, ()>(con).await })
+                .unwrap();
+            black_box(())
+        });
+    });
+
     group.finish();
 }
 
@@ -40,7 +81,7 @@ fn bench_cluster_setup(c: &mut Criterion) {
     let runtime = current_thread_runtime();
     let mut con = runtime.block_on(cluster.async_connection());
 
-    bench_basic(c, &mut con, &runtime);
+    bench_cluster_async(c, &mut con, &runtime);
 }
 
 criterion_group!(cluster_async_bench, bench_cluster_setup,);
