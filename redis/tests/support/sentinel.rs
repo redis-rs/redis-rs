@@ -7,6 +7,7 @@ use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::Client;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
+use redis::RedisResult;
 use redis::TlsMode;
 use tempfile::TempDir;
 
@@ -120,38 +121,64 @@ fn spawn_sentinel_server(
     )
 }
 
-fn wait_for_master_server(master_addr: ConnectionInfo) {
+fn wait_for_master_server(
+    mut get_client_fn: impl FnMut() -> RedisResult<Client>,
+) -> Result<(), ()> {
     let rolecmd = redis::cmd("ROLE");
     for _ in 0..100 {
-        let master_client = Client::open(master_addr.clone()).unwrap();
-        if let Ok(mut conn) = master_client.get_connection() {
-            let r: (String, i32, redis::Value) = rolecmd.query(&mut conn).unwrap();
-            if r.0.starts_with("master") {
-                return;
+        let master_client = get_client_fn();
+        match master_client {
+            Ok(client) => match client.get_connection() {
+                Ok(mut conn) => {
+                    let r: (String, i32, redis::Value) = rolecmd.query(&mut conn).unwrap();
+                    if r.0.starts_with("master") {
+                        return Ok(());
+                    } else {
+                        println!("failed check for master role - current role: {:?}", r)
+                    }
+                }
+                Err(err) => {
+                    println!("failed to get master connection: {:?}", err)
+                }
+            },
+            Err(err) => {
+                println!("failed to get master client: {:?}", err)
             }
         }
 
         sleep(Duration::from_millis(25));
     }
 
-    panic!("failed waiting for master to be ready");
+    Err(())
 }
 
-fn wait_for_replica(replica_addr: ConnectionInfo) {
+fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> Result<(), ()> {
     let rolecmd = redis::cmd("ROLE");
     for _ in 0..200 {
-        let replica_client = Client::open(replica_addr.clone()).unwrap();
-        if let Ok(mut conn) = replica_client.get_connection() {
-            let r: (String, String, i32, String, i32) = rolecmd.query(&mut conn).unwrap();
-            if r.0.starts_with("slave") && r.3 == "connected" {
-                return;
+        let replica_client = get_client_fn();
+        match replica_client {
+            Ok(client) => match client.get_connection() {
+                Ok(mut conn) => {
+                    let r: (String, String, i32, String, i32) = rolecmd.query(&mut conn).unwrap();
+                    if r.0.starts_with("slave") && r.3 == "connected" {
+                        return Ok(());
+                    } else {
+                        println!("failed check for replica role - current role: {:?}", r)
+                    }
+                }
+                Err(err) => {
+                    println!("failed to get replica connection: {:?}", err)
+                }
+            },
+            Err(err) => {
+                println!("failed to get replica client: {:?}", err)
             }
         }
 
         sleep(Duration::from_millis(25));
     }
 
-    panic!("failed waiting for replica to be ready and in sync");
+    Err(())
 }
 
 fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
@@ -161,12 +188,18 @@ fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
 
     for cluster_index in 0..clusters {
         let master_addr = servers[cluster_index * cluster_size].connection_info();
-        wait_for_master_server(master_addr);
+        let r = wait_for_master_server(|| Ok(Client::open(master_addr.clone()).unwrap()));
+        if r.is_err() {
+            panic!("failed waiting for master to be ready");
+        }
 
         for replica_index in 0..replicas {
             let replica_addr =
                 servers[(cluster_index * cluster_size) + 1 + replica_index].connection_info();
-            wait_for_replica(replica_addr);
+            let r = wait_for_replica(|| Ok(Client::open(replica_addr.clone()).unwrap()));
+            if r.is_err() {
+                panic!("failed waiting for replica to be ready and in sync");
+            }
         }
     }
 }
@@ -333,36 +366,15 @@ impl TestSentinelContext {
     pub fn wait_for_cluster_up(&mut self) {
         let node_conn_info = self.sentinel_node_connection_info();
         let con = self.sentinel_mut();
-        let rolecmd = redis::cmd("ROLE");
 
-        for _ in 0..100 {
-            let master_client = con.master_for("master1", Some(&node_conn_info));
-            if let Ok(master_client) = master_client {
-                let r: (String, i32, redis::Value) = rolecmd
-                    .query(&mut master_client.get_connection().unwrap())
-                    .unwrap();
-                if r.0.starts_with("master") {
-                    break;
-                }
-            }
-
-            sleep(Duration::from_millis(25));
+        let r = wait_for_master_server(|| con.master_for("master1", Some(&node_conn_info)));
+        if r.is_err() {
+            panic!("failed waiting for sentinel master1 to be ready");
         }
 
-        for _ in 0..200 {
-            let replica_client = con.replica_for("master1", Some(&node_conn_info));
-            if let Ok(client) = replica_client {
-                let r: (String, String, i32, String, i32) = rolecmd
-                    .query(&mut client.get_connection().unwrap())
-                    .unwrap();
-                if r.0.starts_with("slave") {
-                    return;
-                }
-            }
-
-            sleep(Duration::from_millis(25));
+        let r = wait_for_replica(|| con.replica_for("master1", Some(&node_conn_info)));
+        if r.is_err() {
+            panic!("failed waiting for sentinel master1 replica to be ready");
         }
-
-        panic!("failed waiting for sentinel cluster to be ready");
     }
 }
