@@ -69,7 +69,7 @@
 //!     .master_for(
 //!         "master_name",
 //!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: Some(redis::cluster::TlsMode::Secure),
+//!             tls_mode: Some(redis::TlsMode::Secure),
 //!             redis_connection_info: None,
 //!         }),
 //!     )
@@ -88,7 +88,7 @@
 //!     nodes,
 //!     String::from("master1"),
 //!     Some(SentinelNodeConnectionInfo {
-//!         tls_mode: Some(redis::cluster::TlsMode::Insecure),
+//!         tls_mode: Some(redis::TlsMode::Insecure),
 //!         redis_connection_info: Some(RedisConnectionInfo {
 //!             db: 0,
 //!             username: Some(String::from("user")),
@@ -108,9 +108,9 @@ use futures_util::StreamExt;
 use rand::Rng;
 
 use crate::{
-    aio::MultiplexedConnection as AsyncConnection, cluster::TlsMode, connection::ConnectionInfo,
-    types::RedisResult, Client, Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo,
-    RedisConnectionInfo, Value,
+    aio::MultiplexedConnection as AsyncConnection, connection::ConnectionInfo, types::RedisResult,
+    Client, Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo,
+    TlsMode, Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on

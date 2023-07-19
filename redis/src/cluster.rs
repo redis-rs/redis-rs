@@ -53,6 +53,7 @@ use crate::connection::{
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
+pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Routable, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
@@ -706,16 +707,6 @@ impl NodeCmd {
             addr: a,
         }
     }
-}
-
-/// TlsMode indicates use or do not use verification of certification.
-/// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
-#[derive(Clone, Copy)]
-pub enum TlsMode {
-    /// Secure verify certification.
-    Secure,
-    /// Insecure do not verify certification.
-    Insecure,
 }
 
 // TODO: This function can panic and should probably

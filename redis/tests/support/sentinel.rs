@@ -3,11 +3,11 @@ use std::io::Write;
 use std::thread::sleep;
 use std::time::Duration;
 
-use redis::cluster::TlsMode;
 use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::Client;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
+use redis::TlsMode;
 use tempfile::TempDir;
 
 use super::build_keys_and_certs_for_tls;
