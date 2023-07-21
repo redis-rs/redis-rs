@@ -609,7 +609,7 @@ impl Client {
 
         inner_build_with_tls(connection_info, tls_certs)
     }
-    
+
     /// Returns an async receiver for pub-sub messages.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?

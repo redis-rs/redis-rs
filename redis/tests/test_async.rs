@@ -620,6 +620,7 @@ mod pub_sub {
             pubsub_conn.subscribe("phonewave").await?;
             pubsub_conn.psubscribe("*").await?;
 
+            #[allow(deprecated)]
             let mut conn = pubsub_conn.into_connection().await;
             redis::cmd("SET")
                 .arg("foo")
@@ -730,7 +731,7 @@ mod mtls_test {
 
         let client =
             build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, true).unwrap();
-        let connect = client.get_async_connection();
+        let connect = client.get_multiplexed_async_connection();
         block_on_all(connect.and_then(|mut con| async move {
             redis::cmd("SET")
                 .arg("key1")
@@ -751,7 +752,7 @@ mod mtls_test {
         let client =
             build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, false)
                 .unwrap();
-        let connect = client.get_async_connection();
+        let connect = client.get_multiplexed_async_connection();
         let result = block_on_all(connect.and_then(|mut con| async move {
             redis::cmd("SET")
                 .arg("key1")
