@@ -19,7 +19,7 @@ jobs:
       matrix:
         redis:
           - 6.2.4
-          - 7.0.0
+          - 7.0.12
         rust:
           - stable
           - beta
