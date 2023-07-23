@@ -515,15 +515,6 @@ impl SlotMap {
         Self(BTreeMap::new())
     }
 
-    pub fn from_slots(slots: &[Slot], read_from_replicas: bool) -> Self {
-        Self(
-            slots
-                .iter()
-                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
-                .collect(),
-        )
-    }
-
     pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
         for slot in slots {
             self.0
@@ -618,9 +609,18 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 mod tests {
     use super::{
         get_hashtag, slot, MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotAddr, SlotMap,
+        Slot, SlotAddr, SlotAddrs, SlotMap,
     };
     use crate::{cmd, parser::parse_redis_value};
+
+    fn from_slots(slots: &[Slot], read_from_replicas: bool) -> SlotMap {
+        SlotMap(
+            slots
+                .iter()
+                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
+                .collect(),
+        )
+    }
 
     #[test]
     fn test_get_hashtag() {
@@ -896,7 +896,7 @@ mod tests {
 
     #[test]
     fn test_slot_map() {
-        let slot_map = SlotMap::from_slots(
+        let slot_map = from_slots(
             &[
                 Slot {
                     start: 1,

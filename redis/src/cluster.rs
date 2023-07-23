@@ -41,6 +41,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
+use log::trace;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
@@ -286,52 +287,28 @@ where
 
     fn create_new_slots(&self) -> RedisResult<SlotMap> {
         let mut connections = self.connections.borrow_mut();
-        let mut new_slots = None;
         let mut rng = thread_rng();
         let len = connections.len();
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
-
+        let mut new_slots = SlotMap::new();
+        let mut result = Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Slot refresh error.",
+            "didn't get any slots from server".to_string(),
+        )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            if let Ok(mut slots_data) = parse_slots(value, self.cluster_params.tls) {
-                slots_data.sort_by_key(|s| s.start());
-                let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
-                    if prev_end != slot_data.start() {
-                        return Err(RedisError::from((
-                            ErrorKind::ResponseError,
-                            "Slot refresh error.",
-                            format!(
-                                "Received overlapping slots {} and {}..{}",
-                                prev_end,
-                                slot_data.start(),
-                                slot_data.end()
-                            ),
-                        )));
-                    }
-                    Ok(slot_data.end() + 1)
-                })?;
-
-                if last_slot != SLOT_SIZE {
-                    return Err(RedisError::from((
-                        ErrorKind::ResponseError,
-                        "Slot refresh error.",
-                        format!("Lacks the slots >= {last_slot}"),
-                    )));
+            match parse_slots(value, self.cluster_params.tls).and_then(|v| {
+                build_slot_map(&mut new_slots, v, self.cluster_params.read_from_replicas)
+            }) {
+                Ok(_) => {
+                    result = Ok(new_slots);
+                    break;
                 }
-
-                new_slots = Some(SlotMap::from_slots(&slots_data, self.read_from_replicas));
-                break;
+                Err(err) => result = Err(err),
             }
         }
-
-        match new_slots {
-            Some(new_slots) => Ok(new_slots),
-            None => Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                "didn't get any slots from server".to_string(),
-            ))),
-        }
+        result
     }
 
     fn connect(&self, node: &str) -> RedisResult<C> {
@@ -792,6 +769,41 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
     }
 
     Ok(result)
+}
+
+pub(crate) fn build_slot_map(
+    slot_map: &mut SlotMap,
+    mut slots_data: Vec<Slot>,
+    read_from_replicas: bool,
+) -> RedisResult<()> {
+    slots_data.sort_by_key(|slot_data| slot_data.start());
+    let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
+        if prev_end != slot_data.start() {
+            return Err(RedisError::from((
+                ErrorKind::ResponseError,
+                "Slot refresh error.",
+                format!(
+                    "Received overlapping slots {} and {}..{}",
+                    prev_end,
+                    slot_data.start(),
+                    slot_data.end()
+                ),
+            )));
+        }
+        Ok(slot_data.end() + 1)
+    })?;
+
+    if last_slot != SLOT_SIZE {
+        return Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Slot refresh error.",
+            format!("Lacks the slots >= {last_slot}"),
+        )));
+    }
+    slot_map.clear();
+    slot_map.fill_slots(&slots_data, read_from_replicas);
+    trace!("{:?}", slot_map);
+    Ok(())
 }
 
 // The node string passed to this function will always be in the format host:port as it is either:
