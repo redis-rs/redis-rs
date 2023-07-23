@@ -247,7 +247,7 @@
 //! # Transactions
 //!
 //! Transactions are available through atomic pipelines.  In order to use
-//! them in a more simple way you can use the `transaction` function of a
+//! them in a more simple way you can use the [`transaction`] function on a
 //! connection:
 //!
 //! ```rust,no_run
@@ -255,6 +255,7 @@
 //! use redis::Commands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
+//!
 //! let key = "the_key";
 //! let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 //!     let old_val : isize = con.get(key)?;
@@ -266,7 +267,12 @@
 //! # Ok(()) }
 //! ```
 //!
-//! For more information see the `transaction` function.
+//! On conflict, the [`transaction`] function will retry the transaction until
+//! it succeeds. If instead you want to attempt the transaction only once, and
+//! get back a `None` result if a `WATCH`ed key is modified by another
+//! connection, use [`transaction_opt`].
+//!
+//! For more information see [`transaction`] and [`transaction_opt`].
 //!
 //! # PubSub
 //!
@@ -368,8 +374,8 @@ pub use crate::commands::{
     Commands, ControlFlow, Direction, LposOptions, PubSubCommands, SetOptions,
 };
 pub use crate::connection::{
-    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,
+    parse_redis_url, transaction, transaction_opt, Connection, ConnectionAddr, ConnectionInfo,
+    ConnectionLike, IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo,
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
