@@ -89,6 +89,87 @@ where
                 ClusterConnection(tx)
             })
     }
+
+    /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
+    pub async fn send_packed_command(
+        &mut self,
+        cmd: &Cmd,
+        routing: Option<RoutingInfo>,
+    ) -> RedisResult<Value> {
+        trace!("send_packed_command");
+        let (sender, receiver) = oneshot::channel();
+        self.0
+            .send(Message {
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
+                    func: |mut conn, cmd| {
+                        Box::pin(async move {
+                            conn.req_packed_command(&cmd).await.map(Response::Single)
+                        })
+                    },
+                    routing: routing.or_else(|| RoutingInfo::for_routable(cmd)),
+                    response_policy: RoutingInfo::response_policy(cmd),
+                },
+                sender,
+            })
+            .await
+            .map_err(|_| {
+                RedisError::from(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "redis_cluster: Unable to send command",
+                ))
+            })?;
+        receiver
+            .await
+            .unwrap_or_else(|_| {
+                Err(RedisError::from(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "redis_cluster: Unable to receive command",
+                )))
+            })
+            .map(|response| match response {
+                Response::Single(value) => value,
+                Response::Multiple(_) => unreachable!(),
+            })
+    }
+
+    /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be computed from `pipeline`.
+    pub async fn send_packed_commands<'a>(
+        &'a mut self,
+        pipeline: &'a crate::Pipeline,
+        offset: usize,
+        count: usize,
+        route: Option<Route>,
+    ) -> RedisResult<Vec<Value>> {
+        let (sender, receiver) = oneshot::channel();
+        self.0
+            .send(Message {
+                cmd: CmdArg::Pipeline {
+                    pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
+                    offset,
+                    count,
+                    func: |mut conn, pipeline, offset, count| {
+                        Box::pin(async move {
+                            conn.req_packed_commands(&pipeline, offset, count)
+                                .await
+                                .map(Response::Multiple)
+                        })
+                    },
+                    route: route.or_else(|| route_pipeline(pipeline)),
+                },
+                sender,
+            })
+            .await
+            .map_err(|_| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))?;
+
+        receiver
+            .await
+            .unwrap_or_else(|_| Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))))
+            .map(|response| match response {
+                Response::Multiple(values) => values,
+                Response::Single(_) => unreachable!(),
+            })
+    }
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
@@ -1039,46 +1120,10 @@ where
 
 impl<C> ConnectionLike for ClusterConnection<C>
 where
-    C: ConnectionLike + Send + 'static,
+    C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        trace!("req_packed_command");
-        let (sender, receiver) = oneshot::channel();
-        Box::pin(async move {
-            self.0
-                .send(Message {
-                    cmd: CmdArg::Cmd {
-                        cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                        func: |mut conn, cmd| {
-                            Box::pin(async move {
-                                conn.req_packed_command(&cmd).await.map(Response::Single)
-                            })
-                        },
-                        routing: RoutingInfo::for_routable(cmd),
-                        response_policy: RoutingInfo::response_policy(cmd),
-                    },
-                    sender,
-                })
-                .await
-                .map_err(|_| {
-                    RedisError::from(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "redis_cluster: Unable to send command",
-                    ))
-                })?;
-            receiver
-                .await
-                .unwrap_or_else(|_| {
-                    Err(RedisError::from(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "redis_cluster: Unable to receive command",
-                    )))
-                })
-                .map(|response| match response {
-                    Response::Single(value) => value,
-                    Response::Multiple(_) => unreachable!(),
-                })
-        })
+        self.send_packed_command(cmd, None).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -1087,38 +1132,8 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        let (sender, receiver) = oneshot::channel();
-        Box::pin(async move {
-            self.0
-                .send(Message {
-                    cmd: CmdArg::Pipeline {
-                        pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
-                        offset,
-                        count,
-                        func: |mut conn, pipeline, offset, count| {
-                            Box::pin(async move {
-                                conn.req_packed_commands(&pipeline, offset, count)
-                                    .await
-                                    .map(Response::Multiple)
-                            })
-                        },
-                        route: route_pipeline(pipeline),
-                    },
-                    sender,
-                })
-                .await
-                .map_err(|_| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))?;
-
-            receiver
-                .await
-                .unwrap_or_else(|_| {
-                    Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-                })
-                .map(|response| match response {
-                    Response::Multiple(values) => values,
-                    Response::Single(_) => unreachable!(),
-                })
-        })
+        self.send_packed_commands(pipeline, offset, count, None)
+            .boxed()
     }
 
     fn get_db(&self) -> i64 {
