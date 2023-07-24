@@ -59,23 +59,32 @@ pub enum ResponsePolicy {
     Special,
 }
 
+/// Defines whether a request should be routed to a single node, or multiple ones.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RoutingInfo {
+pub enum RoutingInfo {
+    /// Route to single node
     SingleNode(SingleNodeRoutingInfo),
+    /// Route to multiple nodes
     MultiNode(MultipleNodeRoutingInfo),
 }
 
+/// Defines which single node should receive a request.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SingleNodeRoutingInfo {
+pub enum SingleNodeRoutingInfo {
+    /// Route to any node at random
     Random,
+    /// Route to the node that matches the [route]
     SpecificNode(Route),
 }
 
+/// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum MultipleNodeRoutingInfo {
+pub enum MultipleNodeRoutingInfo {
+    /// route to all nodes in the clusters
     AllNodes,
+    /// Route to all primaries in the cluster
     AllMasters,
-    // Instructions on how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand and the indices of the arguments from the original command that should be copied to the subcommand.
+    /// Instructions on how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand and the indices of the arguments from the original command that should be copied to the subcommand.
     MultiSlot(Vec<(Route, Vec<usize>)>),
 }
 
@@ -203,7 +212,8 @@ pub(crate) fn combine_and_sort_array_results<'a>(
     Ok(Value::Bulk(results))
 }
 
-fn get_slot(key: &[u8]) -> u16 {
+/// Returns the slot that matches `key`.
+pub fn get_slot(key: &[u8]) -> u16 {
     let key = match get_hashtag(key) {
         Some(tag) => tag,
         None => key,
@@ -379,7 +389,7 @@ impl RoutingInfo {
         }
     }
 
-    pub fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
+    fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
             is_readonly_cmd(cmd),
             key,
@@ -387,9 +397,10 @@ impl RoutingInfo {
     }
 }
 
-pub(crate) trait Routable {
-    // Convenience function to return ascii uppercase version of the
-    // the first argument (i.e., the command).
+/// Objects that implement this trait define a request that can be routed by a cluster client to different nodes in the cluster.
+pub trait Routable {
+    /// Convenience function to return ascii uppercase version of the
+    /// the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
         let primary_command = self.arg_idx(0).map(|x| x.to_ascii_uppercase())?;
         let mut primary_command = match primary_command.as_slice() {
@@ -413,10 +424,10 @@ pub(crate) trait Routable {
         })
     }
 
-    // Returns a reference to the data for the argument at `idx`.
+    /// Returns a reference to the data for the argument at `idx`.
     fn arg_idx(&self, idx: usize) -> Option<&[u8]>;
 
-    // Returns index of argument that matches `candidate`, if it exists
+    /// Returns index of argument that matches `candidate`, if it exists
     fn position(&self, candidate: &[u8]) -> Option<usize>;
 }
 
@@ -490,9 +501,12 @@ impl Slot {
     }
 }
 
+/// What type of node should a request be routed to.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
-pub(crate) enum SlotAddr {
+pub enum SlotAddr {
+    /// Primary node
     Master,
+    /// Replica node
     Replica,
 }
 
@@ -611,10 +625,11 @@ impl SlotMap {
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
-pub(crate) struct Route(u16, SlotAddr);
+pub struct Route(u16, SlotAddr);
 
 impl Route {
-    pub(crate) fn new(slot: u16, slot_addr: SlotAddr) -> Self {
+    /// Returns a new Route.
+    pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
         Self(slot, slot_addr)
     }
 

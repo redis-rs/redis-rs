@@ -810,6 +810,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
     let _ = runtime.block_on(connection.send_packed_command(
         &cmd,
         Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters)),
+        None,
     ));
     {
         let mut touched_ports = touched_ports.lock().unwrap();
@@ -821,6 +822,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
     let _ = runtime.block_on(connection.send_packed_command(
         &cmd,
         Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes)),
+        None,
     ));
     {
         let mut touched_ports = touched_ports.lock().unwrap();
