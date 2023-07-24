@@ -13,6 +13,7 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
+    cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo},
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Script, Value,
 };
@@ -777,6 +778,56 @@ fn test_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
             },
         ]),
     );
+}
+
+#[test]
+fn test_async_cluster_route_according_to_passed_argument() {
+    let name = "node";
+
+    let touched_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let cloned_ports = touched_ports.clone();
+
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+            cloned_ports.lock().unwrap().push(port);
+            Err(Ok(Value::Nil))
+        },
+    );
+
+    let mut cmd = cmd("GET");
+    cmd.arg("test");
+    let _ = runtime.block_on(connection.send_packed_command(
+        &cmd,
+        Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters)),
+    ));
+    {
+        let mut touched_ports = touched_ports.lock().unwrap();
+        touched_ports.sort();
+        assert_eq!(*touched_ports, vec![6379, 6381]);
+        touched_ports.clear();
+    }
+
+    let _ = runtime.block_on(connection.send_packed_command(
+        &cmd,
+        Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes)),
+    ));
+    {
+        let mut touched_ports = touched_ports.lock().unwrap();
+        touched_ports.sort();
+        assert_eq!(*touched_ports, vec![6379, 6380, 6381, 6382]);
+        touched_ports.clear();
+    }
 }
 
 #[test]

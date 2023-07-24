@@ -22,27 +22,40 @@ pub(crate) enum Redirect {
     Ask(String),
 }
 
+/// Logical bitwise aggregating operators.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum LogicalAggregateOp {
+pub enum LogicalAggregateOp {
+    /// Aggregate by bitwise &&
     And,
     // Or, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
+/// Numerical aggreagting operators.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum AggregateOp {
+pub enum AggregateOp {
+    /// Choose minimal value
     Min,
+    /// Sum all values
     Sum,
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
+/// Policy on how to combine multiple responses into one.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ResponsePolicy {
+pub enum ResponsePolicy {
+    /// Waits for one request to succeed, and return its results. Return error if all requests fail.
     OneSucceeded,
+    /// Waits for one request to succeed with a non-empty value. Returns error if all requests fail or return `Nil`.
     OneSucceededNonEmpty,
+    /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
+    /// Aggregates success results according to a logical bitwise operator. Returns error on any failed request, or on a response that doesn't conform to 0 or 1.
     AggregateLogical(LogicalAggregateOp),
+    /// Aggregates success results according to a numeric operator. Returns error on any failed request, or on a response that isn't an integer.
     Aggregate(AggregateOp),
+    /// Aggreagte array responses into a single array. Returns error on any failed request, or on a response that isn't an array.
     CombineArrays,
+    /// Handling is not defined by the Redis standard. Will receive a special case
     Special,
 }
 
@@ -252,8 +265,8 @@ where
     })
 }
 
-impl RoutingInfo {
-    pub(crate) fn response_policy<R>(r: &R) -> Option<ResponsePolicy>
+impl ResponsePolicy {
+    pub(crate) fn for_routable<R>(r: &R) -> Option<ResponsePolicy>
     where
         R: Routable + ?Sized,
     {
@@ -293,8 +306,11 @@ impl RoutingInfo {
             _ => None,
         }
     }
+}
 
-    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+impl RoutingInfo {
+    /// Returns the routing info for `r`.
+    pub fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
