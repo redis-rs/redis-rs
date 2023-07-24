@@ -203,7 +203,7 @@ impl RedisCluster {
 }
 
 fn wait_for_status_ok(cluster: &RedisCluster) {
-    'servers: for server in &cluster.servers {
+    'server: for server in &cluster.servers {
         let log_file = RedisServer::log_file(&server.tempdir);
 
         for _ in 1..500 {
@@ -211,7 +211,7 @@ fn wait_for_status_ok(cluster: &RedisCluster) {
                 std::fs::read_to_string(&log_file).expect("Should have been able to read the file");
 
             if contents.contains("Cluster state changed: ok") {
-                break 'servers;
+                continue 'server;
             }
             sleep(Duration::from_millis(20));
         }
