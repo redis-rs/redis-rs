@@ -1,12 +1,13 @@
 use std::time::Duration;
 
-#[cfg(feature = "aio")]
-use std::pin::Pin;
-
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
+#[cfg(feature = "aio")]
+use futures_time::future::FutureExt;
+#[cfg(feature = "aio")]
+use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{inner_build_with_tls, TlsCertificates};
@@ -142,7 +143,6 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        use futures_time::future::FutureExt;
         let connection_timeout: futures_time::time::Duration = connection_timeout.into();
         match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
@@ -170,10 +170,28 @@ impl Client {
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+    pub async fn get_multiplexed_tokio_connection_with_response_timeouts(
+        &self,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisResult<crate::aio::MultiplexedConnection> {
+        let connection_timeout: futures_time::time::Duration = connection_timeout.into();
+        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(response_timeout)
+            .timeout(connection_timeout)
+            .await?
+    }
+
+    /// Returns an async multiplexed connection from the client.
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+        self.get_multiplexed_tokio_connection_with_response_timeouts(
+            std::time::Duration::MAX,
             std::time::Duration::MAX,
         )
         .await
@@ -185,10 +203,30 @@ impl Client {
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+    pub async fn get_multiplexed_async_std_connection_with_timeouts(
+        &self,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisResult<crate::aio::MultiplexedConnection> {
+        let connection_timeout: futures_time::time::Duration = connection_timeout.into();
+        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+            response_timeout,
+        )
+        .timeout(connection_timeout)
+        .await?
+    }
+
+    /// Returns an async multiplexed connection from the client.
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+        self.get_multiplexed_async_std_connection_with_timeouts(
+            std::time::Duration::MAX,
             std::time::Duration::MAX,
         )
         .await
@@ -199,9 +237,10 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
+    /// The multiplexer will return a timeout error on any request that takes longer then [response_timeout].
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
-    pub async fn create_multiplexed_tokio_connection(
+    pub async fn create_multiplexed_tokio_connection_with_response_timeout(
         &self,
         response_timeout: std::time::Duration,
     ) -> RedisResult<(
@@ -217,9 +256,27 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
+    #[cfg(feature = "tokio-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+    pub async fn create_multiplexed_tokio_connection(
+        &self,
+    ) -> RedisResult<(
+        crate::aio::MultiplexedConnection,
+        impl std::future::Future<Output = ()>,
+    )> {
+        self.create_multiplexed_tokio_connection_with_response_timeout(std::time::Duration::MAX)
+            .await
+    }
+
+    /// Returns an async multiplexed connection from the client and a future which must be polled
+    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    /// The multiplexer will return a timeout error on any request that takes longer then [response_timeout].
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
-    pub async fn create_multiplexed_async_std_connection(
+    pub async fn create_multiplexed_async_std_connection_with_response_timeout(
         &self,
         response_timeout: std::time::Duration,
     ) -> RedisResult<(
@@ -230,6 +287,23 @@ impl Client {
             response_timeout,
         )
         .await
+    }
+
+    /// Returns an async multiplexed connection from the client and a future which must be polled
+    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    ///
+    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    #[cfg(feature = "async-std-comp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+    pub async fn create_multiplexed_async_std_connection(
+        &self,
+    ) -> RedisResult<(
+        crate::aio::MultiplexedConnection,
+        impl std::future::Future<Output = ()>,
+    )> {
+        self.create_multiplexed_async_std_connection_with_response_timeout(std::time::Duration::MAX)
+            .await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
