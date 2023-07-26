@@ -28,7 +28,10 @@ use std::{
     marker::Unpin,
     mem,
     pin::Pin,
-    sync::{atomic, Arc, Mutex},
+    sync::{
+        atomic::{self, AtomicUsize},
+        Arc, Mutex,
+    },
     task::{self, Poll},
 };
 
@@ -40,13 +43,26 @@ use crate::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo,
     },
-    cluster_topology::{calculate_topology, SlotMap},
+    cluster_topology::{
+        calculate_topology, SlotMap, DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
+        DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+    },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use backoff_std_async::future::retry;
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use backoff_std_async::{Error, ExponentialBackoff};
+
+#[cfg(feature = "tokio-comp")]
+use backoff_tokio::future::retry;
+#[cfg(feature = "tokio-comp")]
+use backoff_tokio::{Error, ExponentialBackoff};
+
 use futures::{
     future::{self, BoxFuture},
     prelude::*,
@@ -458,8 +474,7 @@ where
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
-        // TODO: add retries
-        connection.refresh_slots().await?;
+        connection.refresh_slots_with_retries().await?;
         Ok(connection)
     }
 
@@ -522,80 +537,6 @@ where
                 )
                 .await;
             write_guard.0 = mem::take(&mut connections);
-        }
-    }
-
-    // Query a node to discover slot-> master mappings.
-    fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
-        self.refresh_slots_with_retries(None)
-    }
-    // Query a node to discover slot-> master mappings with retries
-    fn refresh_slots_with_retries(
-        &mut self,
-        retries: Option<Arc<atomic::AtomicUsize>>,
-    ) -> impl Future<Output = RedisResult<()>> {
-        let inner = self.inner.clone();
-
-        async move {
-            let read_guard = inner.conn_lock.read().await;
-            let num_of_nodes = read_guard.0.len();
-            const MAX_REQUESTED_NODES: usize = 50;
-            let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
-            let mut requested_nodes = {
-                let mut rng = thread_rng();
-                read_guard
-                    .0
-                    .values()
-                    .choose_multiple(&mut rng, num_of_nodes_to_query)
-            };
-            let topology_join_results =
-                futures::future::join_all(requested_nodes.iter_mut().map(|conn| async move {
-                    let mut conn: C = conn.clone().await;
-                    conn.req_packed_command(&slot_cmd()).await
-                }))
-                .await;
-            let topology_values: Vec<_> = topology_join_results
-                .into_iter()
-                .filter_map(|r| r.ok())
-                .collect();
-            let new_slots = calculate_topology(
-                topology_values,
-                retries.clone(),
-                inner.cluster_params.tls,
-                inner.cluster_params.read_from_replicas,
-                num_of_nodes_to_query,
-            )?;
-
-            let connections: &ConnectionMap<C> = &read_guard.0;
-            let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
-            nodes.sort_unstable();
-            nodes.dedup();
-            let nodes_len = nodes.len();
-            let addresses_and_connections_iter = nodes
-                .into_iter()
-                .map(|addr| (addr, connections.get(addr).cloned()));
-            let new_connections: HashMap<String, ConnectionFuture<C>> =
-                stream::iter(addresses_and_connections_iter)
-                    .fold(
-                        HashMap::with_capacity(nodes_len),
-                        |mut connections, (addr, connection)| async {
-                            let conn =
-                                Self::get_or_create_conn(addr, connection, &inner.cluster_params)
-                                    .await;
-                            if let Ok(conn) = conn {
-                                connections
-                                    .insert(addr.to_string(), async { conn }.boxed().shared());
-                            }
-                            connections
-                        },
-                    )
-                    .await;
-
-            drop(read_guard);
-            let mut write_guard = inner.conn_lock.write().await;
-            write_guard.1 = new_slots;
-            write_guard.0 = new_connections;
-            Ok(())
         }
     }
 
@@ -680,6 +621,90 @@ where
                 .map(Value::Bulk)
             }
         }
+    }
+
+    // Query a node to discover slot-> master mappings with retries
+    fn refresh_slots_with_retries(&mut self) -> impl Future<Output = RedisResult<()>> {
+        let inner = self.inner.clone();
+        async move {
+            let retry_strategy = ExponentialBackoff {
+                initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
+                max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+                ..Default::default()
+            };
+            let retries_counter = AtomicUsize::new(0);
+            retry(retry_strategy, || {
+                retries_counter.fetch_add(1, atomic::Ordering::Relaxed);
+                Self::refresh_slots(
+                    inner.clone(),
+                    retries_counter.load(atomic::Ordering::Relaxed),
+                )
+                .map_err(Error::from)
+            })
+            .await?;
+            Ok(())
+        }
+    }
+
+    // Query a node to discover slot-> master mappings
+    async fn refresh_slots(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
+        let read_guard = inner.conn_lock.read().await;
+        let num_of_nodes = read_guard.0.len();
+        const MAX_REQUESTED_NODES: usize = 50;
+        let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
+        let mut requested_nodes = {
+            let mut rng = thread_rng();
+            read_guard
+                .0
+                .values()
+                .choose_multiple(&mut rng, num_of_nodes_to_query)
+        };
+        let topology_join_results =
+            futures::future::join_all(requested_nodes.iter_mut().map(|conn| async move {
+                let mut conn: C = conn.clone().await;
+                conn.req_packed_command(&slot_cmd()).await
+            }))
+            .await;
+        let topology_values: Vec<_> = topology_join_results
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+        let new_slots = calculate_topology(
+            topology_values,
+            curr_retry,
+            inner.cluster_params.tls,
+            inner.cluster_params.read_from_replicas,
+            num_of_nodes_to_query,
+        )?;
+
+        let connections: &ConnectionMap<C> = &read_guard.0;
+        let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes.dedup();
+        let nodes_len = nodes.len();
+        let addresses_and_connections_iter = nodes
+            .into_iter()
+            .map(|addr| (addr, connections.get(addr).cloned()));
+        let new_connections: HashMap<String, ConnectionFuture<C>> =
+            stream::iter(addresses_and_connections_iter)
+                .fold(
+                    HashMap::with_capacity(nodes_len),
+                    |mut connections, (addr, connection)| async {
+                        let conn =
+                            Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                        if let Ok(conn) = conn {
+                            connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        }
+                        connections
+                    },
+                )
+                .await;
+
+        drop(read_guard);
+        let mut write_guard = inner.conn_lock.write().await;
+        write_guard.1 = new_slots;
+        write_guard.0 = new_connections;
+        Ok(())
     }
 
     async fn execute_on_multiple_nodes<'a>(
@@ -902,7 +927,7 @@ where
                 }
                 Poll::Ready(Err(err)) => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                        self.refresh_slots(),
+                        self.refresh_slots_with_retries(),
                     )));
                     Poll::Ready(Err(err))
                 }
@@ -1142,7 +1167,7 @@ where
                     PollFlushAction::None => return Poll::Ready(Ok(())),
                     PollFlushAction::RebuildSlots => {
                         self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(
-                            Box::pin(self.refresh_slots()),
+                            Box::pin(self.refresh_slots_with_retries()),
                         ));
                     }
                     PollFlushAction::Reconnect(addrs) => {
