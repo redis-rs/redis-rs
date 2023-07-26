@@ -41,11 +41,11 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use log::trace;
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{MultipleNodeRoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+use crate::cluster_topology::{build_slot_map, parse_slots, SlotMap, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -55,7 +55,7 @@ use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
 use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Routable, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
+    cluster_routing::{Redirect, Routable, Route, RoutingInfo},
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -298,7 +298,7 @@ where
         )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_slots(value, self.cluster_params.tls).and_then(|v| {
+            match parse_slots(&value, self.cluster_params.tls).and_then(|v| {
                 build_slot_map(&mut new_slots, v, self.cluster_params.read_from_replicas)
             }) {
                 Ok(_) => {
@@ -705,107 +705,6 @@ fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     (addr, con)
 }
 
-// Parse slot data from raw redis value.
-pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
-    // Parse response.
-    let mut result = Vec::with_capacity(2);
-
-    if let Value::Bulk(items) = raw_slot_resp {
-        let mut iter = items.into_iter();
-        while let Some(Value::Bulk(item)) = iter.next() {
-            if item.len() < 3 {
-                continue;
-            }
-
-            let start = if let Value::Int(start) = item[0] {
-                start as u16
-            } else {
-                continue;
-            };
-
-            let end = if let Value::Int(end) = item[1] {
-                end as u16
-            } else {
-                continue;
-            };
-
-            let mut nodes: Vec<String> = item
-                .into_iter()
-                .skip(2)
-                .filter_map(|node| {
-                    if let Value::Bulk(node) = node {
-                        if node.len() < 2 {
-                            return None;
-                        }
-
-                        let ip = if let Value::Data(ref ip) = node[0] {
-                            String::from_utf8_lossy(ip)
-                        } else {
-                            return None;
-                        };
-                        if ip.is_empty() {
-                            return None;
-                        }
-
-                        let port = if let Value::Int(port) = node[1] {
-                            port as u16
-                        } else {
-                            return None;
-                        };
-                        Some(get_connection_addr(ip.into_owned(), port, tls).to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if nodes.is_empty() {
-                continue;
-            }
-
-            let replicas = nodes.split_off(1);
-            result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
-        }
-    }
-
-    Ok(result)
-}
-
-pub(crate) fn build_slot_map(
-    slot_map: &mut SlotMap,
-    mut slots_data: Vec<Slot>,
-    read_from_replicas: bool,
-) -> RedisResult<()> {
-    slots_data.sort_by_key(|slot_data| slot_data.start());
-    let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
-        if prev_end != slot_data.start() {
-            return Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                format!(
-                    "Received overlapping slots {} and {}..{}",
-                    prev_end,
-                    slot_data.start(),
-                    slot_data.end()
-                ),
-            )));
-        }
-        Ok(slot_data.end() + 1)
-    })?;
-
-    if last_slot != SLOT_SIZE {
-        return Err(RedisError::from((
-            ErrorKind::ResponseError,
-            "Slot refresh error.",
-            format!("Lacks the slots >= {last_slot}"),
-        )));
-    }
-    slot_map.clear();
-    slot_map.fill_slots(&slots_data, read_from_replicas);
-    trace!("{:?}", slot_map);
-    Ok(())
-}
-
 // The node string passed to this function will always be in the format host:port as it is either:
 // - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
 // - Returned from redis via the ASK/MOVED response
@@ -834,7 +733,7 @@ pub(crate) fn get_connection_info(
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
+pub(crate) fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,

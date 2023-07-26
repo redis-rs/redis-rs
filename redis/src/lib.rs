@@ -447,6 +447,9 @@ mod cluster_pipeline;
 #[cfg(feature = "cluster")]
 pub mod cluster_routing;
 
+#[cfg(feature = "cluster")]
+mod cluster_topology;
+
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;

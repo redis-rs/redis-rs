@@ -121,7 +121,7 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MockSlotRange {
     pub primary_port: u16,
     pub replica_ports: Vec<u16>,
@@ -151,6 +151,34 @@ pub fn respond_startup_two_nodes(name: &str, cmd: &[u8]) -> Result<(), RedisResu
     )
 }
 
+pub fn create_topology_from_config(name: &str, slots_config: Vec<MockSlotRange>) -> Value {
+    let slots_vec = slots_config
+        .into_iter()
+        .map(|slot_config| {
+            let replicas = slot_config
+                .replica_ports
+                .into_iter()
+                .flat_map(|replica_port| {
+                    vec![
+                        Value::Data(name.as_bytes().to_vec()),
+                        Value::Int(replica_port as i64),
+                    ]
+                })
+                .collect();
+            Value::Bulk(vec![
+                Value::Int(slot_config.slot_range.start as i64),
+                Value::Int(slot_config.slot_range.end as i64),
+                Value::Bulk(vec![
+                    Value::Data(name.as_bytes().to_vec()),
+                    Value::Int(slot_config.primary_port as i64),
+                ]),
+                Value::Bulk(replicas),
+            ])
+        })
+        .collect();
+    Value::Bulk(slots_vec)
+}
+
 pub fn respond_startup_with_replica_using_config(
     name: &str,
     cmd: &[u8],
@@ -171,31 +199,8 @@ pub fn respond_startup_with_replica_using_config(
     if contains_slice(cmd, b"PING") {
         Err(Ok(Value::Status("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        let slots = slots_config
-            .into_iter()
-            .map(|slot_config| {
-                let replicas = slot_config
-                    .replica_ports
-                    .into_iter()
-                    .flat_map(|replica_port| {
-                        vec![
-                            Value::Data(name.as_bytes().to_vec()),
-                            Value::Int(replica_port as i64),
-                        ]
-                    })
-                    .collect();
-                Value::Bulk(vec![
-                    Value::Int(slot_config.slot_range.start as i64),
-                    Value::Int(slot_config.slot_range.end as i64),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
-                        Value::Int(slot_config.primary_port as i64),
-                    ]),
-                    Value::Bulk(replicas),
-                ])
-            })
-            .collect();
-        Err(Ok(Value::Bulk(slots)))
+        let slots = create_topology_from_config(name, slots_config);
+        Err(Ok(slots))
     } else if contains_slice(cmd, b"READONLY") {
         Err(Ok(Value::Status("OK".into())))
     } else {
