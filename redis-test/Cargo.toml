@@ -1,6 +1,6 @@
 [package]
 name = "redis-test"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Testing helpers for the `redis` crate"
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -13,7 +13,7 @@ rust-version = "1.60"
 bench = false
 
 [dependencies]
-redis = { version = "0.23.0", path = "../redis" }
+redis = { version = "0.23.1", path = "../redis" }
 
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
@@ -22,6 +22,6 @@ futures = { version = "0.3", optional = true }
 aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
-redis = { version = "0.23.0", path = "../redis", features = ["aio", "tokio-comp"] }
+redis = { version = "0.23.1", path = "../redis", features = ["aio", "tokio-comp"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 
