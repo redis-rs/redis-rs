@@ -32,7 +32,14 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisEr
 ///     let ca_file = File::open(ca_file).expect("Cannot open CA cert file");
 ///     let mut reader_ca = BufReader::new(ca_file);
 ///
-///     let client = build_with_tls(server, port, &mut reader_cert, &mut reader_key, &mut reader_ca).expect("Unable to build client");
+///     let client = build_with_tls(
+///         server,
+///         port,
+///         &mut reader_cert,
+///         &mut reader_key,
+///         &mut reader_ca
+///     )
+///     .expect("Unable to build client");
 ///
 ///     let connection_info = client.get_connection_info();
 ///
@@ -60,10 +67,30 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisEr
 pub fn build_with_tls(
     server: impl ToString,
     port: u16,
+    client_cert: &mut dyn BufRead,
+    client_key: &mut dyn BufRead,
+    root_cert: &mut dyn BufRead,
+) -> RedisResult<Client> {
+    let tls_params = retrieve_tls_certificates(client_cert, client_key, root_cert)?;
+
+    Ok(Client {
+        connection_info: ConnectionInfo {
+            addr: ConnectionAddr::TcpTls {
+                host: server.to_string(),
+                port,
+                insecure: false,
+                tls_params: Some(tls_params),
+            },
+            redis: RedisConnectionInfo::default(),
+        },
+    })
+}
+
+pub(crate) fn retrieve_tls_certificates(
     mut client_cert: &mut dyn BufRead,
     client_key: &mut dyn BufRead,
     mut root_cert: &mut dyn BufRead,
-) -> RedisResult<Client> {
+) -> RedisResult<TlsConnParams> {
     let client_cert: Vec<Certificate> =
         certs(&mut client_cert).map(|mut certs| certs.drain(..).map(Certificate).collect())?;
 
@@ -89,20 +116,10 @@ pub fn build_with_tls(
     let mut root_cert = RootCertStore::empty();
     root_cert.add_server_trust_anchors(trust_anchors.into_iter());
 
-    Ok(Client {
-        connection_info: ConnectionInfo {
-            addr: ConnectionAddr::TcpTls {
-                host: server.to_string(),
-                port,
-                insecure: false,
-                tls_params: Some(TlsConnParams {
-                    client_key,
-                    client_cert,
-                    root_cert,
-                }),
-            },
-            redis: RedisConnectionInfo::default(),
-        },
+    Ok(TlsConnParams {
+        client_key,
+        client_cert,
+        root_cert,
     })
 }
 

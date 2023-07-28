@@ -6,8 +6,28 @@ use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 use crate::{cluster, TlsMode};
 
+#[cfg(feature = "tls-rustls")]
+use crate::tls::TlsConnParams;
+
+#[cfg(not(feature = "tls-rustls"))]
+use crate::connection::TlsConnParams;
+
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
+
+#[cfg(feature = "tls-rustls")]
+use std::io::Cursor;
+
+#[cfg(feature = "tls-rustls")]
+use crate::tls::retrieve_tls_certificates;
+
+#[cfg(feature = "tls-rustls")]
+#[derive(Clone)]
+pub(crate) struct RawCertificates {
+    client_cert: Vec<u8>,
+    client_key: Vec<u8>,
+    root_cert: Vec<u8>,
+}
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -18,6 +38,8 @@ struct BuilderParams {
     username: Option<String>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
+    #[cfg(feature = "tls-rustls")]
+    certs: Option<RawCertificates>,
     retries_configuration: RetryParams,
 }
 
@@ -108,12 +130,35 @@ impl ClusterClientBuilder {
     /// This does not create connections to the Redis Cluster, but only performs some basic checks
     /// on the initial nodes' URLs and passwords/usernames.
     ///
+    /// In the case `tls-rustls` feature is enabled:
+    /// when TLS credentials are provided, they are set for each cluster connection configured for with `TcpTls`
+    ///
     /// # Errors
     ///
     /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
     /// usernames, an error is returned.
     pub fn build(self) -> RedisResult<ClusterClient> {
         let initial_nodes = self.initial_nodes?;
+
+        #[cfg(not(feature = "tls-rustls"))]
+        let tls_params = None;
+
+        #[cfg(feature = "tls-rustls")]
+        let tls_params = if let Some(RawCertificates {
+            client_cert,
+            client_key,
+            root_cert,
+        }) = self.builder_params.certs.clone()
+        {
+            let tls_params = retrieve_tls_certificates(
+                &mut Cursor::new(client_cert),
+                &mut Cursor::new(client_key),
+                &mut Cursor::new(root_cert),
+            )?;
+            Some(tls_params)
+        } else {
+            None
+        };
 
         let first_node = match initial_nodes.first() {
             Some(node) => node,
@@ -180,6 +225,7 @@ impl ClusterClientBuilder {
         Ok(ClusterClient {
             initial_nodes: nodes,
             cluster_params,
+            tls_params,
         })
     }
 
@@ -230,6 +276,28 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets raw TLS certificates for the new ClusterClient.
+    ///
+    /// `tls` parameter is required since certificates are only used in TLS context
+    /// All certificates are byte streams loaded from PEM files
+    /// their consistency is checked during `build()` call
+    #[cfg(feature = "tls-rustls")]
+    pub fn certs(
+        mut self,
+        tls: TlsMode,
+        client_cert: Vec<u8>,
+        client_key: Vec<u8>,
+        root_cert: Vec<u8>,
+    ) -> ClusterClientBuilder {
+        self.builder_params.tls = Some(tls);
+        self.builder_params.certs = Some(RawCertificates {
+            client_cert,
+            client_key,
+            root_cert,
+        });
+        self
+    }
+
     /// Enables reading from replicas for all new connections (default is disabled).
     ///
     /// If enabled, then read queries will go to the replica nodes & write queries will go to the
@@ -258,6 +326,7 @@ impl ClusterClientBuilder {
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
     cluster_params: ClusterParams,
+    tls_params: Option<TlsConnParams>,
 }
 
 impl ClusterClient {
@@ -286,7 +355,7 @@ impl ClusterClient {
     ///
     /// An error is returned if there is a failure while creating connections or slots.
     pub fn get_connection(&self) -> RedisResult<cluster::ClusterConnection> {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone(), self.tls_params.clone())
     }
 
     /// Creates new connections to Redis Cluster nodes and returns a
@@ -297,7 +366,7 @@ impl ClusterClient {
     /// An error is returned if there is a failure while creating connections or slots.
     #[cfg(feature = "cluster-async")]
     pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone(), self.tls_params.clone())
             .await
     }
 
@@ -306,7 +375,7 @@ impl ClusterClient {
     where
         C: crate::ConnectionLike + crate::cluster::Connect + Send,
     {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone(), self.tls_params.clone())
     }
 
     #[doc(hidden)]
@@ -323,7 +392,7 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone(), self.tls_params.clone())
             .await
     }
 
