@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
@@ -424,6 +425,7 @@ pub struct Connection {
 /// Represents a pubsub connection.
 pub struct PubSub<'a> {
     con: &'a mut Connection,
+    waiting_messages: VecDeque<Msg>,
 }
 
 /// Represents a pubsub message.
@@ -1179,27 +1181,42 @@ where
 /// ```
 impl<'a> PubSub<'a> {
     fn new(con: &'a mut Connection) -> Self {
-        Self { con }
+        Self {
+            con,
+            waiting_messages: VecDeque::new(),
+        }
+    }
+
+    fn cache_messages_until_received_response(&mut self, cmd: &Cmd) -> RedisResult<()> {
+        let mut response = self.con.req_packed_command(&cmd.get_packed_command())?;
+        loop {
+            if let Some(msg) = Msg::from_value(&response) {
+                self.waiting_messages.push_back(msg);
+            } else {
+                return Ok(());
+            }
+            response = self.con.recv_response()?;
+        }
     }
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("SUBSCRIBE").arg(channel).query(self.con)
+        self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel))
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PSUBSCRIBE").arg(pchannel).query(self.con)
+        self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel))
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        cmd("UNSUBSCRIBE").arg(channel).query(self.con)
+        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel))
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        cmd("PUNSUBSCRIBE").arg(pchannel).query(self.con)
+        self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel))
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -1209,6 +1226,9 @@ impl<'a> PubSub<'a> {
     /// The message itself is still generic and can be converted into an
     /// appropriate type through the helper methods on it.
     pub fn get_message(&mut self) -> RedisResult<Msg> {
+        if let Some(msg) = self.waiting_messages.pop_front() {
+            return Ok(msg);
+        }
         loop {
             if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
                 return Ok(msg);
