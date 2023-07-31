@@ -97,7 +97,7 @@ where
         )
     }
 
-    /// Converts this [`Connection`] into [`MonitorSink`] and a [`Stream`] of [`Msg`].
+    /// Converts this [`Connection`] into [`MonitorSink`] and a [`Stream`] of [`Value`].
     pub fn into_monitor(
         self,
     ) -> (
