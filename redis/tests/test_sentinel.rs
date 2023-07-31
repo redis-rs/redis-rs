@@ -285,7 +285,12 @@ pub mod async_tests {
                 .await
                 .unwrap();
 
-            assert!(!replica_conn_infos.contains(&replica_client.get_connection_info().addr));
+            assert!(
+                !replica_conn_infos.contains(&replica_client.get_connection_info().addr),
+                "pushing {:?} into {:?}",
+                replica_client.get_connection_info().addr,
+                replica_conn_infos
+            );
             replica_conn_infos.push(replica_client.get_connection_info().addr.clone());
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, master_client)
