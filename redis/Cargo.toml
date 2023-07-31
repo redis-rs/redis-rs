@@ -83,7 +83,7 @@ log = { version = "0.4", optional = true }
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
-aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
+aio = ["bytes", "pin-project-lite", "futures", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
 geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
