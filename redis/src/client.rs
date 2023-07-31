@@ -208,6 +208,7 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    #[deprecated(note = "use get_connection_manager_with_backoff instead")]
     pub async fn get_tokio_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
         crate::aio::ConnectionManager::new(self.clone()).await
     }
@@ -231,7 +232,42 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    #[deprecated(note = "use get_connection_manager_with_backoff instead")]
     pub async fn get_tokio_connection_manager_with_backoff(
+        &self,
+        exponent_base: u64,
+        factor: u64,
+        number_of_retries: usize,
+    ) -> RedisResult<crate::aio::ConnectionManager> {
+        crate::aio::ConnectionManager::new_with_backoff(
+            self.clone(),
+            exponent_base,
+            factor,
+            number_of_retries,
+        )
+        .await
+    }
+
+    /// Returns an async [`ConnectionManager`][connection-manager] from the client.
+    ///
+    /// The connection manager wraps a
+    /// [`MultiplexedConnection`][multiplexed-connection]. If a command to that
+    /// connection fails with a connection error, then a new connection is
+    /// established in the background and the error is returned to the caller.
+    ///
+    /// This means that on connection loss at least one command will fail, but
+    /// the connection will be re-established automatically if possible. Please
+    /// refer to the [`ConnectionManager`][connection-manager] docs for
+    /// detailed reconnecting behavior.
+    ///
+    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// on the same underlying connection (tcp/unix socket).
+    ///
+    /// [connection-manager]: aio/struct.ConnectionManager.html
+    /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
+    #[cfg(feature = "connection-manager")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    pub async fn get_connection_manager_with_backoff(
         &self,
         exponent_base: u64,
         factor: u64,
