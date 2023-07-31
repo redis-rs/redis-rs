@@ -7,6 +7,7 @@ use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::Client;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
+use redis::FromRedisValue;
 use redis::RedisResult;
 use redis::TlsMode;
 use tempfile::TempDir;
@@ -130,8 +131,9 @@ fn wait_for_master_server(
         match master_client {
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
-                    let r: (String, i32, redis::Value) = rolecmd.query(&mut conn).unwrap();
-                    if r.0.starts_with("master") {
+                    let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
+                    let role = String::from_redis_value(r.get(0).unwrap()).unwrap();
+                    if role.starts_with("master") {
                         return Ok(());
                     } else {
                         println!("failed check for master role - current role: {:?}", r)
@@ -159,8 +161,10 @@ fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> R
         match replica_client {
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
-                    let r: (String, String, i32, String, i32) = rolecmd.query(&mut conn).unwrap();
-                    if r.0.starts_with("slave") && r.3 == "connected" {
+                    let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
+                    let role = String::from_redis_value(r.get(0).unwrap()).unwrap();
+                    let state = String::from_redis_value(r.get(3).unwrap()).unwrap();
+                    if role.starts_with("slave") && state == "connected" {
                         return Ok(());
                     } else {
                         println!("failed check for replica role - current role: {:?}", r)
