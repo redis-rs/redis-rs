@@ -910,22 +910,6 @@ impl Connection {
         Ok(())
     }
 
-    fn packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
-        if self.pubsub {
-            self.exit_pubsub()?;
-        }
-
-        self.con.send_bytes(cmd)?;
-
-        Ok(())
-    }
-
-    // Sends a [Cmd](Cmd) into the TCP socket and does not read a response from it.
-    fn command(&mut self, cmd: &Cmd) -> RedisResult<()> {
-        let pcmd = cmd.get_packed_command();
-        self.packed_command(&pcmd)
-    }
-
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
     pub fn recv_response(&mut self) -> RedisResult<Value> {

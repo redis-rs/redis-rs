@@ -94,7 +94,6 @@ where
         (
             PubSubSink::new(sink),
             stream.map(|msg| msg.and_then(|msg| msg.map(|msg| Msg::from_value(&msg)))),
-            // stream.map(|msg| Msg::from_value(&msg)),
         )
     }
 
