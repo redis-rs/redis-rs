@@ -90,7 +90,7 @@ macro_rules! reconnect_if_io_error {
 impl ConnectionManager {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+    const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
@@ -101,7 +101,7 @@ impl ConnectionManager {
             client,
             Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
             Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
         )
         .await
     }
@@ -230,5 +230,18 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.client.connection_info().redis.db
+    }
+}
+
+impl std::ops::Deref for ConnectionManager {
+    type Target = Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+impl std::ops::DerefMut for ConnectionManager {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
     }
 }
