@@ -579,63 +579,19 @@ where
         }
     }
 
-    async fn execute_on_multiple_nodes<'a>(
-        cmd: &'a Arc<Cmd>,
-        routing: &'a MultipleNodeRoutingInfo,
-        core: Core<C>,
+    async fn aggregate_results(
+        receivers: Vec<(String, oneshot::Receiver<RedisResult<Response>>)>,
+        routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
-    ) -> (OperationTarget, RedisResult<Response>) {
-        let read_guard = core.conn_lock.read().await;
-        let (receivers, requests): (Vec<_>, Vec<_>) = read_guard
-            .1
-            .addresses_for_multi_routing(routing)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, addr)| {
-                read_guard.0.get(addr).cloned().map(|conn| {
-                    let cmd = match routing {
-                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
-                            let mut new_cmd = Cmd::new();
-                            new_cmd.arg(cmd.arg_idx(0));
-                            let (_, indices) = vec.get(index).unwrap();
-                            for index in indices {
-                                new_cmd.arg(cmd.arg_idx(*index));
-                            }
-                            Arc::new(new_cmd)
-                        }
-                        _ => cmd.clone(),
-                    };
-                    let (sender, receiver) = oneshot::channel();
-                    let addr = addr.to_string();
-                    (
-                        (addr.clone(), receiver),
-                        PendingRequest {
-                            retry: 0,
-                            sender,
-                            info: RequestInfo {
-                                cmd: CmdArg::Cmd {
-                                    cmd,
-                                    routing: CommandRouting::Connection { addr, conn },
-                                    response_policy: None,
-                                },
-                                redirect: None,
-                            },
-                        },
-                    )
-                })
-            })
-            .unzip();
-        drop(read_guard);
-        core.pending_requests.lock().unwrap().extend(requests);
-
+    ) -> RedisResult<Value> {
         let extract_result = |response| match response {
             Response::Single(value) => value,
             Response::Multiple(_) => unreachable!(),
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
-            res.map_err(|_| RedisError::from((ErrorKind::ResponseError, "request wasn't handled")))
-                .and_then(|res| res.map(extract_result))
+            res.map_err(|_| RedisError::from((ErrorKind::ResponseError, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
+            .and_then(|res| res.map(extract_result))
         };
 
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {
@@ -643,7 +599,7 @@ where
         };
 
         // TODO - once Value::Error will be merged, these will need to be updated to handle this new value.
-        let result = match response_policy {
+        match response_policy {
             Some(ResponsePolicy::AllSucceeded) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
@@ -704,7 +660,60 @@ where
                 .map(Value::Bulk)
             }
         }
-        .map(Response::Single);
+    }
+
+    async fn execute_on_multiple_nodes<'a>(
+        cmd: &'a Arc<Cmd>,
+        routing: &'a MultipleNodeRoutingInfo,
+        core: Core<C>,
+        response_policy: Option<ResponsePolicy>,
+    ) -> (OperationTarget, RedisResult<Response>) {
+        let read_guard = core.conn_lock.read().await;
+        let (receivers, requests): (Vec<_>, Vec<_>) = read_guard
+            .1
+            .addresses_for_multi_routing(routing)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, addr)| {
+                read_guard.0.get(addr).cloned().map(|conn| {
+                    let cmd = match routing {
+                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                            let mut new_cmd = Cmd::new();
+                            new_cmd.arg(cmd.arg_idx(0));
+                            let (_, indices) = vec.get(index).unwrap();
+                            for index in indices {
+                                new_cmd.arg(cmd.arg_idx(*index));
+                            }
+                            Arc::new(new_cmd)
+                        }
+                        _ => cmd.clone(),
+                    };
+                    let (sender, receiver) = oneshot::channel();
+                    let addr = addr.to_string();
+                    (
+                        (addr.clone(), receiver),
+                        PendingRequest {
+                            retry: 0,
+                            sender,
+                            info: RequestInfo {
+                                cmd: CmdArg::Cmd {
+                                    cmd,
+                                    routing: CommandRouting::Connection { addr, conn },
+                                    response_policy: None,
+                                },
+                                redirect: None,
+                            },
+                        },
+                    )
+                })
+            })
+            .unzip();
+        drop(read_guard);
+        core.pending_requests.lock().unwrap().extend(requests);
+
+        let result = Self::aggregate_results(receivers, routing, response_policy)
+            .await
+            .map(Response::Single);
 
         (OperationTarget::FanOut, result)
     }
@@ -717,35 +726,46 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let routing = match routing {
-            CommandRouting::Route(routing) => routing,
-            CommandRouting::Connection { addr, conn } => {
-                if !asking {
+        let route_option = if redirect.is_some() {
+            // if we have a redirect, we don't take info from `routing`.
+            // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
+            None
+        } else {
+            match routing {
+                // commands that are sent to multiple nodes are handled here.
+                CommandRouting::Route(Some(RoutingInfo::MultiNode(multi_node_routing))) => {
+                    assert!(!asking);
+                    assert!(redirect.is_none());
+                    return Self::execute_on_multiple_nodes(
+                        &cmd,
+                        &multi_node_routing,
+                        core,
+                        response_policy,
+                    )
+                    .await;
+                }
+
+                // commands that have concrete connections, and don't require redirection, are handled here.
+                CommandRouting::Connection { addr, conn } => {
                     let mut conn = conn.await;
                     let result = conn.req_packed_command(&cmd).await.map(Response::Single);
                     return (addr.into(), result);
                 }
-                None
+
+                CommandRouting::Route(Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::SpecificNode(route),
+                ))) => Some(route),
+
+                CommandRouting::Route(Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::Random,
+                ))) => None,
+
+                CommandRouting::Route(None) => None,
             }
         };
 
-        let route_option = match routing
-            .as_ref()
-            .unwrap_or(&RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-        {
-            RoutingInfo::MultiNode(multi_node_routing) => {
-                return Self::execute_on_multiple_nodes(
-                    &cmd,
-                    multi_node_routing,
-                    core,
-                    response_policy,
-                )
-                .await
-            }
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random) => None,
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => Some(route),
-        };
-
+        // if we reached this point, we're sending the command only to single node, and we need to find the
+        // right connection to the node.
         let (addr, mut conn) = Self::get_connection(redirect, route_option, core, asking).await;
         let result = conn.req_packed_command(&cmd).await.map(Response::Single);
         (addr.into(), result)
@@ -790,7 +810,7 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(info.redirect, route.as_ref(), core, asking),
+                    Self::get_connection(info.redirect, route, core, asking),
                 )
                 .await
             }
@@ -799,7 +819,7 @@ where
 
     async fn get_connection(
         mut redirect: Option<Redirect>,
-        route: Option<&Route>,
+        route: Option<Route>,
         core: Core<C>,
         asking: bool,
     ) -> (String, C) {
