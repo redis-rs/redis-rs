@@ -32,7 +32,6 @@ Many commands are implemented through the `Commands` trait but manual
 command creation is also possible.
 
 ```rust
-extern crate redis;
 use redis::Commands;
 
 fn fetch_an_integer() -> redis::RedisResult<isize> {
