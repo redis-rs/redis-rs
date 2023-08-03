@@ -1,7 +1,7 @@
 #![cfg(feature = "cluster-async")]
 mod support;
 use std::sync::{
-    atomic::{self, AtomicI32},
+    atomic::{self, AtomicI32, AtomicU16},
     atomic::{AtomicBool, Ordering},
     Arc,
 };
@@ -1174,6 +1174,53 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
         .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
         .unwrap();
     assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
+}
+
+#[test]
+fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
+    let name = "test_cluster_handle_asking_error_in_split_multi_shard_command";
+    let mut cmd = cmd("MGET");
+    cmd.arg("foo").arg("bar").arg("baz");
+    let asking_called = Arc::new(AtomicU16::new(0));
+    let asking_called_cloned = asking_called.clone();
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            let cmd_str = std::str::from_utf8(received_cmd).unwrap();
+            if cmd_str.contains("ASKING") && port == 6382 {
+                asking_called_cloned.fetch_add(1, Ordering::Relaxed);
+            }
+            if port == 6380 && cmd_str.contains("baz") {
+                return Err(parse_redis_value(
+                    format!("-ASK 14000 {name}:6382\r\n").as_bytes(),
+                ));
+            }
+            let results = ["foo", "bar", "baz"]
+                .iter()
+                .filter_map(|expected_key| {
+                    if cmd_str.contains(expected_key) {
+                        Some(Value::Data(format!("{expected_key}-{port}").into_bytes()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Err(Ok(Value::Bulk(results)))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap();
+    assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6382"]);
+    assert_eq!(asking_called.load(Ordering::Relaxed), 1);
 }
 
 #[test]
