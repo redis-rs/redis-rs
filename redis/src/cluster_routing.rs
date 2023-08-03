@@ -1,20 +1,15 @@
 use std::cmp::min;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::iter::Iterator;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
+use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
-
-pub(crate) const SLOT_SIZE: u16 = 16384;
-
-fn slot(key: &[u8]) -> u16 {
-    crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
-}
 
 #[derive(Clone)]
 pub(crate) enum Redirect {
@@ -189,16 +184,6 @@ pub(crate) fn combine_and_sort_array_results<'a>(
     }
 
     Ok(Value::Bulk(results))
-}
-
-/// Returns the slot that matches `key`.
-pub fn get_slot(key: &[u8]) -> u16 {
-    let key = match get_hashtag(key) {
-        Some(tag) => tag,
-        None => key,
-    };
-
-    slot(key)
 }
 
 fn get_route(is_readonly: bool, key: &[u8]) -> Route {
@@ -481,7 +466,7 @@ pub enum SlotAddr {
 /// which stores only the master and [optional] replica
 /// to avoid the need to choose a replica each time
 /// a command is executed
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct SlotAddrs([String; 2]);
 
 impl SlotAddrs {
@@ -522,64 +507,6 @@ impl<'a> IntoIterator for &'a SlotAddrs {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct SlotMap(BTreeMap<u16, SlotAddrs>);
-
-impl SlotMap {
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
-        for slot in slots {
-            self.0
-                .insert(slot.end(), SlotAddrs::from_slot(slot, read_from_replicas));
-        }
-    }
-
-    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
-        self.0
-            .range(route.slot()..)
-            .next()
-            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
-    }
-
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-
-    pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
-        self.0.values()
-    }
-
-    fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
-        let mut addresses = HashSet::new();
-        for slot in self.values() {
-            addresses.insert(slot.slot_addr(&SlotAddr::Master));
-
-            if !only_primaries {
-                addresses.insert(slot.slot_addr(&SlotAddr::Replica));
-            }
-        }
-        addresses
-    }
-
-    pub fn addresses_for_multi_routing(&self, routing: &MultipleNodeRoutingInfo) -> Vec<&str> {
-        match routing {
-            MultipleNodeRoutingInfo::AllNodes => {
-                self.all_unique_addresses(false).into_iter().collect()
-            }
-            MultipleNodeRoutingInfo::AllMasters => {
-                self.all_unique_addresses(true).into_iter().collect()
-            }
-            MultipleNodeRoutingInfo::MultiSlot(routes) => routes
-                .iter()
-                .flat_map(|(route, _)| self.slot_addr_for_route(route))
-                .collect(),
-        }
-    }
-}
-
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
@@ -600,34 +527,17 @@ impl Route {
     }
 }
 
-fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
-    let open = key.iter().position(|v| *v == b'{');
-    let open = match open {
-        Some(open) => open,
-        None => return None,
-    };
-
-    let close = key[open..].iter().position(|v| *v == b'}');
-    let close = match close {
-        Some(close) => close,
-        None => return None,
-    };
-
-    let rv = &key[open + 1..open + close];
-    if rv.is_empty() {
-        None
-    } else {
-        Some(rv)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hashtag, slot, MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotAddr, SlotAddrs, SlotMap,
+        MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, Slot, SlotAddr,
+        SlotAddrs,
     };
-    use crate::{cmd, parser::parse_redis_value};
+    use crate::{
+        cluster_topology::{slot, SlotMap},
+        cmd,
+        parser::parse_redis_value,
+    };
 
     fn from_slots(slots: &[Slot], read_from_replicas: bool) -> SlotMap {
         SlotMap(
@@ -636,13 +546,6 @@ mod tests {
                 .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
                 .collect(),
         )
-    }
-
-    #[test]
-    fn test_get_hashtag() {
-        assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
-        assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
-        assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 
     #[test]

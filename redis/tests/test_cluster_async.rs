@@ -14,6 +14,7 @@ use redis::{
     cluster::ClusterClient,
     cluster_async::Connect,
     cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo},
+    cluster_topology::DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Script, Value,
 };
@@ -394,6 +395,24 @@ fn test_async_cluster_tryagain_exhaust_retries() {
     assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
 }
 
+// Obtain the view index associated with the node with [called_port] port
+fn get_node_view_index(num_of_views: usize, ports: &Vec<u16>, called_port: u16) -> usize {
+    let port_index = ports
+        .iter()
+        .position(|&p| p == called_port)
+        .unwrap_or_else(|| {
+            panic!(
+                "CLUSTER SLOTS was called with unknown port: {called_port}; Known ports: {:?}",
+                ports
+            )
+        });
+    // If we have less views than nodes, use the last view
+    if port_index < num_of_views {
+        port_index
+    } else {
+        num_of_views - 1
+    }
+}
 #[test]
 fn test_async_cluster_move_error_when_new_node_is_added() {
     let name = "rebuild_with_extra_nodes";
@@ -464,6 +483,234 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
     );
 
     assert_eq!(value, Ok(Some(123)));
+}
+
+fn test_cluster_refresh_topology_after_moved_assert_get_succeed_and_expected_retries(
+    slots_config_vec: Vec<Vec<MockSlotRange>>,
+    ports: Vec<u16>,
+    has_a_majority: bool,
+) {
+    assert!(!ports.is_empty() && !slots_config_vec.is_empty());
+    let name = "refresh_topology_moved";
+    let num_of_nodes = ports.len();
+    let requests = atomic::AtomicUsize::new(0);
+    let started = atomic::AtomicBool::new(false);
+    let refresh_calls = Arc::new(atomic::AtomicUsize::new(0));
+    let refresh_calls_cloned = refresh_calls.clone();
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        if !started.load(atomic::Ordering::SeqCst) {
+            respond_startup_with_replica_using_config(
+                name,
+                cmd,
+                Some(slots_config_vec[0].clone()),
+            )?;
+        }
+        started.store(true, atomic::Ordering::SeqCst);
+
+        if contains_slice(cmd, b"PING") {
+            return Err(Ok(Value::Status("OK".into())));
+        }
+
+        let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+        let is_get_cmd = contains_slice(cmd, b"GET");
+        let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+        let moved_node = ports[0];
+        match i {
+            // Respond that the key exists on a node that does not yet have a connection:
+            0 => Err(parse_redis_value(
+                format!("-MOVED 123 {name}:{moved_node}\r\n").as_bytes(),
+            )),
+            _ => {
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    refresh_calls_cloned.fetch_add(1, atomic::Ordering::SeqCst);
+                    let view_index = get_node_view_index(slots_config_vec.len(), &ports, port);
+                    Err(Ok(create_topology_from_config(
+                        name,
+                        slots_config_vec[view_index].clone(),
+                    )))
+                } else {
+                    assert_eq!(port, moved_node);
+                    assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
+                    get_response
+                }
+            }
+        }
+    });
+    runtime.block_on(async move {
+        let res = cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection)
+            .await;
+        assert_eq!(res, Ok(Some(123)));
+        // If there is a majority in the topology views, or if it's a 2-nodes cluster, we shall be able to calculate the topology on the first try, 
+        // so each node will be queried only once with CLUSTER SLOTS.
+        // Otherwise, if we don't have a majority, we expect to see the refresh_slots function being called with the maximum retry number.
+        let expected_calls = if has_a_majority || num_of_nodes == 2 {num_of_nodes} else {DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES * num_of_nodes};
+        let mut refreshed_calls = 0;
+        for _ in 0..100 {
+            refreshed_calls = refresh_calls.load(atomic::Ordering::Relaxed);
+            if refreshed_calls == expected_calls {
+                return;
+            } else {
+                let sleep_duration = core::time::Duration::from_millis(100);
+                #[cfg(feature = "tokio-comp")]
+                tokio::time::sleep(sleep_duration).await;
+
+                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+                async_std::task::sleep(sleep_duration).await;
+            }
+        }
+        panic!("Failed to reach to the expected topology refresh retries. Found={refreshed_calls}, Expected={expected_calls}")
+    });
+}
+
+fn test_cluster_refresh_topology_in_client_init_get_succeed(
+    slots_config_vec: Vec<Vec<MockSlotRange>>,
+    ports: Vec<u16>,
+) {
+    assert!(!ports.is_empty() && !slots_config_vec.is_empty());
+    let name = "refresh_topology_client_init";
+    let started = atomic::AtomicBool::new(false);
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(
+            ports
+                .iter()
+                .map(|port| format!("redis://{name}:{port}"))
+                .collect(),
+        ),
+        name,
+        move |cmd: &[u8], port| {
+            let is_started = started.load(atomic::Ordering::SeqCst);
+            if !is_started {
+                if contains_slice(cmd, b"PING") {
+                    return Err(Ok(Value::Status("OK".into())));
+                } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    let view_index = get_node_view_index(slots_config_vec.len(), &ports, port);
+                    return Err(Ok(create_topology_from_config(
+                        name,
+                        slots_config_vec[view_index].clone(),
+                    )));
+                } else if contains_slice(cmd, b"READONLY") {
+                    return Err(Ok(Value::Status("OK".into())));
+                } else {
+                }
+            }
+            started.store(true, atomic::Ordering::SeqCst);
+            if contains_slice(cmd, b"PING") {
+                return Err(Ok(Value::Status("OK".into())));
+            }
+
+            let is_get_cmd = contains_slice(cmd, b"GET");
+            let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+            {
+                assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
+                get_response
+            }
+        },
+    );
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+fn generate_topology_view(
+    ports: &Vec<u16>,
+    interval: usize,
+    full_slot_coverage: bool,
+) -> Vec<MockSlotRange> {
+    let mut slots_res = vec![];
+    let mut start_pos: usize = 0;
+    for (idx, port) in ports.iter().enumerate() {
+        let end_pos: usize = if idx == ports.len() - 1 && full_slot_coverage {
+            16383
+        } else {
+            start_pos + interval
+        };
+        let mock_slot = MockSlotRange {
+            primary_port: *port,
+            replica_ports: vec![],
+            slot_range: (start_pos as u16..end_pos as u16),
+        };
+        slots_res.push(mock_slot);
+        start_pos = end_pos + 1;
+    }
+    slots_res
+}
+
+fn get_ports(num_of_nodes: usize) -> Vec<u16> {
+    (6379_u16..6379 + num_of_nodes as u16).collect()
+}
+
+fn get_no_majority_topology_view(ports: &Vec<u16>) -> Vec<Vec<MockSlotRange>> {
+    let mut result = vec![];
+    let mut full_coverage = true;
+    for i in 0..ports.len() {
+        result.push(generate_topology_view(ports, i + 1, full_coverage));
+        full_coverage = !full_coverage;
+    }
+    result
+}
+
+fn get_topology_with_majority(ports: &Vec<u16>) -> Vec<Vec<MockSlotRange>> {
+    let view: Vec<MockSlotRange> = generate_topology_view(ports, 10, true);
+    let result: Vec<_> = ports.iter().map(|_| view.clone()).collect();
+    result
+}
+
+#[test]
+fn test_cluster_refresh_topology_after_moved_error_all_nodes_agree_get_succeed() {
+    let ports = get_ports(3);
+    test_cluster_refresh_topology_after_moved_assert_get_succeed_and_expected_retries(
+        get_topology_with_majority(&ports),
+        ports,
+        true,
+    );
+}
+
+#[test]
+fn test_cluster_refresh_topology_in_client_init_all_nodes_agree_get_succeed() {
+    let ports = get_ports(3);
+    test_cluster_refresh_topology_in_client_init_get_succeed(
+        get_topology_with_majority(&ports),
+        ports,
+    );
+}
+
+#[test]
+fn test_cluster_refresh_topology_after_moved_error_with_no_majority_get_succeed() {
+    for num_of_nodes in 2..4 {
+        let ports = get_ports(num_of_nodes);
+        test_cluster_refresh_topology_after_moved_assert_get_succeed_and_expected_retries(
+            get_no_majority_topology_view(&ports),
+            ports,
+            false,
+        );
+    }
+}
+
+#[test]
+fn test_cluster_refresh_topology_in_client_init_with_no_majority_get_succeed() {
+    for num_of_nodes in 2..4 {
+        let ports = get_ports(num_of_nodes);
+        test_cluster_refresh_topology_in_client_init_get_succeed(
+            get_no_majority_topology_view(&ports),
+            ports,
+        );
+    }
 }
 
 #[test]
