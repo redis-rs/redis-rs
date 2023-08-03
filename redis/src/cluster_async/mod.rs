@@ -673,7 +673,6 @@ where
             topology_values,
             curr_retry,
             inner.cluster_params.tls,
-            inner.cluster_params.read_from_replicas,
             num_of_nodes_to_query,
         )?;
 
@@ -716,7 +715,7 @@ where
         let read_guard = core.conn_lock.read().await;
         let (receivers, requests): (Vec<_>, Vec<_>) = read_guard
             .1
-            .addresses_for_multi_routing(routing)
+            .addresses_for_multi_routing(routing, core.cluster_params.read_from_replicas)
             .into_iter()
             .enumerate()
             .filter_map(|(index, addr)| {
@@ -875,7 +874,11 @@ where
             Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
             None => route
                 .as_ref()
-                .and_then(|route| read_guard.1.slot_addr_for_route(route))
+                .and_then(|route| {
+                    read_guard
+                        .1
+                        .slot_addr_for_route(route, core.cluster_params.read_from_replicas)
+                })
                 .map(|addr| addr.to_string()),
         }
         .map(|addr| {

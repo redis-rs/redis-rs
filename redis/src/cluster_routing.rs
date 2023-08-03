@@ -443,14 +443,6 @@ impl Slot {
     pub fn end(&self) -> u16 {
         self.end
     }
-
-    pub fn master(&self) -> &str {
-        &self.master
-    }
-
-    pub fn replicas(&self) -> &Vec<String> {
-        &self.replicas
-    }
 }
 
 /// What type of node should a request be routed to.
@@ -475,26 +467,22 @@ impl SlotAddrs {
         Self([master_node, replica])
     }
 
-    pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr) -> &str {
-        match slot_addr {
-            SlotAddr::Master => &self.0[0],
-            SlotAddr::Replica => &self.0[1],
+    pub(crate) fn slot_addr(&self, slot_addr: SlotAddr, allow_replica: bool) -> &str {
+        if allow_replica && slot_addr == SlotAddr::Replica {
+            self.0[1].as_str()
+        } else {
+            self.0[0].as_str()
         }
     }
 
-    pub(crate) fn from_slot(slot: &Slot, read_from_replicas: bool) -> Self {
-        let replica = if !read_from_replicas || slot.replicas().is_empty() {
+    pub(crate) fn from_slot(slot: Slot) -> Self {
+        let replica = if slot.replicas.is_empty() {
             None
         } else {
-            Some(
-                slot.replicas()
-                    .choose(&mut thread_rng())
-                    .unwrap()
-                    .to_string(),
-            )
+            Some(slot.replicas.choose(&mut thread_rng()).unwrap().to_string())
         };
 
-        SlotAddrs::new(slot.master().to_string(), replica)
+        SlotAddrs::new(slot.master, replica)
     }
 }
 
@@ -522,8 +510,8 @@ impl Route {
         self.0
     }
 
-    pub(crate) fn slot_addr(&self) -> &SlotAddr {
-        &self.1
+    pub(crate) fn slot_addr(&self) -> SlotAddr {
+        self.1
     }
 }
 
@@ -539,11 +527,11 @@ mod tests {
         parser::parse_redis_value,
     };
 
-    fn from_slots(slots: &[Slot], read_from_replicas: bool) -> SlotMap {
+    fn from_slots(slots: Vec<Slot>) -> SlotMap {
         SlotMap(
             slots
-                .iter()
-                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
+                .into_iter()
+                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot)))
                 .collect(),
         )
     }
@@ -815,68 +803,71 @@ mod tests {
 
     #[test]
     fn test_slot_map() {
-        let slot_map = from_slots(
-            &[
-                Slot {
-                    start: 1,
-                    end: 1000,
-                    master: "node1:6379".to_owned(),
-                    replicas: vec!["replica1:6379".to_owned()],
-                },
-                Slot {
-                    start: 1001,
-                    end: 2000,
-                    master: "node2:6379".to_owned(),
-                    replicas: vec!["replica2:6379".to_owned()],
-                },
-            ],
-            true,
-        );
+        let slot_map = from_slots(vec![
+            Slot {
+                start: 1,
+                end: 1000,
+                master: "node1:6379".to_owned(),
+                replicas: vec!["replica1:6379".to_owned()],
+            },
+            Slot {
+                start: 1001,
+                end: 2000,
+                master: "node2:6379".to_owned(),
+                replicas: vec!["replica2:6379".to_owned()],
+            },
+        ]);
 
         assert_eq!(
             "node1:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(1, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(1, SlotAddr::Master), false)
                 .unwrap()
         );
         assert_eq!(
             "node1:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(500, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(500, SlotAddr::Master), false)
                 .unwrap()
         );
         assert_eq!(
             "node1:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(1000, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Master), false)
                 .unwrap()
         );
         assert_eq!(
             "replica1:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(1000, SlotAddr::Replica))
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Replica), true)
+                .unwrap()
+        );
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Replica), false)
                 .unwrap()
         );
         assert_eq!(
             "node2:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(1001, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(1001, SlotAddr::Master), false)
                 .unwrap()
         );
         assert_eq!(
             "node2:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(1500, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(1500, SlotAddr::Master), false)
                 .unwrap()
         );
         assert_eq!(
             "node2:6379",
             slot_map
-                .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
+                .slot_addr_for_route(&Route::new(2000, SlotAddr::Master), false)
                 .unwrap()
         );
         assert!(slot_map
-            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
+            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master), false)
             .is_none());
     }
 }

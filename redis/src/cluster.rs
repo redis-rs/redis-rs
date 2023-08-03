@@ -298,9 +298,9 @@ where
         )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_slots(&value, self.cluster_params.tls).and_then(|v| {
-                build_slot_map(&mut new_slots, v, self.cluster_params.read_from_replicas)
-            }) {
+            match parse_slots(&value, self.cluster_params.tls)
+                .and_then(|v| build_slot_map(&mut new_slots, v))
+            {
                 Ok(_) => {
                     result = Ok(new_slots);
                     break;
@@ -330,7 +330,7 @@ where
         route: &Route,
     ) -> RedisResult<(String, &'a mut C)> {
         let slots = self.slots.borrow();
-        if let Some(addr) = slots.slot_addr_for_route(route) {
+        if let Some(addr) = slots.slot_addr_for_route(route, self.read_from_replicas) {
             Ok((
                 addr.to_string(),
                 self.get_connection_by_addr(connections, addr)?,
@@ -362,7 +362,7 @@ where
 
         let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
-                .slot_addr_for_route(&route)
+                .slot_addr_for_route(&route, self.read_from_replicas)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
             Ok(slot_addr.to_string())
         };
@@ -415,7 +415,7 @@ where
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        let addresses = slots.addresses_for_multi_routing(&routing);
+        let addresses = slots.addresses_for_multi_routing(&routing, self.read_from_replicas);
         for addr in addresses {
             let addr = addr.to_string();
             if let Some(connection) = connections.get_mut(&addr) {

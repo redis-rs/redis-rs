@@ -44,18 +44,17 @@ impl SlotMap {
         Self(BTreeMap::new())
     }
 
-    pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
+    pub fn fill_slots(&mut self, slots: Vec<Slot>) {
         for slot in slots {
-            self.0
-                .insert(slot.end(), SlotAddrs::from_slot(slot, read_from_replicas));
+            self.0.insert(slot.end(), SlotAddrs::from_slot(slot));
         }
     }
 
-    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
+    pub fn slot_addr_for_route(&self, route: &Route, allow_replica: bool) -> Option<&str> {
         self.0
             .range(route.slot()..)
             .next()
-            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr(), allow_replica))
     }
 
     pub fn clear(&mut self) {
@@ -69,26 +68,31 @@ impl SlotMap {
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
         let mut addresses = HashSet::new();
         for slot in self.values() {
-            addresses.insert(slot.slot_addr(&SlotAddr::Master));
+            addresses.insert(slot.slot_addr(SlotAddr::Master, false));
 
             if !only_primaries {
-                addresses.insert(slot.slot_addr(&SlotAddr::Replica));
+                addresses.insert(slot.slot_addr(SlotAddr::Replica, true));
             }
         }
         addresses
     }
 
-    pub fn addresses_for_multi_routing(&self, routing: &MultipleNodeRoutingInfo) -> Vec<&str> {
+    pub fn addresses_for_multi_routing(
+        &self,
+        routing: &MultipleNodeRoutingInfo,
+        allow_replica: bool,
+    ) -> Vec<&str> {
         match routing {
-            MultipleNodeRoutingInfo::AllNodes => {
-                self.all_unique_addresses(false).into_iter().collect()
-            }
+            MultipleNodeRoutingInfo::AllNodes => self
+                .all_unique_addresses(!allow_replica)
+                .into_iter()
+                .collect(),
             MultipleNodeRoutingInfo::AllMasters => {
                 self.all_unique_addresses(true).into_iter().collect()
             }
             MultipleNodeRoutingInfo::MultiSlot(routes) => routes
                 .iter()
-                .flat_map(|(route, _)| self.slot_addr_for_route(route))
+                .flat_map(|(route, _)| self.slot_addr_for_route(route, allow_replica))
                 .collect(),
         }
     }
@@ -195,11 +199,7 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
     Ok(result)
 }
 
-pub(crate) fn build_slot_map(
-    slot_map: &mut SlotMap,
-    mut slots_data: Vec<Slot>,
-    read_from_replicas: bool,
-) -> RedisResult<()> {
+pub(crate) fn build_slot_map(slot_map: &mut SlotMap, mut slots_data: Vec<Slot>) -> RedisResult<()> {
     slots_data.sort_by_key(|slot_data| slot_data.start());
     let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
         if prev_end != slot_data.start() {
@@ -225,7 +225,7 @@ pub(crate) fn build_slot_map(
         )));
     }
     slot_map.clear();
-    slot_map.fill_slots(&slots_data, read_from_replicas);
+    slot_map.fill_slots(slots_data);
     trace!("{:?}", slot_map);
     Ok(())
 }
@@ -240,7 +240,6 @@ pub(crate) fn calculate_topology(
     topology_views: Vec<Value>,
     curr_retry: usize,
     tls_mode: Option<TlsMode>,
-    read_from_replicas: bool,
     num_of_queried_nodes: usize,
 ) -> Result<SlotMap, RedisError> {
     if topology_views.is_empty() {
@@ -291,7 +290,7 @@ pub(crate) fn calculate_topology(
         if curr_retry >= DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES || num_of_queried_nodes < 3 {
             for (idx, topology_view) in hash_view_map.values().enumerate() {
                 match parse_slots(&topology_view.topology_value, tls_mode)
-                    .and_then(|v| build_slot_map(&mut new_slots, v, read_from_replicas))
+                    .and_then(|v| build_slot_map(&mut new_slots, v))
                 {
                     Ok(_) => {
                         return Ok(new_slots);
@@ -322,7 +321,7 @@ pub(crate) fn calculate_topology(
     const MIN_AGREEMENT_RATE: f32 = 0.2;
     if agreement_rate >= MIN_AGREEMENT_RATE {
         parse_slots(&most_frequent_topology.topology_value, tls_mode)
-            .and_then(|v| build_slot_map(&mut new_slots, v, read_from_replicas))?;
+            .and_then(|v| build_slot_map(&mut new_slots, v))?;
         Ok(new_slots)
     } else {
         Err(RedisError::from((
@@ -420,8 +419,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewFullCoverage),
             get_view(&ViewType::TwoNodesViewFullCoverage),
         ];
-        let topology_view =
-            calculate_topology(topology_results, 1, None, false, queried_nodes).unwrap();
+        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let expected: Vec<&SlotAddrs> = vec![&node_1];
@@ -437,7 +435,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, false, queried_nodes);
+        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes);
         assert!(topology_view.is_err());
     }
 
@@ -450,8 +448,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view =
-            calculate_topology(topology_results, 3, None, false, queried_nodes).unwrap();
+        let topology_view = calculate_topology(topology_results, 3, None, queried_nodes).unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
@@ -467,8 +464,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view =
-            calculate_topology(topology_results, 1, None, false, queried_nodes).unwrap();
+        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
@@ -484,7 +480,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewMissingSlots),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view_res = calculate_topology(topology_results, 1, None, false, queried_nodes);
+        let topology_view_res = calculate_topology(topology_results, 1, None, queried_nodes);
         assert!(topology_view_res.is_err());
     }
 }
