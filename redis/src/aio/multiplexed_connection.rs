@@ -1,16 +1,18 @@
 use super::ConnectionLike;
 use crate::aio::authenticate;
 use crate::cmd::Cmd;
-use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
+use crate::push_manager::{PushInfo, PushManager};
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
+use crate::ConnectionInfo;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+use arc_swap::ArcSwap;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -23,6 +25,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
@@ -30,16 +33,16 @@ use tokio_util::codec::Decoder;
 // Senders which the result of a single request are sent through
 type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
 
-struct InFlight<O, E> {
-    output: PipelineOutput<O, E>,
+struct InFlight<E> {
+    output: PipelineOutput<Value, E>,
     expected_response_count: usize,
     current_response_count: usize,
-    buffer: Vec<O>,
+    buffer: Vec<Value>,
     first_err: Option<E>,
 }
 
-impl<O, E> InFlight<O, E> {
-    fn new(output: PipelineOutput<O, E>, expected_response_count: usize) -> Self {
+impl<E> InFlight<E> {
+    fn new(output: PipelineOutput<Value, E>, expected_response_count: usize) -> Self {
         Self {
             output,
             expected_response_count,
@@ -51,9 +54,9 @@ impl<O, E> InFlight<O, E> {
 }
 
 // A single message sent through the pipeline
-struct PipelineMessage<S, I, E> {
+struct PipelineMessage<S, E> {
     input: S,
-    output: PipelineOutput<I, E>,
+    output: PipelineOutput<Value, E>,
     response_count: usize,
 }
 
@@ -61,46 +64,60 @@ struct PipelineMessage<S, I, E> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
+struct Pipeline<SinkItem, E> {
+    sender: mpsc::Sender<PipelineMessage<SinkItem, E>>,
 
-impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
+    push_manager: Arc<ArcSwap<PushManager>>,
+}
+
+impl<SinkItem, E> Clone for Pipeline<SinkItem, E> {
     fn clone(&self) -> Self {
-        Pipeline(self.0.clone())
+        Pipeline {
+            sender: self.sender.clone(),
+            push_manager: self.push_manager.clone(),
+        }
     }
 }
 
-impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
+impl<SinkItem, E> Debug for Pipeline<SinkItem, E>
 where
     SinkItem: Debug,
-    I: Debug,
     E: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Pipeline").field(&self.0).finish()
+        f.debug_tuple("Pipeline").field(&self.sender).finish()
     }
 }
 
 pin_project! {
-    struct PipelineSink<T, I, E> {
+    struct PipelineSink<T,  E> {
         #[pin]
         sink_stream: T,
-        in_flight: VecDeque<InFlight<I, E>>,
+        in_flight: VecDeque<InFlight< E>>,
         error: Option<E>,
+        push_manager: Arc<ArcSwap<PushManager>>,
+        con_addr: Arc<String>
     }
 }
 
-impl<T, I, E> PipelineSink<T, I, E>
+impl<T, E> PipelineSink<T, E>
 where
-    T: Stream<Item = Result<I, E>> + 'static,
+    T: Stream<Item = Result<Value, E>> + 'static,
 {
-    fn new<SinkItem>(sink_stream: T) -> Self
+    fn new<SinkItem>(
+        sink_stream: T,
+        push_manager: Arc<ArcSwap<PushManager>>,
+        con_addr: Arc<String>,
+    ) -> Self
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
     {
         PipelineSink {
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
+            push_manager,
+            con_addr,
         }
     }
 
@@ -121,7 +138,7 @@ where
         }
     }
 
-    fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
+    fn send_result(self: Pin<&mut Self>, result: Result<Value, E>) {
         let self_ = self.project();
 
         {
@@ -129,10 +146,19 @@ where
                 Some(entry) => entry,
                 None => return,
             };
-
+            let mut is_push = false;
             match result {
                 Ok(item) => {
-                    entry.buffer.push(item);
+                    if let Value::Push { kind, data } = item {
+                        is_push = true;
+                        self_.push_manager.load().send(PushInfo {
+                            kind,
+                            data,
+                            con_addr: self_.con_addr.clone(),
+                        });
+                    } else {
+                        entry.buffer.push(item);
+                    }
                 }
                 Err(err) => {
                     if entry.first_err.is_none() {
@@ -141,7 +167,9 @@ where
                 }
             }
 
-            entry.current_response_count += 1;
+            if !is_push {
+                entry.current_response_count += 1;
+            }
             if entry.current_response_count < entry.expected_response_count {
                 // Need to gather more response values
                 return;
@@ -161,9 +189,9 @@ where
     }
 }
 
-impl<SinkItem, T, I, E> Sink<PipelineMessage<SinkItem, I, E>> for PipelineSink<T, I, E>
+impl<SinkItem, T, E> Sink<PipelineMessage<SinkItem, E>> for PipelineSink<T, E>
 where
-    T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+    T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
 {
     type Error = ();
 
@@ -187,7 +215,7 @@ where
             input,
             output,
             response_count,
-        }: PipelineMessage<SinkItem, I, E>,
+        }: PipelineMessage<SinkItem, E>,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
@@ -248,15 +276,14 @@ where
     }
 }
 
-impl<SinkItem, I, E> Pipeline<SinkItem, I, E>
+impl<SinkItem, E> Pipeline<SinkItem, E>
 where
     SinkItem: Send + 'static,
-    I: Send + 'static,
     E: Send + 'static,
 {
-    fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
+    fn new<T>(sink_stream: T, con_addr: Arc<String>) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
         T: Send + 'static,
         T::Item: Send,
         T::Error: Send,
@@ -264,15 +291,25 @@ where
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let push_manager: Arc<ArcSwap<PushManager>> =
+            Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
+        let sink =
+            PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone(), con_addr.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
-            .forward(PipelineSink::new::<SinkItem>(sink_stream))
+            .forward(sink)
             .map(|_| ());
-        (Pipeline(sender), f)
+        (
+            Pipeline {
+                sender,
+                push_manager,
+            },
+            f,
+        )
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
+    async fn send(&mut self, item: SinkItem) -> Result<Value, Option<E>> {
         self.send_recv_multiple(item, 1)
             .await
             // We can unwrap since we do a request for `1` item
@@ -283,10 +320,10 @@ where
         &mut self,
         input: SinkItem,
         count: usize,
-    ) -> Result<Vec<I>, Option<E>> {
+    ) -> Result<Vec<Value>, Option<E>> {
         let (sender, receiver) = oneshot::channel();
 
-        self.0
+        self.sender
             .send(PipelineMessage {
                 input,
                 response_count: count,
@@ -303,14 +340,20 @@ where
             }
         }
     }
+
+    /// Sets `PushManager` of Pipeline
+    async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager.store(Arc::new(push_manager));
+    }
 }
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
+    pipeline: Pipeline<Vec<u8>, RedisError>,
     db: i64,
+    push_manager: PushManager,
 }
 
 impl Debug for MultiplexedConnection {
@@ -326,7 +369,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &RedisConnectionInfo,
+        connection_info: &ConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -341,17 +384,20 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
+        let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default()
             .framed(stream)
             .and_then(|msg| async move { msg });
-        let (pipeline, driver) = Pipeline::new(codec);
+        let con_addr = Arc::new(connection_info.addr.to_string());
+        let (pipeline, driver) = Pipeline::new(codec, con_addr.clone());
         let driver = boxed(driver);
         let mut con = MultiplexedConnection {
             pipeline,
-            db: connection_info.db,
+            db: redis_connection_info.db,
+            push_manager: PushManager::default(),
         };
         let driver = {
-            let auth = authenticate(connection_info, &mut con);
+            let auth = authenticate(redis_connection_info, &mut con);
             futures_util::pin_mut!(auth);
 
             match futures_util::future::select(auth, driver).await {
@@ -400,6 +446,12 @@ impl MultiplexedConnection {
         value.drain(..offset);
         Ok(value)
     }
+
+    /// Sets `PushManager` of connection
+    pub async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager = push_manager.clone();
+        self.pipeline.set_push_manager(push_manager).await;
+    }
 }
 
 impl ConnectionLike for MultiplexedConnection {
@@ -418,5 +470,9 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }

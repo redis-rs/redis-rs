@@ -27,7 +27,9 @@ use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};
 
-use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, PushKind, RedisError, RedisResult, Value};
+use redis::{
+    Cmd, ConnectionLike, ErrorKind, Pipeline, PushManager, RedisError, RedisResult, Value,
+};
 
 #[cfg(feature = "aio")]
 use futures::{future, FutureExt};
@@ -258,8 +260,8 @@ impl ConnectionLike for MockRedisConnection {
         true
     }
 
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    fn get_push_manager(&self) -> PushManager {
+        PushManager::default()
     }
 }
 
@@ -292,6 +294,10 @@ impl AioConnectionLike for MockRedisConnection {
 
     fn get_db(&self) -> i64 {
         0
+    }
+
+    fn get_push_manager(&self) -> PushManager {
+        PushManager::default()
     }
 }
 

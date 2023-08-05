@@ -1,5 +1,10 @@
 use futures::{future, prelude::*, StreamExt};
-use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
+use redis::aio::ConnectionLike;
+use redis::{
+    aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
+};
+use redis::{PushInfo, PushSenderType};
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
 
@@ -710,5 +715,75 @@ fn test_connection_manager_reconnect_after_delay() {
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
         assert_eq!(result, redis::Value::Okay);
+    });
+}
+
+#[test]
+#[cfg(feature = "connection-manager")]
+fn test_push_manager_cm() {
+    let ctx = TestContext::new();
+    if !ctx.use_resp3 {
+        return;
+    }
+
+    block_on_all(async move {
+        let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        manager
+            .get_push_manager()
+            .subscribe(PushKind::Invalidate, PushSenderType::Tokio(tx.clone()));
+        let pipe = build_simple_pipeline_for_invalidation();
+        let _: RedisResult<()> = pipe.query_async(&mut manager).await;
+        let _: i32 = manager.get("key_1").await.unwrap();
+        let PushInfo {
+            kind,
+            data,
+            con_addr: _con_addr,
+        } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Bulk(vec![Value::Data("key_1".as_bytes().to_vec())])]
+            ),
+            (kind, data)
+        );
+        manager
+            .get_push_manager()
+            .subscribe(PushKind::Message, PushSenderType::Tokio(tx.clone()))
+            .unsubscribe(PushKind::Invalidate);
+        let _: RedisResult<()> = pipe.query_async(&mut manager).await;
+        let _: i32 = manager.get("key_1").await.unwrap();
+        assert_eq!(TryRecvError::Empty, rx.try_recv().err().unwrap());
+    });
+}
+
+#[test]
+fn test_push_manager() {
+    let ctx = TestContext::new();
+    if !ctx.use_resp3 {
+        return;
+    }
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        con.get_push_manager()
+            .subscribe(PushKind::Invalidate, PushSenderType::Tokio(tx));
+        let pipe = build_simple_pipeline_for_invalidation();
+        let _: RedisResult<()> = pipe.query_async(&mut con).await;
+        let _: i32 = con.get("key_1").await.unwrap();
+        let PushInfo {
+            kind,
+            data,
+            con_addr: _con_addr,
+        } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Bulk(vec![Value::Data("key_1".as_bytes().to_vec())])]
+            ),
+            (kind, data)
+        );
     });
 }

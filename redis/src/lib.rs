@@ -370,6 +370,7 @@ pub use crate::connection::{
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
+pub use push_manager::{PushInfo, PushManager, PushSenderType};
 
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
@@ -460,5 +461,6 @@ mod cmd;
 mod commands;
 mod connection;
 mod parser;
+mod push_manager;
 mod script;
 mod types;

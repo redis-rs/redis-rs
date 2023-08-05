@@ -51,11 +51,12 @@ use crate::connection::{
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
+use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Route, SlotAddr, SlotMap},
+    PushManager,
 };
-use crate::{IntoConnectionInfo, PushKind};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -64,7 +65,11 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 /// and obtaining and configuring a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
+    fn connect<T>(
+        info: T,
+        timeout: Option<Duration>,
+        push_manager: Option<PushManager>,
+    ) -> RedisResult<Self>
     where
         T: IntoConnectionInfo;
 
@@ -94,11 +99,15 @@ pub trait Connect: Sized {
 }
 
 impl Connect for Connection {
-    fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
+    fn connect<T>(
+        info: T,
+        timeout: Option<Duration>,
+        push_manager: Option<PushManager>,
+    ) -> RedisResult<Self>
     where
         T: IntoConnectionInfo,
     {
-        connect(&info.into_connection_info()?, timeout)
+        connect(&info.into_connection_info()?, timeout, push_manager)
     }
 
     fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
@@ -133,6 +142,9 @@ pub struct ClusterConnection<C = Connection> {
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
     retries: u32,
+
+    use_resp3: bool,
+    push_manager: PushManager,
 }
 
 impl<C> ClusterConnection<C>
@@ -155,6 +167,8 @@ where
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
             retries: cluster_params.retries,
+            push_manager: PushManager::default(),
+            use_resp3: cluster_params.use_resp3,
         };
         connection.create_initial_connections()?;
 
@@ -344,12 +358,12 @@ where
         let params = ClusterParams {
             password: self.password.clone(),
             username: self.username.clone(),
+            use_resp3: self.use_resp3,
             tls: self.tls,
             ..Default::default()
         };
         let info = get_connection_info(node, params)?;
-
-        let mut conn = C::connect(info, None)?;
+        let mut conn = C::connect(info, None, Some(self.push_manager.clone()))?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
@@ -657,8 +671,8 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         true
     }
 
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }
 
@@ -818,6 +832,7 @@ pub(crate) fn get_connection_info(
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
+            use_resp3: cluster_params.use_resp3,
             ..Default::default()
         },
     })

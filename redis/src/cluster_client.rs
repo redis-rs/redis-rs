@@ -17,6 +17,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     retries: Option<u32>,
+    use_resp3: bool,
 }
 
 /// Redis cluster specific parameters.
@@ -30,6 +31,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retries: u32,
+    pub(crate) use_resp3: bool,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -40,6 +42,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retries: value.retries.unwrap_or(DEFAULT_RETRIES),
+            use_resp3: value.use_resp3,
         }
     }
 }
@@ -112,9 +115,8 @@ impl ClusterClientBuilder {
                 _ => None,
             };
         }
-
         let mut nodes = Vec::with_capacity(initial_nodes.len());
-        for node in initial_nodes {
+        for mut node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
@@ -133,7 +135,7 @@ impl ClusterClientBuilder {
                     "Cannot use different username among initial nodes.",
                 )));
             }
-
+            node.redis.use_resp3 = cluster_params.use_resp3;
             nodes.push(node);
         }
 
@@ -189,6 +191,12 @@ impl ClusterClientBuilder {
     #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
     pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = read_from_replicas;
+        self
+    }
+
+    /// Sets whether to use RESP3 for ClusterClient.
+    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
+        self.builder_params.use_resp3 = use_resp3;
         self
     }
 }

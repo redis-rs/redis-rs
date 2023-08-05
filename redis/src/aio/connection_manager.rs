@@ -1,5 +1,6 @@
 use super::RedisFuture;
 use crate::cmd::Cmd;
+use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
@@ -55,6 +56,8 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
     number_of_retries: usize,
+
+    push_manager: PushManager,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -121,13 +124,13 @@ impl ConnectionManager {
         number_of_retries: usize,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
-
+        let push_manager = PushManager::default();
         let runtime = Runtime::locate();
         let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
-        let connection =
+        let mut connection =
             Self::new_connection(client.clone(), retry_strategy.clone(), number_of_retries).await?;
-
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
+        connection.set_push_manager(push_manager.clone()).await;
         Ok(Self {
             client,
             connection: Arc::new(ArcSwap::from_pointee(
@@ -136,6 +139,7 @@ impl ConnectionManager {
             runtime,
             number_of_retries,
             retry_strategy,
+            push_manager,
         })
     }
 
@@ -156,8 +160,11 @@ impl ConnectionManager {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
         let number_of_retries = self.number_of_retries;
+        let pmc = self.push_manager.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            Ok(Self::new_connection(client, retry_strategy, number_of_retries).await?)
+            let mut con = Self::new_connection(client, retry_strategy, number_of_retries).await?;
+            con.set_push_manager(pmc).await;
+            Ok(con)
         }
         .boxed()
         .shared();
@@ -230,5 +237,9 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.client.connection_info().redis.db
+    }
+
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }

@@ -5,10 +5,11 @@ use super::{authenticate, AsyncStream, RedisRuntime};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
-    Msg, RedisConnectionInfo,
+    Msg,
 };
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
+use crate::push_manager::PushManager;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -23,6 +24,7 @@ use futures_util::{
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
@@ -41,6 +43,10 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
 
     // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
+
+    push_manager: PushManager,
+
+    con_addr: Arc<String>,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -59,6 +65,8 @@ impl<C> Connection<C> {
             db,
             pubsub,
             resp3,
+            push_manager,
+            con_addr,
         } = self;
         Connection {
             con: f(con),
@@ -67,6 +75,8 @@ impl<C> Connection<C> {
             db,
             pubsub,
             resp3,
+            push_manager,
+            con_addr,
         }
     }
 }
@@ -77,16 +87,19 @@ where
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
     /// and a `RedisConnectionInfo`
-    pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
+    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+        let redis_connection_info = &connection_info.redis;
         let mut rv = Connection {
             con,
             buf: Vec::new(),
             decoder: combine::stream::Decoder::new(),
-            db: connection_info.db,
+            db: redis_connection_info.db,
             pubsub: false,
-            resp3: connection_info.use_resp3,
+            resp3: redis_connection_info.use_resp3,
+            push_manager: PushManager::default(),
+            con_addr: Arc::new(connection_info.addr.to_string()),
         };
-        authenticate(connection_info, &mut rv).await?;
+        authenticate(redis_connection_info, &mut rv).await?;
         Ok(rv)
     }
 
@@ -102,7 +115,9 @@ where
 
     /// Fetches a single response from the connection.
     async fn read_response(&mut self) -> RedisResult<Value> {
-        crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
+        let result = crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await;
+        self.push_manager.try_send(&result, &self.con_addr);
+        result
     }
 
     /// Brings [`Connection`] out of `PubSub` mode.
@@ -194,7 +209,7 @@ where
 {
     /// Constructs a new `Connection` out of a `async_std::io::AsyncRead + async_std::io::AsyncWrite` object
     /// and a `RedisConnectionInfo`
-    pub async fn new_async_std(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
+    pub async fn new_async_std(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
         Connection::new(connection_info, async_std::AsyncStdWrapped::new(con)).await
     }
 }
@@ -204,7 +219,7 @@ where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(&connection_info.redis, con).await
+    Connection::new(connection_info, con).await
 }
 
 impl<C> ConnectionLike for Connection<C>
@@ -224,9 +239,7 @@ where
             }
             loop {
                 match self.read_response().await? {
-                    Value::Push { .. } => {
-                        //self.execute_push_message(kind, data) //TODO
-                    }
+                    Value::Push { .. } => continue,
                     val => return Ok(val),
                 }
             }
@@ -271,7 +284,6 @@ where
                         if let Value::Push { .. } = item {
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
-                            // self.execute_push_message(kind, data); //TODO
                         } else {
                             rv.push(item);
                         }
@@ -296,6 +308,10 @@ where
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }
 

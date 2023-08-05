@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, ConnectionLike, ErrorKind, PushKind, PushSenderType, RedisError, Value,
 };
 
 #[test]
@@ -506,4 +506,38 @@ fn test_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_cluster_push_manager() {
+    let cluster = TestClusterContext::new(3, 0);
+    if cluster.use_resp3 {
+        cluster.wait_for_cluster_up();
+        let mut con = cluster.connection();
+        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        con.get_push_manager()
+            .subscribe(PushKind::Invalidate, PushSenderType::Standard(tx.clone()));
+        let _ = con
+            .req_packed_command(
+                cmd("CLIENT")
+                    .arg("TRACKING")
+                    .arg("ON")
+                    .get_packed_command()
+                    .as_slice(),
+            )
+            .unwrap();
+
+        let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
+        let _ = build_cluster_pipeline_for_invalidation(&keys)
+            .query::<Vec<String>>(&mut con)
+            .unwrap();
+        let _ = build_cluster_pipeline_for_invalidation_result(&keys)
+            .query::<Vec<String>>(&mut con)
+            .unwrap();
+        // we should receive at most 5 Push Value from cluster
+        for _ in keys {
+            let _ = rx.try_recv().unwrap();
+        }
+        assert!(rx.try_recv().is_err());
+    }
 }

@@ -6,7 +6,9 @@ use std::{
 };
 
 use futures::Future;
-use redis::{RedisConnectionInfo, Value};
+#[cfg(feature = "cluster")]
+use redis::cluster::{cluster_pipe, ClusterPipeline};
+use redis::{Pipeline, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -523,4 +525,45 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         redis_key,
         ca_crt,
     }
+}
+
+pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
+    let mut pipe = redis::pipe();
+    pipe.cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .ignore()
+        .cmd("GET")
+        .arg("key_1")
+        .ignore()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore();
+    pipe
+}
+#[cfg(feature = "cluster")]
+pub fn build_cluster_pipeline_for_invalidation(keys: &[&str]) -> ClusterPipeline {
+    let mut pipe = cluster_pipe();
+    for (i, key) in keys.iter().enumerate() {
+        pipe.cmd("GET")
+            .arg(key)
+            .ignore()
+            .cmd("SET")
+            .arg(key)
+            .arg(i)
+            .ignore()
+            .cmd("GET")
+            .arg(key)
+            .ignore();
+    }
+    pipe
+}
+#[cfg(feature = "cluster")]
+pub fn build_cluster_pipeline_for_invalidation_result(keys: &[&str]) -> ClusterPipeline {
+    let mut pipe = cluster_pipe();
+    for key in keys {
+        pipe.cmd("GET").arg(key).ignore();
+    }
+    pipe
 }

@@ -14,7 +14,7 @@ use redis::{
     cluster::ClusterClient,
     cluster_async::Connect,
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    RedisError, RedisFuture, RedisResult, Script, Value,
+    PushManager, RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -253,6 +253,10 @@ impl ConnectionLike for ErrorConnection {
 
     fn get_db(&self) -> i64 {
         self.inner.get_db()
+    }
+
+    fn get_push_manager(&self) -> PushManager {
+        self.inner.get_push_manager()
     }
 }
 

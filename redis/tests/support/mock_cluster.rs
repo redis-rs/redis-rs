@@ -17,7 +17,7 @@ use redis::{aio, cluster_async, RedisFuture};
 #[cfg(feature = "cluster-async")]
 use futures::future;
 
-use redis::PushKind;
+use redis::PushManager;
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
 
@@ -56,7 +56,11 @@ impl cluster_async::Connect for MockConnection {
 }
 
 impl cluster::Connect for MockConnection {
-    fn connect<'a, T>(info: T, _timeout: Option<Duration>) -> RedisResult<Self>
+    fn connect<'a, T>(
+        info: T,
+        _timeout: Option<Duration>,
+        _push_manager: Option<PushManager>,
+    ) -> RedisResult<Self>
     where
         T: IntoConnectionInfo,
     {
@@ -209,6 +213,10 @@ impl aio::ConnectionLike for MockConnection {
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn get_push_manager(&self) -> PushManager {
+        PushManager::default()
+    }
 }
 
 impl redis::ConnectionLike for MockConnection {
@@ -237,8 +245,8 @@ impl redis::ConnectionLike for MockConnection {
         true
     }
 
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    fn get_push_manager(&self) -> PushManager {
+        PushManager::default()
     }
 }
 

@@ -38,8 +38,8 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotMap},
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
-    Value,
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushManager, RedisError, RedisFuture,
+    RedisResult, Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -61,7 +61,10 @@ const SLOT_SIZE: usize = 16384;
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
-pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct ClusterConnection<C = MultiplexedConnection> {
+    tx: mpsc::Sender<Message<C>>,
+    push_manager: PushManager,
+}
 
 impl<C> ClusterConnection<C>
 where
@@ -71,6 +74,7 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
+        let push_manager = PushManager::default();
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
@@ -86,7 +90,7 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                ClusterConnection(tx)
+                ClusterConnection { tx, push_manager }
             })
     }
 }
@@ -829,7 +833,7 @@ where
         trace!("req_packed_command");
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
-            self.0
+            self.tx
                 .send(Message {
                     cmd: CmdArg::Cmd {
                         cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
@@ -871,7 +875,7 @@ where
     ) -> RedisFuture<'a, Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
-            self.0
+            self.tx
                 .send(Message {
                     cmd: CmdArg::Pipeline {
                         pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
@@ -905,7 +909,12 @@ where
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
 }
+
 /// Implements the process of connecting to a Redis server
 /// and obtaining a connection handle.
 pub trait Connect: Sized {

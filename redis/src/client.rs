@@ -6,6 +6,7 @@ use std::pin::Pin;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
+    PushManager,
 };
 
 /// The client type.
@@ -46,7 +47,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        connect(&self.connection_info, None)
+        connect(&self.connection_info, None, None)
     }
 
     /// Instructs the client to actually connect to redis with specified
@@ -55,7 +56,7 @@ impl Client {
     /// a variety of errors (like unreachable host) so it's important
     /// that you handle those errors.
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
-        connect(&self.connection_info, Some(timeout))
+        connect(&self.connection_info, Some(timeout), None)
     }
 
     /// Returns a reference of client connection info object.
@@ -85,7 +86,7 @@ impl Client {
             }
         };
 
-        crate::aio::Connection::new(&self.connection_info.redis, con).await
+        crate::aio::Connection::new(&self.connection_info, con).await
     }
 
     /// Returns an async connection from the client.
@@ -269,7 +270,7 @@ impl Client {
         T: crate::aio::RedisRuntime,
     {
         let con = self.get_simple_async_connection::<T>().await?;
-        crate::aio::MultiplexedConnection::new(&self.connection_info.redis, con).await
+        crate::aio::MultiplexedConnection::new(&self.connection_info, con).await
     }
 
     async fn get_simple_async_connection<T>(
@@ -291,7 +292,6 @@ impl Client {
 
 #[cfg(feature = "aio")]
 use crate::aio::Runtime;
-use crate::types::PushKind;
 
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
@@ -328,11 +328,14 @@ impl ConnectionLike for Client {
         }
     }
 
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    fn get_push_manager(&self) -> PushManager {
+        if let Ok(conn) = self.get_connection() {
+            conn.get_push_manager()
+        } else {
+            PushManager::default() // this is messy!
+        }
     }
 }
-
 #[cfg(test)]
 mod test {
     use super::*;

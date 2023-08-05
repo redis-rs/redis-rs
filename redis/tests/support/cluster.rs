@@ -207,6 +207,7 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
+    pub use_resp3: bool,
 }
 
 impl TestClusterContext {
@@ -222,17 +223,22 @@ impl TestClusterContext {
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
+        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
         let cluster = RedisCluster::new(nodes, replicas);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
+        let mut builder =
+            redis::cluster::ClusterClientBuilder::new(initial_nodes).use_resp3(use_resp3);
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
-
-        TestClusterContext { cluster, client }
+        TestClusterContext {
+            cluster,
+            client,
+            use_resp3,
+        }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {

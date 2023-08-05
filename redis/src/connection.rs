@@ -1,11 +1,3 @@
-use std::fmt;
-use std::io::{self, Write};
-use std::net::{self, TcpStream, ToSocketAddrs};
-use std::ops::DerefMut;
-use std::path::PathBuf;
-use std::str::{from_utf8, FromStr};
-use std::time::Duration;
-
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
@@ -13,6 +5,14 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
     Value,
 };
+use std::fmt;
+use std::io::{self, Write};
+use std::net::{self, TcpStream, ToSocketAddrs};
+use std::ops::DerefMut;
+use std::path::PathBuf;
+use std::str::{from_utf8, FromStr};
+use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(unix)]
 use crate::types::HashMap;
@@ -27,13 +27,14 @@ use native_tls::{TlsConnector, TlsStream};
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
-use std::{convert::TryInto, sync::Arc};
+use std::convert::TryInto;
 
 #[cfg(feature = "tls-rustls-webpki-roots")]
 use rustls::OwnedTrustAnchor;
 #[cfg(feature = "tls-rustls-webpki-roots")]
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use crate::push_manager::PushManager;
 #[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-webpki-roots")))]
 use rustls_native_certs::load_native_certs;
 
@@ -390,6 +391,10 @@ pub struct Connection {
 
     // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
+
+    push_manager: PushManager,
+
+    con_addr: Arc<String>,
 }
 
 /// Represents a pubsub connection.
@@ -772,35 +777,39 @@ fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> 
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
+    push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, &connection_info.redis)
+    setup_connection(con, connection_info, push_manager)
 }
 
 fn setup_connection(
     con: ActualConnection,
-    connection_info: &RedisConnectionInfo,
+    connection_info: &ConnectionInfo,
+    push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
+    let redis_connection_info = &connection_info.redis;
     let mut rv = Connection {
         con,
         parser: Parser::new(),
-        db: connection_info.db,
+        db: redis_connection_info.db,
         pubsub: false,
-        resp3: connection_info.use_resp3,
+        resp3: redis_connection_info.use_resp3,
+        push_manager: push_manager.unwrap_or_default(),
+        con_addr: Arc::new(connection_info.addr.to_string()),
     };
-
-    if connection_info.use_resp3 {
-        let hello_cmd = resp3_hello(connection_info);
+    if redis_connection_info.use_resp3 {
+        let hello_cmd = resp3_hello(redis_connection_info);
         let val: RedisResult<Value> = hello_cmd.query(&mut rv);
         if let Err(err) = val {
             return Err(get_resp3_hello_command_error(err));
         }
-    } else if connection_info.password.is_some() {
-        connect_auth(&mut rv, connection_info)?;
+    } else if redis_connection_info.password.is_some() {
+        connect_auth(&mut rv, redis_connection_info)?;
     }
-    if connection_info.db != 0 {
+    if redis_connection_info.db != 0 {
         match cmd("SELECT")
-            .arg(connection_info.db)
+            .arg(redis_connection_info.db)
             .query::<Value>(&mut rv)
         {
             Ok(Value::Okay) => {}
@@ -869,8 +878,8 @@ pub trait ConnectionLike {
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
 
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, kind: PushKind, data: Vec<Value>);
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    fn get_push_manager(&self) -> PushManager;
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -1003,21 +1012,29 @@ impl Connection {
     fn read_response(&mut self) -> RedisResult<Value> {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result, &self.con_addr);
+                result
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result, &self.con_addr);
+                result
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result, &self.con_addr);
+                result
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
-                self.parser.parse_value(sock)
+                let result = self.parser.parse_value(sock);
+                self.push_manager.try_send(&result, &self.con_addr);
+                result
             }
         };
         // shutdown connection on protocol error
@@ -1068,7 +1085,10 @@ impl ConnectionLike for Connection {
         }
         loop {
             match self.read_response()? {
-                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
                 val => return Ok(val),
             }
         }
@@ -1081,7 +1101,10 @@ impl ConnectionLike for Connection {
         self.con.send_bytes(cmd)?;
         loop {
             match self.read_response()? {
-                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
                 val => return Ok(val),
             }
         }
@@ -1110,10 +1133,13 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
-                    if let Value::Push { kind, data } = item {
+                    if let Value::Push {
+                        kind: _kind,
+                        data: _data,
+                    } = item
+                    {
                         // if that is the case we have to extend the loop and handle push data
                         count += 1;
-                        self.execute_push_message(kind, data);
                     } else if idx >= offset {
                         rv.push(item);
                     }
@@ -1142,9 +1168,8 @@ impl ConnectionLike for Connection {
         self.con.is_open()
     }
 
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push message
+    fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }
 
@@ -1186,9 +1211,8 @@ where
         self.deref().is_open()
     }
 
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
+    fn get_push_manager(&self) -> PushManager {
+        self.deref().get_push_manager()
     }
 }
 

@@ -173,7 +173,7 @@ pub enum VerbatimFormat {
 }
 
 /// `Push` type's currently known kinds.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug, Hash, Eq)]
 pub enum PushKind {
     /// Other kind to catch future kinds.
     Other(String),
