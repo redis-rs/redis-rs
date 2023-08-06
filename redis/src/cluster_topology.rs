@@ -50,11 +50,11 @@ impl SlotMap {
         }
     }
 
-    pub fn slot_addr_for_route(&self, route: &Route, allow_replica: bool) -> Option<&str> {
+    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
         self.0
             .range(route.slot()..)
             .next()
-            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr(), allow_replica))
+            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
     }
 
     pub fn clear(&mut self) {
@@ -68,20 +68,16 @@ impl SlotMap {
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
         let mut addresses = HashSet::new();
         for slot in self.values() {
-            addresses.insert(slot.slot_addr(SlotAddr::Master, false));
+            addresses.insert(slot.slot_addr(SlotAddr::Master));
 
             if !only_primaries {
-                addresses.insert(slot.slot_addr(SlotAddr::Replica, true));
+                addresses.insert(slot.slot_addr(SlotAddr::Replica));
             }
         }
         addresses
     }
 
-    pub fn addresses_for_multi_routing(
-        &self,
-        routing: &MultipleNodeRoutingInfo,
-        allow_replica: bool,
-    ) -> Vec<&str> {
+    pub fn addresses_for_multi_routing(&self, routing: &MultipleNodeRoutingInfo) -> Vec<&str> {
         match routing {
             MultipleNodeRoutingInfo::AllNodes => {
                 self.all_unique_addresses(false).into_iter().collect()
@@ -91,7 +87,7 @@ impl SlotMap {
             }
             MultipleNodeRoutingInfo::MultiSlot(routes) => routes
                 .iter()
-                .flat_map(|(route, _)| self.slot_addr_for_route(route, allow_replica))
+                .flat_map(|(route, _)| self.slot_addr_for_route(route))
                 .collect(),
         }
     }

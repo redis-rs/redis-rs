@@ -330,7 +330,7 @@ where
         route: &Route,
     ) -> RedisResult<(String, &'a mut C)> {
         let slots = self.slots.borrow();
-        if let Some(addr) = slots.slot_addr_for_route(route, self.read_from_replicas) {
+        if let Some(addr) = slots.slot_addr_for_route(route) {
             Ok((
                 addr.to_string(),
                 self.get_connection_by_addr(connections, addr)?,
@@ -362,12 +362,12 @@ where
 
         let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
-                .slot_addr_for_route(&route, self.read_from_replicas)
+                .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
             Ok(slot_addr.to_string())
         };
 
-        match RoutingInfo::for_routable(cmd) {
+        match RoutingInfo::for_routable(cmd, self.read_from_replicas) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
                 let mut rng = thread_rng();
                 Ok(addr_for_slot(Route::new(
@@ -415,7 +415,7 @@ where
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        let addresses = slots.addresses_for_multi_routing(&routing, self.read_from_replicas);
+        let addresses = slots.addresses_for_multi_routing(&routing);
         for addr in addresses {
             let addr = addr.to_string();
             if let Some(connection) = connections.get_mut(&addr) {
@@ -433,7 +433,7 @@ where
         T: MergeResults + std::fmt::Debug,
         F: FnMut(&mut C) -> RedisResult<T>,
     {
-        let route = match RoutingInfo::for_routable(cmd) {
+        let route = match RoutingInfo::for_routable(cmd, self.read_from_replicas) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
