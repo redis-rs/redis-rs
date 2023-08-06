@@ -83,10 +83,9 @@ impl SlotMap {
         allow_replica: bool,
     ) -> Vec<&str> {
         match routing {
-            MultipleNodeRoutingInfo::AllNodes => self
-                .all_unique_addresses(!allow_replica)
-                .into_iter()
-                .collect(),
+            MultipleNodeRoutingInfo::AllNodes => {
+                self.all_unique_addresses(false).into_iter().collect()
+            }
             MultipleNodeRoutingInfo::AllMasters => {
                 self.all_unique_addresses(true).into_iter().collect()
             }
