@@ -361,7 +361,7 @@ where
     }
 }
 
-async fn get_socket_addrs(
+pub(crate) async fn get_socket_addrs(
     host: &str,
     port: u16,
 ) -> RedisResult<impl Iterator<Item = SocketAddr> + Send + '_> {
