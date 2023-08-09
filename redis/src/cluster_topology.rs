@@ -36,8 +36,23 @@ pub(crate) struct TopologyView {
     pub(crate) nodes_count: u16,
 }
 
+#[derive(Debug)]
+struct SlotMapValue {
+    start: u16,
+    addrs: SlotAddrs,
+}
+
+impl SlotMapValue {
+    fn from_slot(slot: Slot) -> Self {
+        Self {
+            start: slot.start(),
+            addrs: SlotAddrs::from_slot(slot),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-pub(crate) struct SlotMap(pub(crate) BTreeMap<u16, SlotAddrs>);
+pub(crate) struct SlotMap(BTreeMap<u16, SlotMapValue>);
 
 impl SlotMap {
     pub fn new() -> Self {
@@ -46,23 +61,27 @@ impl SlotMap {
 
     pub fn fill_slots(&mut self, slots: Vec<Slot>) {
         for slot in slots {
-            self.0.insert(slot.end(), SlotAddrs::from_slot(slot));
+            self.0.insert(slot.end(), SlotMapValue::from_slot(slot));
         }
     }
 
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
-        self.0
-            .range(route.slot()..)
-            .next()
-            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+        let slot = route.slot();
+        self.0.range(slot..).next().and_then(|(end, slot_value)| {
+            if slot <= *end && slot_value.start <= slot {
+                Some(slot_value.addrs.slot_addr(route.slot_addr()))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn clear(&mut self) {
         self.0.clear();
     }
 
-    pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
-        self.0.values()
+    pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
+        self.0.values().map(|slot_value| &slot_value.addrs)
     }
 
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
@@ -477,5 +496,70 @@ mod tests {
         ];
         let topology_view_res = calculate_topology(topology_results, 1, None, queried_nodes);
         assert!(topology_view_res.is_err());
+    }
+
+    #[test]
+    fn test_slot_map() {
+        let mut slot_map = SlotMap::new();
+        slot_map.fill_slots(vec![
+            Slot::new(
+                1,
+                1000,
+                "node1:6379".to_owned(),
+                vec!["replica1:6379".to_owned()],
+            ),
+            Slot::new(
+                1002,
+                2000,
+                "node2:6379".to_owned(),
+                vec!["replica2:6379".to_owned()],
+            ),
+        ]);
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(0, SlotAddr::Master))
+            .is_none());
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(500, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node1:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1000, SlotAddr::Master))
+                .unwrap()
+        );
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(1001, SlotAddr::Master))
+            .is_none());
+
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1002, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(1500, SlotAddr::Master))
+                .unwrap()
+        );
+        assert_eq!(
+            "node2:6379",
+            slot_map
+                .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
+                .unwrap()
+        );
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
+            .is_none());
     }
 }

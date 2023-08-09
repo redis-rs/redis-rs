@@ -520,24 +520,8 @@ impl Route {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, Slot, SlotAddr,
-        SlotAddrs,
-    };
-    use crate::{
-        cluster_topology::{slot, SlotMap},
-        cmd,
-        parser::parse_redis_value,
-    };
-
-    fn from_slots(slots: Vec<Slot>) -> SlotMap {
-        SlotMap(
-            slots
-                .into_iter()
-                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot)))
-                .collect(),
-        )
-    }
+    use super::{MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+    use crate::{cluster_topology::slot, cmd, parser::parse_redis_value};
 
     #[test]
     fn test_routing_info_mixed_capatalization() {
@@ -837,69 +821,5 @@ mod tests {
             ),
             "{routing:?}"
         );
-    }
-
-    #[test]
-    fn test_slot_map() {
-        let slot_map = from_slots(vec![
-            Slot {
-                start: 1,
-                end: 1000,
-                master: "node1:6379".to_owned(),
-                replicas: vec!["replica1:6379".to_owned()],
-            },
-            Slot {
-                start: 1001,
-                end: 2000,
-                master: "node2:6379".to_owned(),
-                replicas: vec!["replica2:6379".to_owned()],
-            },
-        ]);
-
-        assert_eq!(
-            "node1:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(1, SlotAddr::Master))
-                .unwrap()
-        );
-        assert_eq!(
-            "node1:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(500, SlotAddr::Master))
-                .unwrap()
-        );
-        assert_eq!(
-            "node1:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(1000, SlotAddr::Master))
-                .unwrap()
-        );
-        assert_eq!(
-            "replica1:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(1000, SlotAddr::Replica))
-                .unwrap()
-        );
-        assert_eq!(
-            "node2:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(1001, SlotAddr::Master))
-                .unwrap()
-        );
-        assert_eq!(
-            "node2:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(1500, SlotAddr::Master))
-                .unwrap()
-        );
-        assert_eq!(
-            "node2:6379",
-            slot_map
-                .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
-                .unwrap()
-        );
-        assert!(slot_map
-            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
-            .is_none());
     }
 }
