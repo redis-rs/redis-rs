@@ -107,10 +107,12 @@ use std::{collections::HashMap, num::NonZeroUsize};
 use futures_util::StreamExt;
 use rand::Rng;
 
+#[cfg(feature = "aio")]
+use crate::aio::MultiplexedConnection as AsyncConnection;
+
 use crate::{
-    aio::MultiplexedConnection as AsyncConnection, connection::ConnectionInfo, types::RedisResult,
-    Client, Cmd, Connection, ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo,
-    TlsMode, Value,
+    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ErrorKind,
+    FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -118,6 +120,7 @@ use crate::{
 pub struct Sentinel {
     sentinels_connection_info: Vec<ConnectionInfo>,
     connections_cache: Vec<Option<Connection>>,
+    #[cfg(feature = "aio")]
     async_connections_cache: Vec<Option<AsyncConnection>>,
     replica_start_index: usize,
 }
@@ -441,15 +444,27 @@ impl Sentinel {
         let mut connections_cache = vec![];
         connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
 
-        let mut async_connections_cache = vec![];
-        async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
+        #[cfg(feature = "aio")]
+        {
+            let mut async_connections_cache = vec![];
+            async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
 
-        Ok(Sentinel {
-            sentinels_connection_info,
-            connections_cache,
-            async_connections_cache,
-            replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
-        })
+            Ok(Sentinel {
+                sentinels_connection_info,
+                connections_cache,
+                async_connections_cache,
+                replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
+            })
+        }
+
+        #[cfg(not(feature = "aio"))]
+        {
+            Ok(Sentinel {
+                sentinels_connection_info,
+                connections_cache,
+                replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
+            })
+        }
     }
 
     /// Try to execute the given command in each sentinel, returning the result of the
