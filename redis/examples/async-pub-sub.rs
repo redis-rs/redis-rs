@@ -12,7 +12,7 @@ async fn main() -> redis::RedisResult<()> {
 
     publish_conn.publish("wavephone", "banana").await?;
 
-    let pubsub_msg: String = pubsub_stream.next().await.unwrap().get_payload()?;
+    let pubsub_msg: String = pubsub_stream.next().await.unwrap().unwrap().get_payload()?;
     assert_eq!(&pubsub_msg, "banana");
 
     Ok(())

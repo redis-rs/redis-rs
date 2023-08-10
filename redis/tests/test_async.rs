@@ -517,7 +517,7 @@ mod pub_sub {
             let mut publish_conn = ctx.async_connection().await?;
             publish_conn.publish("phonewave", "banana").await?;
 
-            let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+            let msg_payload: String = pubsub_stream.next().await.unwrap().unwrap().get_payload()?;
             assert_eq!("banana".to_string(), msg_payload);
 
             Ok::<_, RedisError>(())
