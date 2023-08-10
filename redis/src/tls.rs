@@ -114,7 +114,7 @@ pub(crate) fn retrieve_tls_certificates(
     let trust_anchors = trust_anchors?;
 
     let mut root_cert = RootCertStore::empty();
-    root_cert.add_server_trust_anchors(trust_anchors.into_iter());
+    root_cert.add_trust_anchors(trust_anchors.into_iter());
 
     Ok(TlsConnParams {
         client_key,
