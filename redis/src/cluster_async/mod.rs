@@ -448,7 +448,8 @@ where
         cluster_params: ClusterParams,
         tls_params: Option<TlsConnParams>,
     ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params, &tls_params).await?;
+        let connections =
+            Self::create_initial_connections(initial_nodes, &cluster_params, &tls_params).await?;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, Default::default())),
             cluster_params,
@@ -572,8 +573,13 @@ where
                 .fold(
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
-                        let conn =
-                            Self::get_or_create_conn(addr, connection, &inner.cluster_params, inner.tls_params.clone()).await;
+                        let conn = Self::get_or_create_conn(
+                            addr,
+                            connection,
+                            &inner.cluster_params,
+                            inner.tls_params.clone(),
+                        )
+                        .await;
                         if let Ok(conn) = conn {
                             connections.insert(addr.to_string(), async { conn }.boxed().shared());
                         }
@@ -871,10 +877,12 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn.await)),
-            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone(), core.tls_params.clone())
-                .await
-                .ok()
-                .map(|conn| (addr, conn)),
+            Some((addr, None)) => {
+                connect_and_check(&addr, core.cluster_params.clone(), core.tls_params.clone())
+                    .await
+                    .ok()
+                    .map(|conn| (addr, conn))
+            }
             None => None,
         };
 
@@ -1235,7 +1243,11 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams, tls_params: Option<TlsConnParams>) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &str,
+    params: ClusterParams,
+    tls_params: Option<TlsConnParams>,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {

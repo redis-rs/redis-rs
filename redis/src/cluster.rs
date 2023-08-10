@@ -996,7 +996,12 @@ pub(crate) fn get_connection_info(
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>, tls_params: Option<TlsConnParams>) -> ConnectionAddr {
+fn get_connection_addr(
+    host: String,
+    port: u16,
+    tls: Option<TlsMode>,
+    tls_params: Option<TlsConnParams>,
+) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,

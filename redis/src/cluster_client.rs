@@ -355,7 +355,11 @@ impl ClusterClient {
     ///
     /// An error is returned if there is a failure while creating connections or slots.
     pub fn get_connection(&self) -> RedisResult<cluster::ClusterConnection> {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone(), self.tls_params.clone())
+        cluster::ClusterConnection::new(
+            self.cluster_params.clone(),
+            self.initial_nodes.clone(),
+            self.tls_params.clone(),
+        )
     }
 
     /// Creates new connections to Redis Cluster nodes and returns a
@@ -366,8 +370,12 @@ impl ClusterClient {
     /// An error is returned if there is a failure while creating connections or slots.
     #[cfg(feature = "cluster-async")]
     pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone(), self.tls_params.clone())
-            .await
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            self.tls_params.clone(),
+        )
+        .await
     }
 
     #[doc(hidden)]
@@ -375,7 +383,11 @@ impl ClusterClient {
     where
         C: crate::ConnectionLike + crate::cluster::Connect + Send,
     {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone(), self.tls_params.clone())
+        cluster::ClusterConnection::new(
+            self.cluster_params.clone(),
+            self.initial_nodes.clone(),
+            self.tls_params.clone(),
+        )
     }
 
     #[doc(hidden)]
@@ -392,8 +404,12 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone(), self.tls_params.clone())
-            .await
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            self.tls_params.clone(),
+        )
+        .await
     }
 
     /// Use `new()`.
