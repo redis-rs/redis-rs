@@ -102,8 +102,8 @@ pub(crate) fn retrieve_tls_certificates(
         .iter()
         .map(|cert| {
             let ta = webpki::TrustAnchor::try_from_cert_der(cert)
-                .map_err(|_| Error::new(IOErrorKind::Other, "Unable to parse CA certificate"));
-            let ta = ta?;
+                .map_err(|_| Error::new(IOErrorKind::Other, "Unable to parse CA certificate"))?;
+
             Ok(OwnedTrustAnchor::from_subject_spki_name_constraints(
                 ta.subject,
                 ta.spki,
