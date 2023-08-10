@@ -1,4 +1,12 @@
 <a name="0.23.1"></a>
+### 0.23.2 (2023-08-10)
+
+#### Fixes
+* Fix sentinel tests flakiness ([#912](https://github.com/redis-rs/redis-rs/pull/912))
+* Rustls: Remove usage of deprecated method ([#921](https://github.com/redis-rs/redis-rs/pull/921))
+* Fix compiling with sentinel feature, without aio feature ([#922](https://github.com/redis-rs/redis-rs/pull/923) @brocaar)
+* Add timeouts to tests github action ([#911](https://github.com/redis-rs/redis-rs/pull/911))
+
 ### 0.23.1 (2023-07-28)
 
 #### Features

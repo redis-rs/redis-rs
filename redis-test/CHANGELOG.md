@@ -1,4 +1,9 @@
 <a name="0.2.1"></a>
+
+### 0.2.2 (2023-08-10)
+
+* Track redis 0.23.2 release
+
 ### 0.2.1 (2023-07-28)
 
 * Track redis 0.23.1 release
