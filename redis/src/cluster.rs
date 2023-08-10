@@ -299,7 +299,7 @@ where
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
             match parse_slots(&value, self.cluster_params.tls)
-                .and_then(|v| build_slot_map(&mut new_slots, v))
+                .map(|v| build_slot_map(&mut new_slots, v))
             {
                 Ok(_) => {
                     result = Ok(new_slots);
