@@ -180,6 +180,6 @@ jobs:
         cargo install critcmp
         cargo bench --all-features -- --measurement-time 15 --save-baseline changes
         git fetch
-        git checkout ${{ github.base_ref }} 
+        git checkout ${{ github.base_ref }}
         cargo bench --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
