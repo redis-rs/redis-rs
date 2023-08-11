@@ -25,7 +25,7 @@ jobs:
           - stable
           - beta
           - nightly
-          - 1.60.0
+          - 1.63.0
 
     steps:
 
