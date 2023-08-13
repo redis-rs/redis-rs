@@ -1243,7 +1243,7 @@ fn test_push_manager() {
         return;
     }
     let mut con = ctx.connection();
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(100);
     con.get_push_manager()
         .subscribe(PushKind::Invalidate, PushSender::Standard(tx.clone()));
     let pipe = build_simple_pipeline_for_invalidation();

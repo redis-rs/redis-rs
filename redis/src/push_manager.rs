@@ -21,7 +21,7 @@ pub struct PushInfo {
 #[derive(Clone)]
 pub enum PushSender {
     /// Tokio mpsc UnboundedSender
-    #[cfg(feature = "tokio-comp")]
+    #[cfg(feature = "aio")]
     Tokio(tokio::sync::mpsc::UnboundedSender<PushInfo>),
     /// Standard mpsc SyncSender
     Standard(SyncSender<PushInfo>),
@@ -103,7 +103,7 @@ impl SubscriptionHolder {
                         con_addr: con_addr.clone(),
                     };
                     let is_closed = match &subscription.sender {
-                        #[cfg(feature = "tokio-comp")]
+                        #[cfg(feature = "aio")]
                         PushSender::Tokio(tokio_sender) => tokio_sender.send(push_info).is_err(),
                         PushSender::Standard(std_sender) => std_sender
                             .try_send(push_info)
@@ -138,7 +138,7 @@ impl PushManager {
         if let Some(sender) = self.sender.load().get(&pi.kind) {
             let kind = pi.kind.clone();
             let is_closed = match sender {
-                #[cfg(feature = "tokio-comp")]
+                #[cfg(feature = "aio")]
                 PushSender::Tokio(tokio_sender) => tokio_sender.send(pi).is_err(),
                 PushSender::Standard(std_sender) => std_sender
                     .try_send(pi)
@@ -173,7 +173,7 @@ impl PushManager {
             if kind == &PushKind::Message {
                 let _ = self.subscriptions.try_send(value, con_addr);
             } else if kind == &PushKind::PMessage {
-                let _ = self.psubscriptions.try_send(value, con_addr); //TODO
+                let _ = self.psubscriptions.try_send(value, con_addr);
             };
             if self.has_sender(kind) {
                 return self.send(PushInfo {
@@ -220,6 +220,14 @@ impl PushManager {
     }
     pub(crate) fn pb_unsubscribe(&self, channel_name: String, channel_id: Option<usize>) -> bool {
         self.subscriptions
+            .unsubscribe_from_channel(channel_name, channel_id)
+    }
+    pub(crate) fn pb_psubscribe(&self, channel_name: String, sender_type: PushSender) -> usize {
+        self.psubscriptions
+            .subscribe_to_channel(channel_name, sender_type)
+    }
+    pub(crate) fn pb_punsubscribe(&self, channel_name: String, channel_id: Option<usize>) -> bool {
+        self.psubscriptions
             .unsubscribe_from_channel(channel_name, channel_id)
     }
 }

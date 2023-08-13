@@ -311,14 +311,6 @@ where
         )
     }
 
-    // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send(&mut self, item: SinkItem) -> Result<Value, Option<E>> {
-        self.send_recv_multiple(item, 1)
-            .await
-            // We can unwrap since we do a request for `1` item
-            .map(|mut item| item.pop().unwrap())
-    }
-
     async fn send_recv_multiple(
         &mut self,
         input: SinkItem,
@@ -486,8 +478,9 @@ impl ConnectionLike for MultiplexedConnection {
         self.push_manager.clone()
     }
 }
-
 impl MultiplexedConnection {
+    /// Subscribes to a new channel.
+    /// Result is a channel id to unsubscribe.
     pub async fn subscribe(
         &mut self,
         channel_name: String,
@@ -505,6 +498,9 @@ impl MultiplexedConnection {
         Ok(self.push_manager.pb_subscribe(channel_name, sender))
     }
 
+    /// Unsubscribes from channel. If `channel_id` is not provided all subscriptions to a channel cancelled.
+    /// If `channel_id` is provided only specific channel is unsubscribed from,
+    /// It's a no-op if `channel_id` is invalid.
     pub async fn unsubscribe(
         &mut self,
         channel_name: String,
@@ -521,6 +517,50 @@ impl MultiplexedConnection {
             .pb_unsubscribe(channel_name.clone(), channel_id)
         {
             let mut cmd = cmd("UNSUBSCRIBE");
+            cmd.arg(channel_name);
+            cmd.query_async(self).await?;
+        }
+        Ok(())
+    }
+
+    /// Subscribes to a new channel with pattern.
+    /// Result is a channel id to unsubscribe.
+    pub async fn psubscribe(
+        &mut self,
+        channel_pattern: String,
+        sender: PushSender,
+    ) -> RedisResult<usize> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern.clone());
+        cmd.query_async(self).await?;
+        Ok(self.push_manager.pb_psubscribe(channel_pattern, sender))
+    }
+
+    /// Unsubscribes from channel pattern. If `channel_id` is not provided all subscriptions to a channel cancelled.
+    /// If `channel_id` is provided only specific channel is unsubscribed from,
+    /// It's a no-op if `channel_id` is invalid.
+    pub async fn punsubscribe(
+        &mut self,
+        channel_name: String,
+        channel_id: Option<usize>,
+    ) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        if self
+            .push_manager
+            .pb_punsubscribe(channel_name.clone(), channel_id)
+        {
+            let mut cmd = cmd("PUNSUBSCRIBE");
             cmd.arg(channel_name);
             cmd.query_async(self).await?;
         }

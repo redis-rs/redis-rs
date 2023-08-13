@@ -621,9 +621,9 @@ fn test_cluster_push_manager() {
             let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
             for (i, key) in keys.iter().enumerate() {
                 let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
-                let _: () = cmd("SET").arg(key).arg(i).query_async(&mut con).await?;
+                cmd("SET").arg(key).arg(i).query_async(&mut con).await?;
             }
-            for (i, key) in keys.iter().enumerate() {
+            for key in keys {
                 let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
             }
             // we should receive at most 5 Push Value from cluster

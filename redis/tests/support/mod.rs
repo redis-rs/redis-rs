@@ -536,13 +536,6 @@ pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
         .cmd("SET")
         .arg("key_1")
         .arg(42)
-        .ignore()
-        .cmd("GET")
-        .arg("key_2")
-        .ignore()
-        .cmd("SET")
-        .arg("key_2")
-        .arg(42)
         .ignore();
     pipe
 }

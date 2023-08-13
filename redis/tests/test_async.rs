@@ -4,7 +4,6 @@ use redis::{
     aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
 };
 use redis::{PushInfo, PushSender};
-use std::time::Duration;
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
@@ -705,7 +704,7 @@ mod pub_sub {
                 conn.unsubscribe(channel_name.clone(), Some(channel_id))
                     .await?;
                 publish_conn
-                    .publish(channel_name.clone(), format!("banana!"))
+                    .publish(channel_name.clone(), "banana!")
                     .await?;
                 for _ in 0..4 {
                     rx.recv().await.unwrap();
@@ -714,10 +713,10 @@ mod pub_sub {
             }
             {
                 //Giving random channel id should have no effect!
-                conn.unsubscribe(channel_name.clone(), Some(1_000_0000))
+                conn.unsubscribe(channel_name.clone(), Some(1_000_000))
                     .await?;
                 publish_conn
-                    .publish(channel_name.clone(), format!("banana!"))
+                    .publish(channel_name.clone(), "banana!")
                     .await?;
                 for _ in 0..4 {
                     rx.recv().await.unwrap();
@@ -728,7 +727,7 @@ mod pub_sub {
                 //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
                 conn.unsubscribe(channel_name.clone(), None).await?;
                 publish_conn
-                    .publish(channel_name.clone(), format!("banana!"))
+                    .publish(channel_name.clone(), "banana!")
                     .await?;
                 //Let's wait for 100ms to make sure there is nothing in channel.
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -808,7 +807,7 @@ fn test_push_manager_cm() {
             .subscribe(PushKind::Invalidate, PushSender::Tokio(tx.clone()));
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
-        // let _: i32 = manager.get("key_1").await.unwrap();
+        let _: i32 = manager.get("key_1").await.unwrap();
         let PushInfo {
             kind,
             data,
@@ -821,7 +820,6 @@ fn test_push_manager_cm() {
             ),
             (kind, data)
         );
-        rx.try_recv().unwrap(); //key_2
         manager
             .get_push_manager()
             .subscribe(PushKind::Message, PushSender::Tokio(tx.clone()))
