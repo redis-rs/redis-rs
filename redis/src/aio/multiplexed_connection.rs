@@ -147,7 +147,7 @@ where
                     && kind != &PushKind::SUnsubscribe
                     && kind != &PushKind::PUnsubscribe
                 {
-                    // Convert some push kinds to command reply
+                    // If it's not true then push kind is converted to reply of a command
                     skip_value = true;
                 }
             }

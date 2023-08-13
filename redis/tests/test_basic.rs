@@ -1269,4 +1269,15 @@ fn test_push_manager() {
     let _: RedisResult<()> = pipe.query(&mut con);
     let _: i32 = con.get("key_1").unwrap();
     assert_eq!(TryRecvError::Empty, rx.try_recv().err().unwrap());
+
+    con.get_push_manager()
+        .subscribe(PushKind::Invalidate, PushSender::Standard(tx.clone()));
+    {
+        drop(rx);
+        for _ in 0..10 {
+            let _: RedisResult<()> = pipe.query(&mut con);
+            let v: i32 = con.get("key_1").unwrap();
+            assert_eq!(v, 42);
+        }
+    }
 }

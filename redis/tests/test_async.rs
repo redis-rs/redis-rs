@@ -856,5 +856,13 @@ fn test_push_manager() {
             ),
             (kind, data)
         );
+        {
+            drop(rx);
+            for _ in 0..10 {
+                let _: RedisResult<()> = pipe.query_async(&mut con).await;
+                let v: i32 = con.get("key_1").await.unwrap();
+                assert_eq!(v, 42);
+            }
+        }
     });
 }
