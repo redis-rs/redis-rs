@@ -3,9 +3,9 @@ use crate::aio::authenticate;
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::push_manager::{PushInfo, PushManager};
+use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::ConnectionInfo;
+use crate::{cmd, ConnectionInfo, PushKind, PushSender};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
@@ -124,10 +124,6 @@ where
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
-            // No need to try reading a message if there is no message in flight
-            if self.in_flight.is_empty() {
-                return Poll::Ready(Ok(()));
-            }
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
                 // The redis response stream is not going to produce any more items so we `Err`
@@ -140,23 +136,30 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: Result<Value, E>) {
         let self_ = self.project();
-
+        let mut skip_value = false;
+        if let Ok(res) = &result {
+            if let Value::Push { kind, data: _data } = res {
+                self_.push_manager.load().try_send_raw(res, self_.con_addr);
+                if kind != &PushKind::Subscribe
+                    && kind != &PushKind::SSubscribe
+                    && kind != &PushKind::PSubscribe
+                    && kind != &PushKind::Unsubscribe
+                    && kind != &PushKind::SUnsubscribe
+                    && kind != &PushKind::PUnsubscribe
+                {
+                    // Convert some push kinds to command reply
+                    skip_value = true;
+                }
+            }
+        }
         {
             let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
-            let mut is_push = false;
             match result {
                 Ok(item) => {
-                    if let Value::Push { kind, data } = item {
-                        is_push = true;
-                        self_.push_manager.load().send(PushInfo {
-                            kind,
-                            data,
-                            con_addr: self_.con_addr.clone(),
-                        });
-                    } else {
+                    if !skip_value {
                         entry.buffer.push(item);
                     }
                 }
@@ -167,7 +170,7 @@ where
                 }
             }
 
-            if !is_push {
+            if !skip_value {
                 entry.current_response_count += 1;
             }
             if entry.current_response_count < entry.expected_response_count {
@@ -354,6 +357,7 @@ pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, RedisError>,
     db: i64,
     push_manager: PushManager,
+    resp3: bool,
 }
 
 impl Debug for MultiplexedConnection {
@@ -389,12 +393,15 @@ impl MultiplexedConnection {
             .framed(stream)
             .and_then(|msg| async move { msg });
         let con_addr = Arc::new(connection_info.addr.to_string());
-        let (pipeline, driver) = Pipeline::new(codec, con_addr.clone());
+        let (mut pipeline, driver) = Pipeline::new(codec, con_addr.clone());
         let driver = boxed(driver);
+        let pm = PushManager::default();
+        pipeline.set_push_manager(pm.clone()).await;
         let mut con = MultiplexedConnection {
             pipeline,
             db: redis_connection_info.db,
-            push_manager: PushManager::default(),
+            push_manager: pm,
+            resp3: redis_connection_info.use_resp3,
         };
         let driver = {
             let auth = authenticate(redis_connection_info, &mut con);
@@ -416,14 +423,17 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let value = self
+        let mut value = self
             .pipeline
-            .send(cmd.get_packed_command())
+            .send_recv_multiple(cmd.get_packed_command(), !cmd.is_no_response() as usize)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             })?;
-        Ok(value)
+        if cmd.is_no_response() {
+            return Ok(Value::Nil);
+        }
+        Ok(value.pop().unwrap())
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -474,5 +484,46 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_push_manager(&self) -> PushManager {
         self.push_manager.clone()
+    }
+}
+
+impl MultiplexedConnection {
+    pub async fn subscribe(
+        &mut self,
+        channel_name: String,
+        sender: PushSender,
+    ) -> RedisResult<usize> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name.clone());
+        cmd.query_async(self).await?;
+        Ok(self.push_manager.pb_subscribe(channel_name, sender))
+    }
+
+    pub async fn unsubscribe(
+        &mut self,
+        channel_name: String,
+        channel_id: Option<usize>,
+    ) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        if self
+            .push_manager
+            .pb_unsubscribe(channel_name.clone(), channel_id)
+        {
+            let mut cmd = cmd("UNSUBSCRIBE");
+            cmd.arg(channel_name);
+            cmd.query_async(self).await?;
+        }
+        Ok(())
     }
 }

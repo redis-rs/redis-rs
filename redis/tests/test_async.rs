@@ -3,7 +3,8 @@ use redis::aio::ConnectionLike;
 use redis::{
     aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
 };
-use redis::{PushInfo, PushSenderType};
+use redis::{PushInfo, PushSender};
+use std::time::Duration;
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
@@ -109,11 +110,7 @@ fn test_client_tracking_doesnt_block_execution() {
     block_on_all(async move {
         let mut con = ctx.async_connection().await.unwrap();
         let mut pipe = redis::pipe();
-        pipe.cmd("CLIENT")
-            .arg("TRACKING")
-            .arg("ON")
-            .ignore()
-            .cmd("GET")
+        pipe.cmd("GET")
             .arg("key_1")
             .ignore()
             .cmd("SET")
@@ -477,6 +474,7 @@ async fn invalid_password_issue_343() {
             username: None,
             password: Some("asdcasc".to_string()),
             use_resp3: false,
+            client_tracking_options: None,
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
@@ -667,6 +665,80 @@ mod pub_sub {
         })
         .unwrap();
     }
+
+    #[test]
+    fn pub_sub_multiple() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        if !ctx.use_resp3 {
+            return;
+        }
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let sub_count = 5;
+            let pub_count = 10;
+            let channel_name = "phonewave".to_string();
+            let mut channel_ids: Vec<usize> = vec![];
+            for _ in 0..sub_count {
+                let ch_id: usize = conn
+                    .subscribe(channel_name.clone(), PushSender::Tokio(tx.clone()))
+                    .await?;
+                channel_ids.push(ch_id);
+            }
+
+            let mut publish_conn = ctx.async_connection().await?;
+            for i in 0..pub_count {
+                publish_conn
+                    .publish(channel_name.clone(), format!("banana {i}"))
+                    .await?;
+            }
+            for _ in 0..(pub_count * sub_count) {
+                rx.recv().await.unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+
+            {
+                //Lets test if unsubscribing from individual channel subscription works
+                let channel_id = channel_ids[0];
+                conn.unsubscribe(channel_name.clone(), Some(channel_id))
+                    .await?;
+                publish_conn
+                    .publish(channel_name.clone(), format!("banana!"))
+                    .await?;
+                for _ in 0..4 {
+                    rx.recv().await.unwrap();
+                }
+                assert!(rx.try_recv().is_err());
+            }
+            {
+                //Giving random channel id should have no effect!
+                conn.unsubscribe(channel_name.clone(), Some(1_000_0000))
+                    .await?;
+                publish_conn
+                    .publish(channel_name.clone(), format!("banana!"))
+                    .await?;
+                for _ in 0..4 {
+                    rx.recv().await.unwrap();
+                }
+                assert!(rx.try_recv().is_err());
+            }
+            {
+                //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
+                conn.unsubscribe(channel_name.clone(), None).await?;
+                publish_conn
+                    .publish(channel_name.clone(), format!("banana!"))
+                    .await?;
+                //Let's wait for 100ms to make sure there is nothing in channel.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert!(rx.try_recv().is_err());
+            }
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }
 
 #[cfg(feature = "connection-manager")]
@@ -730,13 +802,13 @@ fn test_push_manager_cm() {
         let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
             .await
             .unwrap();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         manager
             .get_push_manager()
-            .subscribe(PushKind::Invalidate, PushSenderType::Tokio(tx.clone()));
+            .subscribe(PushKind::Invalidate, PushSender::Tokio(tx.clone()));
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
-        let _: i32 = manager.get("key_1").await.unwrap();
+        // let _: i32 = manager.get("key_1").await.unwrap();
         let PushInfo {
             kind,
             data,
@@ -749,9 +821,10 @@ fn test_push_manager_cm() {
             ),
             (kind, data)
         );
+        rx.try_recv().unwrap(); //key_2
         manager
             .get_push_manager()
-            .subscribe(PushKind::Message, PushSenderType::Tokio(tx.clone()))
+            .subscribe(PushKind::Message, PushSender::Tokio(tx.clone()))
             .unsubscribe(PushKind::Invalidate);
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
@@ -767,9 +840,9 @@ fn test_push_manager() {
     }
     block_on_all(async move {
         let mut con = ctx.async_connection().await.unwrap();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         con.get_push_manager()
-            .subscribe(PushKind::Invalidate, PushSenderType::Tokio(tx));
+            .subscribe(PushKind::Invalidate, PushSender::Tokio(tx));
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut con).await;
         let _: i32 = con.get("key_1").await.unwrap();

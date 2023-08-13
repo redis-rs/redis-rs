@@ -4,7 +4,7 @@ use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
     PushKind, RedisResult, Value,
 };
-use redis::{PushInfo, PushSenderType};
+use redis::{PushInfo, PushSender};
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::TryRecvError;
@@ -64,10 +64,6 @@ fn test_client_tracking_doesnt_block_execution() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let (k1, k2): (i32, i32) = redis::pipe()
-        .cmd("CLIENT")
-        .arg("TRACKING")
-        .arg("ON")
-        .ignore()
         .cmd("GET")
         .arg("key_1")
         .ignore()
@@ -1247,9 +1243,9 @@ fn test_push_manager() {
         return;
     }
     let mut con = ctx.connection();
-    let (tx, rx) = std::sync::mpsc::sync_channel(100);
+    let (tx, rx) = std::sync::mpsc::channel();
     con.get_push_manager()
-        .subscribe(PushKind::Invalidate, PushSenderType::Standard(tx.clone()));
+        .subscribe(PushKind::Invalidate, PushSender::Standard(tx.clone()));
     let pipe = build_simple_pipeline_for_invalidation();
     for _ in 0..10 {
         let _: RedisResult<()> = pipe.query(&mut con);
@@ -1268,7 +1264,7 @@ fn test_push_manager() {
         );
     }
     con.get_push_manager()
-        .subscribe(PushKind::Message, PushSenderType::Standard(tx.clone()))
+        .subscribe(PushKind::Message, PushSender::Standard(tx.clone()))
         .unsubscribe(PushKind::Invalidate);
     let _: RedisResult<()> = pipe.query(&mut con);
     let _: i32 = con.get("key_1").unwrap();
