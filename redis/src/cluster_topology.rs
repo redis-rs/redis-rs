@@ -105,12 +105,13 @@ impl SlotMap {
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
         let mut addresses = HashSet::new();
         for slot in self.values() {
-            addresses.insert(slot.slot_addr(SlotAddr::Master));
-
-            if !only_primaries {
-                addresses.insert(slot.slot_addr(SlotAddr::Replica));
+            if only_primaries {
+                addresses.insert(slot.slot_addr(SlotAddr::Master));
+            } else {
+                addresses.extend(slot.into_iter().map(|str| str.as_str()));
             }
         }
+
         addresses
     }
 
@@ -419,7 +420,7 @@ mod tests {
     }
 
     fn get_node_addr(name: &str, port: u16) -> SlotAddrs {
-        SlotAddrs::new(format!("{name}:{port}"), None)
+        SlotAddrs::new(format!("{name}:{port}"), Vec::new())
     }
 
     #[test]
@@ -518,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn test_slot_map() {
+    fn test_slot_map_retrieve_routes() {
         let slot_map = SlotMap::new(vec![
             Slot::new(
                 1,
@@ -580,5 +581,86 @@ mod tests {
         assert!(slot_map
             .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
             .is_none());
+    }
+
+    fn get_slot_map() -> SlotMap {
+        SlotMap::new(vec![
+            Slot::new(
+                1,
+                1000,
+                "node1:6379".to_owned(),
+                vec!["replica1:6379".to_owned()],
+            ),
+            Slot::new(
+                1002,
+                2000,
+                "node2:6379".to_owned(),
+                vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+            ),
+            Slot::new(
+                2001,
+                3000,
+                "node3:6379".to_owned(),
+                vec![
+                    "replica4:6379".to_owned(),
+                    "replica5:6379".to_owned(),
+                    "replica6:6379".to_owned(),
+                ],
+            ),
+            Slot::new(
+                3001,
+                4000,
+                "node2:6379".to_owned(),
+                vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+            ),
+        ])
+    }
+
+    #[test]
+    fn test_slot_map_get_all_primaries() {
+        let slot_map = get_slot_map();
+        let mut addresses =
+            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllMasters);
+        addresses.sort();
+        assert_eq!(addresses, vec!["node1:6379", "node2:6379", "node3:6379"]);
+    }
+
+    #[test]
+    fn test_slot_map_get_all_nodes() {
+        let slot_map = get_slot_map();
+        let mut addresses =
+            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllNodes);
+        addresses.sort();
+        assert_eq!(
+            addresses,
+            vec![
+                "node1:6379",
+                "node2:6379",
+                "node3:6379",
+                "replica1:6379",
+                "replica2:6379",
+                "replica3:6379",
+                "replica4:6379",
+                "replica5:6379",
+                "replica6:6379"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_slot_map_get_multi_node() {
+        let slot_map = get_slot_map();
+        let mut addresses =
+            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::MultiSlot(vec![
+                (Route::new(1, SlotAddr::Master), vec![]),
+                (Route::new(2001, SlotAddr::Replica), vec![]),
+            ]));
+        addresses.sort();
+        assert!(addresses.contains(&"node1:6379"));
+        assert!(
+            addresses.contains(&"replica4:6379")
+                || addresses.contains(&"replica5:6379")
+                || addresses.contains(&"replica6:6379")
+        );
     }
 }
