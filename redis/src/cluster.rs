@@ -45,7 +45,7 @@ use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{MultipleNodeRoutingInfo, SingleNodeRoutingInfo, SlotAddr};
-use crate::cluster_topology::{build_slot_map, parse_slots, SlotMap, SLOT_SIZE};
+use crate::cluster_topology::{parse_slots, SlotMap, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -143,7 +143,7 @@ where
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new()),
+            slots: RefCell::new(SlotMap::new(vec![])),
             auto_reconnect: RefCell::new(true),
             read_from_replicas: cluster_params.read_from_replicas,
             cluster_params,
@@ -290,7 +290,6 @@ where
         let mut rng = thread_rng();
         let len = connections.len();
         let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
-        let mut new_slots = SlotMap::new();
         let mut result = Err(RedisError::from((
             ErrorKind::ResponseError,
             "Slot refresh error.",
@@ -298,10 +297,8 @@ where
         )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_slots(&value, self.cluster_params.tls)
-                .map(|v| build_slot_map(&mut new_slots, v))
-            {
-                Ok(_) => {
+            match parse_slots(&value, self.cluster_params.tls).map(SlotMap::new) {
+                Ok(new_slots) => {
                     result = Ok(new_slots);
                     break;
                 }
