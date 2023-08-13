@@ -145,6 +145,7 @@ pub struct ClusterConnection<C = Connection> {
 
     use_resp3: bool,
     push_manager: PushManager,
+    client_tracking_options: Option<Vec<String>>,
 }
 
 impl<C> ClusterConnection<C>
@@ -169,6 +170,7 @@ where
             retries: cluster_params.retries,
             push_manager: PushManager::default(),
             use_resp3: cluster_params.use_resp3,
+            client_tracking_options: cluster_params.client_tracking_options,
         };
         connection.create_initial_connections()?;
 
@@ -359,6 +361,7 @@ where
             password: self.password.clone(),
             username: self.username.clone(),
             use_resp3: self.use_resp3,
+            client_tracking_options: self.client_tracking_options.clone(),
             tls: self.tls,
             ..Default::default()
         };
