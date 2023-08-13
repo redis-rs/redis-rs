@@ -35,6 +35,7 @@ use rustls::OwnedTrustAnchor;
 use webpki_roots::TLS_SERVER_ROOTS;
 
 use crate::push_manager::PushManager;
+use crate::PushInfo;
 #[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-webpki-roots")))]
 use rustls_native_certs::load_native_certs;
 
@@ -133,6 +134,10 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Use RESP 3 mode, Redis 6 or newer is required.
     pub use_resp3: bool,
+
+    /// If a Vec is provided then the Connection will send `CLIENT TRACKING ON` command
+    /// also items in the Vec is appended to the command
+    pub client_tracking_options: Option<Vec<String>>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -275,6 +280,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
+            client_tracking_options: None,
         },
     })
 }
@@ -301,6 +307,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
+            client_tracking_options: None,
         },
     })
 }
@@ -1358,6 +1365,31 @@ impl Msg {
         })
     }
 
+    /// Tries to convert provided [`PushInfo`] into [`Msg`].
+    pub fn from_push_info(push_info: &PushInfo) -> Option<Self> {
+        let mut pattern = None;
+        let payload;
+        let channel;
+
+        let mut iter = push_info.data.iter().cloned();
+        if push_info.kind == PushKind::Message {
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else if push_info.kind == PushKind::PMessage {
+            pattern = Some(iter.next()?);
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else {
+            return None;
+        }
+
+        Some(Msg {
+            payload,
+            channel,
+            pattern,
+        })
+    }
+
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
         from_redis_value(&self.channel)
@@ -1564,6 +1596,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
+                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1631,6 +1664,7 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
+                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1643,6 +1677,7 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
+                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1658,6 +1693,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
+                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1673,6 +1709,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
                         use_resp3: false,
+                        client_tracking_options: None,
                     },
                 },
             ),

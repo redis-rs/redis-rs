@@ -13,8 +13,8 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    PushManager, RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, PushKind,
+    PushManager, PushSender, RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -222,12 +222,12 @@ struct ErrorConnection {
 }
 
 impl Connect for ErrorConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         Box::pin(async {
-            let inner = MultiplexedConnection::connect(info).await?;
+            let inner = MultiplexedConnection::connect(info, push_manager).await?;
             Ok(ErrorConnection { inner })
         })
     }
@@ -607,4 +607,32 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_cluster_push_manager() {
+    let cluster = TestClusterContext::new(3, 0);
+    if cluster.use_resp3 {
+        block_on_all(async move {
+            let mut con = cluster.async_connection().await;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            con.get_push_manager()
+                .subscribe(PushKind::Invalidate, PushSender::Tokio(tx.clone()));
+            let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
+            for (i, key) in keys.iter().enumerate() {
+                let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
+                let _: () = cmd("SET").arg(key).arg(i).query_async(&mut con).await?;
+            }
+            for (i, key) in keys.iter().enumerate() {
+                let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
+            }
+            // we should receive at most 5 Push Value from cluster
+            for _ in keys {
+                let _ = rx.try_recv().unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }

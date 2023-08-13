@@ -264,6 +264,7 @@ impl TestContext {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
                 use_resp3,
+                client_tracking_options: Some(vec![]),
                 ..Default::default()
             },
         })
@@ -529,15 +530,18 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
 
 pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
     let mut pipe = redis::pipe();
-    pipe.cmd("CLIENT")
-        .arg("TRACKING")
-        .arg("ON")
-        .ignore()
-        .cmd("GET")
+    pipe.cmd("GET")
         .arg("key_1")
         .ignore()
         .cmd("SET")
         .arg("key_1")
+        .arg(42)
+        .ignore()
+        .cmd("GET")
+        .arg("key_2")
+        .ignore()
+        .cmd("SET")
+        .arg("key_2")
         .arg(42)
         .ignore();
     pipe
@@ -552,9 +556,6 @@ pub fn build_cluster_pipeline_for_invalidation(keys: &[&str]) -> ClusterPipeline
             .cmd("SET")
             .arg(key)
             .arg(i)
-            .ignore()
-            .cmd("GET")
-            .arg(key)
             .ignore();
     }
     pipe

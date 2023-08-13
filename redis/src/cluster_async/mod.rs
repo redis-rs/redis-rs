@@ -75,7 +75,7 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let push_manager = PushManager::default();
-        ClusterConnInner::new(initial_nodes, cluster_params)
+        ClusterConnInner::new(initial_nodes, cluster_params, push_manager.clone())
             .await
             .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
@@ -90,7 +90,10 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                ClusterConnection { tx, push_manager }
+                ClusterConnection {
+                    tx,
+                    push_manager: push_manager.clone(),
+                }
             })
     }
 }
@@ -109,6 +112,7 @@ struct ClusterConnInner<C> {
     refresh_error: Option<RedisError>,
     pending_requests: Vec<PendingRequest<Response, C>>,
     cluster_params: ClusterParams,
+    push_manager: PushManager,
 }
 
 #[derive(Clone)]
@@ -356,9 +360,14 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        push_manager: PushManager,
     ) -> RedisResult<Self> {
-        let connections =
-            Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
+        let connections = Self::create_initial_connections(
+            initial_nodes,
+            cluster_params.clone(),
+            push_manager.clone(),
+        )
+        .await?;
         let mut connection = ClusterConnInner {
             connections,
             slots: Default::default(),
@@ -367,6 +376,7 @@ where
             pending_requests: Vec::new(),
             state: ConnectionState::PollComplete,
             cluster_params,
+            push_manager,
         };
         let (slots, connections) = connection.refresh_slots().await.map_err(|(err, _)| err)?;
         connection.slots = slots;
@@ -377,13 +387,15 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: ClusterParams,
+        push_manager: PushManager,
     ) -> RedisResult<ConnectionMap<C>> {
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
+                let pm = push_manager.clone();
                 async move {
                     let addr = info.addr.to_string();
-                    let result = connect_and_check(&addr, params).await;
+                    let result = connect_and_check(&addr, params, pm.clone()).await;
                     match result {
                         Ok(conn) => Some((addr, async { conn }.boxed().shared())),
                         Err(e) => {
@@ -417,12 +429,17 @@ where
     ) -> impl Future<Output = ConnectionMap<C>> {
         let connections = mem::take(&mut self.connections);
         let params = self.cluster_params.clone();
+        let push_manager = self.push_manager.clone();
         async move {
             stream::iter(addrs)
                 .fold(connections, |mut connections, addr| async {
-                    let conn =
-                        Self::get_or_create_conn(&addr, connections.remove(&addr), params.clone())
-                            .await;
+                    let conn = Self::get_or_create_conn(
+                        &addr,
+                        connections.remove(&addr),
+                        params.clone(),
+                        push_manager.clone(),
+                    )
+                    .await;
                     if let Ok(conn) = conn {
                         connections.insert(addr, async { conn }.boxed().shared());
                     }
@@ -439,6 +456,7 @@ where
     {
         let mut connections = mem::take(&mut self.connections);
         let cluster_params = self.cluster_params.clone();
+        let push_manager = self.push_manager.clone();
         async move {
             let mut result = Ok(SlotMap::new());
             for (_, conn) in connections.iter_mut() {
@@ -477,6 +495,7 @@ where
                             addr,
                             connections.remove(addr),
                             cluster_params.clone(),
+                            push_manager.clone(),
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -674,15 +693,16 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: ClusterParams,
+        push_manager: PushManager,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+                Err(_) => connect_and_check(addr, params.clone(), push_manager).await,
             }
         } else {
-            connect_and_check(addr, params.clone()).await
+            connect_and_check(addr, params.clone(), push_manager).await
         }
     }
 }
@@ -919,13 +939,13 @@ where
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
 
 impl Connect for MultiplexedConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, MultiplexedConnection>
+    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
@@ -934,22 +954,32 @@ impl Connect for MultiplexedConnection {
             let client = crate::Client::open(connection_info)?;
 
             #[cfg(feature = "tokio-comp")]
-            return client.get_multiplexed_tokio_connection().await;
+            let mut con = client.get_multiplexed_tokio_connection().await;
 
             #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            return client.get_multiplexed_async_std_connection().await;
+            let mut con = client.get_multiplexed_async_std_connection().await;
+
+            if let Ok(con) = con.as_mut() {
+                con.set_push_manager(push_manager).await;
+            }
+
+            con
         }
         .boxed()
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &str,
+    params: ClusterParams,
+    push_manager: PushManager,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
     let info = get_connection_info(node, params)?;
-    let mut conn = C::connect(info).await?;
+    let mut conn = C::connect(info, push_manager).await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect

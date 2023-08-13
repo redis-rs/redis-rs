@@ -833,6 +833,7 @@ pub(crate) fn get_connection_info(
             password: cluster_params.password,
             username: cluster_params.username,
             use_resp3: cluster_params.use_resp3,
+            client_tracking_options: cluster_params.client_tracking_options,
             ..Default::default()
         },
     })
