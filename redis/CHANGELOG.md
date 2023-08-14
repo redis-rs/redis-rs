@@ -58,7 +58,7 @@ will again return a single response instead of an array.
 * Bump MSRV to 1.60 ([#846](https://github.com/redis-rs/redis-rs/pull/846))
 * Improve error logging. ([#838](https://github.com/redis-rs/redis-rs/pull/838) @nihohit)
 * Improve documentation, add references to `redis-macros` ([#769](https://github.com/redis-rs/redis-rs/pull/769) @daniel7grant)
-* Allow creating Cmd with capacity. ([#817](https://github.com/redis-rs/redis-rs/pull/817) @
+* Allow creating Cmd with capacity. ([#817](https://github.com/redis-rs/redis-rs/pull/817) @nihohit)
 
 <a name="0.23.0"></a>
 ### 0.23.0 (2023-04-05)
