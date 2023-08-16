@@ -712,7 +712,7 @@ fn test_cluster_fan_out_to_all_nodes() {
 }
 
 #[test]
-fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available() {
+fn test_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
     test_cluster_fan_out(
         "CONFIG SET",
         vec![6379, 6381],
@@ -732,7 +732,7 @@ fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available(
 }
 
 #[test]
-fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
+fn test_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
     test_cluster_fan_out(
         "CONFIG SET",
         vec![6379, 6380, 6381, 6382],
@@ -758,6 +758,314 @@ fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
                 slot_range: (8201..16383),
             },
         ]),
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_and_aggregate_numeric_response_with_min() {
+    let name = "test_cluster_fan_out_and_aggregate_numeric_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SLOWLOG").arg("LEN");
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            let res = 6383 - port as i64;
+            Err(Ok(Value::Int(res))) // this results in 1,2,3,4
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, i64>(&mut connection))
+        .unwrap();
+    assert_eq!(result, 10, "{result}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_aggregate_logical_array_response() {
+    let name = "test_cluster_fan_out_and_aggregate_logical_array_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT")
+        .arg("EXISTS")
+        .arg("foo")
+        .arg("bar")
+        .arg("baz")
+        .arg("barvaz");
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            if port == 6381 {
+                return Err(Ok(Value::Bulk(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Int(1),
+                ])));
+            } else if port == 6379 {
+                return Err(Ok(Value::Bulk(vec![
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Int(0),
+                    Value::Int(1),
+                ])));
+            }
+
+            panic!("unexpected port {port}");
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<i64>>(&mut connection))
+        .unwrap();
+    assert_eq!(result, vec![0, 0, 0, 1], "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_one_succeeded_response() {
+    let name = "test_cluster_fan_out_and_return_one_succeeded_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT").arg("KILL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(Value::Okay));
+            } else if port == 6379 {
+                return Err(Err((
+                    ErrorKind::NotBusy,
+                    "No scripts in execution right now",
+                )
+                    .into()));
+            }
+
+            panic!("unexpected port {port}");
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap();
+    assert_eq!(result, Value::Okay, "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes() {
+    let name = "test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT").arg("KILL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            Err(Err((
+                ErrorKind::NotBusy,
+                "No scripts in execution right now",
+            )
+                .into()))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_all_succeeded_response() {
+    let name = "test_cluster_fan_out_and_return_all_succeeded_response";
+    let cmd = cmd("FLUSHALL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Okay))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap();
+    assert_eq!(result, Value::Okay, "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure() {
+    let name = "test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure";
+    let cmd = cmd("FLUSHALL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Err((
+                    ErrorKind::NotBusy,
+                    "No scripts in execution right now",
+                )
+                    .into()));
+            }
+            Err(Ok(Value::Okay))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
+    let name = "test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values";
+    let cmd = cmd("RANDOMKEY");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(Value::Data("foo".as_bytes().to_vec())));
+            }
+            Err(Ok(Value::Nil))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, String>(&mut connection))
+        .unwrap();
+    assert_eq!(result, "foo", "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() {
+    let name = "foo";
+    let mut cmd = Cmd::new();
+    cmd.arg("LATENCY").arg("LATEST");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Data(format!("latency: {port}").into_bytes())))
+        },
+    );
+
+    // TODO once RESP3 is in, return this as a map
+    let mut result = runtime
+        .block_on(cmd.query_async::<_, Vec<Vec<String>>>(&mut connection))
+        .unwrap();
+    result.sort();
+    assert_eq!(
+        result,
+        vec![
+            vec![format!("{name}:6379"), "latency: 6379".to_string()],
+            vec![format!("{name}:6380"), "latency: 6380".to_string()],
+            vec![format!("{name}:6381"), "latency: 6381".to_string()],
+            vec![format!("{name}:6382"), "latency: 6382".to_string()]
+        ],
+        "{result:?}"
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_and_combine_arrays_of_values() {
+    let name = "foo";
+    let cmd = cmd("KEYS");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Bulk(vec![Value::Data(
+                format!("key:{port}").into_bytes(),
+            )])))
+        },
+    );
+
+    let mut result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap();
+    result.sort();
+    assert_eq!(
+        result,
+        vec![format!("key:6379"), format!("key:6381"),],
+        "{result:?}"
     );
 }
 
