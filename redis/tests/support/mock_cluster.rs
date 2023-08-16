@@ -155,25 +155,21 @@ pub fn create_topology_from_config(name: &str, slots_config: Vec<MockSlotRange>)
     let slots_vec = slots_config
         .into_iter()
         .map(|slot_config| {
-            let replicas = slot_config
-                .replica_ports
-                .into_iter()
-                .flat_map(|replica_port| {
-                    vec![
-                        Value::Data(name.as_bytes().to_vec()),
-                        Value::Int(replica_port as i64),
-                    ]
-                })
-                .collect();
-            Value::Bulk(vec![
+            let mut config = vec![
                 Value::Int(slot_config.slot_range.start as i64),
                 Value::Int(slot_config.slot_range.end as i64),
                 Value::Bulk(vec![
                     Value::Data(name.as_bytes().to_vec()),
                     Value::Int(slot_config.primary_port as i64),
                 ]),
-                Value::Bulk(replicas),
-            ])
+            ];
+            config.extend(slot_config.replica_ports.into_iter().map(|replica_port| {
+                Value::Bulk(vec![
+                    Value::Data(name.as_bytes().to_vec()),
+                    Value::Int(replica_port as i64),
+                ])
+            }));
+            Value::Bulk(config)
         })
         .collect();
     Value::Bulk(slots_vec)
