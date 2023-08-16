@@ -60,7 +60,6 @@ fn test_async_cluster_basic_eval() {
     .unwrap();
 }
 
-#[ignore] // TODO Handle running SCRIPT LOAD on all masters
 #[test]
 fn test_async_cluster_basic_script() {
     let cluster = TestClusterContext::new(3, 0);
@@ -377,11 +376,184 @@ fn test_async_cluster_tryagain_exhaust_retries() {
 }
 
 #[test]
-fn test_async_cluster_rebuild_with_extra_nodes() {
+fn test_async_cluster_move_error_when_new_node_is_added() {
     let name = "rebuild_with_extra_nodes";
 
     let requests = atomic::AtomicUsize::new(0);
     let started = atomic::AtomicBool::new(false);
+    let refreshed = atomic::AtomicBool::new(false);
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        if !started.load(atomic::Ordering::SeqCst) {
+            respond_startup(name, cmd)?;
+        }
+        started.store(true, atomic::Ordering::SeqCst);
+
+        if contains_slice(cmd, b"PING") {
+            return Err(Ok(Value::Status("OK".into())));
+        }
+
+        let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+
+        let is_get_cmd = contains_slice(cmd, b"GET");
+        let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+        match i {
+            // Respond that the key exists on a node that does not yet have a connection:
+            0 => Err(parse_redis_value(
+                format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
+            )),
+            _ => {
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    // Should not attempt to refresh slots more than once:
+                    assert!(!refreshed.swap(true, Ordering::SeqCst));
+                    Err(Ok(Value::Bulk(vec![
+                        Value::Bulk(vec![
+                            Value::Int(0),
+                            Value::Int(1),
+                            Value::Bulk(vec![
+                                Value::Data(name.as_bytes().to_vec()),
+                                Value::Int(6379),
+                            ]),
+                        ]),
+                        Value::Bulk(vec![
+                            Value::Int(2),
+                            Value::Int(16383),
+                            Value::Bulk(vec![
+                                Value::Data(name.as_bytes().to_vec()),
+                                Value::Int(6380),
+                            ]),
+                        ]),
+                    ])))
+                } else {
+                    assert_eq!(port, 6380);
+                    assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
+                    get_response
+                }
+            }
+        }
+    });
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_ask_redirect() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                let count = completed.fetch_add(1, Ordering::SeqCst);
+                match port {
+                    6379 => match count {
+                        0 => Err(parse_redis_value(b"-ASK 14000 node:6380\r\n")),
+                        _ => panic!("Node should not be called now"),
+                    },
+                    6380 => match count {
+                        1 => {
+                            assert!(contains_slice(cmd, b"ASKING"));
+                            Err(Ok(Value::Okay))
+                        }
+                        2 => {
+                            assert!(contains_slice(cmd, b"GET"));
+                            Err(Ok(Value::Data(b"123".to_vec())))
+                        }
+                        _ => panic!("Node should not be called now"),
+                    },
+                    _ => panic!("Wrong node"),
+                }
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_async_cluster_ask_redirect_even_if_original_call_had_no_route() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                let count = completed.fetch_add(1, Ordering::SeqCst);
+                if count == 0 {
+                    return Err(parse_redis_value(b"-ASK 14000 node:6380\r\n"));
+                }
+                match port {
+                    6380 => match count {
+                        1 => {
+                            assert!(
+                                contains_slice(cmd, b"ASKING"),
+                                "{:?}",
+                                std::str::from_utf8(cmd)
+                            );
+                            Err(Ok(Value::Okay))
+                        }
+                        2 => {
+                            assert!(contains_slice(cmd, b"EVAL"));
+                            Err(Ok(Value::Okay))
+                        }
+                        _ => panic!("Node should not be called now"),
+                    },
+                    _ => panic!("Wrong node"),
+                }
+            }
+        },
+    );
+
+    let value = runtime.block_on(
+        cmd("EVAL") // Eval command has no directed, and so is redirected randomly
+            .query_async::<_, Value>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Value::Okay));
+}
+
+#[test]
+fn test_async_cluster_ask_error_when_new_node_is_added() {
+    let name = "ask_with_extra_nodes";
+
+    let requests = atomic::AtomicUsize::new(0);
+    let started = atomic::AtomicBool::new(false);
+
     let MockEnv {
         runtime,
         async_connection: mut connection,
@@ -400,32 +572,22 @@ fn test_async_cluster_rebuild_with_extra_nodes() {
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
         match i {
-            // Respond that the key exists elswehere (the slot, 123, is unused in the
-            // implementation)
-            0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
-            // Respond with the new masters
-            1 => Err(Ok(Value::Bulk(vec![
-                Value::Bulk(vec![
-                    Value::Int(0),
-                    Value::Int(1),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
-                        Value::Int(6379),
-                    ]),
-                ]),
-                Value::Bulk(vec![
-                    Value::Int(2),
-                    Value::Int(16383),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
-                        Value::Int(6380),
-                    ]),
-                ]),
-            ]))),
-            _ => {
-                // Check that the correct node receives the request after rebuilding
+            // Respond that the key exists on a node that does not yet have a connection:
+            0 => Err(parse_redis_value(
+                format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+            )),
+            1 => {
                 assert_eq!(port, 6380);
+                assert!(contains_slice(cmd, b"ASKING"));
+                Err(Ok(Value::Okay))
+            }
+            2 => {
+                assert_eq!(port, 6380);
+                assert!(contains_slice(cmd, b"GET"));
                 Err(Ok(Value::Data(b"123".to_vec())))
+            }
+            _ => {
+                panic!("Unexpected request: {:?}", cmd);
             }
         }
     });
@@ -456,7 +618,6 @@ fn test_async_cluster_replica_read() {
         name,
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
-
             match port {
                 6380 => Err(Ok(Value::Data(b"123".to_vec()))),
                 _ => panic!("Wrong node"),
@@ -498,6 +659,414 @@ fn test_async_cluster_replica_read() {
             .query_async::<_, Option<Value>>(&mut connection),
     );
     assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
+}
+
+fn test_cluster_fan_out(
+    command: &'static str,
+    expected_ports: Vec<u16>,
+    slots_config: Option<Vec<MockSlotRange>>,
+) {
+    let name = "node";
+    let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ports_clone = found_ports.clone();
+    let mut cmd = Cmd::new();
+    for arg in command.split_whitespace() {
+        cmd.arg(arg);
+    }
+    let packed_cmd = cmd.get_packed_command();
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            if received_cmd == packed_cmd {
+                ports_clone.lock().unwrap().push(port);
+                return Err(Ok(Value::Status("OK".into())));
+            }
+            Ok(())
+        },
+    );
+
+    let _ = runtime.block_on(cmd.query_async::<_, Option<()>>(&mut connection));
+    found_ports.lock().unwrap().sort();
+    // MockEnv creates 2 mock connections.
+    assert_eq!(*found_ports.lock().unwrap(), expected_ports);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_primaries() {
+    test_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_nodes() {
+    test_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
+}
+
+#[test]
+fn test_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
+    test_cluster_fan_out(
+        "CONFIG SET",
+        vec![6379, 6381],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: Vec::new(),
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: Vec::new(),
+                slot_range: (8192..16383),
+            },
+        ]),
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
+    test_cluster_fan_out(
+        "CONFIG SET",
+        vec![6379, 6380, 6381, 6382],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (0..4000),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (4001..8191),
+            },
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (8192..8200),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (8201..16383),
+            },
+        ]),
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_and_aggregate_numeric_response_with_min() {
+    let name = "test_cluster_fan_out_and_aggregate_numeric_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SLOWLOG").arg("LEN");
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            let res = 6383 - port as i64;
+            Err(Ok(Value::Int(res))) // this results in 1,2,3,4
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, i64>(&mut connection))
+        .unwrap();
+    assert_eq!(result, 10, "{result}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_aggregate_logical_array_response() {
+    let name = "test_cluster_fan_out_and_aggregate_logical_array_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT")
+        .arg("EXISTS")
+        .arg("foo")
+        .arg("bar")
+        .arg("baz")
+        .arg("barvaz");
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            if port == 6381 {
+                return Err(Ok(Value::Bulk(vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Int(1),
+                ])));
+            } else if port == 6379 {
+                return Err(Ok(Value::Bulk(vec![
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Int(0),
+                    Value::Int(1),
+                ])));
+            }
+
+            panic!("unexpected port {port}");
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<i64>>(&mut connection))
+        .unwrap();
+    assert_eq!(result, vec![0, 0, 0, 1], "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_one_succeeded_response() {
+    let name = "test_cluster_fan_out_and_return_one_succeeded_response";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT").arg("KILL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(Value::Okay));
+            } else if port == 6379 {
+                return Err(Err((
+                    ErrorKind::NotBusy,
+                    "No scripts in execution right now",
+                )
+                    .into()));
+            }
+
+            panic!("unexpected port {port}");
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap();
+    assert_eq!(result, Value::Okay, "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes() {
+    let name = "test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes";
+    let mut cmd = Cmd::new();
+    cmd.arg("SCRIPT").arg("KILL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+
+            Err(Err((
+                ErrorKind::NotBusy,
+                "No scripts in execution right now",
+            )
+                .into()))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_all_succeeded_response() {
+    let name = "test_cluster_fan_out_and_return_all_succeeded_response";
+    let cmd = cmd("FLUSHALL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Okay))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap();
+    assert_eq!(result, Value::Okay, "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure() {
+    let name = "test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure";
+    let cmd = cmd("FLUSHALL");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Err((
+                    ErrorKind::NotBusy,
+                    "No scripts in execution right now",
+                )
+                    .into()));
+            }
+            Err(Ok(Value::Okay))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Value>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
+    let name = "test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values";
+    let cmd = cmd("RANDOMKEY");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(Value::Data("foo".as_bytes().to_vec())));
+            }
+            Err(Ok(Value::Nil))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, String>(&mut connection))
+        .unwrap();
+    assert_eq!(result, "foo", "{result:?}");
+}
+
+#[test]
+fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() {
+    let name = "foo";
+    let mut cmd = Cmd::new();
+    cmd.arg("LATENCY").arg("LATEST");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Data(format!("latency: {port}").into_bytes())))
+        },
+    );
+
+    // TODO once RESP3 is in, return this as a map
+    let mut result = runtime
+        .block_on(cmd.query_async::<_, Vec<Vec<String>>>(&mut connection))
+        .unwrap();
+    result.sort();
+    assert_eq!(
+        result,
+        vec![
+            vec![format!("{name}:6379"), "latency: 6379".to_string()],
+            vec![format!("{name}:6380"), "latency: 6380".to_string()],
+            vec![format!("{name}:6381"), "latency: 6381".to_string()],
+            vec![format!("{name}:6382"), "latency: 6382".to_string()]
+        ],
+        "{result:?}"
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_and_combine_arrays_of_values() {
+    let name = "foo";
+    let cmd = cmd("KEYS");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            Err(Ok(Value::Bulk(vec![Value::Data(
+                format!("key:{port}").into_bytes(),
+            )])))
+        },
+    );
+
+    let mut result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap();
+    result.sort();
+    assert_eq!(
+        result,
+        vec![format!("key:6379"), format!("key:6381"),],
+        "{result:?}"
+    );
 }
 
 #[test]

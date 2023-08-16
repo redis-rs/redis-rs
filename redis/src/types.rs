@@ -46,6 +46,28 @@ pub enum Expiry {
     PERSIST,
 }
 
+/// Helper enum that is used to define expiry time for SET command
+pub enum SetExpiry {
+    /// EX seconds -- Set the specified expire time, in seconds.
+    EX(usize),
+    /// PX milliseconds -- Set the specified expire time, in milliseconds.
+    PX(usize),
+    /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
+    EXAT(usize),
+    /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
+    PXAT(usize),
+    /// KEEPTTL -- Retain the time to live associated with the key.
+    KEEPTTL,
+}
+
+/// Helper enum that is used to define existence checks
+pub enum ExistenceCheck {
+    /// NX -- Only set the key if it does not already exist.
+    NX,
+    /// XX -- Only set the key if it already exists.
+    XX,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -100,6 +122,14 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+    /// Requested name not found among masters returned by the sentinels
+    MasterNameNotFoundBySentinel,
+    /// No valid replicas found in the sentinels, for a given master name
+    NoValidReplicasFoundBySentinel,
+    /// At least one sentinel connection info is required
+    EmptySentinelList,
+    /// Attempted to kill a script/function while they werent' executing
+    NotBusy,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -569,6 +599,7 @@ impl RedisError {
             ErrorKind::CrossSlot => Some("CROSSSLOT"),
             ErrorKind::MasterDown => Some("MASTERDOWN"),
             ErrorKind::ReadOnly => Some("READONLY"),
+            ErrorKind::NotBusy => Some("NOTBUSY"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(code),
                 _ => None,
@@ -596,6 +627,10 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
+            ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
+            ErrorKind::EmptySentinelList => "empty sentinel list",
+            ErrorKind::NotBusy => "not busy",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
@@ -734,6 +769,9 @@ impl RedisError {
             ErrorKind::IoError => true,
             ErrorKind::ReadOnly => true,
             ErrorKind::ClusterDown => true,
+            ErrorKind::MasterNameNotFoundBySentinel => true,
+            ErrorKind::NoValidReplicasFoundBySentinel => true,
+
             ErrorKind::ExtensionError => false,
             ErrorKind::ExecAbortError => false,
             ErrorKind::ResponseError => false,
@@ -743,6 +781,8 @@ impl RedisError {
             ErrorKind::InvalidClientConfig => false,
             ErrorKind::CrossSlot => false,
             ErrorKind::ClientError => false,
+            ErrorKind::EmptySentinelList => false,
+            ErrorKind::NotBusy => false,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => false,
             ErrorKind::RESP3NotSupported => false,

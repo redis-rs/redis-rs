@@ -11,16 +11,6 @@ use std::str;
 use std::thread::sleep;
 use std::time::Duration;
 
-macro_rules! assert_args {
-    ($value:expr, $($args:expr),+) => {
-        let args = $value.to_redis_args();
-        let strings: Vec<_> = args.iter()
-                                .map(|a| str::from_utf8(a.as_ref()).unwrap())
-                                .collect();
-        assert_eq!(strings, vec![$($args),+]);
-    }
-}
-
 fn xadd(con: &mut Connection) {
     let _: RedisResult<String> =
         con.xadd("k1", "1000-0", &[("hello", "world"), ("redis", "streams")]);

@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::{self, Write};
-use std::net::{self, TcpStream, ToSocketAddrs};
+use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
@@ -39,6 +39,42 @@ use rustls_native_certs::load_native_certs;
 
 static DEFAULT_PORT: u16 = 6379;
 
+#[inline(always)]
+fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
+    let socket = TcpStream::connect(addr)?;
+    #[cfg(feature = "keep-alive")]
+    {
+        //For now rely on system defaults
+        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
+        //these are useless error that not going to happen
+        let socket2: socket2::Socket = socket.into();
+        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
+        Ok(socket2.into())
+    }
+    #[cfg(not(feature = "keep-alive"))]
+    {
+        Ok(socket)
+    }
+}
+
+#[inline(always)]
+fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+    let socket = TcpStream::connect_timeout(addr, timeout)?;
+    #[cfg(feature = "keep-alive")]
+    {
+        //For now rely on system defaults
+        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
+        //these are useless error that not going to happen
+        let socket2: socket2::Socket = socket.into();
+        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
+        Ok(socket2.into())
+    }
+    #[cfg(not(feature = "keep-alive"))]
+    {
+        Ok(socket)
+    }
+}
+
 /// This function takes a redis URL string and parses it into a URL
 /// as used by rust-url.  This is necessary as the default parser does
 /// not understand how redis URLs function.
@@ -50,6 +86,16 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
         },
         Err(_) => None,
     }
+}
+
+/// TlsMode indicates use or do not use verification of certification.
+/// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
+#[derive(Clone, Copy)]
+pub enum TlsMode {
+    /// Secure verify certification.
+    Secure,
+    /// Insecure do not verify certification.
+    Insecure,
 }
 
 /// Defines the connection address.
@@ -411,12 +457,12 @@ impl ActualConnection {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let addr = (host.as_str(), *port);
                 let tcp = match timeout {
-                    None => TcpStream::connect(addr)?,
+                    None => connect_tcp(addr)?,
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in addr.to_socket_addrs()? {
-                            match TcpStream::connect_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -463,7 +509,7 @@ impl ActualConnection {
                 let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = TcpStream::connect(addr)?;
+                        let tcp = connect_tcp(addr)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
@@ -475,7 +521,7 @@ impl ActualConnection {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host.as_str(), port).to_socket_addrs()? {
-                            match TcpStream::connect_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -515,14 +561,14 @@ impl ActualConnection {
                 let conn = rustls::ClientConnection::new(Arc::new(config), host.try_into()?)?;
                 let reader = match timeout {
                     None => {
-                        let tcp = TcpStream::connect((host, port))?;
+                        let tcp = connect_tcp((host, port))?;
                         StreamOwned::new(conn, tcp)
                     }
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host, port).to_socket_addrs()? {
-                            match TcpStream::connect_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -691,7 +737,7 @@ impl ActualConnection {
 pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::ClientConfig> {
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
-    root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
+    root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
             ta.subject,
             ta.spki,

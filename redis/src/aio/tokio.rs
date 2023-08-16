@@ -29,6 +29,26 @@ use tokio_native_tls::TlsStream;
 #[cfg(unix)]
 use super::Path;
 
+#[inline(always)]
+async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
+    let socket = TcpStreamTokio::connect(addr).await?;
+    #[cfg(feature = "keep-alive")]
+    {
+        //For now rely on system defaults
+        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
+        //these are useless error that not going to happen
+        let std_socket = socket.into_std()?;
+        let socket2: socket2::Socket = std_socket.into();
+        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
+        TcpStreamTokio::from_std(socket2.into())
+    }
+
+    #[cfg(not(feature = "keep-alive"))]
+    {
+        Ok(socket)
+    }
+}
+
 pub(crate) enum Tokio {
     /// Represents a Tokio TCP connection.
     Tcp(TcpStreamTokio),
@@ -95,9 +115,7 @@ impl AsyncRead for Tokio {
 #[async_trait]
 impl RedisRuntime for Tokio {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(TcpStreamTokio::connect(&socket_addr)
-            .await
-            .map(Tokio::Tcp)?)
+        Ok(connect_tcp(&socket_addr).await.map(Tokio::Tcp)?)
     }
 
     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -117,7 +135,7 @@ impl RedisRuntime for Tokio {
         }
         .into();
         Ok(tls_connector
-            .connect(hostname, TcpStreamTokio::connect(&socket_addr).await?)
+            .connect(hostname, connect_tcp(&socket_addr).await?)
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
@@ -132,10 +150,7 @@ impl RedisRuntime for Tokio {
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector
-            .connect(
-                hostname.try_into()?,
-                TcpStreamTokio::connect(&socket_addr).await?,
-            )
+            .connect(hostname.try_into()?, connect_tcp(&socket_addr).await?)
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }

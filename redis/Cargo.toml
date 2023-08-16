@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.23.0"
+version = "0.23.2"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -8,12 +8,15 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.63"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+bench = false
 
 [dependencies]
 # These two are generally really common simple dependencies so it does not seem
@@ -39,6 +42,7 @@ futures-util = { version = "0.3.15", default-features = false, optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
+socket2 = { version = "0.4", default-features = false, optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.1.0", optional = true }
@@ -61,7 +65,7 @@ tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
 
 # Only needed for rustls
-rustls = { version = "0.21.0", optional = true }
+rustls = { version = "0.21.6", optional = true }
 webpki-roots = { version = "0.23.0", optional = true }
 rustls-native-certs = { version = "0.6.2", optional = true }
 tokio-rustls = { version = "0.24.0", optional = true }
@@ -78,7 +82,7 @@ num-bigint = "0.4.3"
 log = { version = "0.4", optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script"]
+default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait"]
 geospatial = []
@@ -98,6 +102,8 @@ tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
 connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
+keep-alive = ["socket2"]
+sentinel = ["rand"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -113,7 +119,7 @@ criterion = "0.4"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
-tempfile = "3.2"
+tempfile = "=3.6.0"
 once_cell = "1"
 anyhow = "1"
 
@@ -149,6 +155,11 @@ required-features = ["tokio-comp"]
 name = "bench_cluster"
 harness = false
 required-features = ["cluster"]
+
+[[bench]]
+name = "bench_cluster_async"
+harness = false
+required-features = ["cluster-async", "tokio-comp"]
 
 [[example]]
 name = "async-multiplexed"

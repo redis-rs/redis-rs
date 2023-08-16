@@ -43,17 +43,19 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
+use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{Routable, RoutingInfo, Slot, SLOT_SIZE};
+use crate::cluster_routing::SlotAddr;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
+pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Route, SlotAddr, SlotMap},
+    cluster_routing::{Redirect, Routable, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
 };
 use crate::{IntoConnectionInfo, PushKind};
 
@@ -132,7 +134,7 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
-    retries: u32,
+    retry_params: RetryParams,
 }
 
 impl<C> ClusterConnection<C>
@@ -154,7 +156,7 @@ where
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
-            retries: cluster_params.retries,
+            retry_params: cluster_params.retry_params,
         };
         connection.create_initial_connections()?;
 
@@ -395,8 +397,7 @@ where
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
         let slots = self.slots.borrow();
 
-        let addr_for_slot = |slot: u16, slot_addr: SlotAddr| -> RedisResult<String> {
-            let route = Route::new(slot, slot_addr);
+        let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
@@ -406,13 +407,12 @@ where
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => {
                 let mut rng = thread_rng();
-                Ok(addr_for_slot(
+                Ok(addr_for_slot(Route::new(
                     rng.gen_range(0..SLOT_SIZE),
                     SlotAddr::Master,
-                )?)
+                ))?)
             }
-            Some(RoutingInfo::MasterSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Master)?),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Ok(addr_for_slot(slot, SlotAddr::Replica)?),
+            Some(RoutingInfo::SpecificNode(route)) => Ok(addr_for_slot(route)?),
             _ => fail!(UNROUTABLE_ERROR),
         }
     }
@@ -436,17 +436,21 @@ where
         Ok(result)
     }
 
-    fn execute_on_all_nodes<T, F>(&self, mut func: F) -> RedisResult<T>
+    fn execute_on_all_nodes<T, F>(&self, mut func: F, only_primaries: bool) -> RedisResult<T>
     where
         T: MergeResults,
         F: FnMut(&mut C) -> RedisResult<T>,
     {
         let mut connections = self.connections.borrow_mut();
+        let slots = self.slots.borrow_mut();
         let mut results = HashMap::new();
 
         // TODO: reconnect and shit
-        for (addr, connection) in connections.iter_mut() {
-            results.insert(addr.as_str(), func(connection)?);
+        for addr in slots.all_unique_addresses(only_primaries) {
+            let addr = addr.to_string();
+            if let Some(connection) = connections.get_mut(&addr) {
+                results.insert(addr, func(connection)?);
+            }
         }
 
         Ok(T::merge_results(results))
@@ -461,29 +465,34 @@ where
     {
         let route = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::MasterSlot(slot)) => Some(Route::new(slot, SlotAddr::Master)),
-            Some(RoutingInfo::ReplicaSlot(slot)) => Some(Route::new(slot, SlotAddr::Replica)),
-            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => {
-                return self.execute_on_all_nodes(func);
+            Some(RoutingInfo::SpecificNode(route)) => Some(route),
+            Some(RoutingInfo::AllMasters) => {
+                return self.execute_on_all_nodes(func, true);
+            }
+            Some(RoutingInfo::AllNodes) => {
+                return self.execute_on_all_nodes(func, false);
             }
             None => fail!(UNROUTABLE_ERROR),
         };
 
-        let mut retries = self.retries;
-        let mut redirected = None::<String>;
-        let mut is_asking = false;
+        let mut retries = 0;
+        let mut redirected = None::<Redirect>;
+
         loop {
             // Get target address and response.
             let (addr, rv) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if let Some(addr) = redirected.take() {
+                let (addr, conn) = if let Some(redirected) = redirected.take() {
+                    let (addr, is_asking) = match redirected {
+                        Redirect::Moved(addr) => (addr, false),
+                        Redirect::Ask(addr) => (addr, true),
+                    };
                     let conn = self.get_connection_by_addr(&mut connections, &addr)?;
                     if is_asking {
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
                         // actually want to execute.
                         conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
-                        is_asking = false;
                     }
                     (addr.to_string(), conn)
                 } else if route.is_none() {
@@ -497,27 +506,29 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    if retries == 0 {
+                    if retries == self.retry_params.number_of_retries {
                         return Err(err);
                     }
-                    retries -= 1;
+                    retries += 1;
 
                     match err.kind() {
                         ErrorKind::Ask => {
-                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
-                            is_asking = true;
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| Redirect::Ask(node.to_string()));
                         }
                         ErrorKind::Moved => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
-                            redirected = err.redirect_node().map(|(node, _slot)| node.to_string());
-                            is_asking = false;
+                            redirected = err
+                                .redirect_node()
+                                .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
-                            let sleep_time = 2u64.pow(16 - retries.max(9)) * 10;
-                            thread::sleep(Duration::from_millis(sleep_time));
+                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
+                            thread::sleep(sleep_time);
                         }
                         ErrorKind::IoError => {
                             if *self.auto_reconnect.borrow() {
@@ -663,26 +674,23 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
 }
 
 trait MergeResults {
-    fn merge_results(_values: HashMap<&str, Self>) -> Self
+    fn merge_results(_values: HashMap<String, Self>) -> Self
     where
         Self: Sized;
 }
 
 impl MergeResults for Value {
-    fn merge_results(values: HashMap<&str, Value>) -> Value {
+    fn merge_results(values: HashMap<String, Value>) -> Value {
         let mut items = vec![];
         for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![
-                Value::Data(addr.as_bytes().to_vec()),
-                value,
-            ]));
+            items.push(Value::Bulk(vec![Value::Data(addr.into_bytes()), value]));
         }
         Value::Bulk(items)
     }
 }
 
 impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<&str, Vec<Value>>) -> Vec<Value> {
+    fn merge_results(_values: HashMap<String, Vec<Value>>) -> Vec<Value> {
         unreachable!("attempted to merge a pipeline. This should not happen");
     }
 }
@@ -703,16 +711,6 @@ impl NodeCmd {
             addr: a,
         }
     }
-}
-
-/// TlsMode indicates use or do not use verification of certification.
-/// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
-#[derive(Clone, Copy)]
-pub enum TlsMode {
-    /// Secure verify certification.
-    Secure,
-    /// Insecure do not verify certification.
-    Insecure,
 }
 
 // TODO: This function can panic and should probably

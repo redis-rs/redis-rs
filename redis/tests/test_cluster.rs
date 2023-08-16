@@ -330,7 +330,7 @@ fn test_cluster_exhaust_retries() {
 }
 
 #[test]
-fn test_cluster_rebuild_with_extra_nodes() {
+fn test_cluster_move_error_when_new_node_is_added() {
     let name = "rebuild_with_extra_nodes";
 
     let requests = atomic::AtomicUsize::new(0);
@@ -352,8 +352,7 @@ fn test_cluster_rebuild_with_extra_nodes() {
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
         match i {
-            // Respond that the key exists elswehere (the slot, 123, is unused in the
-            // implementation)
+            // Respond that the key exists on a node that does not yet have a connection:
             0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
             // Respond with the new masters
             1 => Err(Ok(Value::Bulk(vec![
@@ -378,6 +377,99 @@ fn test_cluster_rebuild_with_extra_nodes() {
                 // Check that the correct node receives the request after rebuilding
                 assert_eq!(port, 6380);
                 Err(Ok(Value::Data(b"123".to_vec())))
+            }
+        }
+    });
+
+    let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_cluster_ask_redirect() {
+    let name = "node";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                let count = completed.fetch_add(1, Ordering::SeqCst);
+                match port {
+                    6379 => match count {
+                        0 => Err(parse_redis_value(b"-ASK 14000 node:6380\r\n")),
+                        _ => panic!("Node should not be called now"),
+                    },
+                    6380 => match count {
+                        1 => {
+                            assert!(contains_slice(cmd, b"ASKING"));
+                            Err(Ok(Value::Okay))
+                        }
+                        2 => {
+                            assert!(contains_slice(cmd, b"GET"));
+                            Err(Ok(Value::Data(b"123".to_vec())))
+                        }
+                        _ => panic!("Node should not be called now"),
+                    },
+                    _ => panic!("Wrong node"),
+                }
+            }
+        },
+    );
+
+    let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
+fn test_cluster_ask_error_when_new_node_is_added() {
+    let name = "ask_with_extra_nodes";
+
+    let requests = atomic::AtomicUsize::new(0);
+    let started = atomic::AtomicBool::new(false);
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        if !started.load(atomic::Ordering::SeqCst) {
+            respond_startup(name, cmd)?;
+        }
+        started.store(true, atomic::Ordering::SeqCst);
+
+        if contains_slice(cmd, b"PING") {
+            return Err(Ok(Value::Status("OK".into())));
+        }
+
+        let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+
+        match i {
+            // Respond that the key exists on a node that does not yet have a connection:
+            0 => Err(parse_redis_value(
+                format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+            )),
+            1 => {
+                assert_eq!(port, 6380);
+                assert!(contains_slice(cmd, b"ASKING"));
+                Err(Ok(Value::Okay))
+            }
+            2 => {
+                assert_eq!(port, 6380);
+                assert!(contains_slice(cmd, b"GET"));
+                Err(Ok(Value::Data(b"123".to_vec())))
+            }
+            _ => {
+                panic!("Unexpected request: {:?}", cmd);
             }
         }
     });
@@ -506,4 +598,103 @@ fn test_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+}
+
+fn test_cluster_fan_out(
+    command: &'static str,
+    expected_ports: Vec<u16>,
+    slots_config: Option<Vec<MockSlotRange>>,
+) {
+    let name = "node";
+    let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ports_clone = found_ports.clone();
+    let mut cmd = redis::Cmd::new();
+    for arg in command.split_whitespace() {
+        cmd.arg(arg);
+    }
+    let packed_cmd = cmd.get_packed_command();
+    // requests should route to replica
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            if received_cmd == packed_cmd {
+                ports_clone.lock().unwrap().push(port);
+                return Err(Ok(Value::Status("OK".into())));
+            }
+            Ok(())
+        },
+    );
+
+    let _ = cmd.query::<Option<()>>(&mut connection);
+    found_ports.lock().unwrap().sort();
+    // MockEnv creates 2 mock connections.
+    assert_eq!(*found_ports.lock().unwrap(), expected_ports);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_primaries() {
+    test_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
+}
+
+#[test]
+fn test_cluster_fan_out_to_all_nodes() {
+    test_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
+}
+
+#[test]
+fn test_cluster_fan_out_out_once_to_each_primary_when_no_replicas_are_available() {
+    test_cluster_fan_out(
+        "CONFIG SET",
+        vec![6379, 6381],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: Vec::new(),
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: Vec::new(),
+                slot_range: (8192..16383),
+            },
+        ]),
+    );
+}
+
+#[test]
+fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
+    test_cluster_fan_out(
+        "CONFIG SET",
+        vec![6379, 6380, 6381, 6382],
+        Some(vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (0..4000),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (4001..8191),
+            },
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (8192..8200),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (8201..16383),
+            },
+        ]),
+    );
 }

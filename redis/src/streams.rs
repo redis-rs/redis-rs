@@ -253,18 +253,13 @@ pub struct StreamClaimReply {
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum StreamPendingReply {
     /// The stream is empty.
+    #[default]
     Empty,
     /// Data with payload exists in the stream.
     Data(StreamPendingData),
-}
-
-impl Default for StreamPendingReply {
-    fn default() -> StreamPendingReply {
-        StreamPendingReply::Empty
-    }
 }
 
 impl StreamPendingReply {

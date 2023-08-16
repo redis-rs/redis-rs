@@ -2,8 +2,6 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{get_resp3_hello_command_error, RedisConnectionInfo};
 use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
 use futures_util::Future;
