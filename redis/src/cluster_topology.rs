@@ -76,14 +76,15 @@ impl SlotMapValue {
 pub(crate) struct SlotMap(BTreeMap<u16, SlotMapValue>);
 
 impl SlotMap {
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    pub fn fill_slots(&mut self, slots: Vec<Slot>) {
-        for slot in slots {
-            self.0.insert(slot.end(), SlotMapValue::from_slot(slot));
-        }
+    pub fn new(slots: Vec<Slot>) -> Self {
+        let mut this = Self(BTreeMap::new());
+        this.0.extend(
+            slots
+                .into_iter()
+                .map(|slot| (slot.end(), SlotMapValue::from_slot(slot))),
+        );
+        trace!("{:?}", this);
+        this
     }
 
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
@@ -95,10 +96,6 @@ impl SlotMap {
                 None
             }
         })
-    }
-
-    pub fn clear(&mut self) {
-        self.0.clear();
     }
 
     pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
@@ -234,12 +231,6 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
     Ok(result)
 }
 
-pub(crate) fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) {
-    slot_map.clear();
-    slot_map.fill_slots(slots_data);
-    trace!("{:?}", slot_map);
-}
-
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
     let mut s = DefaultHasher::new();
     t.hash(&mut s);
@@ -315,7 +306,6 @@ pub(crate) fn calculate_topology(
     }
 
     let parse_and_built_result = |mut most_frequent_topology: TopologyView| {
-        let mut new_slots = SlotMap::new();
         most_frequent_topology.parse_and_count_slots(tls_mode);
         let slots_data = most_frequent_topology
             .slots_and_count
@@ -324,8 +314,8 @@ pub(crate) fn calculate_topology(
                 ErrorKind::ResponseError,
                 "Failed to parse the slots on the majority view",
             )))?;
-        build_slot_map(&mut new_slots, slots_data);
-        Ok(new_slots)
+
+        Ok(SlotMap::new(slots_data))
     };
 
     if non_unique_max_node_count {
@@ -529,8 +519,7 @@ mod tests {
 
     #[test]
     fn test_slot_map() {
-        let mut slot_map = SlotMap::new();
-        slot_map.fill_slots(vec![
+        let slot_map = SlotMap::new(vec![
             Slot::new(
                 1,
                 1000,
@@ -544,6 +533,7 @@ mod tests {
                 vec!["replica2:6379".to_owned()],
             ),
         ]);
+
         assert!(slot_map
             .slot_addr_for_route(&Route::new(0, SlotAddr::Master))
             .is_none());
