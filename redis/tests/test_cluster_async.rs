@@ -640,13 +640,8 @@ fn test_cluster_push_manager() {
 #[test]
 fn test_cluster_pub_sub() {
     let cluster = TestClusterContext::new(3, 0);
-    if cluster.use_resp3
-        && cluster
-            .version_info
-            .clone()
-            .unwrap_or_default()
-            .starts_with("7.")
-    {
+    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    if cluster.use_resp3 && redis_ver.starts_with("7.") {
         block_on_all(async move {
             let pub_count = 1;
             let channel_names = vec![

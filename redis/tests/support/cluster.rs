@@ -209,7 +209,6 @@ pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
     pub use_resp3: bool,
-    pub version_info: Option<String>,
 }
 
 impl TestClusterContext {
@@ -237,27 +236,10 @@ impl TestClusterContext {
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
-
-        let mut version_info: Option<String> = None;
-        if use_resp3 {
-            let mut pipe = pipe();
-            pipe.cmd("HELLO");
-            pipe.arg("3");
-            let val: RedisResult<Vec<HashMap<String, Value>>> =
-                pipe.query(&mut client.get_connection().unwrap());
-            if let Ok(val) = val {
-                if let Some(val) = val.first() {
-                    if let Some(version) = val.get("version") {
-                        version_info = Some(from_redis_value(version).unwrap());
-                    }
-                }
-            }
-        }
         TestClusterContext {
             cluster,
             client,
             use_resp3,
-            version_info,
         }
     }
 

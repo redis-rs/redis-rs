@@ -138,7 +138,7 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let mut redis_cmd = process::Command::new("redis-server");
+        let mut redis_cmd = process::Command::new("/opt/homebrew/opt/redis@6.2/bin/redis-server");
 
         // Load Redis Modules
         for module in modules {
@@ -251,7 +251,6 @@ pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
     pub use_resp3: bool,
-    pub version_info: Option<String>,
 }
 
 impl TestContext {
@@ -295,25 +294,10 @@ impl TestContext {
             }
         }
         redis::cmd("FLUSHDB").execute(&mut con);
-        let mut version_info: Option<String> = None;
-        if use_resp3 {
-            let mut pipe = pipe();
-            pipe.cmd("HELLO");
-            pipe.arg("3");
-            let val: RedisResult<Vec<HashMap<String, Value>>> = pipe.query(&mut client);
-            if let Ok(val) = val {
-                if let Some(val) = val.first() {
-                    if let Some(version) = val.get("version") {
-                        version_info = Some(from_redis_value(version).unwrap());
-                    }
-                }
-            }
-        }
         TestContext {
             server,
             client,
             use_resp3,
-            version_info,
         }
     }
 

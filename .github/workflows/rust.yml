@@ -72,6 +72,8 @@ jobs:
 
       - name: Run tests
         run: make test
+        env:
+          REDIS_VERSION: ${{ matrix.redis }}
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true'
@@ -106,6 +108,8 @@ jobs:
 
       - name: Run module-specific tests
         run: make test-module
+        env:
+          REDIS_VERSION: ${{ matrix.redis }}
 
       - name: Check features
         run: |
