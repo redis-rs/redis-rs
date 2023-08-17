@@ -126,49 +126,48 @@ impl SubscriptionHolder {
 /// Manages Push messages for both tokio and std channels
 #[derive(Clone, Default)]
 pub struct PushManager {
-    sender: Arc<ArcSwap<HashMap<PushKind, PushSender>>>,
+    senders: Arc<ArcSwap<HashMap<PushKind, Vec<PushSender>>>>,
     subscriptions: Arc<SubscriptionHolder>,
     psubscriptions: Arc<SubscriptionHolder>,
 }
 impl PushManager {
     /// Try to send `PushInfo` to mpsc channel without blocking
-    /// if the function returns false it means
-    /// `PushManager` has no channel for PushKind
-    pub(crate) fn send(&self, pi: PushInfo) -> bool {
-        if let Some(sender) = self.sender.load().get(&pi.kind) {
-            let kind = pi.kind.clone();
-            let is_closed = match sender {
-                #[cfg(feature = "aio")]
-                PushSender::Tokio(tokio_sender) => tokio_sender.send(pi).is_err(),
-                PushSender::Standard(std_sender) => std_sender
-                    .try_send(pi)
-                    .is_err_and(|err| matches!(err, TrySendError::Disconnected(_))),
-            };
-            if is_closed {
-                self.unsubscribe(kind);
-                return false;
+    pub(crate) fn send(&self, pi: PushInfo) {
+        if let Some(senders) = self.senders.load().get(&pi.kind) {
+            let mut indexes_to_remove = vec![];
+            for (i,sender) in senders.iter().enumerate() {
+                let is_closed = match sender {
+                    #[cfg(feature = "aio")]
+                    PushSender::Tokio(tokio_sender) => tokio_sender.send(pi.clone()).is_err(),
+                    PushSender::Standard(std_sender) => std_sender
+                        .try_send(pi.clone())
+                        .is_err_and(|err| matches!(err, TrySendError::Disconnected(_))),
+                };
+                if is_closed {
+                    indexes_to_remove.push(i);
+                }
             }
-            return true;
+            if !indexes_to_remove.is_empty() {
+                self.unsubscribe(pi.kind, &indexes_to_remove);
+            }
         }
-        false
     }
 
     /// Checks if `PushManager` has provided any channel.
     pub(crate) fn has_sender(&self, push_kind: &PushKind) -> bool {
-        self.sender.load().contains_key(push_kind)
+        self.senders.load().contains_key(push_kind)
     }
 
     /// It checks if value's type is Push
     /// then it is checks Push's kind to see if there is any provided channel
     /// then creates PushInfo and invoke `send` method
-    pub(crate) fn try_send(&self, value: &RedisResult<Value>, con_addr: &Arc<String>) -> bool {
+    pub(crate) fn try_send(&self, value: &RedisResult<Value>, con_addr: &Arc<String>)  {
         if let Ok(value) = &value {
-            return self.try_send_raw(value, con_addr);
+            self.try_send_raw(value, con_addr);
         }
-        false
     }
 
-    pub(crate) fn try_send_raw(&self, value: &Value, con_addr: &Arc<String>) -> bool {
+    pub(crate) fn try_send_raw(&self, value: &Value, con_addr: &Arc<String>)  {
         if let Value::Push { kind, data } = value {
             if kind == &PushKind::Message {
                 let _ = self.subscriptions.try_send(value, con_addr);
@@ -183,32 +182,41 @@ impl PushManager {
                 });
             }
         }
-        false
     }
 
     /// Creates new `PushManager`
     pub fn new() -> Self {
         PushManager {
-            sender: Arc::from(ArcSwap::from(Arc::from(HashMap::new()))),
+            senders: Arc::from(ArcSwap::from(Arc::from(HashMap::new()))),
             ..Default::default()
         }
     }
 
     /// Subscribes to a `PushKind`
     pub fn subscribe(&self, push_kind: PushKind, sender_type: PushSender) -> &Self {
-        self.sender.rcu(|x| {
+        self.senders.rcu(|x| {
             let mut cache = HashMap::clone(x);
-            cache.insert(push_kind.clone(), sender_type.clone());
+            if let Some(sbs) = cache.get_mut(&push_kind) {
+                sbs.push(sender_type.clone());
+            } else {
+                cache.insert(push_kind.clone(), vec![sender_type.clone()]);
+            }
             cache
         });
         self
     }
 
-    /// Unsubscribes from a `PushKind`
-    pub fn unsubscribe(&self, push_kind: PushKind) -> &Self {
-        self.sender.rcu(|x| {
+    fn unsubscribe(&self, push_kind: PushKind, indexes: &[usize]) -> &Self {
+        self.senders.rcu(|x| {
             let mut cache = HashMap::clone(x);
-            cache.remove(&push_kind);
+            if let Some(senders) = cache.get_mut(&push_kind) {
+                let mut i: usize = 0;
+                senders.retain(|_| {
+                    let contains = indexes.contains(&i);
+                    i+=1;
+                    !contains
+                });
+            }
             cache
         });
         self

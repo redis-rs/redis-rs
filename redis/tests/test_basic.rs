@@ -1263,21 +1263,45 @@ fn test_push_manager() {
             (kind, data)
         );
     }
+    let (new_tx, new_rx) = std::sync::mpsc::sync_channel(100);
     con.get_push_manager()
-        .subscribe(PushKind::Message, PushSender::Standard(tx.clone()))
-        .unsubscribe(PushKind::Invalidate);
+        .subscribe(PushKind::Message, PushSender::Standard(new_tx.clone()));
+    drop(rx);
     let _: RedisResult<()> = pipe.query(&mut con);
     let _: i32 = con.get("key_1").unwrap();
-    assert_eq!(TryRecvError::Empty, rx.try_recv().err().unwrap());
+    assert_eq!(TryRecvError::Empty, new_rx.try_recv().err().unwrap());
 
     con.get_push_manager()
-        .subscribe(PushKind::Invalidate, PushSender::Standard(tx.clone()));
+        .subscribe(PushKind::Invalidate, PushSender::Standard(new_tx.clone()));
     {
-        drop(rx);
+        drop(new_rx);
         for _ in 0..10 {
             let _: RedisResult<()> = pipe.query(&mut con);
             let v: i32 = con.get("key_1").unwrap();
             assert_eq!(v, 42);
         }
+    }
+    {
+        let mut receivers = vec![];
+        for _ in 0..10 {
+            let (new_tx, new_rx) = std::sync::mpsc::sync_channel(100);
+            con.get_push_manager()
+                .subscribe(PushKind::Invalidate, PushSender::Standard(new_tx.clone()));
+            receivers.push(new_rx);
+        }
+        receivers.remove(1);
+        receivers.remove(7);
+        {
+            let _: RedisResult<()> = pipe.query(&mut con);
+            let _: i32 = con.get("key_1").unwrap();
+        }
+        for receive in &receivers {
+            receive.try_recv().unwrap();
+        }
+        for receive in &receivers {
+            assert!(receive.try_recv().is_err());
+        }
+
+
     }
 }

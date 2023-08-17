@@ -820,13 +820,14 @@ fn test_push_manager_cm() {
             ),
             (kind, data)
         );
+        let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
         manager
             .get_push_manager()
-            .subscribe(PushKind::Message, PushSender::Tokio(tx.clone()))
-            .unsubscribe(PushKind::Invalidate);
+            .subscribe(PushKind::Message, PushSender::Tokio(new_tx.clone()));
+        drop(rx);
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
-        assert_eq!(TryRecvError::Empty, rx.try_recv().err().unwrap());
+        assert_eq!(TryRecvError::Empty, new_rx.try_recv().err().unwrap());
     });
 }
 
