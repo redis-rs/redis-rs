@@ -46,6 +46,8 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
 
     push_manager: PushManager,
 
+    /// Connection ip address
+    /// This field used when sending Push Information to PushManager
     con_addr: Arc<String>,
 }
 

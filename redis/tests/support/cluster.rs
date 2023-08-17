@@ -1,7 +1,6 @@
 #![cfg(feature = "cluster")]
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::convert::identity;
 use std::env;
 use std::process;
@@ -12,7 +11,7 @@ use std::time::Duration;
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
-use redis::{from_redis_value, pipe, ConnectionInfo, RedisResult, Value};
+use redis::{ConnectionInfo};
 use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;

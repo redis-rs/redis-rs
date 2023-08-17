@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
@@ -9,7 +8,7 @@ use std::{
 use futures::Future;
 #[cfg(feature = "cluster")]
 use redis::cluster::{cluster_pipe, ClusterPipeline};
-use redis::{from_redis_value, pipe, Pipeline, RedisConnectionInfo, RedisResult, Value};
+use redis::{Pipeline, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -261,7 +260,7 @@ impl TestContext {
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
         let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
-        let mut client = redis::Client::open(redis::ConnectionInfo {
+        let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
                 use_resp3,
