@@ -56,9 +56,13 @@ test:
 
 test-module:
 	@echo "===================================================================="
-	@echo "Testing with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP2 with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
 	@REDISRS_SERVER_TYPE=tcp cargo test --all-features test_module
+	@echo "===================================================================="
+	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test --all-features test_module
 
 test-single: test
 

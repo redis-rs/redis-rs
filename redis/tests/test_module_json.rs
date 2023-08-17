@@ -30,14 +30,14 @@ fn test_module_json_serialize_error() {
         // so numbers and strings, anything else will cause the serialization to fail
         // this is basically the only way to make a serialization fail at runtime
         // since rust doesnt provide the necessary ability to enforce this
-        pub invalid_json: HashMap<bool, i64>,
+        pub invalid_json: HashMap<Option<bool>, i64>,
     }
 
     let mut test_invalid_value: InvalidSerializedStruct = InvalidSerializedStruct {
         invalid_json: HashMap::new(),
     };
 
-    test_invalid_value.invalid_json.insert(true, 2i64);
+    test_invalid_value.invalid_json.insert(None, 2i64);
 
     let set_invalid: RedisResult<bool> = con.json_set(TEST_KEY, "$", &test_invalid_value);
 
