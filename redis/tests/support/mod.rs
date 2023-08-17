@@ -138,7 +138,7 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let mut redis_cmd = process::Command::new("/opt/homebrew/opt/redis@6.2/bin/redis-server");
+        let mut redis_cmd = process::Command::new("redis-server");
 
         // Load Redis Modules
         for module in modules {
