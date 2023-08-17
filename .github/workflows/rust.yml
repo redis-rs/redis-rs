@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         redis:
-          - 6.2.4
+          - 6.2.13
           - 7.0.12
         rust:
           - stable
