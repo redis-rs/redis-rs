@@ -636,3 +636,59 @@ fn test_cluster_push_manager() {
         .unwrap();
     }
 }
+
+#[test]
+fn test_cluster_pub_sub() {
+    let cluster = TestClusterContext::new(3, 0);
+    if cluster.use_resp3 {
+        block_on_all(async move {
+            let pub_count = 1;
+            let channel_names = vec![
+                String::from("phonewave1"),
+                String::from("phonewave2"),
+                String::from("phonewave3"),
+                String::from("phonewave4"),
+            ];
+            let mut con = cluster.async_connection().await;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut channel_ids: Vec<(&String, usize)> = vec![];
+            for channel_name in &channel_names {
+                let ch_id: usize = con
+                    .ssubscribe(channel_name.clone(), PushSender::Tokio(tx.clone()))
+                    .await
+                    .unwrap();
+                channel_ids.push((channel_name, ch_id))
+            }
+
+            for i in 0..pub_count {
+                for channel_name in &channel_names {
+                    con.spublish(channel_name.clone(), format!("banana {i}"))
+                        .await?;
+                }
+            }
+            for _ in 0..(pub_count * channel_names.len()) {
+                rx.recv().await.unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+            {
+                let channel_data = channel_ids.remove(1);
+                con.sunsubscribe(channel_data.0.clone(), Some(channel_data.1))
+                    .await
+                    .unwrap()
+            }
+
+            for i in 0..pub_count {
+                for channel_name in &channel_names {
+                    con.spublish(channel_name.clone(), format!("banana {i}"))
+                        .await?;
+                }
+            }
+            for _ in 0..(pub_count * channel_ids.len()) {
+                rx.recv().await.unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+}

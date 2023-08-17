@@ -547,7 +547,7 @@ impl MultiplexedConnection {
     /// It's a no-op if `channel_id` is invalid.
     pub async fn punsubscribe(
         &mut self,
-        channel_name: String,
+        channel_pattern: String,
         channel_id: Option<usize>,
     ) -> RedisResult<()> {
         if !self.resp3 {
@@ -558,10 +558,10 @@ impl MultiplexedConnection {
         }
         if self
             .push_manager
-            .pb_punsubscribe(channel_name.clone(), channel_id)
+            .pb_punsubscribe(channel_pattern.clone(), channel_id)
         {
             let mut cmd = cmd("PUNSUBSCRIBE");
-            cmd.arg(channel_name);
+            cmd.arg(channel_pattern);
             cmd.query_async(self).await?;
         }
         Ok(())

@@ -105,9 +105,10 @@ impl SubscriptionHolder {
                     let is_closed = match &subscription.sender {
                         #[cfg(feature = "aio")]
                         PushSender::Tokio(tokio_sender) => tokio_sender.send(push_info).is_err(),
-                        PushSender::Standard(std_sender) => std_sender
-                            .try_send(push_info)
-                            .is_err_and(|err| matches!(err, TrySendError::Disconnected(_))),
+                        PushSender::Standard(std_sender) => {
+                            let result = std_sender.try_send(push_info);
+                            matches!(result, Err(TrySendError::Disconnected(_)))
+                        }
                     };
                     if is_closed {
                         //TODO check if it causes any problem when guard is hold
@@ -129,19 +130,21 @@ pub struct PushManager {
     senders: Arc<ArcSwap<HashMap<PushKind, Vec<PushSender>>>>,
     subscriptions: Arc<SubscriptionHolder>,
     psubscriptions: Arc<SubscriptionHolder>,
+    ssubscriptions: Arc<SubscriptionHolder>,
 }
 impl PushManager {
     /// Try to send `PushInfo` to mpsc channel without blocking
     pub(crate) fn send(&self, pi: PushInfo) {
         if let Some(senders) = self.senders.load().get(&pi.kind) {
             let mut indexes_to_remove = vec![];
-            for (i,sender) in senders.iter().enumerate() {
+            for (i, sender) in senders.iter().enumerate() {
                 let is_closed = match sender {
                     #[cfg(feature = "aio")]
                     PushSender::Tokio(tokio_sender) => tokio_sender.send(pi.clone()).is_err(),
-                    PushSender::Standard(std_sender) => std_sender
-                        .try_send(pi.clone())
-                        .is_err_and(|err| matches!(err, TrySendError::Disconnected(_))),
+                    PushSender::Standard(std_sender) => {
+                        let result = std_sender.try_send(pi.clone());
+                        matches!(result, Err(TrySendError::Disconnected(_)))
+                    }
                 };
                 if is_closed {
                     indexes_to_remove.push(i);
@@ -161,21 +164,23 @@ impl PushManager {
     /// It checks if value's type is Push
     /// then it is checks Push's kind to see if there is any provided channel
     /// then creates PushInfo and invoke `send` method
-    pub(crate) fn try_send(&self, value: &RedisResult<Value>, con_addr: &Arc<String>)  {
+    pub(crate) fn try_send(&self, value: &RedisResult<Value>, con_addr: &Arc<String>) {
         if let Ok(value) = &value {
             self.try_send_raw(value, con_addr);
         }
     }
 
-    pub(crate) fn try_send_raw(&self, value: &Value, con_addr: &Arc<String>)  {
+    pub(crate) fn try_send_raw(&self, value: &Value, con_addr: &Arc<String>) {
         if let Value::Push { kind, data } = value {
             if kind == &PushKind::Message {
                 let _ = self.subscriptions.try_send(value, con_addr);
             } else if kind == &PushKind::PMessage {
                 let _ = self.psubscriptions.try_send(value, con_addr);
+            } else if kind == &PushKind::SMessage {
+                let _ = self.ssubscriptions.try_send(value, con_addr);
             };
             if self.has_sender(kind) {
-                return self.send(PushInfo {
+                self.send(PushInfo {
                     kind: kind.clone(),
                     data: data.clone(),
                     con_addr: con_addr.clone(),
@@ -213,7 +218,7 @@ impl PushManager {
                 let mut i: usize = 0;
                 senders.retain(|_| {
                     let contains = indexes.contains(&i);
-                    i+=1;
+                    i += 1;
                     !contains
                 });
             }
@@ -236,6 +241,14 @@ impl PushManager {
     }
     pub(crate) fn pb_punsubscribe(&self, channel_name: String, channel_id: Option<usize>) -> bool {
         self.psubscriptions
+            .unsubscribe_from_channel(channel_name, channel_id)
+    }
+    pub(crate) fn pb_ssubscribe(&self, channel_name: String, sender_type: PushSender) -> usize {
+        self.ssubscriptions
+            .subscribe_to_channel(channel_name, sender_type)
+    }
+    pub(crate) fn pb_sunsubscribe(&self, channel_name: String, channel_id: Option<usize>) -> bool {
+        self.ssubscriptions
             .unsubscribe_from_channel(channel_name, channel_id)
     }
 }

@@ -1333,7 +1333,7 @@ impl Msg {
 
         if let Value::Push { kind, data } = value {
             let mut iter: IntoIter<Value> = data.to_vec().into_iter();
-            if kind == &PushKind::Message {
+            if kind == &PushKind::Message || kind == &PushKind::SMessage {
                 channel = iter.next()?;
                 payload = iter.next()?;
             } else if kind == &PushKind::PMessage {
@@ -1372,7 +1372,7 @@ impl Msg {
         let channel;
 
         let mut iter = push_info.data.iter().cloned();
-        if push_info.kind == PushKind::Message {
+        if push_info.kind == PushKind::Message || push_info.kind == PushKind::SMessage {
             channel = iter.next()?;
             payload = iter.next()?;
         } else if push_info.kind == PushKind::PMessage {

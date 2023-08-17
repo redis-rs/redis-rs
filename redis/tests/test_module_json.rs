@@ -364,7 +364,6 @@ fn test_module_json_num_incr_by() {
         // however numbers can be incremented
         assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
     }
-
 }
 
 #[test]
@@ -512,7 +511,6 @@ fn test_module_json_type() {
             ])]))
         );
         assert_eq!(json_type_c, Ok(Bulk(vec![Bulk(vec![])])));
-
     } else {
         assert_eq!(
             json_type_a,

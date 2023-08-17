@@ -1301,7 +1301,5 @@ fn test_push_manager() {
         for receive in &receivers {
             assert!(receive.try_recv().is_err());
         }
-
-
     }
 }
