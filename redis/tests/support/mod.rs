@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
@@ -8,7 +9,7 @@ use std::{
 use futures::Future;
 #[cfg(feature = "cluster")]
 use redis::cluster::{cluster_pipe, ClusterPipeline};
-use redis::{Pipeline, RedisConnectionInfo, Value};
+use redis::{from_redis_value, pipe, Pipeline, RedisConnectionInfo, RedisResult, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -250,6 +251,7 @@ pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
     pub use_resp3: bool,
+    pub version_info: Option<String>,
 }
 
 impl TestContext {
@@ -260,7 +262,7 @@ impl TestContext {
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
         let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
-        let client = redis::Client::open(redis::ConnectionInfo {
+        let mut client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
                 use_resp3,
@@ -293,11 +295,25 @@ impl TestContext {
             }
         }
         redis::cmd("FLUSHDB").execute(&mut con);
-
+        let mut version_info: Option<String> = None;
+        if use_resp3 {
+            let mut pipe = pipe();
+            pipe.cmd("HELLO");
+            pipe.arg("3");
+            let val: RedisResult<Vec<HashMap<String, Value>>> = pipe.query(&mut client);
+            if let Ok(val) = val {
+                if let Some(val) = val.first() {
+                    if let Some(version) = val.get("version") {
+                        version_info = Some(from_redis_value(version).unwrap());
+                    }
+                }
+            }
+        }
         TestContext {
             server,
             client,
             use_resp3,
+            version_info,
         }
     }
 

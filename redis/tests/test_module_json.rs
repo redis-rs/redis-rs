@@ -345,7 +345,7 @@ fn test_module_json_num_incr_by() {
 
     assert_eq!(set_initial, Ok(true));
 
-    if ctx.use_resp3 {
+    if ctx.use_resp3 && ctx.version_info.unwrap_or_default().starts_with("7.") {
         // cannot increment a string
         let json_numincrby_a: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
         assert_eq!(json_numincrby_a, Ok(vec![Nil]));
@@ -353,7 +353,7 @@ fn test_module_json_num_incr_by() {
         let json_numincrby_b: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
 
         // however numbers can be incremented
-        assert_eq!(json_numincrby_b, Ok(vec![Nil,Int(4),Int(7),Nil]));
+        assert_eq!(json_numincrby_b, Ok(vec![Nil, Int(4), Int(7), Nil]));
     } else {
         // cannot increment a string
         let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
@@ -497,7 +497,7 @@ fn test_module_json_type() {
     let json_type_a: RedisResult<Value> = con.json_type(TEST_KEY, "$..foo");
     let json_type_b: RedisResult<Value> = con.json_type(TEST_KEY, "$..a");
     let json_type_c: RedisResult<Value> = con.json_type(TEST_KEY, "$..dummy");
-    if ctx.use_resp3 {
+    if ctx.use_resp3 && ctx.version_info.unwrap_or_default().starts_with("7.") {
         // In RESP3 current RedisJSON always gives response in an array.
         assert_eq!(
             json_type_a,
