@@ -11,7 +11,7 @@ use std::time::Duration;
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
-use redis::{ConnectionInfo};
+use redis::ConnectionInfo;
 use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
