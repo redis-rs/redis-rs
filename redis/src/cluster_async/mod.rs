@@ -38,8 +38,8 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotMap},
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushManager, PushSender, RedisError,
-    RedisFuture, RedisResult, Value,
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushManager, RedisError, RedisFuture,
+    RedisResult, Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -90,20 +90,13 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                ClusterConnection {
-                    tx,
-                    push_manager: push_manager.clone(),
-                }
+                ClusterConnection { tx, push_manager }
             })
     }
 
     /// Subscribes to a new shard channel.
     /// Result is a channel id to unsubscribe.
-    pub async fn ssubscribe(
-        &mut self,
-        channel_name: String,
-        push_sender: PushSender,
-    ) -> RedisResult<usize> {
+    pub async fn ssubscribe(&mut self, channel_name: String) -> RedisResult<()> {
         let mut cmd = crate::cmd("SSUBSCRIBE");
         cmd.arg(channel_name.clone());
         let (sender, receiver) = oneshot::channel();
@@ -127,9 +120,7 @@ where
                 ))
             })?;
         match receiver.await {
-            Ok(Ok(Response::Single(_))) => {
-                Ok(self.push_manager.pb_ssubscribe(channel_name, push_sender))
-            }
+            Ok(Ok(Response::Single(_))) => Ok(()),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
             _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
@@ -139,45 +130,35 @@ where
     /// Unsubscribes from shard channel. If `channel_id` is not provided all subscriptions to a channel cancelled.
     /// If `channel_id` is provided only specific channel is unsubscribed from,
     /// It's a no-op if `channel_id` is invalid.
-    pub async fn sunsubscribe(
-        &mut self,
-        channel_name: String,
-        channel_id: Option<usize>,
-    ) -> RedisResult<()> {
-        if self
-            .get_push_manager()
-            .pb_sunsubscribe(channel_name.clone(), channel_id)
-        {
-            let mut cmd = crate::cmd("SUNSUBSCRIBE");
-            cmd.arg(channel_name.clone());
-            let (sender, receiver) = oneshot::channel();
-            self.tx
-                .send(Message {
-                    cmd: CmdArg::Cmd {
-                        cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                        func: |mut conn, cmd| {
-                            Box::pin(async move {
-                                cmd.query_async(&mut conn).await.map(Response::Single)
-                            })
-                        },
+    pub async fn sunsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
+        let mut cmd = crate::cmd("SUNSUBSCRIBE");
+        cmd.arg(channel_name.clone());
+        let (sender, receiver) = oneshot::channel();
+        self.tx
+            .send(Message {
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
+                    func: |mut conn, cmd| {
+                        Box::pin(
+                            async move { cmd.query_async(&mut conn).await.map(Response::Single) },
+                        )
                     },
-                    sender,
-                })
-                .await
-                .map_err(|_| {
-                    RedisError::from(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "redis_cluster: Unable to send command",
-                    ))
-                })?;
-            return match receiver.await {
-                Ok(Ok(Response::Single(_))) => Ok(()),
-                Ok(Err(err)) => Err(err),
-                Err(_) => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-                _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-            };
+                },
+                sender,
+            })
+            .await
+            .map_err(|_| {
+                RedisError::from(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "redis_cluster: Unable to send command",
+                ))
+            })?;
+        match receiver.await {
+            Ok(Ok(Response::Single(_))) => Ok(()),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
+            _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
         }
-        Ok(())
     }
 }
 

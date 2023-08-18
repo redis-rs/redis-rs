@@ -13,8 +13,8 @@ use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
-    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, PushKind,
-    PushManager, PushSender, RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
+    PushManager, RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -616,8 +616,7 @@ fn test_cluster_push_manager() {
         block_on_all(async move {
             let mut con = cluster.async_connection().await;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            con.get_push_manager()
-                .subscribe(PushKind::Invalidate, PushSender::Tokio(tx.clone()));
+            con.get_push_manager().replace_sender(tx);
             let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
             for (i, key) in keys.iter().enumerate() {
                 let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
@@ -653,12 +652,10 @@ fn test_cluster_pub_sub() {
             let mut con = cluster.async_connection().await;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let mut channel_ids: Vec<(&String, usize)> = vec![];
+            con.get_push_manager().replace_sender(tx);
             for channel_name in &channel_names {
-                let ch_id: usize = con
-                    .ssubscribe(channel_name.clone(), PushSender::Tokio(tx.clone()))
-                    .await
-                    .unwrap();
-                channel_ids.push((channel_name, ch_id))
+                con.ssubscribe(channel_name.clone()).await.unwrap();
+                channel_ids.push((channel_name, 0))
             }
 
             for i in 0..pub_count {
@@ -673,9 +670,7 @@ fn test_cluster_pub_sub() {
             assert!(rx.try_recv().is_err());
             {
                 let channel_data = channel_ids.remove(1);
-                con.sunsubscribe(channel_data.0.clone(), Some(channel_data.1))
-                    .await
-                    .unwrap()
+                con.sunsubscribe(channel_data.0.clone()).await.unwrap()
             }
 
             for i in 0..pub_count {

@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, ConnectionLike, ErrorKind, PushKind, PushSender, RedisError, Value,
+    cmd, parse_redis_value, ConnectionLike, ErrorKind, RedisError, Value,
 };
 
 #[test]
@@ -514,9 +514,8 @@ fn test_cluster_push_manager() {
     if cluster.use_resp3 {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
-        con.get_push_manager()
-            .subscribe(PushKind::Invalidate, PushSender::Standard(tx.clone()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        con.get_push_manager().replace_sender(tx);
 
         let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
         let _ = build_cluster_pipeline_for_invalidation(&keys)

@@ -1,9 +1,9 @@
 use futures::{future, prelude::*, StreamExt};
 use redis::aio::ConnectionLike;
+use redis::PushInfo;
 use redis::{
     aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
 };
-use redis::{PushInfo, PushSender};
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
@@ -676,15 +676,14 @@ mod pub_sub {
         block_on_all(async move {
             let mut conn = ctx.multiplexed_async_connection().await?;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            conn.get_push_manager().replace_sender(tx);
             let sub_count = 5;
             let pub_count = 10;
             let channel_name = "phonewave".to_string();
             let mut channel_ids: Vec<usize> = vec![];
             for _ in 0..sub_count {
-                let ch_id: usize = conn
-                    .subscribe(channel_name.clone(), PushSender::Tokio(tx.clone()))
-                    .await?;
-                channel_ids.push(ch_id);
+                conn.subscribe(channel_name.clone()).await?;
+                channel_ids.push(0);
             }
 
             let mut publish_conn = ctx.async_connection().await?;
@@ -700,9 +699,7 @@ mod pub_sub {
 
             {
                 //Lets test if unsubscribing from individual channel subscription works
-                let channel_id = channel_ids[0];
-                conn.unsubscribe(channel_name.clone(), Some(channel_id))
-                    .await?;
+                conn.unsubscribe(channel_name.clone()).await?;
                 publish_conn
                     .publish(channel_name.clone(), "banana!")
                     .await?;
@@ -713,8 +710,7 @@ mod pub_sub {
             }
             {
                 //Giving random channel id should have no effect!
-                conn.unsubscribe(channel_name.clone(), Some(1_000_000))
-                    .await?;
+                conn.unsubscribe(channel_name.clone()).await?;
                 publish_conn
                     .publish(channel_name.clone(), "banana!")
                     .await?;
@@ -725,7 +721,7 @@ mod pub_sub {
             }
             {
                 //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
-                conn.unsubscribe(channel_name.clone(), None).await?;
+                conn.unsubscribe(channel_name.clone()).await?;
                 publish_conn
                     .publish(channel_name.clone(), "banana!")
                     .await?;
@@ -802,9 +798,7 @@ fn test_push_manager_cm() {
             .await
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        manager
-            .get_push_manager()
-            .subscribe(PushKind::Invalidate, PushSender::Tokio(tx.clone()));
+        manager.get_push_manager().replace_sender(tx);
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
@@ -821,9 +815,7 @@ fn test_push_manager_cm() {
             (kind, data)
         );
         let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
-        manager
-            .get_push_manager()
-            .subscribe(PushKind::Message, PushSender::Tokio(new_tx.clone()));
+        manager.get_push_manager().replace_sender(new_tx);
         drop(rx);
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
@@ -840,8 +832,7 @@ fn test_push_manager() {
     block_on_all(async move {
         let mut con = ctx.async_connection().await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager()
-            .subscribe(PushKind::Invalidate, PushSender::Tokio(tx));
+        con.get_push_manager().replace_sender(tx);
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut con).await;
         let _: i32 = con.get("key_1").await.unwrap();
