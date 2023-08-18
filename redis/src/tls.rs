@@ -3,11 +3,11 @@ use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
 use rustls::{Certificate, OwnedTrustAnchor, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, read_one};
 
-use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisError, RedisResult};
+use crate::{Client, ConnectionAddr, ErrorKind, IntoConnectionInfo, RedisError, RedisResult};
 
 /// The builder takes all parameters necessary to create a TLS connection.
 ///
-/// In addition to a `server` and a `port`, it must be provided with
+/// In addition to an `url` with `rediss` location, it must be provided with
 /// binary streams corresponding to PEM file's contents for:
 /// - CA's certificate
 /// - one client certificate and
@@ -22,7 +22,7 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisEr
 /// use std::fs::File;
 /// use std::io::BufReader;
 ///
-/// async fn do_redis_code(server: &str, port: u16, ca_file: &str, cert_file: &str, key_file: &str) -> redis::RedisResult<()> {
+/// async fn do_redis_code(url: &str, ca_file: &str, cert_file: &str, key_file: &str) -> redis::RedisResult<()> {
 ///     let cert_file = File::open(cert_file).expect("cannot open private cert file");
 ///     let mut reader_cert = BufReader::new(cert_file);
 ///
@@ -33,8 +33,7 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisEr
 ///     let mut reader_ca = BufReader::new(ca_file);
 ///
 ///     let client = build_with_tls(
-///         server,
-///         port,
+///         url,
 ///         &mut reader_cert,
 ///         &mut reader_key,
 ///         &mut reader_ca
@@ -64,26 +63,36 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo, RedisEr
 ///     Ok(())
 /// }
 /// ```
-pub fn build_with_tls(
-    server: impl ToString,
-    port: u16,
+pub fn build_with_tls<C: IntoConnectionInfo>(
+    conn_info: C,
     client_cert: &mut dyn BufRead,
     client_key: &mut dyn BufRead,
     root_cert: &mut dyn BufRead,
 ) -> RedisResult<Client> {
+    let mut connection_info = conn_info.into_connection_info()?;
     let tls_params = retrieve_tls_certificates(client_cert, client_key, root_cert)?;
 
-    Ok(Client {
-        connection_info: ConnectionInfo {
-            addr: ConnectionAddr::TcpTls {
-                host: server.to_string(),
-                port,
-                insecure: false,
-                tls_params: Some(tls_params),
-            },
-            redis: RedisConnectionInfo::default(),
-        },
-    })
+    connection_info.addr = if let ConnectionAddr::TcpTls {
+        host,
+        port,
+        insecure,
+        ..
+    } = connection_info.addr
+    {
+        ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure,
+            tls_params: Some(tls_params),
+        }
+    } else {
+        return Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "TLS Build requires an TCP TLS address `rediss`",
+        )));
+    };
+
+    Ok(Client { connection_info })
 }
 
 pub(crate) fn retrieve_tls_certificates(
