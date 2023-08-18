@@ -259,7 +259,8 @@ impl TestContext {
 
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
-        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
+        let use_resp3 = env::var("RESP3").unwrap_or("true".to_string()) == "true";
+        println!("use resp3: {use_resp3}");
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {

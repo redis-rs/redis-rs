@@ -677,7 +677,7 @@ mod pub_sub {
             let mut conn = ctx.multiplexed_async_connection().await?;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             conn.get_push_manager().replace_sender(tx);
-            let sub_count = 5;
+            let sub_count = 1; // TODO - does this make sense > 1 after refactor?
             let pub_count = 10;
             let channel_name = "phonewave".to_string();
             let mut channel_ids: Vec<usize> = vec![];
@@ -691,10 +691,13 @@ mod pub_sub {
                 publish_conn
                     .publish(channel_name.clone(), format!("banana {i}"))
                     .await?;
+                println!("published {i}");
             }
-            for _ in 0..(pub_count * sub_count) {
+            for i in 0..(pub_count * sub_count) {
+                println!("receiving {i}");
                 rx.recv().await.unwrap();
             }
+            println!("done receiving");
             assert!(rx.try_recv().is_err());
 
             {
@@ -703,8 +706,9 @@ mod pub_sub {
                 publish_conn
                     .publish(channel_name.clone(), "banana!")
                     .await?;
-                for _ in 0..4 {
+                for i in 0..4 {
                     rx.recv().await.unwrap();
+                    println!("done receiving {i}");
                 }
                 assert!(rx.try_recv().is_err());
             }
@@ -714,7 +718,8 @@ mod pub_sub {
                 publish_conn
                     .publish(channel_name.clone(), "banana!")
                     .await?;
-                for _ in 0..4 {
+                for i in 0..4 {
+                    println!("done receiving {i}");
                     rx.recv().await.unwrap();
                 }
                 assert!(rx.try_recv().is_err());

@@ -639,9 +639,13 @@ fn test_cluster_push_manager() {
 #[test]
 fn test_cluster_pub_sub() {
     let cluster = TestClusterContext::new(3, 0);
-    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
-    if cluster.use_resp3 && redis_ver.starts_with("7.") {
+    // TODO - get this from the server instead of env var.
+    // let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    println!("start");
+    if cluster.use_resp3 {
+        //&& redis_ver.starts_with("7.") {
         block_on_all(async move {
+            println!("in block");
             let pub_count = 1;
             let channel_names = vec![
                 String::from("phonewave1"),
@@ -653,20 +657,28 @@ fn test_cluster_pub_sub() {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let mut channel_ids: Vec<(&String, usize)> = vec![];
             con.get_push_manager().replace_sender(tx);
+            println!("set sender");
             for channel_name in &channel_names {
                 con.ssubscribe(channel_name.clone()).await.unwrap();
                 channel_ids.push((channel_name, 0))
             }
 
+            println!("subscriobed");
             for i in 0..pub_count {
                 for channel_name in &channel_names {
+                    println!("publishing");
                     con.spublish(channel_name.clone(), format!("banana {i}"))
                         .await?;
                 }
             }
-            for _ in 0..(pub_count * channel_names.len()) {
-                rx.recv().await.unwrap();
+            println!("published");
+            for _ in 0..(pub_count * channel_names.len() + channel_names.len()) {
+                let received_value = rx.recv().await.unwrap();
+                println!("received {:?}", received_value.data);
+                // TODO - actually assert on values here
             }
+            println!("done received");
+            println!("try recv is_err assert!");
             assert!(rx.try_recv().is_err());
             {
                 let channel_data = channel_ids.remove(1);
@@ -679,9 +691,11 @@ fn test_cluster_pub_sub() {
                         .await?;
                 }
             }
-            for _ in 0..(pub_count * channel_ids.len()) {
-                rx.recv().await.unwrap();
+            for _ in 0..(pub_count * channel_ids.len() + channel_ids.len()) {
+                let received_value = rx.recv().await.unwrap();
+                println!("received {:?}", received_value.data);
             }
+            println!("Final assert!");
             assert!(rx.try_recv().is_err());
             Ok::<_, RedisError>(())
         })
