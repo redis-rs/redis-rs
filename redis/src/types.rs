@@ -1170,27 +1170,17 @@ macro_rules! to_redis_args_for_tuple_peel {
 
 to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
-macro_rules! to_redis_args_for_array {
-    ($($N:expr)+) => {
-        $(
-            impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T; $N] {
-                fn write_redis_args<W>(&self, out: &mut W) where W: ?Sized + RedisWrite {
-                    ToRedisArgs::make_arg_vec(*self, out)
-                }
-
-                fn is_single_arg(&self) -> bool {
-                    ToRedisArgs::is_single_vec_arg(*self)
-                }
-            }
-        )+
+impl<'a, T: ToRedisArgs, const N: usize> ToRedisArgs for &'a [T; N] {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        ToRedisArgs::make_arg_vec(*self, out)
     }
-}
 
-to_redis_args_for_array! {
-     0  1  2  3  4  5  6  7  8  9
-    10 11 12 13 14 15 16 17 18 19
-    20 21 22 23 24 25 26 27 28 29
-    30 31 32
+    fn is_single_arg(&self) -> bool {
+        ToRedisArgs::is_single_vec_arg(*self)
+    }
 }
 
 /// This trait is used to convert a redis value into a more appropriate
@@ -1519,6 +1509,43 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
             return Ok(None);
         }
         Ok(Some(from_redis_value(v)?))
+    }
+}
+
+impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
+    fn from_redis_value(v: &Value) -> RedisResult<[T; N]> {
+        fn convert_vec<T, const N: usize>(v: &Value, items: Vec<T>) -> RedisResult<[T; N]> {
+            match items.try_into() {
+                Ok(array) => Ok(array),
+                Err(items) => {
+                    let msg = format!(
+                        "Bulk response of wrong dimension, expected {N}, got {}",
+                        items.len()
+                    );
+                    invalid_type_error!(v, msg)
+                }
+            }
+        }
+
+        match *v {
+            // All binary data except u8 will try to parse into a single element array.
+            Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                Some(items) => convert_vec(v, items),
+                None => {
+                    let msg = format!(
+                        "Conversion to Array[{}; {N}] failed",
+                        std::any::type_name::<T>()
+                    );
+                    invalid_type_error!(v, msg)
+                }
+            },
+            Value::Bulk(ref items) => {
+                let items = FromRedisValue::from_redis_values(items)?;
+                convert_vec(v, items)
+            }
+            Value::Nil => convert_vec(v, vec![]),
+            _ => invalid_type_error!(v, "Response type not array compatible"),
+        }
     }
 }
 
