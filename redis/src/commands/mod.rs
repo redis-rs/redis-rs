@@ -124,6 +124,11 @@ implement_commands! {
         cmd("EXISTS").arg(key)
     }
 
+    /// Determine the type of a key.
+    fn type_key<K: ToRedisArgs>(key: K) {
+        cmd("TYPE").arg(key)
+    }
+
     /// Set a key's time to live in seconds.
     fn expire<K: ToRedisArgs>(key: K, seconds: usize) {
         cmd("EXPIRE").arg(key).arg(seconds)
