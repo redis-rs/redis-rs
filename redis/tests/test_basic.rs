@@ -68,9 +68,11 @@ fn test_key_type() {
         .arg("foo")
         .arg(42)
         .execute(&mut con);
+    
+    let string_key_type: String = con.key_type("foo").unwrap();
     assert_eq!(
-        redis::cmd("TYPE").arg("foo").query(&mut con), 
-        Ok(b"string".to_vec())
+        string_key_type, 
+        "string"
     );
 
     //The key is a list
@@ -78,9 +80,11 @@ fn test_key_type() {
         .arg("list_bar")
         .arg("foo")
         .execute(&mut con);
+    
+    let list_key_type: String = con.key_type("list_bar").unwrap();
     assert_eq!(
-        redis::cmd("TYPE").arg("listbar").query(&mut con),
-        Ok(b"list".to_vec())
+        list_key_type, 
+        "list"
     );
 
     //The key is a set
@@ -88,10 +92,13 @@ fn test_key_type() {
         .arg("set_bar")
         .arg("foo")
         .execute(&mut con);
+
+    let set_key_type: String = con.key_type("set_bar").unwrap();
     assert_eq!(
-        redis::cmd("TYPE").arg("set_bar").query(&mut con),
-        Ok(b"set".to_vec())
+        set_key_type, 
+        "set"
     );
+
 
     //The key is a sorted set
     redis::cmd("ZADD")
@@ -99,9 +106,11 @@ fn test_key_type() {
         .arg("1")
         .arg("foo")
         .execute(&mut con);
+
+    let zset_key_type: String = con.key_type("sorted_set_bar").unwrap();
     assert_eq!(
-        redis::cmd("TYPE").arg("sorted_set_bar").query(&mut con),
-        Ok(b"zset".to_vec())
+        zset_key_type, 
+        "zset"
     );
 
     //The key is a hash
@@ -110,9 +119,11 @@ fn test_key_type() {
         .arg("hset_key_1")
         .arg("foo")
         .execute(&mut con);
+
+    let hash_key_type: String = con.key_type("hset_bar").unwrap();
     assert_eq!(
-        redis::cmd("TYPE").arg("hset_bar").query(&mut con),
-        Ok(b"hash".to_vec())
+        hash_key_type, 
+        "hash"
     );
 
 }
