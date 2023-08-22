@@ -125,7 +125,7 @@ implement_commands! {
     }
 
     /// Determine the type of a key.
-    fn type_key<K: ToRedisArgs>(key: K) {
+    fn key_type<K: ToRedisArgs>(key: K) {
         cmd("TYPE").arg(key)
     }
 
