@@ -245,7 +245,8 @@ impl RoutingInfo {
 
             b"WAIT" => Some(Aggregate(AggregateOp::Min)),
 
-            b"CONFIG SET" | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
+            b"CONFIG SET" | b"CONFIG GET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
+            | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
             | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"LATENCY RESET" | b"MEMORY PURGE"
             | b"MSET" | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
                 Some(AllSucceeded)
@@ -299,9 +300,10 @@ impl RoutingInfo {
             | b"MEMORY STATS"
             | b"INFO" => Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters)),
 
-            b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"CONFIG SET"
-            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH"
-            | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
+            b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"CONFIG SET" | b"CONFIG GET"
+            | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH" | b"SCRIPT LOAD"
+            | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY"
+            | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
                 Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes))
             }
 
