@@ -88,7 +88,7 @@ pub fn build_with_tls<C: IntoConnectionInfo>(
     } else {
         return Err(RedisError::from((
             ErrorKind::InvalidClientConfig,
-            "TLS Build requires an TCP TLS address `rediss`",
+            "TLS client requires a `rediss://` address",
         )));
     };
 
