@@ -1,7 +1,7 @@
 ### 0.23.3 (2023-09-01)
 
 Note that this release fixes a small regression in async Redis Cluster handling of the `PING` command.
-Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it 
+Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it
 will again return a single response instead of an array.
 
 #### Features
@@ -24,6 +24,7 @@ will again return a single response instead of an array.
 * Fix compiling with sentinel feature, without aio feature ([#922](https://github.com/redis-rs/redis-rs/pull/923) @brocaar)
 * Add timeouts to tests github action ([#911](https://github.com/redis-rs/redis-rs/pull/911))
 
+<a name="0.23.1"></a>
 ### 0.23.1 (2023-07-28)
 
 #### Features
