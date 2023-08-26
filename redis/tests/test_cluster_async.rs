@@ -6,8 +6,7 @@ use std::sync::{
     Arc,
 };
 
-use futures::prelude::*;
-use futures::stream;
+use futures_util::{future, stream, StreamExt as _, TryStreamExt as _};
 use once_cell::sync::Lazy;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
@@ -175,13 +174,10 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
                         .iter_mut()
                         .map(do_failover)
                         .collect::<stream::FuturesUnordered<_>>()
-                        .fold(
-                            Err(anyhow::anyhow!("None")),
-                            |acc: Result<(), _>, result: Result<(), _>| async move {
-                                acc.or(result)
-                            },
-                        )
+                        .filter_map(|map| future::ready(map.ok()))
+                        .next()
                         .await
+                        .ok_or_else(|| anyhow::anyhow!("None"))
                 } else {
                     let key = format!("test-{value}-{i}");
                     cmd("SET")
@@ -282,6 +278,8 @@ fn test_async_cluster_error_in_inner_connection() {
 #[test]
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 fn test_async_cluster_async_std_basic_cmd() {
+    use futures_util::TryFutureExt as _;
+
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all_using_async_std(async {

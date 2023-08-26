@@ -15,8 +15,8 @@ use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use ::tokio::net::lookup_host;
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 use futures_util::{
-    future::FutureExt,
-    stream::{self, Stream, StreamExt},
+    future::{self, FutureExt},
+    stream::{Stream, StreamExt},
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -385,21 +385,18 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addrs = get_socket_addrs(host, port).await?;
-            stream::iter(socket_addrs)
-                .fold(
-                    Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "No address found for host",
-                    ))),
-                    |acc, socket_addr| async move {
-                        match acc {
-                            ok @ Ok(_) => ok,
-                            Err(_) => <T>::connect_tcp(socket_addr).await,
-                        }
-                    },
-                )
+            let mut socket_addrs = get_socket_addrs(host, port).await?.peekable();
+
+            if socket_addrs.peek().is_none() {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "No address found for host",
+                )));
+            }
+
+            future::select_ok(socket_addrs.map(|addr| <T>::connect_tcp(addr)))
                 .await?
+                .0
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -408,21 +405,18 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             port,
             insecure,
         } => {
-            let socket_addrs = get_socket_addrs(host, port).await?;
-            stream::iter(socket_addrs)
-                .fold(
-                    Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "No address found for host",
-                    ))),
-                    |acc, socket_addr| async move {
-                        match acc {
-                            ok @ Ok(_) => ok,
-                            Err(_) => <T>::connect_tcp_tls(host, socket_addr, insecure).await,
-                        }
-                    },
-                )
+            let mut socket_addrs = get_socket_addrs(host, port).await?.peekable();
+
+            if socket_addrs.peek().is_none() {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "No address found for host",
+                )));
+            }
+
+            future::select_ok(socket_addrs.map(|addr| <T>::connect_tcp_tls(host, addr, insecure)))
                 .await?
+                .0
         }
 
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]

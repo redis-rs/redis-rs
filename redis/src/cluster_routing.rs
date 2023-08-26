@@ -59,26 +59,21 @@ pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Valu
         AggregateOp::Min => i64::MAX,
         AggregateOp::Sum => 0,
     };
-    let result = values
-        .into_iter()
-        .fold(RedisResult::Ok(initial_value), |acc, curr| {
-            let mut acc = acc?;
-            let int = match curr {
-                Value::Int(int) => int,
-                _ => {
-                    return Err((
-                        ErrorKind::TypeError,
-                        "expected array of integers as response",
-                    )
-                        .into());
-                }
-            };
-            acc = match op {
-                AggregateOp::Min => min(acc, int),
-                AggregateOp::Sum => acc + int,
-            };
-            Ok(acc)
-        })?;
+    let result = values.into_iter().try_fold(initial_value, |acc, curr| {
+        let int = match curr {
+            Value::Int(int) => int,
+            _ => {
+                return Err((
+                    ErrorKind::TypeError,
+                    "expected array of integers as response",
+                ));
+            }
+        };
+        Ok(match op {
+            AggregateOp::Min => min(acc, int),
+            AggregateOp::Sum => acc + int,
+        })
+    })?;
     Ok(Value::Int(result))
 }
 
@@ -86,42 +81,37 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
     let initial_value = match op {
         LogicalAggregateOp::And => true,
     };
-    let results = values
-        .into_iter()
-        .fold(RedisResult::Ok(Vec::new()), |acc, curr| {
-            let acc = acc?;
-            let values = match curr {
-                Value::Bulk(values) => values,
+    let results = values.into_iter().try_fold(Vec::new(), |acc, curr| {
+        let values = match curr {
+            Value::Bulk(values) => values,
+            _ => {
+                return Err((
+                    ErrorKind::TypeError,
+                    "expected array of integers as response",
+                ));
+            }
+        };
+        let mut acc = if acc.is_empty() {
+            vec![initial_value; values.len()]
+        } else {
+            acc
+        };
+        for (index, value) in values.into_iter().enumerate() {
+            let int = match value {
+                Value::Int(int) => int,
                 _ => {
                     return Err((
                         ErrorKind::TypeError,
                         "expected array of integers as response",
-                    )
-                        .into());
+                    ));
                 }
             };
-            let mut acc = if acc.is_empty() {
-                vec![initial_value; values.len()]
-            } else {
-                acc
+            acc[index] = match op {
+                LogicalAggregateOp::And => acc[index] && (int > 0),
             };
-            for (index, value) in values.into_iter().enumerate() {
-                let int = match value {
-                    Value::Int(int) => int,
-                    _ => {
-                        return Err((
-                            ErrorKind::TypeError,
-                            "expected array of integers as response",
-                        )
-                            .into());
-                    }
-                };
-                acc[index] = match op {
-                    LogicalAggregateOp::And => acc[index] && (int > 0),
-                };
-            }
-            Ok(acc)
-        })?;
+        }
+        Ok(acc)
+    })?;
     Ok(Value::Bulk(
         results
             .into_iter()
@@ -604,7 +594,7 @@ mod tests {
 
         // Assert expected RoutingInfo explicitly:
 
-        for cmd in vec![
+        for cmd in [
             cmd("FLUSHALL"),
             cmd("FLUSHDB"),
             cmd("DBSIZE"),
@@ -636,14 +626,14 @@ mod tests {
             );
         }
 
-        for cmd in vec![
+        for cmd in [
             cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
             assert_eq!(RoutingInfo::for_routable(cmd), Some(RoutingInfo::Random));
         }
 
-        for (cmd, expected) in vec![
+        for (cmd, expected) in [
             (
                 cmd("EVAL")
                     .arg(r#"redis.call("GET, KEYS[1]");"#)
