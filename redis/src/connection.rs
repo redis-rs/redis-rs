@@ -144,7 +144,7 @@ impl ConnectionAddr {
 }
 
 impl fmt::Display for ConnectionAddr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Cluster::get_connection_info depends on the return value from this function
         match *self {
             ConnectionAddr::Tcp(ref host, port) => write!(f, "{host}:{port}"),

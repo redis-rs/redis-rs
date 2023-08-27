@@ -356,7 +356,12 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
 
-#![deny(non_camel_case_types)]
+#![deny(
+    rust_2018_idioms,
+    nonstandard_style,
+    future_incompatible,
+    non_camel_case_types
+)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, warn(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]

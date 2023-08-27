@@ -66,7 +66,7 @@ where
 {
     fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
+        cx: &mut core::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, tokio::io::Error>> {
         async_std::io::Write::poll_write(self.project().inner, cx, buf)
@@ -74,14 +74,14 @@ where
 
     fn poll_flush(
         self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
+        cx: &mut core::task::Context<'_>,
     ) -> std::task::Poll<Result<(), tokio::io::Error>> {
         async_std::io::Write::poll_flush(self.project().inner, cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
+        cx: &mut core::task::Context<'_>,
     ) -> std::task::Poll<Result<(), tokio::io::Error>> {
         async_std::io::Write::poll_close(self.project().inner, cx)
     }
@@ -93,7 +93,7 @@ where
 {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut core::task::Context,
+        cx: &mut core::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> std::task::Poll<Result<(), tokio::io::Error>> {
         let n = ready!(async_std::io::Read::poll_read(
@@ -124,7 +124,7 @@ pub enum AsyncStd {
 impl AsyncWrite for AsyncStd {
     fn poll_write(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
@@ -139,7 +139,7 @@ impl AsyncWrite for AsyncStd {
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
             #[cfg(any(
@@ -152,7 +152,7 @@ impl AsyncWrite for AsyncStd {
         }
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(any(
@@ -169,7 +169,7 @@ impl AsyncWrite for AsyncStd {
 impl AsyncRead for AsyncStd {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match &mut *self {

@@ -81,7 +81,7 @@ struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
 
 /// Represents the state of AsyncIter
 #[cfg(feature = "aio")]
-enum IterOrFuture<'a, T: FromRedisValue + 'a> {
+enum IterOrFuture<'a, T: FromRedisValue> {
     Iter(AsyncIterInner<'a, T>),
     Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<T>)>),
     Empty,
@@ -89,7 +89,7 @@ enum IterOrFuture<'a, T: FromRedisValue + 'a> {
 
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
-pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+pub struct AsyncIter<'a, T: FromRedisValue> {
     inner: IterOrFuture<'a, T>,
 }
 

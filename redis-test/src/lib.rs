@@ -23,6 +23,8 @@
 //! assert_eq!(result, true);
 //! ```
 
+#![deny(rust_2018_idioms, nonstandard_style, future_incompatible)]
+
 use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};

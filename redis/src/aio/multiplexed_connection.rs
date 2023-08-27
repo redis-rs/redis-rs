@@ -103,7 +103,7 @@ where
     }
 
     // Read messages from the stream and send them back to the caller
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<(), ()>> {
         loop {
             // No need to try reading a message if there is no message in flight
             if self.in_flight.is_empty() {
@@ -168,7 +168,7 @@ where
     // Retrieve incoming messages and write them to the sink
     fn poll_ready(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
             Ok(()) => Ok(()).into(),
@@ -217,7 +217,7 @@ where
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self
             .as_mut()
@@ -232,7 +232,7 @@ where
 
     fn poll_close(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         // No new requests will come in after the first call to `close` but we need to complete any
         // in progress requests before closing

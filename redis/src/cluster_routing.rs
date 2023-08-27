@@ -449,7 +449,7 @@ impl SlotMap {
         self.0.clear();
     }
 
-    pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
+    pub fn values(&self) -> std::collections::btree_map::Values<'_, u16, SlotAddrs> {
         self.0.values()
     }
 

@@ -249,7 +249,7 @@ where
 {
     type Output = Next<I, C>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
         if this.request.is_none() {
             return Poll::Ready(Next::Done);
@@ -937,7 +937,7 @@ where
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         match mem::replace(&mut self.state, ConnectionState::PollComplete) {
             ConnectionState::PollComplete => Poll::Ready(Ok(())),
@@ -980,7 +980,7 @@ where
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         trace!("poll_complete: {:?}", self.state);
         loop {
@@ -1023,7 +1023,7 @@ where
 
     fn poll_close(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         // Try to drive any in flight requests to completion
         match self.poll_complete(cx) {

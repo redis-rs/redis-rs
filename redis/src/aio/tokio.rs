@@ -63,7 +63,7 @@ pub(crate) enum Tokio {
 impl AsyncWrite for Tokio {
     fn poll_write(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
@@ -75,7 +75,7 @@ impl AsyncWrite for Tokio {
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_flush(cx),
             #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
@@ -85,7 +85,7 @@ impl AsyncWrite for Tokio {
         }
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
@@ -99,7 +99,7 @@ impl AsyncWrite for Tokio {
 impl AsyncRead for Tokio {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
+        cx: &mut task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match &mut *self {
