@@ -191,17 +191,17 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
             async move {
                 if i == requests / 2 {
                     // Failover all the nodes, error only if all the failover requests error
-                    node_conns
-                        .iter_mut()
-                        .map(do_failover)
-                        .collect::<stream::FuturesUnordered<_>>()
-                        .fold(
-                            Err(anyhow::anyhow!("None")),
-                            |acc: Result<(), _>, result: Result<(), _>| async move {
-                                acc.or(result)
-                            },
-                        )
-                        .await
+                    let mut results = future::join_all(
+                        node_conns
+                            .iter_mut()
+                            .map(|conn| Box::pin(do_failover(conn))),
+                    )
+                    .await;
+                    if results.iter().all(|res| res.is_err()) {
+                        results.pop().unwrap()
+                    } else {
+                        Ok::<_, anyhow::Error>(())
+                    }
                 } else {
                     let key = format!("test-{value}-{i}");
                     cmd("SET")
@@ -602,7 +602,6 @@ fn test_cluster_refresh_topology_in_client_init_get_succeed(
                     )));
                 } else if contains_slice(cmd, b"READONLY") {
                     return Err(Ok(Value::Status("OK".into())));
-                } else {
                 }
             }
             started.store(true, atomic::Ordering::SeqCst);

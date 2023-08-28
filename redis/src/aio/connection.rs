@@ -14,9 +14,10 @@ use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "tokio-comp")]
 use ::tokio::net::lookup_host;
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
+use futures_util::future::select_ok;
 use futures_util::{
     future::FutureExt,
-    stream::{self, Stream, StreamExt},
+    stream::{Stream, StreamExt},
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -386,20 +387,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            stream::iter(socket_addrs)
-                .fold(
-                    Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "No address found for host",
-                    ))),
-                    |acc, socket_addr| async move {
-                        match acc {
-                            ok @ Ok(_) => ok,
-                            Err(_) => <T>::connect_tcp(socket_addr).await,
-                        }
-                    },
-                )
-                .await?
+            select_ok(socket_addrs.map(<T>::connect_tcp)).await?.0
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -409,20 +397,11 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            stream::iter(socket_addrs)
-                .fold(
-                    Err(RedisError::from((
-                        ErrorKind::InvalidClientConfig,
-                        "No address found for host",
-                    ))),
-                    |acc, socket_addr| async move {
-                        match acc {
-                            ok @ Ok(_) => ok,
-                            Err(_) => <T>::connect_tcp_tls(host, socket_addr, insecure).await,
-                        }
-                    },
-                )
-                .await?
+            select_ok(
+                socket_addrs.map(|socket_addr| <T>::connect_tcp_tls(host, socket_addr, insecure)),
+            )
+            .await?
+            .0
         }
 
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
