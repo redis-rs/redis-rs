@@ -136,7 +136,7 @@ fn wait_for_master_server(
                     if role.starts_with("master") {
                         return Ok(());
                     } else {
-                        println!("failed check for master role - current role: {:?}", r)
+                        println!("failed check for master role - current role: {r:?}")
                     }
                 }
                 Err(err) => {
@@ -230,8 +230,15 @@ impl RedisSentinelCluster {
         let tlspaths = build_keys_and_certs_for_tls(&tempdir);
         folders.push(tempdir);
 
+        let required_number_of_sockets = masters * (replicas_per_master + 1) + sentinels;
+        let mut available_ports = std::collections::HashSet::new();
+        while available_ports.len() < required_number_of_sockets as usize {
+            available_ports.insert(get_random_available_port());
+        }
+        let mut available_ports: Vec<_> = available_ports.into_iter().collect();
+
         for _ in 0..masters {
-            let port = get_random_available_port();
+            let port = available_ports.pop().unwrap();
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
@@ -241,7 +248,7 @@ impl RedisSentinelCluster {
             master_ports.push(port);
 
             for _ in 0..replicas_per_master {
-                let replica_port = get_random_available_port();
+                let replica_port = available_ports.pop().unwrap();
                 let tempdir = tempfile::Builder::new()
                     .prefix("redis")
                     .tempdir()
@@ -262,7 +269,7 @@ impl RedisSentinelCluster {
 
         let mut sentinel_servers = vec![];
         for _ in 0..sentinels {
-            let port = get_random_available_port();
+            let port = available_ports.pop().unwrap();
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
