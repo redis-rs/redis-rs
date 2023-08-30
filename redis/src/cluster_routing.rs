@@ -237,17 +237,16 @@ impl RoutingInfo {
         match cmd {
             b"SCRIPT EXISTS" => Some(AggregateLogical(LogicalAggregateOp::And)),
 
-            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK" => {
-                Some(Aggregate(AggregateOp::Sum))
-            }
+            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK"
+            | b"LATENCY RESET" => Some(Aggregate(AggregateOp::Sum)),
 
             b"WAIT" => Some(Aggregate(AggregateOp::Min)),
 
-            b"ACL SETUSER" | b"ACL DELUSER" | b"CONFIG SET" | b"CONFIG RESETSTAT"
-            | b"CONFIG REWRITE" | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE"
-            | b"FUNCTION FLUSH" | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"LATENCY RESET"
-            | b"MEMORY PURGE" | b"MSET" | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD"
-            | b"SLOWLOG RESET" => Some(AllSucceeded),
+            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
+            | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
+            | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
+            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"PING"
+            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => Some(AllSucceeded),
 
             b"KEYS" | b"MGET" | b"SLOWLOG GET" => Some(CombineArrays),
 
@@ -297,18 +296,18 @@ impl RoutingInfo {
             | b"MEMORY STATS"
             | b"INFO" => Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters)),
 
-            b"ACL SETUSER" | b"ACL DELUSER" | b"SLOWLOG GET" | b"SLOWLOG LEN"
-            | b"SLOWLOG RESET" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
-            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH"
-            | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
+            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
+            | b"CLIENT SETINFO" | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET"
+            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH"
+            | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM"
+            | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
                 Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes))
             }
 
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
             b"MSET" => multi_shard(r, cmd, 1, true),
             // TODO - special handling - b"SCAN"
-            b"SCAN" | b"CLIENT SETNAME" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE"
-            | b"BITOP" => None,
+            b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
             b"EVALSHA" | b"EVAL" => {
                 let key_count = r
                     .arg_idx(2)
@@ -615,7 +614,6 @@ mod tests {
 
         for cmd in vec![
             cmd("SCAN"),
-            cmd("CLIENT SETNAME"),
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
