@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 #[cfg(feature = "aio")]
 use std::pin::Pin;
@@ -75,12 +75,12 @@ impl Client {
         let con = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(None)
                     .await?
             }
             #[cfg(feature = "async-std-comp")]
             Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
+                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>(None)
                     .await?
             }
         };
@@ -94,7 +94,7 @@ impl Client {
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
-            crate::aio::connect::<crate::aio::tokio::Tokio>(&self.connection_info)
+            crate::aio::connect::<crate::aio::tokio::Tokio>(&self.connection_info, None)
                 .await?
                 .map(RedisRuntime::boxed),
         )
@@ -106,7 +106,7 @@ impl Client {
     pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
-            crate::aio::connect::<crate::aio::async_std::AsyncStd>(&self.connection_info)
+            crate::aio::connect::<crate::aio::async_std::AsyncStd>(&self.connection_info, None)
                 .await?
                 .map(RedisRuntime::boxed),
         )
@@ -138,7 +138,7 @@ impl Client {
     pub async fn get_multiplexed_tokio_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
+        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(None)
             .await
     }
 
@@ -151,7 +151,7 @@ impl Client {
     pub async fn get_multiplexed_async_std_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
+        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(None)
             .await
     }
 
@@ -168,7 +168,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>()
+        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(None)
             .await
     }
 
@@ -185,7 +185,7 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>()
+        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(None)
             .await
     }
 
@@ -246,14 +246,15 @@ impl Client {
         .await
     }
 
-    async fn get_multiplexed_async_connection_inner<T>(
+    pub(crate) async fn get_multiplexed_async_connection_inner<T>(
         &self,
+        socket_addr: Option<SocketAddr>,
     ) -> RedisResult<crate::aio::MultiplexedConnection>
     where
         T: crate::aio::RedisRuntime,
     {
         let (connection, driver) = self
-            .create_multiplexed_async_connection_inner::<T>()
+            .create_multiplexed_async_connection_inner::<T>(socket_addr)
             .await?;
         T::spawn(driver);
         Ok(connection)
@@ -261,6 +262,7 @@ impl Client {
 
     async fn create_multiplexed_async_connection_inner<T>(
         &self,
+        socket_addr: Option<SocketAddr>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
@@ -268,19 +270,22 @@ impl Client {
     where
         T: crate::aio::RedisRuntime,
     {
-        let con = self.get_simple_async_connection::<T>().await?;
+        let con = self.get_simple_async_connection::<T>(socket_addr).await?;
         crate::aio::MultiplexedConnection::new(&self.connection_info.redis, con).await
     }
 
     async fn get_simple_async_connection<T>(
         &self,
+        socket_addr: Option<SocketAddr>,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
     where
         T: crate::aio::RedisRuntime,
     {
-        Ok(crate::aio::connect_simple::<T>(&self.connection_info)
-            .await?
-            .boxed())
+        Ok(
+            crate::aio::connect_simple::<T>(&self.connection_info, socket_addr)
+                .await?
+                .boxed(),
+        )
     }
 
     #[cfg(feature = "connection-manager")]

@@ -27,6 +27,7 @@ use std::{
     iter::Iterator,
     marker::Unpin,
     mem,
+    net::SocketAddr,
     pin::Pin,
     sync::{
         atomic::{self, AtomicUsize},
@@ -489,9 +490,10 @@ where
 
     /// Go through each of the initial nodes and attempt to retrieve all IP entries from them.
     /// If there's a DNS endpoint that directs to several IP addresses, add all addresses to the initial nodes list.
+    /// Returns a vector of tuples, each containing a node's address (including the hostname) and its corresponding SocketAddr if retrieved.
     pub(crate) async fn try_to_expand_initial_nodes(
         initial_nodes: &[ConnectionInfo],
-    ) -> Vec<String> {
+    ) -> Vec<(String, Option<SocketAddr>)> {
         stream::iter(initial_nodes)
             .fold(
                 Vec::with_capacity(initial_nodes.len()),
@@ -505,19 +507,19 @@ where
                         } => (host, port),
                         crate::ConnectionAddr::Unix(_) => {
                             // We don't support multiple addresses for a Unix address. Store the initial node address and continue
-                            acc.push(info.addr.to_string());
+                            acc.push((info.addr.to_string(), None));
                             return acc;
                         }
                     };
                     match get_socket_addrs(host, *port).await {
                         Ok(socket_addrs) => {
                             for addr in socket_addrs {
-                                acc.push(addr.to_string());
+                                acc.push((info.addr.to_string(), Some(addr)));
                             }
                         }
                         Err(_) => {
                             // Couldn't find socket addresses, store the initial node address and continue
-                            acc.push(info.addr.to_string());
+                            acc.push((info.addr.to_string(), None));
                         }
                     };
                     acc
@@ -530,14 +532,15 @@ where
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
-        let initial_nodes: Vec<String> = Self::try_to_expand_initial_nodes(initial_nodes).await;
+        let initial_nodes: Vec<(String, Option<SocketAddr>)> =
+            Self::try_to_expand_initial_nodes(initial_nodes).await;
         let connections = stream::iter(initial_nodes.iter().cloned())
-            .map(|addr| {
+            .map(|node| {
                 let params = params.clone();
                 async move {
-                    let result = connect_and_check(&addr, params).await;
+                    let result = connect_and_check(&node.0, params, node.1).await;
                     match result {
-                        Ok(conn) => Some((addr, async { conn }.boxed().shared())),
+                        Ok(conn) => Some((node.0, async { conn }.boxed().shared())),
                         Err(e) => {
                             trace!("Failed to connect to initial node: {:?}", e);
                             None
@@ -952,7 +955,7 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn.await)),
-            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone())
+            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone(), None)
                 .await
                 .ok()
                 .map(|conn| (addr, conn)),
@@ -1119,10 +1122,10 @@ where
             let mut conn = conn.await;
             match check_connection(&mut conn, params.connection_timeout.into()).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+                Err(_) => connect_and_check(addr, params.clone(), None).await,
             }
         } else {
-            connect_and_check(addr, params.clone()).await
+            connect_and_check(addr, params.clone(), None).await
         }
     }
 }
@@ -1294,13 +1297,16 @@ where
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, socket_addr: Option<SocketAddr>) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
 
 impl Connect for MultiplexedConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, MultiplexedConnection>
+    fn connect<'a, T>(
+        info: T,
+        socket_addr: Option<SocketAddr>,
+    ) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
@@ -1309,23 +1315,35 @@ impl Connect for MultiplexedConnection {
             let client = crate::Client::open(connection_info)?;
 
             #[cfg(feature = "tokio-comp")]
-            return client.get_multiplexed_tokio_connection().await;
+            return client
+                .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(socket_addr)
+                .await;
 
             #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            return client.get_multiplexed_async_std_connection().await;
+            return client
+                .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                    socket_addr,
+                )
+                .await;
         }
         .boxed()
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &str,
+    params: ClusterParams,
+    socket_addr: Option<SocketAddr>,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout.into();
     let info = get_connection_info(node, params)?;
-    let mut conn: C = C::connect(info).timeout(connection_timeout).await??;
+    let mut conn: C = C::connect(info, socket_addr)
+        .timeout(connection_timeout)
+        .await??;
     check_connection(&mut conn, connection_timeout).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect

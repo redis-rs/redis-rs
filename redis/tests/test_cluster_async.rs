@@ -1,5 +1,6 @@
 #![cfg(feature = "cluster-async")]
 mod support;
+use std::net::SocketAddr;
 use std::sync::{
     atomic::{self, AtomicI32, AtomicU16},
     atomic::{AtomicBool, Ordering},
@@ -241,12 +242,12 @@ struct ErrorConnection {
 }
 
 impl Connect for ErrorConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, _socket_addr: Option<SocketAddr>) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         Box::pin(async {
-            let inner = MultiplexedConnection::connect(info).await?;
+            let inner = MultiplexedConnection::connect(info, None).await?;
             Ok(ErrorConnection { inner })
         })
     }

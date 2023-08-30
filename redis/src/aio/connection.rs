@@ -176,11 +176,14 @@ where
     }
 }
 
-pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
+pub(crate) async fn connect<C>(
+    connection_info: &ConnectionInfo,
+    socket_addr: Option<SocketAddr>,
+) -> RedisResult<Connection<C>>
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
-    let con = connect_simple::<C>(connection_info).await?;
+    let con = connect_simple::<C>(connection_info, socket_addr).await?;
     Connection::new(&connection_info.redis, con).await
 }
 
@@ -383,6 +386,7 @@ pub(crate) async fn get_socket_addrs(
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
+    socket_addr: Option<SocketAddr>,
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
@@ -396,6 +400,9 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             port,
             insecure,
         } => {
+            if let Some(socket_addr) = socket_addr {
+                return <T>::connect_tcp_tls(host, socket_addr, insecure).await;
+            }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(
                 socket_addrs.map(|socket_addr| <T>::connect_tcp_tls(host, socket_addr, insecure)),
