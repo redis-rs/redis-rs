@@ -121,6 +121,12 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+    /// Requested name not found among masters returned by the sentinels
+    MasterNameNotFoundBySentinel,
+    /// No valid replicas found in the sentinels, for a given master name
+    NoValidReplicasFoundBySentinel,
+    /// At least one sentinel connection info is required
+    EmptySentinelList,
     /// Attempted to kill a script/function while they werent' executing
     NotBusy,
 
@@ -492,6 +498,9 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
+            ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
+            ErrorKind::EmptySentinelList => "empty sentinel list",
             ErrorKind::NotBusy => "not busy",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
@@ -630,6 +639,8 @@ impl RedisError {
             ErrorKind::IoError => true,
             ErrorKind::ReadOnly => true,
             ErrorKind::ClusterDown => true,
+            ErrorKind::MasterNameNotFoundBySentinel => true,
+            ErrorKind::NoValidReplicasFoundBySentinel => true,
 
             ErrorKind::ExtensionError => false,
             ErrorKind::ExecAbortError => false,
@@ -640,6 +651,7 @@ impl RedisError {
             ErrorKind::InvalidClientConfig => false,
             ErrorKind::CrossSlot => false,
             ErrorKind::ClientError => false,
+            ErrorKind::EmptySentinelList => false,
             ErrorKind::NotBusy => false,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => false,

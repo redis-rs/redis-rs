@@ -1,3 +1,48 @@
+<a name="0.23.1"></a>
+### 0.23.2 (2023-08-10)
+
+#### Fixes
+* Fix sentinel tests flakiness ([#912](https://github.com/redis-rs/redis-rs/pull/912))
+* Rustls: Remove usage of deprecated method ([#921](https://github.com/redis-rs/redis-rs/pull/921))
+* Fix compiling with sentinel feature, without aio feature ([#922](https://github.com/redis-rs/redis-rs/pull/923) @brocaar)
+* Add timeouts to tests github action ([#911](https://github.com/redis-rs/redis-rs/pull/911))
+
+### 0.23.1 (2023-07-28)
+
+#### Features
+* Add basic Sentinel functionality ([#836](https://github.com/redis-rs/redis-rs/pull/836) @felipou)
+* Enable keep alive on tcp connections via feature ([#886](https://github.com/redis-rs/redis-rs/pull/886) @DoumanAsh)
+* Support fan-out commands in cluster-async ([#843](https://github.com/redis-rs/redis-rs/pull/843) @nihohit)
+* connection_manager: retry and backoff on reconnect ([#804](https://github.com/redis-rs/redis-rs/pull/804) @nihohit)
+
+#### Changes
+* Tests: Wait for all servers ([#901](https://github.com/redis-rs/redis-rs/pull/901) @barshaul)
+* Pin `tempfile` dependency ([#902](https://github.com/redis-rs/redis-rs/pull/902))
+* Update routing data for commands. ([#887](https://github.com/redis-rs/redis-rs/pull/887) @nihohit)
+* Add basic benchmark reporting to CI ([#880](https://github.com/redis-rs/redis-rs/pull/880))
+* Add `set_options` cmd ([#879](https://github.com/redis-rs/redis-rs/pull/879) @RokasVaitkevicius)
+* Move random connection creation to when needed. ([#882](https://github.com/redis-rs/redis-rs/pull/882) @nihohit)
+* Clean up existing benchmarks ([#881](https://github.com/redis-rs/redis-rs/pull/881))
+* Improve async cluster client performance. ([#877](https://github.com/redis-rs/redis-rs/pull/877) @nihohit)
+* Allow configuration of cluster retry wait duration ([#859](https://github.com/redis-rs/redis-rs/pull/859) @nihohit)
+* Fix async connect when ns resolved to multi ip ([#872](https://github.com/redis-rs/redis-rs/pull/872) @hugefiver)
+* Reduce the number of unnecessary clones. ([#874](https://github.com/redis-rs/redis-rs/pull/874) @nihohit)
+* Remove connection checking on every request. ([#873](https://github.com/redis-rs/redis-rs/pull/873) @nihohit)
+* cluster_async: Wrap internal state with Arc. ([#864](https://github.com/redis-rs/redis-rs/pull/864) @nihohit)
+* Fix redirect routing on request with no route. ([#870](https://github.com/redis-rs/redis-rs/pull/870) @nihohit)
+* Amend README for macOS users ([#869](https://github.com/redis-rs/redis-rs/pull/869) @sarisssa)
+* Improved redirection error handling ([#857](https://github.com/redis-rs/redis-rs/pull/857))
+* Fix minor async client bug. ([#862](https://github.com/redis-rs/redis-rs/pull/862) @nihohit)
+* Split aio.rs to separate files. ([#821](https://github.com/redis-rs/redis-rs/pull/821) @nihohit)
+* Add time feature to tokio dependency ([#855](https://github.com/redis-rs/redis-rs/pull/855) @robjtede)
+* Refactor cluster error handling ([#844](https://github.com/redis-rs/redis-rs/pull/844))
+* Fix unnecessarily mutable variable ([#849](https://github.com/redis-rs/redis-rs/pull/849) @kamulos)
+* Newtype SlotMap ([#845](https://github.com/redis-rs/redis-rs/pull/845))
+* Bump MSRV to 1.60 ([#846](https://github.com/redis-rs/redis-rs/pull/846))
+* Improve error logging. ([#838](https://github.com/redis-rs/redis-rs/pull/838) @nihohit)
+* Improve documentation, add references to `redis-macros` ([#769](https://github.com/redis-rs/redis-rs/pull/769) @daniel7grant)
+* Allow creating Cmd with capacity. ([#817](https://github.com/redis-rs/redis-rs/pull/817) @nihohit)
+
 <a name="0.23.0"></a>
 ### 0.23.0 (2023-04-05)
 In addition to *everything mentioned in 0.23.0-beta.1 notes*, this release adds support for Rustls, a long-

@@ -1,5 +1,7 @@
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
+#[cfg(feature = "aio")]
+use std::net::SocketAddr;
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 

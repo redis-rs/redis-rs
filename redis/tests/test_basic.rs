@@ -57,6 +57,52 @@ fn test_getset() {
     );
 }
 
+//unit test for key_type function
+#[test]
+fn test_key_type() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    //The key is a simple value
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    let string_key_type: String = con.key_type("foo").unwrap();
+    assert_eq!(string_key_type, "string");
+
+    //The key is a list
+    redis::cmd("LPUSH")
+        .arg("list_bar")
+        .arg("foo")
+        .execute(&mut con);
+    let list_key_type: String = con.key_type("list_bar").unwrap();
+    assert_eq!(list_key_type, "list");
+
+    //The key is a set
+    redis::cmd("SADD")
+        .arg("set_bar")
+        .arg("foo")
+        .execute(&mut con);
+    let set_key_type: String = con.key_type("set_bar").unwrap();
+    assert_eq!(set_key_type, "set");
+
+    //The key is a sorted set
+    redis::cmd("ZADD")
+        .arg("sorted_set_bar")
+        .arg("1")
+        .arg("foo")
+        .execute(&mut con);
+    let zset_key_type: String = con.key_type("sorted_set_bar").unwrap();
+    assert_eq!(zset_key_type, "zset");
+
+    //The key is a hash
+    redis::cmd("HSET")
+        .arg("hset_bar")
+        .arg("hset_key_1")
+        .arg("foo")
+        .execute(&mut con);
+    let hash_key_type: String = con.key_type("hset_bar").unwrap();
+    assert_eq!(hash_key_type, "hash");
+}
+
 #[test]
 fn test_incr() {
     let ctx = TestContext::new();
