@@ -87,10 +87,7 @@ use self::connections_container::{ConnectionAndIdentifier, Identifier as Connect
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
-pub struct ClusterConnection<C = MultiplexedConnection> {
-    sender: mpsc::Sender<Message<C>>,
-    read_from_replicas: bool,
-}
+pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
 impl<C> ClusterConnection<C>
 where
@@ -100,7 +97,6 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
-        let read_from_replicas = cluster_params.read_from_replicas;
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
@@ -116,10 +112,7 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                ClusterConnection {
-                    sender: tx,
-                    read_from_replicas,
-                }
+                ClusterConnection(tx)
             })
     }
 
@@ -129,15 +122,14 @@ where
         cmd: &Cmd,
         routing: Option<RoutingInfo>,
     ) -> RedisResult<Value> {
-        let allow_replicas = self.read_from_replicas;
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
-        self.sender
+        self.0
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
                     routing: CommandRouting::Route(
-                        routing.or_else(|| RoutingInfo::for_routable(cmd, allow_replicas)),
+                        routing.or_else(|| RoutingInfo::for_routable(cmd)),
                     ),
                 },
                 sender,
@@ -171,15 +163,14 @@ where
         count: usize,
         route: Option<Route>,
     ) -> RedisResult<Vec<Value>> {
-        let allow_replicas = self.read_from_replicas;
         let (sender, receiver) = oneshot::channel();
-        self.sender
+        self.0
             .send(Message {
                 cmd: CmdArg::Pipeline {
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
                     offset,
                     count,
-                    route: route.or_else(|| route_pipeline(pipeline, allow_replicas)),
+                    route: route.or_else(|| route_pipeline(pipeline)),
                 },
                 sender,
             })
@@ -245,9 +236,9 @@ enum CmdArg<C> {
     },
 }
 
-fn route_pipeline(pipeline: &crate::Pipeline, allow_replica: bool) -> Option<Route> {
+fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
     let route_for_command = |cmd| -> Option<Route> {
-        match RoutingInfo::for_routable(cmd, allow_replica) {
+        match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
@@ -1492,13 +1483,8 @@ mod pipeline_routing_tests {
             .add_command(cmd("EVAL")); // route randomly
 
         assert_eq!(
-            route_pipeline(&pipeline, true),
+            route_pipeline(&pipeline),
             Some(Route::new(12182, SlotAddr::Replica))
-        );
-
-        assert_eq!(
-            route_pipeline(&pipeline, false),
-            Some(Route::new(12182, SlotAddr::Master))
         );
     }
 
@@ -1512,7 +1498,7 @@ mod pipeline_routing_tests {
             .get("foo"); // route to slot 12182
 
         assert_eq!(
-            route_pipeline(&pipeline, false),
+            route_pipeline(&pipeline),
             Some(Route::new(4813, SlotAddr::Master))
         );
     }

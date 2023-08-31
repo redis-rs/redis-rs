@@ -365,7 +365,7 @@ where
             Ok(slot_addr.to_string())
         };
 
-        match RoutingInfo::for_routable(cmd, self.read_from_replicas) {
+        match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
                 let mut rng = thread_rng();
                 Ok(addr_for_slot(Route::new(
@@ -431,7 +431,7 @@ where
         T: MergeResults + std::fmt::Debug,
         F: FnMut(&mut C) -> RedisResult<T>,
     {
-        let route = match RoutingInfo::for_routable(cmd, self.read_from_replicas) {
+        let route = match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
