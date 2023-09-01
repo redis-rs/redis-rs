@@ -344,6 +344,8 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
+    use bytes::BytesMut;
+    use tokio_util::codec::Decoder;
 
     use super::*;
 
@@ -369,5 +371,19 @@ mod tests {
             Ok(_) => panic!("Expected Err"),
             Err(e) => assert!(matches!(e.kind(), ErrorKind::ResponseError)),
         }
+    }
+
+    #[test]
+    fn test_handle_unknown() {
+        let mut bytes = BytesMut::from(&b"/test\r\n*1\r\n"[..]);
+
+        let mut codec = ValueCodec::default();
+
+        match codec.decode(&mut bytes) {
+            Ok(Some(Err(e))) => assert!(matches!(e.kind(), ErrorKind::ResponseError)),
+            _ => panic!("Expected Err"),
+        }
+
+        assert!(codec.decode(&mut bytes).is_ok())
     }
 }
