@@ -32,6 +32,7 @@ use super::Path;
 #[inline(always)]
 async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
     let socket = TcpStreamTokio::connect(addr).await?;
+    socket.set_nodelay(true)?;
     #[cfg(feature = "keep-alive")]
     {
         //For now rely on system defaults
@@ -92,6 +93,30 @@ impl AsyncWrite for Tokio {
             Tokio::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             Tokio::Unix(r) => Pin::new(r).poll_shutdown(cx),
+        }
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<Result<usize, io::Error>> {
+        match &mut *self {
+            Tokio::Tcp(r) => Pin::new(r).poll_write_vectored(cx, bufs),
+            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            Tokio::TcpTls(r) => Pin::new(r).poll_write_vectored(cx, bufs),
+            #[cfg(unix)]
+            Tokio::Unix(r) => Pin::new(r).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Tokio::Tcp(r) => r.is_write_vectored(),
+            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            Tokio::TcpTls(r) => r.is_write_vectored(),
+            #[cfg(unix)]
+            Tokio::Unix(r) => r.is_write_vectored(),
         }
     }
 }
