@@ -1310,7 +1310,7 @@ impl FromRedisValue for bool {
 impl FromRedisValue for CString {
     fn from_redis_value(v: &Value) -> RedisResult<CString> {
         match *v {
-            Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
+            Value::Data(ref bytes) => Ok(CString::new(bytes.as_slice())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),
