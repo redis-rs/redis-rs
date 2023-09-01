@@ -344,9 +344,6 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::BytesMut;
-    use tokio_util::codec::Decoder;
-
     use super::*;
 
     #[cfg(feature = "aio")]
@@ -373,8 +370,12 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "aio")]
     #[test]
     fn test_handle_unknown() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
         let mut bytes = BytesMut::from(&b"/test\r\n*1\r\n"[..]);
 
         let mut codec = ValueCodec::default();
