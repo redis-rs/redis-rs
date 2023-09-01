@@ -154,13 +154,23 @@ where
                     })
                 };
 
+                let unknown = || {
+                    line().map(|line| {
+                        RedisError::from((
+                            ErrorKind::ResponseError,
+                            "Unknown response",
+                            format!("Unknown line: {}", line),
+                        ))
+                    })
+                };
+
                 combine::dispatch!(b;
                     b'+' => status().map(Ok),
                     b':' => int().map(|i| Ok(Value::Int(i))),
                     b'$' => data().map(Ok),
                     b'*' => bulk(),
                     b'-' => error().map(Err),
-                    b => combine::unexpected_any(combine::error::Token(b))
+                    _ => unknown().map(Err)
                 )
             })
     ))
