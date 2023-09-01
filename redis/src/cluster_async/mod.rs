@@ -317,7 +317,7 @@ enum Next<I, C> {
     },
     Reconnect {
         request: PendingRequest<I, C>,
-        target: OperationTarget,
+        target: String,
     },
     RefreshSlots {
         request: PendingRequest<I, C>,
@@ -359,7 +359,7 @@ where
                 let address = match target {
                     OperationTarget::Node { address } => address,
                     OperationTarget::FanOut => {
-                        // TODO - implement retries on fan-out operations
+                        // Fanout operation are retried per internal request, and don't need additional retries.
                         self.respond(Err(err));
                         return Next::Done.into();
                     }
@@ -402,7 +402,7 @@ where
                     }
                     ErrorKind::IoError => Next::Reconnect {
                         request: this.request.take().unwrap(),
-                        target: OperationTarget::Node { address },
+                        target: address,
                     }
                     .into(),
                     _ => {
@@ -990,13 +990,8 @@ where
                 Next::Reconnect {
                     request, target, ..
                 } => {
-                    poll_flush_action = match target {
-                        OperationTarget::Node { address } => poll_flush_action
-                            .change_state(PollFlushAction::Reconnect(vec![address])),
-                        OperationTarget::FanOut => {
-                            poll_flush_action.change_state(PollFlushAction::RebuildSlots)
-                        }
-                    };
+                    poll_flush_action =
+                        poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
                     self.inner.pending_requests.lock().unwrap().push(request);
                 }
             }
