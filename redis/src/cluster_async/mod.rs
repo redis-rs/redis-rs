@@ -539,31 +539,31 @@ where
                 let params = params.clone();
                 async move {
                     let result = connect_and_check(&node.0, params, node.1).await;
-                    match result {
-                        Ok(conn) => Some((node.0, async { conn }.boxed().shared())),
-                        Err(e) => {
-                            trace!("Failed to connect to initial node: {:?}", e);
-                            None
-                        }
-                    }
+                    result.map(|conn| (node.0, async { conn }.boxed().shared()))
                 }
             })
             .buffer_unordered(initial_nodes.len())
             .fold(
-                HashMap::with_capacity(initial_nodes.len()),
-                |mut connections: ConnectionMap<C>, conn| async move {
-                    connections.extend(conn);
-                    connections
+                (HashMap::with_capacity(initial_nodes.len()), None),
+                |mut connections: (ConnectionMap<C>, Option<String>), addr_conn_res| async move {
+                    match addr_conn_res {
+                        Ok(addr_conn) => {
+                            connections.0.extend(Some(addr_conn));
+                            (connections.0, None)
+                        }
+                        Err(e) => (connections.0, Some(e.to_string())),
+                    }
                 },
             )
             .await;
-        if connections.is_empty() {
+        if connections.0.is_empty() {
             return Err(RedisError::from((
                 ErrorKind::IoError,
                 "Failed to create initial connections",
+                connections.1.unwrap_or("".to_string()),
             )));
         }
-        Ok(connections)
+        Ok(connections.0)
     }
 
     fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
