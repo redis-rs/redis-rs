@@ -28,6 +28,26 @@ use async_trait::async_trait;
 use futures_util::ready;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+#[inline(always)]
+async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
+    let socket = TcpStream::connect(addr).await?;
+    #[cfg(feature = "keep-alive")]
+    {
+        //For now rely on system defaults
+        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
+        //these are useless error that not going to happen
+        let mut std_socket = std::net::TcpStream::try_from(socket)?;
+        let socket2: socket2::Socket = std_socket.into();
+        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
+        std_socket = socket2.into();
+        Ok(std_socket.into())
+    }
+    #[cfg(not(feature = "keep-alive"))]
+    {
+        Ok(socket)
+    }
+}
+
 pin_project_lite::pin_project! {
     /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
     /// for it
@@ -168,7 +188,7 @@ impl AsyncRead for AsyncStd {
 #[async_trait]
 impl RedisRuntime for AsyncStd {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(TcpStream::connect(&socket_addr)
+        Ok(connect_tcp(&socket_addr)
             .await
             .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
@@ -179,7 +199,7 @@ impl RedisRuntime for AsyncStd {
         socket_addr: SocketAddr,
         insecure: bool,
     ) -> RedisResult<Self> {
-        let tcp_stream = TcpStream::connect(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr).await?;
         let tls_connector = if insecure {
             TlsConnector::new()
                 .danger_accept_invalid_certs(true)
@@ -200,7 +220,7 @@ impl RedisRuntime for AsyncStd {
         socket_addr: SocketAddr,
         insecure: bool,
     ) -> RedisResult<Self> {
-        let tcp_stream = TcpStream::connect(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr).await?;
 
         let config = create_rustls_config(insecure)?;
         let tls_connector = TlsConnector::from(Arc::new(config));

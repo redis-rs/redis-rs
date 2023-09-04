@@ -4,7 +4,7 @@ use rand::Rng;
 
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
-use crate::{cluster, cluster::TlsMode};
+use crate::{cluster, TlsMode};
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;

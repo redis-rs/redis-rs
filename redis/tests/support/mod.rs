@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+use std::path::Path;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
 };
 
 use futures::Future;
-use redis::Value;
+use redis::{ConnectionAddr, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -49,6 +50,12 @@ pub use self::cluster::*;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::mock_cluster::*;
 
+#[cfg(feature = "sentinel")]
+mod sentinel;
+
+#[cfg(feature = "sentinel")]
+pub use self::sentinel::*;
+
 #[derive(PartialEq)]
 enum ServerType {
     Tcp { tls: bool },
@@ -88,27 +95,18 @@ impl RedisServer {
         RedisServer::with_modules(&[])
     }
 
-    pub fn with_modules(modules: &[Module]) -> RedisServer {
+    pub fn get_addr(port: u16) -> ConnectionAddr {
         let server_type = ServerType::get_intended();
-        let addr = match server_type {
+        match server_type {
             ServerType::Tcp { tls } => {
-                // this is technically a race but we can't do better with
-                // the tools that redis gives us :(
-                let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-                let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-                socket.set_reuse_address(true).unwrap();
-                socket.bind(addr).unwrap();
-                socket.listen(1).unwrap();
-                let listener = TcpListener::from(socket);
-                let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
-                        port: redis_port,
+                        port,
                         insecure: true,
                     }
                 } else {
-                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port)
+                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
                 }
             }
             ServerType::Unix => {
@@ -116,15 +114,26 @@ impl RedisServer {
                 let path = format!("/tmp/redis-rs-test-{a}-{b}.sock");
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
-        };
-        RedisServer::new_with_addr_and_modules(addr, modules)
+        }
+    }
+
+    pub fn with_modules(modules: &[Module]) -> RedisServer {
+        // this is technically a race but we can't do better with
+        // the tools that redis gives us :(
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+        })
     }
 
     pub fn new_with_addr_and_modules(
         addr: redis::ConnectionAddr,
         modules: &[Module],
     ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, modules, |cmd| {
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
             cmd.spawn()
                 .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
         })
@@ -134,11 +143,16 @@ impl RedisServer {
         F: FnOnce(&mut process::Command) -> process::Child,
     >(
         addr: redis::ConnectionAddr,
+        config_file: Option<&Path>,
         tls_paths: Option<TlsFilePaths>,
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
+
+        if let Some(config_path) = config_file {
+            redis_cmd.arg(config_path);
+        }
 
         // Load Redis Modules
         for module in modules {
@@ -244,6 +258,21 @@ impl RedisServer {
     pub fn log_file(tempdir: &TempDir) -> PathBuf {
         tempdir.path().join("redis.log")
     }
+}
+
+/// Finds a random open port available for listening at, by spawning a TCP server with
+/// port "zero" (which prompts the OS to just use any available port). Between calling
+/// this function and trying to bind to this port, the port may be given to another
+/// process, so this must be used with care (since here we only use it for tests, it's
+/// mostly okay).
+pub fn get_random_available_port() -> u16 {
+    let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(addr).unwrap();
+    socket.listen(1).unwrap();
+    let listener = TcpListener::from(socket);
+    listener.local_addr().unwrap().port()
 }
 
 impl Drop for RedisServer {

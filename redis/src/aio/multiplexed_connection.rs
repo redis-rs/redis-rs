@@ -5,8 +5,6 @@ use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
