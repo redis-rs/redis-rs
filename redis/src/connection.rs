@@ -766,13 +766,13 @@ pub(crate) fn client_set_info_pipeline() -> Pipeline {
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-NAME")
-        .arg("redis-rs")
+        .arg(std::env!("BABUSHKA_NAME"))
         .ignore();
     pipeline
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-VER")
-        .arg(env!("CARGO_PKG_VERSION"))
+        .arg(std::env!("BABUSHKA_VERSION"))
         .ignore();
     pipeline
 }
