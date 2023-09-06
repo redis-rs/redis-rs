@@ -8,6 +8,12 @@ use crate::{
     types::{RedisResult, Value},
 };
 
+#[cfg(feature = "tls-rustls")]
+use crate::tls::inner_build_with_tls;
+
+#[cfg(feature = "tls-rustls")]
+use std::io::BufRead;
+
 /// The client type.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -345,6 +351,76 @@ impl Client {
     #[cfg(feature = "connection-manager")]
     pub(crate) fn connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    /// The builder takes all parameters necessary to create a TLS connection.
+    ///
+    /// - `url` - URL using `rediss:` protocol
+    /// - `client_tls_params` - Optional pair of binary streams containing PEM's file's contents for
+    /// -- client certificate
+    /// -- client key
+    /// - `root_cert` - Optional binary stream containing PEM file for CA certificate
+    ///
+    /// If CA certificate is not provided, then CA certificate is used instead
+    /// If client cert/key are not provided, then client-side authentication is not enabled
+    ///
+    ///
+    /// Example usage:
+    ///
+    /// ```no_run
+    /// use redis::Client;
+    /// use redis::AsyncCommands;
+    ///
+    /// use std::fs::File;
+    /// use std::io::BufReader;
+    ///
+    /// async fn do_redis_code(url: &str, ca_file: &str, cert_file: &str, key_file: &str) -> redis::RedisResult<()> {
+    ///     let cert_file = File::open(cert_file).expect("cannot open private cert file");
+    ///     let mut reader_cert = BufReader::new(cert_file);
+    ///
+    ///     let key_file = File::open(key_file).expect("Cannot open private key file");
+    ///     let mut reader_key = BufReader::new(key_file);
+    ///
+    ///     let ca_file = File::open(ca_file).expect("Cannot open CA cert file");
+    ///     let mut reader_ca = BufReader::new(ca_file);
+    ///
+    ///     let client = Client::build_with_tls(
+    ///         url,
+    ///         Some((&mut reader_cert, &mut reader_key)),
+    ///         Some(&mut reader_ca),
+    ///     )
+    ///     .expect("Unable to build client");
+    ///
+    ///     let connection_info = client.get_connection_info();
+    ///
+    ///     println!(">>> connection info: {connection_info:?}");
+    ///
+    ///     let mut con = client.get_async_connection().await?;
+    ///
+    ///     con.set("key1", b"foo").await?;
+    ///
+    ///     redis::cmd("SET")
+    ///         .arg(&["key2", "bar"])
+    ///         .query_async(&mut con)
+    ///         .await?;
+    ///
+    ///     let result = redis::cmd("MGET")
+    ///         .arg(&["key1", "key2"])
+    ///         .query_async(&mut con)
+    ///         .await;
+    ///     assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+    ///     println!("Result from MGET: {result:?}");
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn build_with_tls<C: IntoConnectionInfo>(
+        conn_info: C,
+        client_tls_params: Option<(&mut dyn BufRead, &mut dyn BufRead)>,
+        root_cert: Option<&mut dyn BufRead>,
+    ) -> RedisResult<Client> {
+        inner_build_with_tls(conn_info, client_tls_params, root_cert)
     }
 }
 

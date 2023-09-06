@@ -151,9 +151,8 @@ impl ClusterClientBuilder {
         }) = self.builder_params.certs.clone()
         {
             let tls_params = retrieve_tls_certificates(
-                &mut Cursor::new(client_cert),
-                &mut Cursor::new(client_key),
-                &mut Cursor::new(root_cert),
+                Some((&mut Cursor::new(client_cert), &mut Cursor::new(client_key))),
+                Some(&mut Cursor::new(root_cert)),
             )?;
             Some(tls_params)
         } else {
@@ -284,12 +283,11 @@ impl ClusterClientBuilder {
     #[cfg(feature = "tls-rustls")]
     pub fn certs(
         mut self,
-        tls: TlsMode,
         client_cert: Vec<u8>,
         client_key: Vec<u8>,
         root_cert: Vec<u8>,
     ) -> ClusterClientBuilder {
-        self.builder_params.tls = Some(tls);
+        self.builder_params.tls = Some(TlsMode::Secure);
         self.builder_params.certs = Some(RawCertificates {
             client_cert,
             client_key,

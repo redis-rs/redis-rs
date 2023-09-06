@@ -787,6 +787,8 @@ pub(crate) fn create_rustls_config(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
 ) -> RedisResult<rustls::ClientConfig> {
+    use crate::tls::ClientTlsParams;
+
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
     root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -807,16 +809,26 @@ pub(crate) fn create_rustls_config(
         .with_protocol_versions(rustls::ALL_VERSIONS)?;
 
     let config = if let Some(tls_params) = tls_params {
-        config
-            .with_root_certificates(tls_params.root_cert)
-            .with_client_auth_cert(tls_params.client_cert, tls_params.client_key)
-            .map_err(|err| {
-                RedisError::from((
-                    ErrorKind::InvalidClientConfig,
-                    "Unable to build client with TLS parameters provided.",
-                    err.to_string(),
-                ))
-            })?
+        let config_builder =
+            config.with_root_certificates(tls_params.root_cert.unwrap_or(root_store));
+
+        if let Some(ClientTlsParams {
+            client_cert,
+            client_key,
+        }) = tls_params.client_tls_params
+        {
+            config_builder
+                .with_client_auth_cert(client_cert, client_key)
+                .map_err(|err| {
+                    RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Unable to build client with TLS parameters provided.",
+                        err.to_string(),
+                    ))
+                })?
+        } else {
+            config_builder.with_no_client_auth()
+        }
     } else {
         config
             .with_root_certificates(root_store)
