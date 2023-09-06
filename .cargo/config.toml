@@ -1,0 +1,4 @@
+# filler file, to allow tests to pass.
+[env]
+BABUSHKA_NAME = "TBD"
+BABUSHKA_VERSION = "TBD"

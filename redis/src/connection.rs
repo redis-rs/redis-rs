@@ -806,6 +806,23 @@ pub fn connect(
     setup_connection(con, &connection_info.redis)
 }
 
+pub(crate) fn client_set_info_pipeline() -> Pipeline {
+    let mut pipeline = crate::pipe();
+    pipeline
+        .cmd("CLIENT")
+        .arg("SETINFO")
+        .arg("LIB-NAME")
+        .arg(std::env!("BABUSHKA_NAME"))
+        .ignore();
+    pipeline
+        .cmd("CLIENT")
+        .arg("SETINFO")
+        .arg("LIB-VER")
+        .arg(std::env!("BABUSHKA_VERSION"))
+        .ignore();
+    pipeline
+}
+
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
@@ -833,6 +850,10 @@ fn setup_connection(
             )),
         }
     }
+
+    // result is ignored, as per the command's instructions.
+    // https://redis.io/commands/client-setinfo/
+    let _: RedisResult<()> = client_set_info_pipeline().query(&mut rv);
 
     Ok(rv)
 }

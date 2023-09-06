@@ -1,5 +1,5 @@
 use super::ConnectionLike;
-use crate::aio::authenticate;
+use crate::aio::setup_connection;
 use crate::cmd::Cmd;
 use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -349,7 +349,7 @@ impl MultiplexedConnection {
             db: connection_info.db,
         };
         let driver = {
-            let auth = authenticate(connection_info, &mut con);
+            let auth = setup_connection(connection_info, &mut con);
             futures_util::pin_mut!(auth);
 
             match futures_util::future::select(auth, driver).await {
