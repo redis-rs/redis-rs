@@ -30,14 +30,6 @@ use crate::streams;
 #[cfg(feature = "acl")]
 use crate::acl;
 
-#[cfg(feature = "cluster")]
-pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
-    matches!(
-        cmd,
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DBSIZE" | b"DUMP" | b"EVALSHA_RO" | b"EVAL_RO" | b"EXISTS" | b"EXPIRETIME" | b"FCALL_RO" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUSBYMEMBER_RO" | b"GEORADIUS_RO" | b"GEOSEARCH" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HRANDFIELD" | b"HSCAN" | b"HSTRLEN" | b"HVALS" | b"KEYS" | b"LCS" | b"LINDEX" | b"LLEN" | b"LOLWUT" | b"LPOS" | b"LRANGE" | b"MEMORY USAGE" | b"MGET" | b"OBJECT ENCODING" | b"OBJECT FREQ" | b"OBJECT IDLETIME" | b"OBJECT REFCOUNT" | b"PEXPIRETIME" | b"PFCOUNT" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"SORT_RO" | b"SRANDMEMBER" | b"SSCAN" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TOUCH" | b"TTL" | b"TYPE" | b"XINFO CONSUMERS" | b"XINFO GROUPS" | b"XINFO STREAM" | b"XLEN" | b"XPENDING" | b"XRANGE" | b"XREAD" | b"XREVRANGE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANDMEMBER" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" | b"ZUNION"
-    )
-}
-
 implement_commands! {
     'a
     // most common operations
