@@ -23,10 +23,16 @@ use crate::tls::retrieve_tls_certificates;
 
 #[cfg(feature = "tls-rustls")]
 #[derive(Clone)]
-pub(crate) struct RawCertificates {
+pub(crate) struct RawClientTls {
     client_cert: Vec<u8>,
     client_key: Vec<u8>,
-    root_cert: Vec<u8>,
+}
+
+#[cfg(feature = "tls-rustls")]
+#[derive(Clone)]
+pub(crate) struct RawCertificates {
+    client_tls: Option<RawClientTls>,
+    root_cert: Option<Vec<u8>>,
 }
 
 /// Parameters specific to builder, so that
@@ -144,19 +150,56 @@ impl ClusterClientBuilder {
         let tls_params = None;
 
         #[cfg(feature = "tls-rustls")]
-        let tls_params = if let Some(RawCertificates {
-            client_cert,
-            client_key,
-            root_cert,
-        }) = self.builder_params.certs.clone()
-        {
-            let tls_params = retrieve_tls_certificates(
-                Some((&mut Cursor::new(client_cert), &mut Cursor::new(client_key))),
-                Some(&mut Cursor::new(root_cert)),
-            )?;
-            Some(tls_params)
-        } else {
-            None
+        let tls_params = {
+            use std::io::BufRead;
+
+            fn curs_to_buf<T>(cur: &mut Cursor<T>) -> &mut dyn BufRead
+            where
+                T: AsRef<[u8]>,
+            {
+                cur
+            }
+
+            fn curs_to_buf2<'t, T, U>(
+                cur: (&'t mut Cursor<T>, &'t mut Cursor<U>),
+            ) -> (&'t mut dyn BufRead, &'t mut dyn BufRead)
+            where
+                T: AsRef<[u8]>,
+                U: AsRef<[u8]>,
+            {
+                (cur.0, cur.1)
+            }
+
+            let client_tls = self.builder_params.certs.clone().map(
+                |RawCertificates {
+                     client_tls,
+                     root_cert,
+                 }| {
+                    let mut client_tls_params = client_tls.map(
+                        |RawClientTls {
+                             client_cert,
+                             client_key,
+                         }| {
+                            (Cursor::new(client_cert), Cursor::new(client_key))
+                        },
+                    );
+
+                    let mut root_cert = root_cert.map(Cursor::new);
+
+                    retrieve_tls_certificates(
+                        client_tls_params.as_mut().map(|(client_cert, client_key)| {
+                            curs_to_buf2((client_cert, client_key))
+                        }),
+                        root_cert.as_mut().map(curs_to_buf),
+                    )
+                },
+            );
+
+            if let Some(client_tls) = client_tls {
+                Some(client_tls?)
+            } else {
+                None
+            }
         };
 
         let first_node = match initial_nodes.first() {
@@ -277,20 +320,25 @@ impl ClusterClientBuilder {
 
     /// Sets raw TLS certificates for the new ClusterClient.
     ///
-    /// `tls` parameter is required since certificates are only used in TLS context
-    /// All certificates are byte streams loaded from PEM files
+    /// When set, enforces the connection must bu TLS secure.
+    ///
+    /// All certificates must be provided as byte streams loaded from PEM files
     /// their consistency is checked during `build()` call
+    ///
+    /// - `client_tls` - Pair containing client certificate and key respectively used for client-side authentication
+    /// - `root_cert` - CA root certificate. If not provided, it uses certificates in trust store.
     #[cfg(feature = "tls-rustls")]
     pub fn certs(
         mut self,
-        client_cert: Vec<u8>,
-        client_key: Vec<u8>,
-        root_cert: Vec<u8>,
+        client_tls: Option<(Vec<u8>, Vec<u8>)>,
+        root_cert: Option<Vec<u8>>,
     ) -> ClusterClientBuilder {
         self.builder_params.tls = Some(TlsMode::Secure);
         self.builder_params.certs = Some(RawCertificates {
-            client_cert,
-            client_key,
+            client_tls: client_tls.map(|(client_cert, client_key)| RawClientTls {
+                client_cert,
+                client_key,
+            }),
             root_cert,
         });
         self
