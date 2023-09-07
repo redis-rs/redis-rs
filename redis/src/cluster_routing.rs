@@ -1,14 +1,12 @@
-use std::cmp::min;
-use std::collections::HashMap;
-use std::iter::Iterator;
-
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-
 use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::iter::{Iterator, Once};
 
 #[derive(Clone)]
 pub(crate) enum Redirect {
@@ -563,39 +561,36 @@ pub enum SlotAddr {
 /// to avoid the need to choose a replica each time
 /// a command is executed
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct SlotAddrs([String; 2]);
+pub(crate) struct SlotAddrs {
+    primary: String,
+    replicas: Vec<String>,
+}
 
 impl SlotAddrs {
-    pub(crate) fn new(master_node: String, replica_node: Option<String>) -> Self {
-        let replica = replica_node.unwrap_or_else(|| master_node.clone());
-        Self([master_node, replica])
+    pub(crate) fn new(primary: String, replicas: Vec<String>) -> Self {
+        Self { primary, replicas }
     }
 
     pub(crate) fn slot_addr(&self, slot_addr: SlotAddr) -> &str {
-        if slot_addr == SlotAddr::Replica {
-            self.0[1].as_str()
+        if slot_addr == SlotAddr::Master || self.replicas.is_empty() {
+            self.primary.as_str()
         } else {
-            self.0[0].as_str()
+            self.replicas[0].as_str()
         }
     }
 
-    pub(crate) fn from_slot(slot: Slot) -> Self {
-        let replica = if slot.replicas.is_empty() {
-            None
-        } else {
-            Some(slot.replicas.choose(&mut thread_rng()).unwrap().to_string())
-        };
-
-        SlotAddrs::new(slot.master, replica)
+    pub(crate) fn from_slot(mut slot: Slot) -> Self {
+        slot.replicas.shuffle(&mut thread_rng());
+        SlotAddrs::new(slot.master, slot.replicas)
     }
 }
 
 impl<'a> IntoIterator for &'a SlotAddrs {
     type Item = &'a String;
-    type IntoIter = std::slice::Iter<'a, String>;
+    type IntoIter = std::iter::Chain<Once<&'a String>, std::slice::Iter<'a, String>>;
 
-    fn into_iter(self) -> std::slice::Iter<'a, String> {
-        self.0.iter()
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(&self.primary).chain(self.replicas.iter())
     }
 }
 
