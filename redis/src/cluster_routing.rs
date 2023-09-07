@@ -7,7 +7,6 @@ use rand::thread_rng;
 
 use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
-use crate::commands::is_readonly_cmd;
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
 
@@ -348,6 +347,110 @@ impl RoutingInfo {
             key,
         )))
     }
+}
+
+/// Returns true if the given `routable` represents a readonly command.
+pub fn is_readonly(routable: &impl Routable) -> bool {
+    match routable.command() {
+        Some(cmd) => is_readonly_cmd(cmd.as_slice()),
+        None => false,
+    }
+}
+
+fn is_readonly_cmd(cmd: &[u8]) -> bool {
+    matches!(
+        cmd,
+        b"BITCOUNT"
+            | b"BITFIELD_RO"
+            | b"BITPOS"
+            | b"DBSIZE"
+            | b"DUMP"
+            | b"EVALSHA_RO"
+            | b"EVAL_RO"
+            | b"EXISTS"
+            | b"EXPIRETIME"
+            | b"FCALL_RO"
+            | b"GEODIST"
+            | b"GEOHASH"
+            | b"GEOPOS"
+            | b"GEORADIUSBYMEMBER_RO"
+            | b"GEORADIUS_RO"
+            | b"GEOSEARCH"
+            | b"GET"
+            | b"GETBIT"
+            | b"GETRANGE"
+            | b"HEXISTS"
+            | b"HGET"
+            | b"HGETALL"
+            | b"HKEYS"
+            | b"HLEN"
+            | b"HMGET"
+            | b"HRANDFIELD"
+            | b"HSCAN"
+            | b"HSTRLEN"
+            | b"HVALS"
+            | b"KEYS"
+            | b"LCS"
+            | b"LINDEX"
+            | b"LLEN"
+            | b"LOLWUT"
+            | b"LPOS"
+            | b"LRANGE"
+            | b"MEMORY USAGE"
+            | b"MGET"
+            | b"OBJECT ENCODING"
+            | b"OBJECT FREQ"
+            | b"OBJECT IDLETIME"
+            | b"OBJECT REFCOUNT"
+            | b"PEXPIRETIME"
+            | b"PFCOUNT"
+            | b"PTTL"
+            | b"RANDOMKEY"
+            | b"SCAN"
+            | b"SCARD"
+            | b"SDIFF"
+            | b"SINTER"
+            | b"SINTERCARD"
+            | b"SISMEMBER"
+            | b"SMEMBERS"
+            | b"SMISMEMBER"
+            | b"SORT_RO"
+            | b"SRANDMEMBER"
+            | b"SSCAN"
+            | b"STRLEN"
+            | b"SUBSTR"
+            | b"SUNION"
+            | b"TOUCH"
+            | b"TTL"
+            | b"TYPE"
+            | b"XINFO CONSUMERS"
+            | b"XINFO GROUPS"
+            | b"XINFO STREAM"
+            | b"XLEN"
+            | b"XPENDING"
+            | b"XRANGE"
+            | b"XREAD"
+            | b"XREVRANGE"
+            | b"ZCARD"
+            | b"ZCOUNT"
+            | b"ZDIFF"
+            | b"ZINTER"
+            | b"ZINTERCARD"
+            | b"ZLEXCOUNT"
+            | b"ZMSCORE"
+            | b"ZRANDMEMBER"
+            | b"ZRANGE"
+            | b"ZRANGEBYLEX"
+            | b"ZRANGEBYSCORE"
+            | b"ZRANK"
+            | b"ZREVRANGE"
+            | b"ZREVRANGEBYLEX"
+            | b"ZREVRANGEBYSCORE"
+            | b"ZREVRANK"
+            | b"ZSCAN"
+            | b"ZSCORE"
+            | b"ZUNION"
+    )
 }
 
 /// Objects that implement this trait define a request that can be routed by a cluster client to different nodes in the cluster.
