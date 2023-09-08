@@ -136,8 +136,8 @@ impl ClusterClientBuilder {
     /// This does not create connections to the Redis Cluster, but only performs some basic checks
     /// on the initial nodes' URLs and passwords/usernames.
     ///
-    /// In the case `tls-rustls` feature is enabled:
-    /// when TLS credentials are provided, they are set for each cluster connection configured for with `TcpTls`
+    /// When the `tls-rustls` feature is enabled and TLS credentials are provided, they are set for
+    /// each cluster connection.
     ///
     /// # Errors
     ///
@@ -320,12 +320,13 @@ impl ClusterClientBuilder {
 
     /// Sets raw TLS certificates for the new ClusterClient.
     ///
-    /// When set, enforces the connection must bu TLS secure.
+    /// When set, enforces the connection must be TLS secured.
     ///
-    /// All certificates must be provided as byte streams loaded from PEM files
-    /// their consistency is checked during `build()` call
+    /// All certificates must be provided as byte streams loaded from PEM files their consistency is
+    /// checked during `build()` call.
     ///
-    /// - `client_tls` - Pair containing client certificate and key respectively used for client-side authentication
+    /// - `client_tls` - Pair containing client certificate and key respectively used for
+    ///   client-side authentication.
     /// - `root_cert` - CA root certificate. If not provided, it uses certificates in trust store.
     #[cfg(feature = "tls-rustls")]
     pub fn certs(

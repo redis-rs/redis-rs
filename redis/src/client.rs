@@ -353,42 +353,43 @@ impl Client {
         &self.connection_info
     }
 
-    #[cfg(feature = "tls-rustls")]
-    /// The builder takes all parameters necessary to create a TLS connection.
+    /// Constructs a new `Client` with parameters necessary to create a TLS connection.
     ///
-    /// - `url` - URL using `rediss:` protocol
-    /// - `client_tls_params` - Optional pair of binary streams containing PEM's file's contents for
-    /// -- client certificate
-    /// -- client key
-    /// - `root_cert` - Optional binary stream containing PEM file for CA certificate
+    /// - `conn_info` - URL using the `rediss://` scheme.
+    /// - `client_tls_params` - Optional pair of byte readers yielding PEM formatted files for:
+    ///   0. client's certificate chain
+    ///   1. client's private key
+    /// - `root_cert` - Optional byte readers yielding PEM formatted file for root certificates.
     ///
-    /// If CA certificate is not provided, then CA certificate is used instead
-    /// If client cert/key are not provided, then client-side authentication is not enabled
+    /// If client cert+key pair is not provided, then client-side authentication is not enabled. If
+    /// trust anchors are not provided, then system root certificates are used instead.
     ///
-    ///
-    /// Example usage:
+    /// # Examples
     ///
     /// ```no_run
-    /// use redis::Client;
-    /// use redis::AsyncCommands;
+    /// use std::{fs::File, io::BufReader};
     ///
-    /// use std::fs::File;
-    /// use std::io::BufReader;
+    /// use redis::{Client, AsyncCommands as _};
     ///
-    /// async fn do_redis_code(url: &str, ca_file: &str, cert_file: &str, key_file: &str) -> redis::RedisResult<()> {
+    /// async fn do_redis_code(
+    ///     url: &str,
+    ///     root_cert_file: &str,
+    ///     cert_file: &str,
+    ///     key_file: &str
+    /// ) -> redis::RedisResult<()> {
     ///     let cert_file = File::open(cert_file).expect("cannot open private cert file");
     ///     let mut reader_cert = BufReader::new(cert_file);
     ///
     ///     let key_file = File::open(key_file).expect("Cannot open private key file");
     ///     let mut reader_key = BufReader::new(key_file);
     ///
-    ///     let ca_file = File::open(ca_file).expect("Cannot open CA cert file");
-    ///     let mut reader_ca = BufReader::new(ca_file);
+    ///     let root_cert_file = File::open(root_cert_file).expect("Cannot open root cert file");
+    ///     let mut reader_root_certs = BufReader::new(root_cert_file);
     ///
     ///     let client = Client::build_with_tls(
     ///         url,
     ///         Some((&mut reader_cert, &mut reader_key)),
-    ///         Some(&mut reader_ca),
+    ///         Some(&mut reader_root_certs),
     ///     )
     ///     .expect("Unable to build client");
     ///
@@ -415,6 +416,7 @@ impl Client {
     ///     Ok(())
     /// }
     /// ```
+    #[cfg(feature = "tls-rustls")]
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
         client_tls_params: Option<(&mut dyn BufRead, &mut dyn BufRead)>,

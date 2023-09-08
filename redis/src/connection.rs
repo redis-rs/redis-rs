@@ -810,10 +810,10 @@ pub(crate) fn create_rustls_config(
 
     let config = if let Some(tls_params) = tls_params {
         let config_builder =
-            config.with_root_certificates(tls_params.root_cert.unwrap_or(root_store));
+            config.with_root_certificates(tls_params.root_cert_store.unwrap_or(root_store));
 
         if let Some(ClientTlsParams {
-            client_cert,
+            client_cert_chain: client_cert,
             client_key,
         }) = tls_params.client_tls_params
         {
