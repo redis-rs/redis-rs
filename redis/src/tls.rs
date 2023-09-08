@@ -60,8 +60,9 @@ pub(crate) fn retrieve_tls_certificates(
         let trust_anchors = certs
             .iter()
             .map(|cert| {
-                let ta = webpki::TrustAnchor::try_from_cert_der(cert)
-                    .map_err(|_| Error::new(IOErrorKind::Other, "Unable to parse trust anchors"))?;
+                let ta = webpki::TrustAnchor::try_from_cert_der(cert).map_err(|_| {
+                    Error::new(IOErrorKind::Other, "Unable to parse TLS trust anchors")
+                })?;
 
                 Ok(OwnedTrustAnchor::from_subject_spki_name_constraints(
                     ta.subject,
