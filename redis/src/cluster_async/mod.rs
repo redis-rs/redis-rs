@@ -30,6 +30,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
+    time::Duration,
 };
 
 use crate::{
@@ -287,7 +288,7 @@ struct RequestInfo<C> {
 
 pin_project! {
     #[project = RequestStateProj]
-    enum RequestState<F> {
+    enum RequestState<F, I, C> {
         None,
         Future {
             #[pin]
@@ -296,6 +297,7 @@ pin_project! {
         Sleep {
             #[pin]
             sleep: BoxFuture<'static, ()>,
+            next_action: Option<Next<I, C>>,
         },
     }
 }
@@ -311,8 +313,16 @@ pin_project! {
         retry_params: RetryParams,
         request: Option<PendingRequest<I, C>>,
         #[pin]
-        future: RequestState<F>,
+        future: RequestState<F, I, C>,
     }
+}
+
+fn sleep(duration: Duration) -> BoxFuture<'static, ()> {
+    #[cfg(feature = "tokio-comp")]
+    return Box::pin(tokio::time::sleep(duration));
+
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    return Box::pin(async_std::task::sleep(duration));
 }
 
 #[must_use]
@@ -339,17 +349,15 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
-        if this.request.is_none() {
-            return Poll::Ready(Next::Done);
-        }
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,
-            RequestStateProj::Sleep { sleep } => {
+            RequestStateProj::Sleep { sleep, next_action } => {
                 ready!(sleep.poll(cx));
-                return Next::Retry {
-                    request: self.project().request.take().unwrap(),
+                if let Some(next_action) = next_action.take() {
+                    return Poll::Ready(next_action);
+                } else {
+                    return Poll::Ready(Next::Done);
                 }
-                .into();
             }
             _ => panic!("Request future must be Some"),
         };
@@ -371,7 +379,16 @@ where
                     }
                 };
 
-                let request = this.request.as_mut().unwrap();
+                if !err.is_retryable() {
+                    self.respond(Err(err));
+                    return Next::Done.into();
+                }
+
+                let request = if this.request.is_none() {
+                    return Poll::Ready(Next::Done);
+                } else {
+                    this.request.as_mut().unwrap()
+                };
 
                 if request.retry >= this.retry_params.number_of_retries {
                     self.respond(Err(err));
@@ -379,50 +396,33 @@ where
                 }
                 request.retry = request.retry.saturating_add(1);
 
-                match err.kind() {
+                let sleep = sleep(this.retry_params.wait_time_for_retry(request.retry));
+                let mut request = this.request.take().unwrap();
+                let next_action = match err.kind() {
                     ErrorKind::Ask => {
-                        let mut request = this.request.take().unwrap();
                         request.info.redirect = err
                             .redirect_node()
                             .map(|(node, _slot)| Redirect::Ask(node.to_string()));
-                        Next::Retry { request }.into()
+                        Next::Retry { request }
                     }
                     ErrorKind::Moved => {
-                        let mut request = this.request.take().unwrap();
                         request.info.redirect = err
                             .redirect_node()
                             .map(|(node, _slot)| Redirect::Moved(node.to_string()));
-                        Next::RefreshSlots { request }.into()
-                    }
-                    ErrorKind::TryAgain | ErrorKind::ClusterDown => {
-                        // Sleep and retry.
-                        let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
-                        this.future.set(RequestState::Sleep {
-                            #[cfg(feature = "tokio-comp")]
-                            sleep: Box::pin(tokio::time::sleep(sleep_duration)),
-
-                            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                            sleep: Box::pin(async_std::task::sleep(sleep_duration)),
-                        });
-                        self.poll(cx)
+                        Next::RefreshSlots { request }
                     }
                     ErrorKind::IoError => Next::Reconnect {
-                        request: this.request.take().unwrap(),
+                        request,
                         target: OperationTarget::Node { address },
-                    }
-                    .into(),
-                    _ => {
-                        if err.is_retryable() {
-                            Next::Retry {
-                                request: this.request.take().unwrap(),
-                            }
-                            .into()
-                        } else {
-                            self.respond(Err(err));
-                            Next::Done.into()
-                        }
-                    }
-                }
+                    },
+                    // includes TryAgain, ClusterDown
+                    _ => Next::Retry { request },
+                };
+                this.future.set(RequestState::Sleep {
+                    sleep,
+                    next_action: Some(next_action),
+                });
+                self.poll(cx)
             }
         }
     }

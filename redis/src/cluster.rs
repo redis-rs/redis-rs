@@ -512,11 +512,16 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
+                    if !err.is_retryable() {
+                        return Err(err);
+                    }
+
                     if retries == self.retry_params.number_of_retries {
                         return Err(err);
                     }
                     retries += 1;
 
+                    thread::sleep(self.retry_params.wait_time_for_retry(retries));
                     match err.kind() {
                         ErrorKind::Ask => {
                             redirected = err
@@ -531,11 +536,6 @@ where
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
-                        ErrorKind::TryAgain | ErrorKind::ClusterDown => {
-                            // Sleep and retry.
-                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
-                            thread::sleep(sleep_time);
-                        }
                         ErrorKind::IoError => {
                             if *self.auto_reconnect.borrow() {
                                 if let Ok(mut conn) = self.connect(&addr) {
@@ -545,11 +545,7 @@ where
                                 }
                             }
                         }
-                        _ => {
-                            if !err.is_retryable() {
-                                return Err(err);
-                            }
-                        }
+                        _ => {}
                     }
                 }
             }
