@@ -14,13 +14,13 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 35    
+    timeout-minutes: 50    
     strategy:
       fail-fast: false
       matrix:
         redis:
           - 6.2.4
-          - 7.0.12
+          - 7.2.0
         rust:
           - stable
           - beta
