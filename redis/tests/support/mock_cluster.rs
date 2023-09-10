@@ -1,7 +1,8 @@
 use redis::cluster::{self, ClusterClient, ClusterClientBuilder};
+
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -32,7 +33,10 @@ pub struct MockConnection {
 
 #[cfg(feature = "cluster-async")]
 impl cluster_async::Connect for MockConnection {
-    fn connect<'a, T>(info: T, _socket_addr: Option<SocketAddr>) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(
+        info: T,
+        _socket_addr: Option<SocketAddr>,
+    ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
@@ -42,15 +46,18 @@ impl cluster_async::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
-        Box::pin(future::ok(MockConnection {
-            handler: HANDLERS
-                .read()
-                .unwrap()
-                .get(name)
-                .unwrap_or_else(|| panic!("Handler `{name}` were not installed"))
-                .clone(),
-            port,
-        }))
+        Box::pin(future::ok((
+            MockConnection {
+                handler: HANDLERS
+                    .read()
+                    .unwrap()
+                    .get(name)
+                    .unwrap_or_else(|| panic!("Handler `{name}` were not installed"))
+                    .clone(),
+                port,
+            },
+            None,
+        )))
     }
 }
 
