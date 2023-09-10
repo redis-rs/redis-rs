@@ -572,15 +572,17 @@ impl SlotAddrs {
     }
 
     pub(crate) fn slot_addr(&self, slot_addr: SlotAddr) -> &str {
-        if slot_addr == SlotAddr::Master || self.replicas.is_empty() {
-            self.primary.as_str()
-        } else {
-            self.replicas[0].as_str()
+        match slot_addr {
+            SlotAddr::Master => &self.primary,
+            SlotAddr::Replica => self
+                .replicas
+                .choose(&mut thread_rng())
+                .unwrap_or(&self.primary),
         }
+        .as_str()
     }
 
-    pub(crate) fn from_slot(mut slot: Slot) -> Self {
-        slot.replicas.shuffle(&mut thread_rng());
+    pub(crate) fn from_slot(slot: Slot) -> Self {
         SlotAddrs::new(slot.master, slot.replicas)
     }
 }
