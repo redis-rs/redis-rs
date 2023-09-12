@@ -139,7 +139,6 @@ where
                     routing: CommandRouting::Route(
                         routing.or_else(|| RoutingInfo::for_routable(cmd, allow_replicas)),
                     ),
-                    response_policy: RoutingInfo::response_policy(cmd),
                 },
                 sender,
             })
@@ -237,7 +236,6 @@ enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
         routing: CommandRouting<C>,
-        response_policy: Option<ResponsePolicy>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
@@ -838,7 +836,6 @@ where
                                                     identifier,
                                                     conn,
                                                 },
-                                                response_policy: None,
                                             },
                                             redirect: None,
                                         },
@@ -893,7 +890,6 @@ where
         cmd: Arc<Cmd>,
         redirect: Option<Redirect>,
         routing: CommandRouting<C>,
-        response_policy: Option<ResponsePolicy>,
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
@@ -904,7 +900,10 @@ where
         } else {
             match routing {
                 // commands that are sent to multiple nodes are handled here.
-                CommandRouting::Route(Some(RoutingInfo::MultiNode(multi_node_routing))) => {
+                CommandRouting::Route(Some(RoutingInfo::MultiNode((
+                    multi_node_routing,
+                    response_policy,
+                )))) => {
                     assert!(!asking);
                     assert!(redirect.is_none());
                     return Self::execute_on_multiple_nodes(
@@ -964,13 +963,8 @@ where
         let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
 
         match info.cmd {
-            CmdArg::Cmd {
-                cmd,
-                routing,
-                response_policy,
-            } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, response_policy, core, asking)
-                    .await
+            CmdArg::Cmd { cmd, routing } => {
+                Self::try_cmd_request(cmd, info.redirect, routing, core, asking).await
             }
             CmdArg::Pipeline {
                 pipeline,
