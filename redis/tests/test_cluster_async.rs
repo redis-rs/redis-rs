@@ -99,7 +99,7 @@ fn test_async_cluster_route_flush_to_specific_node() {
         let routing = RoutingInfo::SingleNode(single_node_route);
         assert_eq!(
             connection
-                .route_command(&redis::cmd("FLUSHALL"), routing, None)
+                .route_command(&redis::cmd("FLUSHALL"), routing)
                 .await
                 .unwrap(),
             Value::Okay
@@ -143,9 +143,9 @@ fn test_async_cluster_route_info_to_nodes() {
         let mut connection = client.get_async_connection().await?;
 
         let route_to_all_nodes = redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes;
-        let routing = RoutingInfo::MultiNode(route_to_all_nodes);
+        let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
         let res = connection
-            .route_command(&redis::cmd("INFO"), routing, None)
+            .route_command(&redis::cmd("INFO"), routing)
             .await
             .unwrap();
         let (addresses, infos) = split_to_addresses_and_info(res);
@@ -165,9 +165,9 @@ fn test_async_cluster_route_info_to_nodes() {
         }
 
         let route_to_all_primaries = redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
-        let routing = RoutingInfo::MultiNode(route_to_all_primaries);
+        let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
         let res = connection
-            .route_command(&redis::cmd("INFO"), routing, None)
+            .route_command(&redis::cmd("INFO"), routing)
             .await
             .unwrap();
         let (addresses, infos) = split_to_addresses_and_info(res);
@@ -915,8 +915,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
     cmd.arg("test");
     let _ = runtime.block_on(connection.route_command(
         &cmd,
-        RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters),
-        None,
+        RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllMasters, None)),
     ));
     {
         let mut touched_ports = touched_ports.lock().unwrap();
@@ -927,8 +926,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
 
     let _ = runtime.block_on(connection.route_command(
         &cmd,
-        RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes),
-        None,
+        RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
     ));
     {
         let mut touched_ports = touched_ports.lock().unwrap();
