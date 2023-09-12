@@ -36,7 +36,10 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
-    cluster_routing::{Redirect, ResponsePolicy, Route, RoutingInfo, Slot, SlotMap},
+    cluster_routing::{
+        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+        SingleNodeRoutingInfo, Slot, SlotMap,
+    },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -132,10 +135,12 @@ enum CmdArg<C> {
 fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::Random) => None,
-            Some(RoutingInfo::SpecificNode(route)) => Some(route),
-            Some(RoutingInfo::AllNodes) | Some(RoutingInfo::AllMasters) => None,
-            _ => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
+                Some(route)
+            }
+            Some(RoutingInfo::MultiNode(_)) => None,
+            None => None,
         }
     }
 
@@ -534,24 +539,36 @@ where
         Ok(())
     }
 
-    async fn execute_on_multiple_nodes(
+    async fn execute_on_multiple_nodes<'a>(
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
-        cmd: &Arc<Cmd>,
-        only_primaries: bool,
+        cmd: &'a Arc<Cmd>,
+        routing: &'a MultipleNodeRoutingInfo,
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
-        let connections: Vec<(String, ConnectionFuture<C>)> = read_guard
+        let connections: Vec<_> = read_guard
             .1
-            .all_unique_addresses(only_primaries)
+            .addresses_for_multi_routing(routing)
             .into_iter()
-            .filter_map(|addr| {
-                read_guard
-                    .0
-                    .get(addr)
-                    .cloned()
-                    .map(|conn| (addr.to_string(), conn))
+            .enumerate()
+            .filter_map(|(index, addr)| {
+                read_guard.0.get(addr).cloned().map(|conn| {
+                    let cmd = match routing {
+                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                            let mut new_cmd = Cmd::new();
+                            let command_length = 1; // TODO - the +1 should change if we have multi-slot commands with 2 command words.
+                            new_cmd.arg(cmd.arg_idx(0));
+                            let (_, indices) = vec.get(index).unwrap();
+                            for index in indices {
+                                new_cmd.arg(cmd.arg_idx(*index + command_length));
+                            }
+                            Arc::new(new_cmd)
+                        }
+                        _ => cmd.clone(),
+                    };
+                    (addr.to_string(), conn, cmd)
+                })
             })
             .collect();
         drop(read_guard);
@@ -561,10 +578,10 @@ where
             Response::Multiple(_) => unreachable!(),
         };
 
-        let run_func = |(_, conn)| {
+        let run_func = |(_, conn, cmd)| {
             Box::pin(async move {
                 let conn = conn.await;
-                Ok(extract_result(func(conn, cmd.clone()).await?))
+                Ok(extract_result(func(conn, cmd).await?))
             })
         };
 
@@ -606,17 +623,25 @@ where
             Some(ResponsePolicy::CombineArrays) => {
                 future::try_join_all(connections.into_iter().map(run_func))
                     .await
-                    .and_then(crate::cluster_routing::combine_array_results)
+                    .and_then(|results| match routing {
+                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                            crate::cluster_routing::combine_and_sort_array_results(
+                                results,
+                                vec.iter().map(|(_, indices)| indices),
+                            )
+                        }
+                        _ => crate::cluster_routing::combine_array_results(results),
+                    })
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
                 // TODO - once RESP3 is merged, return a map value here.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
-                future::try_join_all(connections.into_iter().map(|(addr, conn)| async move {
+                future::try_join_all(connections.into_iter().map(|(addr, conn, cmd)| async move {
                     let conn = conn.await;
                     Ok(Value::Bulk(vec![
                         Value::Data(addr.into_bytes()),
-                        extract_result(func(conn, cmd.clone()).await?),
+                        extract_result(func(conn, cmd).await?),
                     ]))
                 }))
                 .await
@@ -637,18 +662,24 @@ where
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route_option = match routing.as_ref().unwrap_or(&RoutingInfo::Random) {
-            RoutingInfo::AllNodes => {
-                return Self::execute_on_multiple_nodes(func, &cmd, false, core, response_policy)
-                    .await
+        let route_option = match routing
+            .as_ref()
+            .unwrap_or(&RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        {
+            RoutingInfo::MultiNode(multi_node_routing) => {
+                return Self::execute_on_multiple_nodes(
+                    func,
+                    &cmd,
+                    multi_node_routing,
+                    core,
+                    response_policy,
+                )
+                .await
             }
-            RoutingInfo::AllMasters => {
-                return Self::execute_on_multiple_nodes(func, &cmd, true, core, response_policy)
-                    .await
-            }
-            RoutingInfo::Random => None,
-            RoutingInfo::SpecificNode(route) => Some(route),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random) => None,
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => Some(route),
         };
+
         let (addr, conn) = Self::get_connection(redirect, route_option, core, asking).await;
         let result = func(conn, cmd).await;
         (addr.into(), result)
