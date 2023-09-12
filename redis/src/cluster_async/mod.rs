@@ -96,7 +96,7 @@ where
     pub async fn send_packed_command(
         &mut self,
         cmd: &Cmd,
-        routing: Option<RoutingInfo>,
+        routing: RoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
         trace!("send_packed_command");
@@ -142,7 +142,7 @@ where
         pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-        route: Option<Route>,
+        route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
         self.0
@@ -203,7 +203,7 @@ enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
-        routing: Option<RoutingInfo>,
+        routing: RoutingInfo,
         response_policy: Option<ResponsePolicy>,
     },
     Pipeline {
@@ -211,7 +211,7 @@ enum CmdArg<C> {
         offset: usize,
         count: usize,
         func: fn(C, Arc<crate::Pipeline>, usize, usize) -> RedisFuture<'static, Response>,
-        route: Option<Route>,
+        route: SingleNodeRoutingInfo,
     },
 }
 
@@ -740,20 +740,17 @@ where
         cmd: Arc<Cmd>,
         func: fn(C, Arc<Cmd>) -> RedisFuture<'static, Response>,
         redirect: Option<Redirect>,
-        routing: Option<RoutingInfo>,
+        routing: RoutingInfo,
         response_policy: Option<ResponsePolicy>,
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route_option = match routing
-            .as_ref()
-            .unwrap_or(&RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-        {
+        let route_option = match routing {
             RoutingInfo::MultiNode(multi_node_routing) => {
                 return Self::execute_on_multiple_nodes(
                     func,
                     &cmd,
-                    multi_node_routing,
+                    &multi_node_routing,
                     core,
                     response_policy,
                 )
@@ -763,7 +760,7 @@ where
             RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => Some(route),
         };
 
-        let (addr, conn) = Self::get_connection(redirect, route_option, core, asking).await;
+        let (addr, conn) = Self::get_connection(redirect, route_option.into(), core, asking).await;
         let result = func(conn, cmd).await;
         (addr.into(), result)
     }
@@ -816,7 +813,7 @@ where
                     offset,
                     count,
                     func,
-                    Self::get_connection(info.redirect, route.as_ref(), core, asking),
+                    Self::get_connection(info.redirect, route, core, asking),
                 )
                 .await
             }
@@ -825,7 +822,7 @@ where
 
     async fn get_connection(
         mut redirect: Option<Redirect>,
-        route: Option<&Route>,
+        route: SingleNodeRoutingInfo,
         core: Core<C>,
         asking: bool,
     ) -> (String, C) {
@@ -834,10 +831,13 @@ where
         let conn = match redirect.take() {
             Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
             Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
-            None => route
-                .as_ref()
-                .and_then(|route| read_guard.1.slot_addr_for_route(route))
-                .map(|addr| addr.to_string()),
+            None => match route {
+                SingleNodeRoutingInfo::Random => None,
+                SingleNodeRoutingInfo::SpecificNode(route) => read_guard
+                    .1
+                    .slot_addr_for_route(&route)
+                    .map(|addr| addr.to_string()),
+            },
         }
         .map(|addr| {
             let conn = read_guard.0.get(&addr).cloned();
@@ -1162,7 +1162,8 @@ where
     C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        let routing = RoutingInfo::for_routable(cmd);
+        let routing = RoutingInfo::for_routable(cmd)
+            .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
         let response_policy = ResponsePolicy::for_routable(cmd);
         self.send_packed_command(cmd, routing, response_policy)
             .boxed()
@@ -1174,7 +1175,7 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        let route = route_pipeline(pipeline);
+        let route = route_pipeline(pipeline).into();
         self.send_packed_commands(pipeline, offset, count, route)
             .boxed()
     }

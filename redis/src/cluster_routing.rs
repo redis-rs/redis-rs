@@ -77,6 +77,14 @@ pub enum SingleNodeRoutingInfo {
     SpecificNode(Route),
 }
 
+impl From<Option<Route>> for SingleNodeRoutingInfo {
+    fn from(value: Option<Route>) -> Self {
+        value
+            .map(SingleNodeRoutingInfo::SpecificNode)
+            .unwrap_or(SingleNodeRoutingInfo::Random)
+    }
+}
+
 /// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
 pub enum MultipleNodeRoutingInfo {
