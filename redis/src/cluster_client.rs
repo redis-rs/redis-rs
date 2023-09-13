@@ -16,24 +16,7 @@ use crate::connection::TlsConnParams;
 use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
-use std::io::Cursor;
-
-#[cfg(feature = "tls-rustls")]
-use crate::tls::retrieve_tls_certificates;
-
-#[cfg(feature = "tls-rustls")]
-#[derive(Clone)]
-pub(crate) struct RawClientTls {
-    client_cert: Vec<u8>,
-    client_key: Vec<u8>,
-}
-
-#[cfg(feature = "tls-rustls")]
-#[derive(Clone)]
-pub(crate) struct RawCertificates {
-    client_tls: Option<RawClientTls>,
-    root_cert: Option<Vec<u8>>,
-}
+use crate::tls::{retrieve_tls_certificates, CertificatesBinary};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -45,7 +28,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
-    certs: Option<RawCertificates>,
+    certs: Option<CertificatesBinary>,
     retries_configuration: RetryParams,
 }
 
@@ -151,52 +134,14 @@ impl ClusterClientBuilder {
 
         #[cfg(feature = "tls-rustls")]
         let tls_params = {
-            use std::io::BufRead;
+            let retrieved_tls_params = self
+                .builder_params
+                .certs
+                .clone()
+                .map(retrieve_tls_certificates);
 
-            fn curs_to_buf<T>(cur: &mut Cursor<T>) -> &mut dyn BufRead
-            where
-                T: AsRef<[u8]>,
-            {
-                cur
-            }
-
-            fn curs_to_buf2<'t, T, U>(
-                cur: (&'t mut Cursor<T>, &'t mut Cursor<U>),
-            ) -> (&'t mut dyn BufRead, &'t mut dyn BufRead)
-            where
-                T: AsRef<[u8]>,
-                U: AsRef<[u8]>,
-            {
-                (cur.0, cur.1)
-            }
-
-            let client_tls = self.builder_params.certs.clone().map(
-                |RawCertificates {
-                     client_tls,
-                     root_cert,
-                 }| {
-                    let mut client_tls_params = client_tls.map(
-                        |RawClientTls {
-                             client_cert,
-                             client_key,
-                         }| {
-                            (Cursor::new(client_cert), Cursor::new(client_key))
-                        },
-                    );
-
-                    let mut root_cert = root_cert.map(Cursor::new);
-
-                    retrieve_tls_certificates(
-                        client_tls_params.as_mut().map(|(client_cert, client_key)| {
-                            curs_to_buf2((client_cert, client_key))
-                        }),
-                        root_cert.as_mut().map(curs_to_buf),
-                    )
-                },
-            );
-
-            if let Some(client_tls) = client_tls {
-                Some(client_tls?)
+            if let Some(tls_params) = retrieved_tls_params {
+                Some(tls_params?)
             } else {
                 None
             }
@@ -329,19 +274,9 @@ impl ClusterClientBuilder {
     ///   client-side authentication.
     /// - `root_cert` - CA root certificate. If not provided, it uses certificates in trust store.
     #[cfg(feature = "tls-rustls")]
-    pub fn certs(
-        mut self,
-        client_tls: Option<(Vec<u8>, Vec<u8>)>,
-        root_cert: Option<Vec<u8>>,
-    ) -> ClusterClientBuilder {
+    pub fn certs(mut self, certificates: CertificatesBinary) -> ClusterClientBuilder {
         self.builder_params.tls = Some(TlsMode::Secure);
-        self.builder_params.certs = Some(RawCertificates {
-            client_tls: client_tls.map(|(client_cert, client_key)| RawClientTls {
-                client_cert,
-                client_key,
-            }),
-            root_cert,
-        });
+        self.builder_params.certs = Some(certificates);
         self
     }
 

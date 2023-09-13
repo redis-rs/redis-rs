@@ -465,6 +465,9 @@ pub mod sentinel;
 #[cfg(feature = "tls-rustls")]
 mod tls;
 
+#[cfg(feature = "tls-rustls")]
+pub use crate::tls::{CertificatesBinary, ClientTlsBinary};
+
 mod client;
 mod cmd;
 mod commands;

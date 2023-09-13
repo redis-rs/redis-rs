@@ -9,10 +9,7 @@ use crate::{
 };
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::inner_build_with_tls;
-
-#[cfg(feature = "tls-rustls")]
-use std::io::BufRead;
+use crate::tls::{inner_build_with_tls, CertificatesBinary};
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -367,9 +364,9 @@ impl Client {
     /// # Examples
     ///
     /// ```no_run
-    /// use std::{fs::File, io::BufReader};
+    /// use std::{fs::File, io::{BufReader, Read}};
     ///
-    /// use redis::{Client, AsyncCommands as _};
+    /// use redis::{Client, AsyncCommands as _, CertificatesBinary, ClientTlsBinary};
     ///
     /// async fn do_redis_code(
     ///     url: &str,
@@ -377,19 +374,33 @@ impl Client {
     ///     cert_file: &str,
     ///     key_file: &str
     /// ) -> redis::RedisResult<()> {
+    ///     let root_cert_file = File::open(root_cert_file).expect("cannot open private cert file");
+    ///     let mut root_cert_vec = Vec::new();
+    ///     BufReader::new(root_cert_file)
+    ///         .read_to_end(&mut root_cert_vec)
+    ///         .expect("Unable to read ROOT cert file");
+    ///
     ///     let cert_file = File::open(cert_file).expect("cannot open private cert file");
-    ///     let mut reader_cert = BufReader::new(cert_file);
+    ///     let mut client_cert_vec = Vec::new();
+    ///     BufReader::new(cert_file)
+    ///         .read_to_end(&mut client_cert_vec)
+    ///         .expect("Unable to read client cert file");
     ///
-    ///     let key_file = File::open(key_file).expect("Cannot open private key file");
-    ///     let mut reader_key = BufReader::new(key_file);
-    ///
-    ///     let root_cert_file = File::open(root_cert_file).expect("Cannot open root cert file");
-    ///     let mut reader_root_certs = BufReader::new(root_cert_file);
+    ///     let key_file = File::open(key_file).expect("cannot open private key file");
+    ///     let mut client_key_vec = Vec::new();
+    ///     BufReader::new(key_file)
+    ///         .read_to_end(&mut client_key_vec)
+    ///         .expect("Unable to read client key file");
     ///
     ///     let client = Client::build_with_tls(
     ///         url,
-    ///         Some((&mut reader_cert, &mut reader_key)),
-    ///         Some(&mut reader_root_certs),
+    ///         CertificatesBinary {
+    ///             client_tls: Some(ClientTlsBinary{
+    ///                 client_cert: client_cert_vec,
+    ///                 client_key: client_key_vec,
+    ///             }),
+    ///             root_cert: Some(root_cert_vec),
+    ///         }
     ///     )
     ///     .expect("Unable to build client");
     ///
@@ -419,10 +430,9 @@ impl Client {
     #[cfg(feature = "tls-rustls")]
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
-        client_tls_params: Option<(&mut dyn BufRead, &mut dyn BufRead)>,
-        root_cert: Option<&mut dyn BufRead>,
+        tls_certs: CertificatesBinary,
     ) -> RedisResult<Client> {
-        inner_build_with_tls(conn_info, client_tls_params, root_cert)
+        inner_build_with_tls(conn_info, tls_certs)
     }
 }
 

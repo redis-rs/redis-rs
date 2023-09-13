@@ -1,16 +1,37 @@
-use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
+use std::io::{BufRead, Cursor, Error, ErrorKind as IOErrorKind};
 
 use rustls::{Certificate, OwnedTrustAnchor, PrivateKey, RootCertStore};
 
 use crate::{Client, ConnectionAddr, ErrorKind, IntoConnectionInfo, RedisError, RedisResult};
 
+/// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
+///
+#[derive(Clone)]
+pub struct ClientTlsBinary {
+    /// client certificate byte stream in PEM format
+    pub client_cert: Vec<u8>,
+    /// client key byte stream in PEM format
+    pub client_key: Vec<u8>,
+}
+
+/// Structure to hold TLS certificates
+/// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsBinary` structure if mTLS is used
+/// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
+///
+#[derive(Clone)]
+pub struct CertificatesBinary {
+    /// 'ClientTlsBinary' containing client certificate and key if mTLS is to be used
+    pub client_tls: Option<ClientTlsBinary>,
+    /// root certificate byte stream in PEM format if the local truststore is *not* to be used
+    pub root_cert: Option<Vec<u8>>,
+}
+
 pub(crate) fn inner_build_with_tls<C: IntoConnectionInfo>(
     conn_info: C,
-    client_tls_params: Option<(&mut dyn BufRead, &mut dyn BufRead)>,
-    trust_anchors_pem: Option<&mut dyn BufRead>,
+    certificates: CertificatesBinary,
 ) -> RedisResult<Client> {
     let mut connection_info = conn_info.into_connection_info()?;
-    let tls_params = retrieve_tls_certificates(client_tls_params, trust_anchors_pem)?;
+    let tls_params = retrieve_tls_certificates(certificates)?;
 
     connection_info.addr = if let ConnectionAddr::TcpTls {
         host,
@@ -36,15 +57,22 @@ pub(crate) fn inner_build_with_tls<C: IntoConnectionInfo>(
 }
 
 pub(crate) fn retrieve_tls_certificates(
-    client_tls_params: Option<(&mut dyn BufRead, &mut dyn BufRead)>,
-    trust_anchors_pem: Option<&mut dyn BufRead>,
+    certificates: CertificatesBinary,
 ) -> RedisResult<TlsConnParams> {
-    let client_tls_params = if let Some((client_cert_chain_pem, client_key_pem)) = client_tls_params
+    let CertificatesBinary {
+        client_tls,
+        root_cert,
+    } = certificates;
+
+    let client_tls_params = if let Some(ClientTlsBinary {
+        client_cert,
+        client_key,
+    }) = client_tls
     {
-        let mut certs = rustls_pemfile::certs(client_cert_chain_pem)?;
+        let mut certs = rustls_pemfile::certs(&mut Cursor::new(client_cert))?;
         let client_cert_chain = certs.drain(..).map(Certificate).collect();
 
-        let client_key = load_key(client_key_pem)?;
+        let client_key = load_key(&mut Cursor::new(client_key))?;
 
         Some(ClientTlsParams {
             client_cert_chain,
@@ -54,8 +82,8 @@ pub(crate) fn retrieve_tls_certificates(
         None
     };
 
-    let root_cert_store = if let Some(root_cert) = trust_anchors_pem {
-        let certs = rustls_pemfile::certs(root_cert)?;
+    let root_cert_store = if let Some(root_cert) = root_cert {
+        let certs = rustls_pemfile::certs(&mut Cursor::new(root_cert))?;
 
         let trust_anchors = certs
             .iter()
