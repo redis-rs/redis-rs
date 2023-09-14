@@ -19,7 +19,7 @@ use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
@@ -183,7 +183,7 @@ pub(crate) async fn connect<C>(
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
-    let con = connect_simple::<C>(connection_info, socket_addr).await?;
+    let (con, _ip) = connect_simple::<C>(connection_info, socket_addr).await?;
     Connection::new(&connection_info.redis, con).await
 }
 
@@ -387,11 +387,20 @@ pub(crate) async fn get_socket_addrs(
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
     socket_addr: Option<SocketAddr>,
-) -> RedisResult<T> {
+) -> RedisResult<(T, Option<IpAddr>)> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(socket_addrs.map(<T>::connect_tcp)).await?.0
+            select_ok(socket_addrs.map(|socket_addr| {
+                Box::pin(async move {
+                    Ok::<_, RedisError>((
+                        <T>::connect_tcp(socket_addr).await?,
+                        Some(socket_addr.ip()),
+                    ))
+                })
+            }))
+            .await?
+            .0
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -401,12 +410,20 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
         } => {
             if let Some(socket_addr) = socket_addr {
-                return <T>::connect_tcp_tls(host, socket_addr, insecure).await;
+                return Ok::<_, RedisError>((
+                    <T>::connect_tcp_tls(host, socket_addr, insecure).await?,
+                    Some(socket_addr.ip()),
+                ));
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(
-                socket_addrs.map(|socket_addr| <T>::connect_tcp_tls(host, socket_addr, insecure)),
-            )
+            select_ok(socket_addrs.map(|socket_addr| {
+                Box::pin(async move {
+                    Ok::<_, RedisError>((
+                        <T>::connect_tcp_tls(host, socket_addr, insecure).await?,
+                        Some(socket_addr.ip()),
+                    ))
+                })
+            }))
             .await?
             .0
         }
@@ -420,7 +437,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => <T>::connect_unix(path).await?,
+        ConnectionAddr::Unix(ref path) => (<T>::connect_unix(path).await?, None),
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {

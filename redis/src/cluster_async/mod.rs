@@ -29,7 +29,7 @@ use std::{
     iter::Iterator,
     marker::Unpin,
     mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{
         atomic::{self, AtomicUsize},
@@ -41,6 +41,7 @@ use std::{
 use crate::{
     aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, slot_cmd},
+    cluster_async::connections_container::ClusterNode,
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
@@ -197,7 +198,8 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
+type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
+type ConnectionMap<C> = HashMap<String, AsyncClusterNode<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
 
@@ -550,11 +552,16 @@ where
         let initial_nodes: Vec<(String, Option<SocketAddr>)> =
             Self::try_to_expand_initial_nodes(initial_nodes).await;
         let connections = stream::iter(initial_nodes.iter().cloned())
-            .map(|node| {
+            .map(|(node_addr, socket_addr)| {
                 let params = params.clone();
                 async move {
-                    let result = connect_and_check(&node.0, params, node.1).await;
-                    result.map(|conn| (node.0, async { conn }.boxed().shared()))
+                    let result = connect_and_check(&node_addr, params, socket_addr).await;
+                    result.map(|(conn, ip)| {
+                        (
+                            node_addr,
+                            ClusterNode::new(async { conn }.boxed().shared(), ip),
+                        )
+                    })
                 }
             })
             .buffer_unordered(initial_nodes.len())
@@ -562,8 +569,8 @@ where
                 (HashMap::with_capacity(initial_nodes.len()), None),
                 |mut connections: (ConnectionMap<C>, Option<String>), addr_conn_res| async move {
                     match addr_conn_res {
-                        Ok(addr_conn) => {
-                            connections.0.extend(Some(addr_conn));
+                        Ok((addr, node)) => {
+                            connections.0.insert(addr, node);
                             (connections.0, None)
                         }
                         Err(e) => (connections.0, Some(e.to_string())),
@@ -594,14 +601,14 @@ where
                     &mut *connections_container,
                     |connections_container, identifier| async move {
                         let addr_option = connections_container.address_for_identifier(&identifier);
-                        let conn_option = connections_container.remove_connection(&identifier);
+                        let node_option = connections_container.remove_connection(&identifier);
                         if let Some(addr) = addr_option {
                             let conn =
-                                Self::get_or_create_conn(&addr, conn_option, cluster_params).await;
-                            if let Ok(conn) = conn {
+                                Self::get_or_create_conn(&addr, node_option, cluster_params).await;
+                            if let Ok((conn, ip)) = conn {
                                 connections_container.replace_or_add_connection_for_address(
                                     addr,
-                                    async { conn }.boxed().shared(),
+                                    ClusterNode::new(async { conn }.boxed().shared(), ip),
                                 );
                             }
                         }
@@ -748,8 +755,8 @@ where
         nodes.dedup();
         let nodes_len = nodes.len();
         let addresses_and_connections_iter = nodes.into_iter().map(|addr| async move {
-            if let Some((_, conn)) = connections.connection_for_address(addr.as_str()) {
-                return (addr, Some(conn));
+            if let Some(node) = connections.node_for_address(addr.as_str()) {
+                return (addr, Some(node));
             }
             // If it's a DNS endpoint, it could have been stored in the existing connections vector using the resolved IP address instead of the DNS endpoint's name.
             // We shall check if a connection is already exists under the resolved IP name.
@@ -761,26 +768,26 @@ where
                 .await
                 .ok()
                 .map(|mut socket_addresses| {
-                    socket_addresses.find_map(|addr| {
-                        connections
-                            .connection_for_address(&addr.to_string())
-                            .map(|(_, conn)| conn)
-                    })
+                    socket_addresses
+                        .find_map(|addr| connections.node_for_address(&addr.to_string()))
                 })
                 .unwrap_or(None);
             (addr, conn)
         });
         let addresses_and_connections_iter =
             futures::future::join_all(addresses_and_connections_iter).await;
-        let new_connections: HashMap<String, ConnectionFuture<C>> =
+        let new_connections: HashMap<String, AsyncClusterNode<C>> =
             stream::iter(addresses_and_connections_iter)
                 .fold(
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
                         let conn =
                             Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                        if let Ok(conn) = conn {
-                            connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        if let Ok((conn, ip)) = conn {
+                            connections.insert(
+                                addr.to_string(),
+                                ClusterNode::new(async { conn }.boxed().shared(), ip),
+                            );
                         }
                         connections
                     },
@@ -1016,12 +1023,15 @@ where
             }
             ConnectionCheck::OnlyAddress(addr) => {
                 match connect_and_check::<C>(&addr, core.cluster_params.clone(), None).await {
-                    Ok(connection) => {
+                    Ok((connection, ip)) => {
                         let connection_clone = connection.clone();
                         let mut connections = core.conn_lock.write().await;
                         let identifier = connections.replace_or_add_connection_for_address(
                             addr,
-                            async move { connection_clone.clone() }.boxed().shared(),
+                            ClusterNode::new(
+                                async move { connection_clone.clone() }.boxed().shared(),
+                                ip,
+                            ),
                         );
                         drop(connections);
                         Some((identifier, connection))
@@ -1179,15 +1189,38 @@ where
         }
     }
 
+    /// Return true if a DNS change is detected, otherwise return false.
+    /// This function takes a node's address, examines if its host has encountered a DNS change, where the node's endpoint now leads to a different IP address.
+    /// If no socket addresses are discovered for the node's host address, or if it's a non-DNS address, it returns false.
+    /// In case the node's host address resolves to socket addresses and none of them match the current connection's IP,
+    /// a DNS change is detected, so the current connection isn't valid anymore and a new connection should be made.
+    async fn is_dns_changed(addr: &str, curr_ip: &IpAddr) -> bool {
+        let (host, port) = match get_host_and_port_from_addr(addr) {
+            Some((host, port)) => (host, port),
+            None => return false,
+        };
+        let mut updated_addresses = match get_socket_addrs(host, port).await {
+            Ok(socket_addrs) => socket_addrs,
+            Err(_) => return false,
+        };
+
+        !updated_addresses.any(|socket_addr| socket_addr.ip() == *curr_ip)
+    }
+
     async fn get_or_create_conn(
         addr: &str,
-        conn_option: Option<ConnectionFuture<C>>,
+        node: Option<AsyncClusterNode<C>>,
         params: &ClusterParams,
-    ) -> RedisResult<C> {
-        if let Some(conn) = conn_option {
-            let mut conn = conn.await;
+    ) -> RedisResult<(C, Option<IpAddr>)> {
+        if let Some(node) = node {
+            let mut conn = node.connection.await;
+            if let Some(ref ip) = node.ip {
+                if Self::is_dns_changed(addr, ip).await {
+                    return connect_and_check(addr, params.clone(), None).await;
+                }
+            };
             match check_connection(&mut conn, params.connection_timeout.into()).await {
-                Ok(_) => Ok(conn),
+                Ok(_) => Ok((conn, node.ip)),
                 Err(_) => connect_and_check(addr, params.clone(), None).await,
             }
         } else {
@@ -1362,8 +1395,13 @@ where
 /// Implements the process of connecting to a Redis server
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
-    /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(info: T, socket_addr: Option<SocketAddr>) -> RedisFuture<'a, Self>
+    /// Connect to a node.
+    /// For TCP connections, returning a tuple of handle for command execution and the node's IP address.
+    /// For UNIX connections, returning a tuple of handle for command execution and None.
+    fn connect<'a, T>(
+        info: T,
+        socket_addr: Option<SocketAddr>,
+    ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
@@ -1372,7 +1410,7 @@ impl Connect for MultiplexedConnection {
     fn connect<'a, T>(
         info: T,
         socket_addr: Option<SocketAddr>,
-    ) -> RedisFuture<'a, MultiplexedConnection>
+    ) -> RedisFuture<'a, (MultiplexedConnection, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
@@ -1400,14 +1438,14 @@ async fn connect_and_check<C>(
     node: &str,
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
-) -> RedisResult<C>
+) -> RedisResult<(C, Option<IpAddr>)>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout.into();
     let info = get_connection_info(node, params)?;
-    let mut conn: C = C::connect(info, socket_addr)
+    let (mut conn, ip) = C::connect(info, socket_addr)
         .timeout(connection_timeout)
         .await??;
     check_connection(&mut conn, connection_timeout).await?;
@@ -1415,7 +1453,7 @@ where
         // If READONLY is sent to primary nodes, it will have no effect
         crate::cmd("READONLY").query_async(&mut conn).await?;
     }
-    Ok(conn)
+    Ok((conn, ip))
 }
 
 async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration) -> RedisResult<()>
