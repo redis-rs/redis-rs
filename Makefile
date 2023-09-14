@@ -53,7 +53,7 @@ test-module:
 	@echo "===================================================================="
 	@echo "Testing with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --all-features test_module
+	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --all-features test_module -- --test-threads=1
 
 test-single: test
 
