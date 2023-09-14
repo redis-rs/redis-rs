@@ -151,8 +151,8 @@ impl RedisCluster {
         if is_tls {
             cmd.arg("--tls").arg("--insecure");
         }
-        let status = cmd.status().unwrap();
-        assert!(status.success());
+        let output = cmd.output().unwrap();
+        assert!(output.status.success(), "output: {output:?}");
 
         let cluster = RedisCluster { servers, folders };
         if replicas > 0 {
