@@ -2,8 +2,6 @@ use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::iter::{Iterator, Once};
@@ -569,7 +567,7 @@ impl Slot {
     }
 }
 
-/// What type of node should a request be routed to.
+/// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
 pub enum SlotAddr {
     /// Primary node
@@ -584,24 +582,13 @@ pub enum SlotAddr {
 /// a command is executed
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct SlotAddrs {
-    primary: String,
-    replicas: Vec<String>,
+    pub(crate) primary: String,
+    pub(crate) replicas: Vec<String>,
 }
 
 impl SlotAddrs {
     pub(crate) fn new(primary: String, replicas: Vec<String>) -> Self {
         Self { primary, replicas }
-    }
-
-    pub(crate) fn slot_addr(&self, slot_addr: SlotAddr) -> &str {
-        match slot_addr {
-            SlotAddr::Master => &self.primary,
-            SlotAddr::Replica => self
-                .replicas
-                .choose(&mut thread_rng())
-                .unwrap_or(&self.primary),
-        }
-        .as_str()
     }
 
     pub(crate) fn from_slot(slot: Slot) -> Self {
@@ -850,41 +837,6 @@ mod tests {
                     SingleNodeRoutingInfo::SpecificNode(Route::new(
                         slot(b"mystream"),
                         SlotAddr::Replica,
-                    )),
-                )),
-            ),
-        ] {
-            assert_eq!(
-                RoutingInfo::for_routable(cmd),
-                expected,
-                "{}",
-                std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
-            );
-        }
-    }
-
-    #[test]
-    fn test_routing_info_without_allowing_replicas() {
-        for (cmd, expected) in [
-            (
-                cmd("XINFO").arg("GROUPS").arg("foo"),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"foo"), SlotAddr::Master)),
-                )),
-            ),
-            (
-                cmd("XREAD")
-                    .arg("COUNT")
-                    .arg("2")
-                    .arg("STREAMS")
-                    .arg("mystream")
-                    .arg("writers")
-                    .arg("0-0")
-                    .arg("0-0"),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"mystream"),
-                        SlotAddr::Master,
                     )),
                 )),
             ),

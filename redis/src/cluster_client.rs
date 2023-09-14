@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
+use crate::cluster_topology::ReadFromReplicaStrategy;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 use crate::{cluster, TlsMode};
@@ -16,7 +17,7 @@ use crate::cluster_async;
 struct BuilderParams {
     password: Option<String>,
     username: Option<String>,
-    read_from_replicas: bool,
+    read_from_replicas: ReadFromReplicaStrategy,
     tls: Option<TlsMode>,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
@@ -64,7 +65,7 @@ impl RetryParams {
 pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
-    pub(crate) read_from_replicas: bool,
+    pub(crate) read_from_replicas: ReadFromReplicaStrategy,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
@@ -237,7 +238,7 @@ impl ClusterClientBuilder {
     /// If enabled, then read queries will go to the replica nodes & write queries will go to the
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = true;
+        self.builder_params.read_from_replicas = ReadFromReplicaStrategy::RoundRobin;
         self
     }
 
@@ -258,7 +259,11 @@ impl ClusterClientBuilder {
     /// Use `read_from_replicas()`.
     #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
     pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = read_from_replicas;
+        self.builder_params.read_from_replicas = if read_from_replicas {
+            ReadFromReplicaStrategy::RoundRobin
+        } else {
+            ReadFromReplicaStrategy::AlwaysFromPrimary
+        };
         self
     }
 }

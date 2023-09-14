@@ -480,7 +480,11 @@ where
     ) -> RedisResult<Self> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new(ConnectionsContainer::new(Default::default(), connections)),
+            conn_lock: RwLock::new(ConnectionsContainer::new(
+                Default::default(),
+                connections,
+                cluster_params.read_from_replicas,
+            )),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
         });
@@ -736,6 +740,7 @@ where
             curr_retry,
             inner.cluster_params.tls,
             num_of_nodes_to_query,
+            inner.cluster_params.read_from_replicas,
         )?;
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
@@ -786,7 +791,11 @@ where
         drop(read_guard);
         // Replace the current slot map and connection vector with the new ones
         let mut write_guard = inner.conn_lock.write().await;
-        *write_guard = ConnectionsContainer::new(new_slots, new_connections);
+        *write_guard = ConnectionsContainer::new(
+            new_slots,
+            new_connections,
+            inner.cluster_params.read_from_replicas,
+        );
         Ok(())
     }
 
@@ -1427,7 +1436,8 @@ async fn connect_and_check<C>(
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
-    let read_from_replicas = params.read_from_replicas;
+    let read_from_replicas = params.read_from_replicas
+        != crate::cluster_topology::ReadFromReplicaStrategy::AlwaysFromPrimary;
     let connection_timeout = params.connection_timeout.into();
     let info = get_connection_info(node, params)?;
     let (mut conn, ip) = C::connect(info, socket_addr)

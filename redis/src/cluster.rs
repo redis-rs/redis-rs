@@ -128,7 +128,6 @@ pub struct ClusterConnection<C = Connection> {
     connections: RefCell<HashMap<String, C>>,
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     cluster_params: ClusterParams,
@@ -144,9 +143,8 @@ where
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new(vec![])),
+            slots: RefCell::new(SlotMap::new(vec![], cluster_params.read_from_replicas)),
             auto_reconnect: RefCell::new(true),
-            read_from_replicas: cluster_params.read_from_replicas,
             cluster_params,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
@@ -298,7 +296,9 @@ where
         )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_slots(&value, self.cluster_params.tls).map(SlotMap::new) {
+            match parse_slots(&value, self.cluster_params.tls)
+                .map(|slots_data| SlotMap::new(slots_data, self.cluster_params.read_from_replicas))
+            {
                 Ok(new_slots) => {
                     result = Ok(new_slots);
                     break;
@@ -313,7 +313,9 @@ where
         let info = get_connection_info(node, self.cluster_params.clone())?;
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
-        if self.read_from_replicas {
+        if self.cluster_params.read_from_replicas
+            != crate::cluster_topology::ReadFromReplicaStrategy::AlwaysFromPrimary
+        {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
