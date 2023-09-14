@@ -72,7 +72,8 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 }
 
-async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
+// Initial setup for every connection.
+async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike,
 {
@@ -125,6 +126,12 @@ where
             )),
         }
     }
+
+    // result is ignored, as per the command's instructions.
+    // https://redis.io/commands/client-setinfo/
+    let _: RedisResult<()> = crate::connection::client_set_info_pipeline()
+        .query_async(con)
+        .await;
 
     Ok(())
 }
