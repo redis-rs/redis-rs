@@ -103,6 +103,7 @@ streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
 keep-alive = ["socket2"]
 sentinel = ["rand"]
+tcp_nodelay = []
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
