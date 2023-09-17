@@ -40,20 +40,20 @@ pub enum AggregateOp {
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
-/// Policy on how to combine multiple responses into one.
+/// Policy for combining multiple responses into one.
 #[derive(Debug, Clone, Copy)]
 pub enum ResponsePolicy {
-    /// Waits for one request to succeed, and return its results. Return error if all requests fail.
+    /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
-    /// Waits for one request to succeed with a non-empty value. Returns error if all requests fail or return `Nil`.
+    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
     OneSucceededNonEmpty,
     /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
-    /// Aggregates success results according to a logical bitwise operator. Returns error on any failed request, or on a response that doesn't conform to 0 or 1.
+    /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
     AggregateLogical(LogicalAggregateOp),
-    /// Aggregates success results according to a numeric operator. Returns error on any failed request, or on a response that isn't an integer.
+    /// Aggregate success results according to a numeric operator. Return error on any failed request or on a response that isn't an integer.
     Aggregate(AggregateOp),
-    /// Aggreagte array responses into a single array. Returns error on any failed request, or on a response that isn't an array.
+    /// Aggregate array responses into a single array. Return error on any failed request or on a response that isn't an array.
     CombineArrays,
     /// Handling is not defined by the Redis standard. Will receive a special case
     Special,
@@ -88,11 +88,11 @@ impl From<Option<Route>> for SingleNodeRoutingInfo {
 /// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
 pub enum MultipleNodeRoutingInfo {
-    /// route to all nodes in the clusters
+    /// Route to all nodes in the clusters
     AllNodes,
     /// Route to all primaries in the cluster
     AllMasters,
-    /// Instructions on how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand and the indices of the arguments from the original command that should be copied to the subcommand.
+    /// Instructions for how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand, and the indices of the arguments from the original command that should be copied to the subcommand.
     MultiSlot(Vec<(Route, Vec<usize>)>),
 }
 
