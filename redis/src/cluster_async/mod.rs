@@ -93,7 +93,7 @@ where
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
     /// If `routing` is [None], the request will be sent to a random node.
-    pub async fn send_packed_command(
+    pub async fn route_command(
         &mut self,
         cmd: &Cmd,
         routing: RoutingInfo,
@@ -137,7 +137,7 @@ where
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be sent to a random node.
-    pub async fn send_packed_commands<'a>(
+    pub async fn route_pipeline<'a>(
         &'a mut self,
         pipeline: &'a crate::Pipeline,
         offset: usize,
@@ -1165,8 +1165,7 @@ where
         let routing = RoutingInfo::for_routable(cmd)
             .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
         let response_policy = ResponsePolicy::for_routable(cmd);
-        self.send_packed_command(cmd, routing, response_policy)
-            .boxed()
+        self.route_command(cmd, routing, response_policy).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -1176,8 +1175,7 @@ where
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         let route = route_pipeline(pipeline).into();
-        self.send_packed_commands(pipeline, offset, count, route)
-            .boxed()
+        self.route_pipeline(pipeline, offset, count, route).boxed()
     }
 
     fn get_db(&self) -> i64 {

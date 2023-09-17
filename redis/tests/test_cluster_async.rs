@@ -807,7 +807,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
 
     let mut cmd = cmd("GET");
     cmd.arg("test");
-    let _ = runtime.block_on(connection.send_packed_command(
+    let _ = runtime.block_on(connection.route_command(
         &cmd,
         RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters),
         None,
@@ -819,7 +819,7 @@ fn test_async_cluster_route_according_to_passed_argument() {
         touched_ports.clear();
     }
 
-    let _ = runtime.block_on(connection.send_packed_command(
+    let _ = runtime.block_on(connection.route_command(
         &cmd,
         RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes),
         None,
