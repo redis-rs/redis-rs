@@ -81,7 +81,7 @@ fn test_async_cluster_basic_script() {
 }
 
 #[test]
-fn test_async_route_flush_to_specific_node() {
+fn test_async_cluster_route_flush_to_specific_node() {
     let cluster = TestClusterContext::new(3, 0);
 
     block_on_all(async move {
@@ -114,7 +114,7 @@ fn test_async_route_flush_to_specific_node() {
 }
 
 #[test]
-fn test_async_route_info_to_nodes() {
+fn test_async_cluster_route_info_to_nodes() {
     let cluster = TestClusterContext::new(12, 1);
 
     let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
@@ -161,8 +161,7 @@ fn test_async_route_info_to_nodes() {
         assert_eq!(infos.len(), 12);
         for i in 0..12 {
             let split: Vec<_> = addresses[i].split(':').collect();
-            assert!(infos[i].contains(&format!("bind={}", split[0])));
-            assert!(infos[i].contains(&format!("port={}", split[1])));
+            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }
 
         let route_to_all_primaries = redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
@@ -178,8 +177,7 @@ fn test_async_route_info_to_nodes() {
         for i in 0..6 {
             assert!(cluster_addresses.contains(&addresses[i]));
             let split: Vec<_> = addresses[i].split(':').collect();
-            assert!(infos[i].contains(&format!("bind={}", split[0])));
-            assert!(infos[i].contains(&format!("port={}", split[1])));
+            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
             assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
         }
 
