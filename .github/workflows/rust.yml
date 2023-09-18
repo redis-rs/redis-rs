@@ -60,22 +60,21 @@ jobs:
         echo "$HOME" >> $GITHUB_PATH
 
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain/@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
         components: rustfmt
 
-    - uses: Swatinem/rust-cache@v1
+    - uses: Swatinem/rust-cache@v2
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Run tests
       run: make test
 
     - name: Checkout RedisJSON
       if: steps.cache-redisjson.outputs.cache-hit != 'true'
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         repository: "RedisJSON/RedisJSON"
         path: "./__ci/redis-json"
@@ -121,22 +120,17 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain/@master
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-features --all-targets -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+        name: fmt
+
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+        name: clippy
       - name: doc
         run: cargo doc --no-deps --document-private-items
         env:
@@ -173,14 +167,13 @@ jobs:
         echo "$HOME" >> $GITHUB_PATH
 
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain/@master
       with:
         toolchain: ${{ env.rust_ver }}
-        override: true
 
-    - uses: Swatinem/rust-cache@v1
+    - uses: Swatinem/rust-cache@v2
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Benchmark
       run: |
