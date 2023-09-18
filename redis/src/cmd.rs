@@ -242,16 +242,18 @@ where
     write_command(cmd, args, cursor).unwrap()
 }
 
-fn write_command<'a, I>(cmd: &mut (impl ?Sized + io::Write), args: I, cursor: u64) -> io::Result<()>
+fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64) -> io::Result<()>
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     let mut buf = ::itoa::Buffer::new();
 
-    cmd.write_all(b"*")?;
+    // TODO: if we can guarantee to allocate enough memory before enter
+    // this function, we can optimize this further by using unsafe to remove bound check.
+    cmd.extend_from_slice(b"*");
     let s = buf.format(args.len());
-    cmd.write_all(s.as_bytes())?;
-    cmd.write_all(b"\r\n")?;
+    cmd.extend_from_slice(s.as_bytes());
+    cmd.extend_from_slice(b"\r\n");
 
     let mut cursor_bytes = itoa::Buffer::new();
     for item in args {
@@ -260,13 +262,13 @@ where
             Arg::Simple(val) => val,
         };
 
-        cmd.write_all(b"$")?;
+        cmd.extend_from_slice(b"$");
         let s = buf.format(bytes.len());
-        cmd.write_all(s.as_bytes())?;
-        cmd.write_all(b"\r\n")?;
+        cmd.extend_from_slice(s.as_bytes());
+        cmd.extend_from_slice(b"\r\n");
 
-        cmd.write_all(bytes)?;
-        cmd.write_all(b"\r\n")?;
+        cmd.extend_from_slice(bytes);
+        cmd.extend_from_slice(b"\r\n");
     }
     Ok(())
 }
