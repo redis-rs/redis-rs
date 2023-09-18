@@ -89,6 +89,11 @@ fn test_async_route_flush_to_specific_node() {
         let _: () = connection.set("foo", "bar").await.unwrap();
         let _: () = connection.set("bar", "foo").await.unwrap();
 
+        let res: String = connection.get("foo").await.unwrap();
+        assert_eq!(res, "bar".to_string());
+        let res2: Option<String> = connection.get("bar").await.unwrap();
+        assert_eq!(res2, Some("foo".to_string()));
+
         let route = redis::cluster_routing::Route::new(1, redis::cluster_routing::SlotAddr::Master);
         let single_node_route = redis::cluster_routing::SingleNodeRoutingInfo::SpecificNode(route);
         let routing = RoutingInfo::SingleNode(single_node_route);
