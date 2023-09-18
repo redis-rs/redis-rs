@@ -249,8 +249,10 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
         let cleared_nodes = async {
             for server in env.cluster.iter_servers() {
                 let addr = server.client_addr();
-                let client = redis::Client::open(server.connection_info())
-                    .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
+
+                let client =
+                    build_single_client(server.connection_info(), &server.tls_paths).unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
+
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await

@@ -70,6 +70,7 @@ pub struct RedisServer {
     pub process: process::Child,
     tempdir: tempfile::TempDir,
     addr: redis::ConnectionAddr,
+    pub(crate) tls_paths: Option<TlsFilePaths>,
 }
 
 impl ServerType {
@@ -188,10 +189,13 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir,
                     addr,
+                    tls_paths: None,
                 }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
                 let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
+
+                let auth_client = if is_tls_enabled() { "yes" } else { "no" };
 
                 // prepare redis with TLS
                 redis_cmd
@@ -205,8 +209,8 @@ impl RedisServer {
                     .arg(&tls_paths.redis_key)
                     .arg("--tls-ca-cert-file")
                     .arg(&tls_paths.ca_crt)
-                    .arg("--tls-auth-clients") // Make it so client doesn't have to send cert
-                    .arg("no")
+                    .arg("--tls-auth-clients")
+                    .arg(auth_client)
                     .arg("--bind")
                     .arg(host);
 
@@ -221,6 +225,7 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir,
                     addr,
+                    tls_paths: Some(tls_paths),
                 }
             }
             redis::ConnectionAddr::Unix(ref path) => {
@@ -233,6 +238,7 @@ impl RedisServer {
                     process: spawner(&mut redis_cmd),
                     tempdir,
                     addr,
+                    tls_paths: None,
                 }
             }
         }
@@ -288,15 +294,69 @@ pub struct TestContext {
     pub client: redis::Client,
 }
 
+pub(crate) fn is_tls_enabled() -> bool {
+    if cfg!(feature = "tls-rustls") {
+        true
+    } else {
+        false
+    }
+}
+
 impl TestContext {
     pub fn new() -> TestContext {
         TestContext::with_modules(&[])
     }
 
+    pub fn with_tls(tls_files: TlsFilePaths) -> TestContext {
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        let server = RedisServer::new_with_addr_tls_modules_and_spawner(
+            addr,
+            None,
+            Some(tls_files),
+            &[],
+            |cmd| {
+                cmd.spawn()
+                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+            },
+        );
+
+        let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+
+        let mut con;
+
+        let millisecond = Duration::from_millis(1);
+        let mut retries = 0;
+        loop {
+            match client.get_connection() {
+                Err(err) => {
+                    if err.is_connection_refusal() {
+                        sleep(millisecond);
+                        retries += 1;
+                        if retries > 100000 {
+                            panic!("Tried to connect too many times, last error: {err}");
+                        }
+                    } else {
+                        panic!("Could not connect: {err}");
+                    }
+                }
+                Ok(x) => {
+                    con = x;
+                    break;
+                }
+            }
+        }
+        redis::cmd("FLUSHDB").execute(&mut con);
+
+        TestContext { server, client }
+    }
+
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
 
-        let client = redis::Client::open(server.connection_info()).unwrap();
+        let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+
         let mut con;
 
         let millisecond = Duration::from_millis(1);
@@ -396,11 +456,11 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TlsFilePaths {
-    redis_crt: PathBuf,
-    redis_key: PathBuf,
-    ca_crt: PathBuf,
+    pub(crate) redis_crt: PathBuf,
+    pub(crate) redis_key: PathBuf,
+    pub(crate) ca_crt: PathBuf,
 }
 
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
@@ -456,8 +516,14 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .expect("failed to create CA cert");
 
     // Build x509v3 extensions file
-    fs::write(&ext_file, b"keyUsage = digitalSignature, keyEncipherment")
-        .expect("failed to create x509v3 extensions file");
+    fs::write(
+        &ext_file,
+        b"keyUsage = digitalSignature, keyEncipherment\n\
+    subjectAltName = @alt_names\n\
+    [alt_names]\n\
+    IP.1 = 127.0.0.1\n",
+    )
+    .expect("failed to create x509v3 extensions file");
 
     // Read redis key
     let mut key_cmd = process::Command::new("openssl")

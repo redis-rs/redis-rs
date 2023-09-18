@@ -1230,7 +1230,13 @@ impl ConnectionLike for Connection {
     }
 
     fn check_connection(&mut self) -> bool {
-        cmd("PING").query::<String>(self).is_ok()
+        match cmd("PING").query::<String>(self) {
+            Ok(_) => true,
+            Err(e) => {
+                println!("Error checking connection: {:?}", e);
+                false
+            }
+        }
     }
 }
 

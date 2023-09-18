@@ -667,8 +667,13 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 #[test]
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
-    let ctx = TestContext::new();
+    let tempdir = tempfile::Builder::new()
+                .prefix("redis")
+                .tempdir()
+                .expect("failed to create tempdir");
+    let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
+    let ctx = TestContext::with_tls(tls_files.clone());
     block_on_all(async move {
         let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
             .await
@@ -680,7 +685,21 @@ fn test_connection_manager_reconnect_after_delay() {
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
+
+        let _new_server = if is_tls_enabled() {
+            RedisServer::new_with_addr_tls_modules_and_spawner(
+                addr.clone(),
+                None,
+                Some(tls_files),
+                &[],
+                |cmd| {
+                    cmd.spawn()
+                        .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+                },
+            )
+        } else {
+            RedisServer::new_with_addr_and_modules(addr.clone(), &[])
+        };
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
