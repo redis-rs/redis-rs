@@ -436,7 +436,7 @@ where
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
             }
-            Some(RoutingInfo::MultiNode(multi_node_routing)) => {
+            Some(RoutingInfo::MultiNode((multi_node_routing, _response_policy))) => {
                 return self.execute_on_multiple_nodes(func, multi_node_routing);
             }
             None => fail!(UNROUTABLE_ERROR),
