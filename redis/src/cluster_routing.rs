@@ -22,47 +22,77 @@ pub(crate) enum Redirect {
     Ask(String),
 }
 
+/// Logical bitwise aggregating operators.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum LogicalAggregateOp {
+pub enum LogicalAggregateOp {
+    /// Aggregate by bitwise &&
     And,
     // Or, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
+/// Numerical aggreagting operators.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum AggregateOp {
+pub enum AggregateOp {
+    /// Choose minimal value
     Min,
+    /// Sum all values
     Sum,
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
+/// Policy for combining multiple responses into one.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ResponsePolicy {
+pub enum ResponsePolicy {
+    /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
+    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
     OneSucceededNonEmpty,
+    /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
+    /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
     AggregateLogical(LogicalAggregateOp),
+    /// Aggregate success results according to a numeric operator. Return error on any failed request or on a response that isn't an integer.
     Aggregate(AggregateOp),
+    /// Aggregate array responses into a single array. Return error on any failed request or on a response that isn't an array.
     CombineArrays,
+    /// Handling is not defined by the Redis standard. Will receive a special case
     Special,
 }
 
+/// Defines whether a request should be routed to a single node, or multiple ones.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RoutingInfo {
+pub enum RoutingInfo {
+    /// Route to single node
     SingleNode(SingleNodeRoutingInfo),
+    /// Route to multiple nodes
     MultiNode(MultipleNodeRoutingInfo),
 }
 
+/// Defines which single node should receive a request.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SingleNodeRoutingInfo {
+pub enum SingleNodeRoutingInfo {
+    /// Route to any node at random
     Random,
+    /// Route to the node that matches the [route]
     SpecificNode(Route),
 }
 
+impl From<Option<Route>> for SingleNodeRoutingInfo {
+    fn from(value: Option<Route>) -> Self {
+        value
+            .map(SingleNodeRoutingInfo::SpecificNode)
+            .unwrap_or(SingleNodeRoutingInfo::Random)
+    }
+}
+
+/// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum MultipleNodeRoutingInfo {
+pub enum MultipleNodeRoutingInfo {
+    /// Route to all nodes in the clusters
     AllNodes,
+    /// Route to all primaries in the cluster
     AllMasters,
-    // Instructions on how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand and the indices of the arguments from the original command that should be copied to the subcommand.
+    /// Instructions for how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand, and the indices of the arguments from the original command that should be copied to the subcommand.
     MultiSlot(Vec<(Route, Vec<usize>)>),
 }
 
@@ -190,7 +220,8 @@ pub(crate) fn combine_and_sort_array_results<'a>(
     Ok(Value::Bulk(results))
 }
 
-fn get_slot(key: &[u8]) -> u16 {
+/// Returns the slot that matches `key`.
+pub fn get_slot(key: &[u8]) -> u16 {
     let key = match get_hashtag(key) {
         Some(tag) => tag,
         None => key,
@@ -252,8 +283,8 @@ where
     })
 }
 
-impl RoutingInfo {
-    pub(crate) fn response_policy<R>(r: &R) -> Option<ResponsePolicy>
+impl ResponsePolicy {
+    pub(crate) fn for_routable<R>(r: &R) -> Option<ResponsePolicy>
     where
         R: Routable + ?Sized,
     {
@@ -293,8 +324,11 @@ impl RoutingInfo {
             _ => None,
         }
     }
+}
 
-    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+impl RoutingInfo {
+    /// Returns the routing info for `r`.
+    pub fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
@@ -363,7 +397,7 @@ impl RoutingInfo {
         }
     }
 
-    pub fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
+    fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
             is_readonly_cmd(cmd),
             key,
@@ -371,9 +405,10 @@ impl RoutingInfo {
     }
 }
 
-pub(crate) trait Routable {
-    // Convenience function to return ascii uppercase version of the
-    // the first argument (i.e., the command).
+/// Objects that implement this trait define a request that can be routed by a cluster client to different nodes in the cluster.
+pub trait Routable {
+    /// Convenience function to return ascii uppercase version of the
+    /// the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
         let primary_command = self.arg_idx(0).map(|x| x.to_ascii_uppercase())?;
         let mut primary_command = match primary_command.as_slice() {
@@ -397,10 +432,10 @@ pub(crate) trait Routable {
         })
     }
 
-    // Returns a reference to the data for the argument at `idx`.
+    /// Returns a reference to the data for the argument at `idx`.
     fn arg_idx(&self, idx: usize) -> Option<&[u8]>;
 
-    // Returns index of argument that matches `candidate`, if it exists
+    /// Returns index of argument that matches `candidate`, if it exists
     fn position(&self, candidate: &[u8]) -> Option<usize>;
 }
 
@@ -474,9 +509,12 @@ impl Slot {
     }
 }
 
+/// What type of node should a request be routed to.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
-pub(crate) enum SlotAddr {
+pub enum SlotAddr {
+    /// Primary node
     Master,
+    /// Replica node
     Replica,
 }
 
@@ -595,10 +633,11 @@ impl SlotMap {
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
-pub(crate) struct Route(u16, SlotAddr);
+pub struct Route(u16, SlotAddr);
 
 impl Route {
-    pub(crate) fn new(slot: u16, slot_addr: SlotAddr) -> Self {
+    /// Returns a new Route.
+    pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
         Self(slot, slot_addr)
     }
 
