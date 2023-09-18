@@ -160,7 +160,7 @@ fn test_async_route_info_to_nodes() {
         assert_eq!(addresses, cluster_addresses);
         assert_eq!(infos.len(), 12);
         for i in 0..12 {
-            let split: Vec<_> = addresses[i].split(":").collect();
+            let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("bind={}", split[0])));
             assert!(infos[i].contains(&format!("port={}", split[1])));
         }
@@ -177,7 +177,7 @@ fn test_async_route_info_to_nodes() {
         // verify that all primaries have the correct port & host, and are marked as primaries.
         for i in 0..6 {
             assert!(cluster_addresses.contains(&addresses[i]));
-            let split: Vec<_> = addresses[i].split(":").collect();
+            let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("bind={}", split[0])));
             assert!(infos[i].contains(&format!("port={}", split[1])));
             assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
