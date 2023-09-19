@@ -179,7 +179,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
             Ok(()) => break 'outer,
             Err(err) => {
                 // Failed to clear the databases, retry
-                log::warn!("{}", err);
+                tracing::warn!("{}", err);
             }
         }
     }

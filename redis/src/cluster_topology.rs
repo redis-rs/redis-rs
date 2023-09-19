@@ -7,13 +7,13 @@ use crate::cluster_routing::SlotAddr;
 use crate::cluster_routing::SlotAddrs;
 use crate::{cluster::TlsMode, cluster_routing::Slot, ErrorKind, RedisError, RedisResult, Value};
 use derivative::Derivative;
-use log::trace;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+use tracing::trace;
 
 /// The default number of refersh topology retries
 pub const DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES: usize = 3;

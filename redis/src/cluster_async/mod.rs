@@ -73,13 +73,13 @@ use futures::{
     ready, stream,
 };
 use futures_time::future::FutureExt;
-use log::trace;
 use pin_project_lite::pin_project;
 use tokio::sync::{
     mpsc,
     oneshot::{self, Receiver},
     RwLock,
 };
+use tracing::trace;
 
 use self::connections_container::{ConnectionAndIdentifier, Identifier as ConnectionIdentifier};
 

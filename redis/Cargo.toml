@@ -85,7 +85,7 @@ serde_json = { version = "1.0.82", optional = true }
 # Optional aHash support
 ahash = { version = "0.7.6", optional = true }
 
-log = { version = "0.4", optional = true }
+tracing = "0.1"
 futures-time = { version = "3.0.0", optional = true }
 
 [features]
@@ -108,7 +108,7 @@ tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
 connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
 streams = []
-cluster-async = ["cluster", "futures", "futures-util", "log"]
+cluster-async = ["cluster", "futures", "futures-util"]
 keep-alive = ["socket2"]
 sentinel = ["rand"]
 
