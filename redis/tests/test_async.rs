@@ -449,7 +449,11 @@ async fn invalid_password_issue_343() {
             password: Some("asdcasc".to_string()),
         },
     };
+    #[cfg(not(feature = "tls-rustls"))]
     let client = redis::Client::open(coninfo).unwrap();
+
+    #[cfg(feature = "tls-rustls")]
+    let client = build_single_client(coninfo, &ctx.server.tls_paths).unwrap();
     let err = client
         .get_multiplexed_tokio_connection()
         .await
@@ -668,9 +672,9 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
     let tempdir = tempfile::Builder::new()
-                .prefix("redis")
-                .tempdir()
-                .expect("failed to create tempdir");
+        .prefix("redis")
+        .tempdir()
+        .expect("failed to create tempdir");
     let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
     let ctx = TestContext::with_tls(tls_files.clone());

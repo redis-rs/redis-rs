@@ -3,8 +3,6 @@
 
 use std::convert::identity;
 use std::env;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
@@ -13,13 +11,14 @@ use std::time::Duration;
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
-use redis::{CertificatesBinary, ClientTlsBinary};
-use redis::{ConnectionInfo, IntoConnectionInfo};
+use redis::ConnectionInfo;
 use tempfile::TempDir;
 
-use crate::support::{build_keys_and_certs_for_tls, is_tls_enabled};
+use crate::support::{build_keys_and_certs_for_tls, is_tls_enabled, Module};
 
-use super::Module;
+#[cfg(feature = "tls-rustls")]
+use super::{build_single_client, load_certs_from_file};
+
 use super::RedisServer;
 use super::TlsFilePaths;
 
@@ -155,23 +154,25 @@ impl RedisCluster {
         }
         cmd.arg("--cluster-yes");
 
-        if is_tls_enabled() {
-            if let Some(TlsFilePaths {
-                redis_crt,
-                redis_key,
-                ca_crt,
-            }) = &tls_paths
-            {
-                cmd.arg("--cert");
-                cmd.arg(redis_crt);
-                cmd.arg("--key");
-                cmd.arg(redis_key);
-                cmd.arg("--cacert");
-                cmd.arg(ca_crt);
-                cmd.arg("--tls");
+        if is_tls {
+            if is_tls_enabled() {
+                if let Some(TlsFilePaths {
+                    redis_crt,
+                    redis_key,
+                    ca_crt,
+                }) = &tls_paths
+                {
+                    cmd.arg("--cert");
+                    cmd.arg(redis_crt);
+                    cmd.arg("--key");
+                    cmd.arg(redis_key);
+                    cmd.arg("--cacert");
+                    cmd.arg(ca_crt);
+                    cmd.arg("--tls");
+                }
+            } else {
+                cmd.arg("--tls").arg("--insecure");
             }
-        } else {
-            cmd.arg("--tls").arg("--insecure");
         }
 
         let output = cmd.output().unwrap();
@@ -197,7 +198,11 @@ impl RedisCluster {
                 "waiting until {:?} knows required number of replicas",
                 conn_info.addr
             );
+
+            #[cfg(feature = "tls-rustls")]
             let client = build_single_client(server.connection_info(), &self.tls_paths).unwrap();
+            #[cfg(not(feature = "tls-rustls"))]
+            let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
 
@@ -278,6 +283,7 @@ impl TestClusterContext {
             .collect();
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
 
+        #[cfg(feature = "tls-rustls")]
         if is_tls_enabled() {
             if let Some(tls_file_paths) = &cluster.tls_paths {
                 builder = builder.certs(load_certs_from_file(tls_file_paths));
@@ -331,8 +337,11 @@ impl TestClusterContext {
 
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
+            #[cfg(feature = "tls-rustls")]
             let client =
                 build_single_client(server.connection_info(), &self.cluster.tls_paths).unwrap();
+            #[cfg(not(feature = "tls-rustls"))]
+            let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
             let _: () = redis::cmd("ACL")
@@ -351,51 +360,5 @@ impl TestClusterContext {
     pub fn get_version(&self) -> super::Version {
         let mut conn = self.connection();
         super::get_version(&mut conn)
-    }
-}
-
-fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> CertificatesBinary {
-    let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
-    let mut root_cert_vec = Vec::new();
-    BufReader::new(ca_file)
-        .read_to_end(&mut root_cert_vec)
-        .expect("Unable to read CA cert file");
-
-    let cert_file = File::open(&tls_file_paths.redis_crt).expect("cannot open private cert file");
-    let mut client_cert_vec = Vec::new();
-    BufReader::new(cert_file)
-        .read_to_end(&mut client_cert_vec)
-        .expect("Unable to read client cert file");
-
-    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open private key file");
-    let mut client_key_vec = Vec::new();
-    BufReader::new(key_file)
-        .read_to_end(&mut client_key_vec)
-        .expect("Unable to read client key file");
-
-    CertificatesBinary {
-        client_tls: Some(ClientTlsBinary {
-            client_cert: client_cert_vec,
-            client_key: client_key_vec,
-        }),
-        root_cert: Some(root_cert_vec),
-    }
-}
-
-pub(crate) fn build_single_client<T: IntoConnectionInfo>(
-    connection_info: T,
-    tls_file_params: &Option<TlsFilePaths>,
-) -> redis::RedisResult<redis::Client> {
-    if is_tls_enabled() {
-        redis::Client::build_with_tls(
-            connection_info,
-            load_certs_from_file(
-                tls_file_params
-                    .as_ref()
-                    .expect("Expected certificates when `tls-rustls` feature is enabled"),
-            ),
-        )
-    } else {
-        redis::Client::open(connection_info)
     }
 }

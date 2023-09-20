@@ -5,9 +5,18 @@ use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
 };
+#[cfg(feature = "tls-rustls")]
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+};
 
 use futures::Future;
 use redis::{ConnectionAddr, InfoDict, Value};
+
+#[cfg(feature = "tls-rustls")]
+use redis::{CertificatesBinary, ClientTlsBinary};
+
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -214,10 +223,13 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(host);
 
+                // Insecure only disabled if `tls` is enabled
+                let insecure = !is_tls_enabled();
+
                 let addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
                     port,
-                    insecure: true,
+                    insecure,
                     tls_params: None,
                 };
 
@@ -295,11 +307,7 @@ pub struct TestContext {
 }
 
 pub(crate) fn is_tls_enabled() -> bool {
-    if cfg!(feature = "tls-rustls") {
-        true
-    } else {
-        false
-    }
+    cfg!(all(feature = "tls-rustls", not(feature = "tls-native-tls")))
 }
 
 impl TestContext {
@@ -322,7 +330,10 @@ impl TestContext {
             },
         );
 
+        #[cfg(feature = "tls-rustls")]
         let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+        #[cfg(not(feature = "tls-rustls"))]
+        let client = redis::Client::open(server.connection_info()).unwrap();
 
         let mut con;
 
@@ -355,7 +366,10 @@ impl TestContext {
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
 
+        #[cfg(feature = "tls-rustls")]
         let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+        #[cfg(not(feature = "tls-rustls"))]
+        let client = redis::Client::open(server.connection_info()).unwrap();
 
         let mut con;
 
@@ -594,4 +608,52 @@ pub fn is_major_version(expected_version: u16, version: Version) -> bool {
 pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
     expected_major_minor.0 < version.0
         || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
+}
+
+#[cfg(feature = "tls-rustls")]
+fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> CertificatesBinary {
+    let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
+    let mut root_cert_vec = Vec::new();
+    BufReader::new(ca_file)
+        .read_to_end(&mut root_cert_vec)
+        .expect("Unable to read CA cert file");
+
+    let cert_file = File::open(&tls_file_paths.redis_crt).expect("cannot open private cert file");
+    let mut client_cert_vec = Vec::new();
+    BufReader::new(cert_file)
+        .read_to_end(&mut client_cert_vec)
+        .expect("Unable to read client cert file");
+
+    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open private key file");
+    let mut client_key_vec = Vec::new();
+    BufReader::new(key_file)
+        .read_to_end(&mut client_key_vec)
+        .expect("Unable to read client key file");
+
+    CertificatesBinary {
+        client_tls: Some(ClientTlsBinary {
+            client_cert: client_cert_vec,
+            client_key: client_key_vec,
+        }),
+        root_cert: Some(root_cert_vec),
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    tls_file_params: &Option<TlsFilePaths>,
+) -> redis::RedisResult<redis::Client> {
+    if is_tls_enabled() && tls_file_params.is_some() {
+        redis::Client::build_with_tls(
+            connection_info,
+            load_certs_from_file(
+                tls_file_params
+                    .as_ref()
+                    .expect("Expected certificates when `tls-rustls` feature is enabled"),
+            ),
+        )
+    } else {
+        redis::Client::open(connection_info)
+    }
 }
