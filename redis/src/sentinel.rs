@@ -114,8 +114,8 @@ use rand::Rng;
 use crate::aio::MultiplexedConnection as AsyncConnection;
 
 use crate::{
-    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ErrorKind,
-    FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
+    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
+    ErrorKind, FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
 };
 
 #[cfg(feature = "tls-rustls")]
@@ -145,7 +145,10 @@ pub struct SentinelNodeConnectionInfo {
 
     /// The Redis specific/connection independent information to be used.
     pub redis_connection_info: Option<RedisConnectionInfo>,
-    /// TESTING
+
+    /// Certificates provided to allow:
+    /// - CA certificate, instead of the one in truststore
+    /// - Client key and certificates to establish mTLS connection
     pub certificates: Option<CertificatesBinary>,
 }
 
@@ -236,6 +239,7 @@ fn random_replica_index(max: NonZeroUsize) -> usize {
 fn try_connect_to_first_replica(
     addresses: &Vec<ConnectionInfo>,
     start_index: Option<usize>,
+    certificates: Option<&CertificatesBinary>,
 ) -> Result<Client, crate::RedisError> {
     if addresses.is_empty() {
         fail!((
@@ -249,7 +253,8 @@ fn try_connect_to_first_replica(
     let mut last_err = None;
     for i in 0..addresses.len() {
         let index = (i + start_index) % addresses.len();
-        match Client::open(addresses[index].clone()) {
+
+        match open_client(addresses[index].clone(), certificates) {
             Ok(client) => return Ok(client),
             Err(err) => last_err = Some(err),
         }
@@ -287,8 +292,12 @@ fn check_role_result(result: &RedisResult<Vec<Value>>, target_role: &str) -> boo
     false
 }
 
-fn check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
-    if let Ok(client) = Client::open(connection_info.clone()) {
+fn check_role(
+    connection_info: &ConnectionInfo,
+    target_role: &str,
+    certificates: Option<&CertificatesBinary>,
+) -> bool {
+    if let Ok(client) = open_client(connection_info.clone(), certificates) {
         if let Ok(mut conn) = client.get_connection() {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query(&mut conn);
             return check_role_result(&result, target_role);
@@ -310,7 +319,11 @@ fn find_valid_master(
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         let connection_info = node_connection_info.create_connection_info(ip, port);
-        if check_role(&connection_info, "master") {
+        if check_role(
+            &connection_info,
+            "master",
+            node_connection_info.certificates.as_ref(),
+        ) {
             return Ok(connection_info);
         }
     }
@@ -322,8 +335,12 @@ fn find_valid_master(
 }
 
 #[cfg(feature = "aio")]
-async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
-    if let Ok(client) = Client::open(connection_info.clone()) {
+async fn async_check_role(
+    connection_info: &ConnectionInfo,
+    target_role: &str,
+    certificates: Option<&CertificatesBinary>,
+) -> bool {
+    if let Ok(client) = open_client(connection_info.clone(), certificates) {
         if let Ok(mut conn) = client.get_async_connection().await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
             return check_role_result(&result, target_role);
@@ -341,7 +358,13 @@ async fn async_find_valid_master(
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         let connection_info = node_connection_info.create_connection_info(ip, port);
-        if async_check_role(&connection_info, "master").await {
+        if async_check_role(
+            &connection_info,
+            "master",
+            node_connection_info.certificates.as_ref(),
+        )
+        .await
+        {
             return Ok(connection_info);
         }
     }
@@ -358,7 +381,13 @@ fn get_valid_replicas_addresses(
 ) -> Vec<ConnectionInfo> {
     valid_addrs(replicas, is_replica_valid)
         .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
-        .filter(|connection_info| check_role(connection_info, "slave"))
+        .filter(|connection_info| {
+            check_role(
+                connection_info,
+                "slave",
+                node_connection_info.certificates.as_ref(),
+            )
+        })
         .collect()
 }
 
@@ -367,8 +396,11 @@ async fn async_get_valid_replicas_addresses<'a>(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> Vec<ConnectionInfo> {
-    async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
-        if async_check_role(&connection_info, "slave").await {
+    async fn is_replica_role_valid(
+        connection_info: ConnectionInfo,
+        certificates: Option<&CertificatesBinary>,
+    ) -> Option<ConnectionInfo> {
+        if async_check_role(&connection_info, "slave", certificates).await {
             Some(connection_info)
         } else {
             None
@@ -377,7 +409,9 @@ async fn async_get_valid_replicas_addresses<'a>(
 
     futures_util::stream::iter(valid_addrs(replicas, is_replica_valid))
         .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
-        .filter_map(is_replica_role_valid)
+        .filter_map(|connection_info| {
+            is_replica_role_valid(connection_info, node_connection_info.certificates.as_ref())
+        })
         .collect()
         .await
 }
@@ -386,8 +420,9 @@ async fn async_get_valid_replicas_addresses<'a>(
 async fn async_reconnect(
     connection: &mut Option<AsyncConnection>,
     connection_info: &ConnectionInfo,
+    certificates: Option<&CertificatesBinary>,
 ) -> RedisResult<()> {
-    let sentinel_client = Client::open(connection_info.clone())?;
+    let sentinel_client = open_client(connection_info.clone(), certificates)?;
     let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
     connection.replace(new_connection);
     Ok(())
@@ -398,16 +433,17 @@ async fn async_try_single_sentinel<T: FromRedisValue>(
     cmd: Cmd,
     connection_info: &ConnectionInfo,
     cached_connection: &mut Option<AsyncConnection>,
+    certificates: Option<&CertificatesBinary>,
 ) -> RedisResult<T> {
     if cached_connection.is_none() {
-        async_reconnect(cached_connection, connection_info).await?;
+        async_reconnect(cached_connection, connection_info, certificates).await?;
     }
 
     let result = cmd.query_async(cached_connection.as_mut().unwrap()).await;
 
     if let Err(err) = result {
         if err.is_connection_dropped() || err.is_io_error() {
-            async_reconnect(cached_connection, connection_info).await?;
+            async_reconnect(cached_connection, connection_info, certificates).await?;
             cmd.query_async(cached_connection.as_mut().unwrap()).await
         } else {
             Err(err)
@@ -420,8 +456,9 @@ async fn async_try_single_sentinel<T: FromRedisValue>(
 fn reconnect(
     connection: &mut Option<Connection>,
     connection_info: &ConnectionInfo,
+    certificates: Option<&CertificatesBinary>,
 ) -> RedisResult<()> {
-    let sentinel_client = Client::open(connection_info.clone())?;
+    let sentinel_client = open_client(connection_info.clone(), certificates)?;
     let new_connection = sentinel_client.get_connection()?;
     connection.replace(new_connection);
     Ok(())
@@ -431,16 +468,17 @@ fn try_single_sentinel<T: FromRedisValue>(
     cmd: Cmd,
     connection_info: &ConnectionInfo,
     cached_connection: &mut Option<Connection>,
+    certificates: Option<&CertificatesBinary>,
 ) -> RedisResult<T> {
     if cached_connection.is_none() {
-        reconnect(cached_connection, connection_info)?;
+        reconnect(cached_connection, connection_info, certificates)?;
     }
 
     let result = cmd.query(cached_connection.as_mut().unwrap());
 
     if let Err(err) = result {
         if err.is_connection_dropped() || err.is_io_error() {
-            reconnect(cached_connection, connection_info)?;
+            reconnect(cached_connection, connection_info, certificates)?;
             cmd.query(cached_connection.as_mut().unwrap())
         } else {
             Err(err)
@@ -503,14 +541,23 @@ impl Sentinel {
     /// connection. If there is an error indicating that the connection is invalid, we
     /// reconnect and try one more time in the new connection.
     ///
-    fn try_all_sentinels<T: FromRedisValue>(&mut self, cmd: Cmd) -> RedisResult<T> {
+    fn try_all_sentinels<T: FromRedisValue>(
+        &mut self,
+        cmd: Cmd,
+        certificates: Option<&CertificatesBinary>,
+    ) -> RedisResult<T> {
         let mut last_err = None;
         for (connection_info, cached_connection) in self
             .sentinels_connection_info
             .iter()
             .zip(self.connections_cache.iter_mut())
         {
-            match try_single_sentinel(cmd.clone(), connection_info, cached_connection) {
+            match try_single_sentinel(
+                cmd.clone(),
+                connection_info,
+                cached_connection,
+                certificates,
+            ) {
                 Ok(result) => {
                     return Ok(result);
                 }
@@ -526,15 +573,19 @@ impl Sentinel {
 
     /// Get a list of all masters (using the command SENTINEL MASTERS) from the
     /// sentinels.
-    fn get_sentinel_masters(&mut self) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.try_all_sentinels(sentinel_masters_cmd())
+    fn get_sentinel_masters(
+        &mut self,
+        certificates: Option<&CertificatesBinary>,
+    ) -> RedisResult<Vec<HashMap<String, String>>> {
+        self.try_all_sentinels(sentinel_masters_cmd(), certificates)
     }
 
     fn get_sentinel_replicas(
         &mut self,
         service_name: &str,
+        certificates: Option<&CertificatesBinary>,
     ) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.try_all_sentinels(sentinel_replicas_cmd(service_name))
+        self.try_all_sentinels(sentinel_replicas_cmd(service_name), certificates)
     }
 
     fn find_master_address(
@@ -542,7 +593,7 @@ impl Sentinel {
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
-        let masters = self.get_sentinel_masters()?;
+        let masters = self.get_sentinel_masters(node_connection_info.certificates.as_ref())?;
         find_valid_master(masters, service_name, node_connection_info)
     }
 
@@ -551,7 +602,8 @@ impl Sentinel {
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
-        let replicas = self.get_sentinel_replicas(service_name)?;
+        let replicas =
+            self.get_sentinel_replicas(service_name, node_connection_info.certificates.as_ref())?;
         Ok(get_valid_replicas_addresses(replicas, node_connection_info))
     }
 
@@ -564,7 +616,8 @@ impl Sentinel {
     ) -> RedisResult<Client> {
         let connection_info =
             self.find_master_address(service_name, node_connection_info.unwrap_or_default())?;
-        Client::open(connection_info)
+        let certificates = node_connection_info.and_then(|info| info.certificates.as_ref());
+        open_client(connection_info, certificates)
     }
 
     /// Connects to a randomly chosen replica of the given master name.
@@ -576,7 +629,11 @@ impl Sentinel {
         let addresses = self
             .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
         let start_index = NonZeroUsize::new(addresses.len()).map(random_replica_index);
-        try_connect_to_first_replica(&addresses, start_index)
+        try_connect_to_first_replica(
+            &addresses,
+            start_index,
+            node_connection_info.and_then(|ci| ci.certificates.as_ref()),
+        )
     }
 
     /// Attempts to connect to a different replica of the given master name each time.
@@ -593,7 +650,11 @@ impl Sentinel {
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
         }
-        try_connect_to_first_replica(&addresses, Some(self.replica_start_index))
+        try_connect_to_first_replica(
+            &addresses,
+            Some(self.replica_start_index),
+            node_connection_info.and_then(|ci| ci.certificates.as_ref()),
+        )
     }
 }
 
@@ -601,14 +662,25 @@ impl Sentinel {
 // methods required for the public methods.
 #[cfg(feature = "aio")]
 impl Sentinel {
-    async fn async_try_all_sentinels<T: FromRedisValue>(&mut self, cmd: Cmd) -> RedisResult<T> {
+    async fn async_try_all_sentinels<T: FromRedisValue>(
+        &mut self,
+        cmd: Cmd,
+        certificates: Option<&CertificatesBinary>,
+    ) -> RedisResult<T> {
         let mut last_err = None;
         for (connection_info, cached_connection) in self
             .sentinels_connection_info
             .iter()
             .zip(self.async_connections_cache.iter_mut())
         {
-            match async_try_single_sentinel(cmd.clone(), connection_info, cached_connection).await {
+            match async_try_single_sentinel(
+                cmd.clone(),
+                connection_info,
+                cached_connection,
+                certificates,
+            )
+            .await
+            {
                 Ok(result) => {
                     return Ok(result);
                 }
@@ -622,15 +694,20 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
-    async fn async_get_sentinel_masters(&mut self) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.async_try_all_sentinels(sentinel_masters_cmd()).await
+    async fn async_get_sentinel_masters(
+        &mut self,
+        certificates: Option<&CertificatesBinary>,
+    ) -> RedisResult<Vec<HashMap<String, String>>> {
+        self.async_try_all_sentinels(sentinel_masters_cmd(), certificates)
+            .await
     }
 
     async fn async_get_sentinel_replicas<'a>(
         &mut self,
         service_name: &'a str,
+        certificates: Option<&CertificatesBinary>,
     ) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.async_try_all_sentinels(sentinel_replicas_cmd(service_name))
+        self.async_try_all_sentinels(sentinel_replicas_cmd(service_name), certificates)
             .await
     }
 
@@ -639,7 +716,9 @@ impl Sentinel {
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
-        let masters = self.async_get_sentinel_masters().await?;
+        let masters = self
+            .async_get_sentinel_masters(node_connection_info.certificates.as_ref())
+            .await?;
         async_find_valid_master(masters, service_name, node_connection_info).await
     }
 
@@ -648,7 +727,9 @@ impl Sentinel {
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
-        let replicas = self.async_get_sentinel_replicas(service_name).await?;
+        let replicas = self
+            .async_get_sentinel_replicas(service_name, node_connection_info.certificates.as_ref())
+            .await?;
         Ok(async_get_valid_replicas_addresses(replicas, node_connection_info).await)
     }
 
@@ -662,7 +743,8 @@ impl Sentinel {
         let address = self
             .async_find_master_address(service_name, node_connection_info.unwrap_or_default())
             .await?;
-        Client::open(address)
+        let certificates = node_connection_info.and_then(|info| info.certificates.as_ref());
+        open_client(address, certificates)
     }
 
     /// Connects to a randomly chosen replica of the given master name.
@@ -678,7 +760,11 @@ impl Sentinel {
             )
             .await?;
         let start_index = NonZeroUsize::new(addresses.len()).map(random_replica_index);
-        try_connect_to_first_replica(&addresses, start_index)
+        try_connect_to_first_replica(
+            &addresses,
+            start_index,
+            node_connection_info.and_then(|ci| ci.certificates.as_ref()),
+        )
     }
 
     /// Attempts to connect to a different replica of the given master name each time.
@@ -699,7 +785,11 @@ impl Sentinel {
         if !addresses.is_empty() {
             self.replica_start_index = (self.replica_start_index + 1) % addresses.len();
         }
-        try_connect_to_first_replica(&addresses, Some(self.replica_start_index))
+        try_connect_to_first_replica(
+            &addresses,
+            Some(self.replica_start_index),
+            node_connection_info.and_then(|ci| ci.certificates.as_ref()),
+        )
     }
 }
 
@@ -791,4 +881,20 @@ impl SentinelClient {
         let client = self.async_get_client().await?;
         client.get_multiplexed_async_connection().await
     }
+}
+
+fn open_client<T: IntoConnectionInfo>(
+    params: T,
+    certificates: Option<&CertificatesBinary>,
+) -> RedisResult<Client> {
+    let connection_info = params.into_connection_info()?;
+
+    #[cfg(feature = "tls-rustls")]
+    if matches!(connection_info.addr, ConnectionAddr::TcpTls { .. }) {
+        if let Some(certificates) = certificates {
+            return Client::build_with_tls(connection_info, certificates.clone());
+        }
+    }
+
+    Client::open(connection_info)
 }
