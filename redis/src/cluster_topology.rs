@@ -739,7 +739,7 @@ mod tests {
         let mut addresses =
             slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::MultiSlot(vec![
                 (Route::new(1, SlotAddr::Master), vec![]),
-                (Route::new(2001, SlotAddr::Replica), vec![]),
+                (Route::new(2001, SlotAddr::ReplicaOptional), vec![]),
             ]));
         addresses.sort();
         assert!(addresses.contains(&"node1:6379"));
@@ -753,7 +753,7 @@ mod tests {
     #[test]
     fn test_slot_map_rotate_read_replicas() {
         let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
-        let route = Route::new(2001, SlotAddr::Replica);
+        let route = Route::new(2001, SlotAddr::ReplicaOptional);
         let mut addresses = vec![
             slot_map.slot_addr_for_route(&route).unwrap(),
             slot_map.slot_addr_for_route(&route).unwrap(),

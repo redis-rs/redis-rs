@@ -195,7 +195,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
 fn get_route(is_readonly: bool, key: &[u8]) -> Route {
     let slot = get_slot(key);
     if is_readonly {
-        Route::new(slot, SlotAddr::Replica)
+        Route::new(slot, SlotAddr::ReplicaOptional)
     } else {
         Route::new(slot, SlotAddr::Master)
     }
@@ -570,10 +570,14 @@ impl Slot {
 /// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
 pub enum SlotAddr {
-    /// Primary node
+    /// The request must be routed to primary node
     Master,
-    /// Replica node
-    Replica,
+    /// The request may be routed to a replica node.
+    /// For example, a GET command can be routed either to replica or primary.
+    ReplicaOptional,
+    /// The request must be routed to replica node, if one exists.
+    /// For example, by user requested routing.
+    ReplicaRequired,
 }
 
 /// This is just a simplified version of [`Slot`],
@@ -806,7 +810,7 @@ mod tests {
                 Some(RoutingInfo::SingleNode(
                     SingleNodeRoutingInfo::SpecificNode(Route::new(
                         slot(b"foo"),
-                        SlotAddr::Replica,
+                        SlotAddr::ReplicaOptional,
                     )),
                 )),
             ),
@@ -836,7 +840,7 @@ mod tests {
                 Some(RoutingInfo::SingleNode(
                     SingleNodeRoutingInfo::SpecificNode(Route::new(
                         slot(b"mystream"),
-                        SlotAddr::Replica,
+                        SlotAddr::ReplicaOptional,
                     )),
                 )),
             ),
@@ -855,7 +859,7 @@ mod tests {
         assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
                 244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Replica)))) if slot == 964));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964));
 
         assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
@@ -894,9 +898,9 @@ mod tests {
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&cmd);
         let mut expected = std::collections::HashMap::new();
-        expected.insert(Route(4813, SlotAddr::Replica), vec![3]);
-        expected.insert(Route(5061, SlotAddr::Replica), vec![2, 4]);
-        expected.insert(Route(12182, SlotAddr::Replica), vec![1]);
+        expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![3]);
+        expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![2, 4]);
+        expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![1]);
 
         assert!(
             matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::CombineArrays)))) if {

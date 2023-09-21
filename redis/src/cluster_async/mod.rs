@@ -1494,7 +1494,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_pipeline(&pipeline),
-            Some(Route::new(12182, SlotAddr::Replica))
+            Some(Route::new(12182, SlotAddr::ReplicaOptional))
         );
     }
 

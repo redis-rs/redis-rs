@@ -102,7 +102,7 @@ where
 
         match route.slot_addr() {
             SlotAddr::Master => self.connection_for_address(addrs.primary.as_str()),
-            SlotAddr::Replica => match self.read_from_replica_strategy {
+            SlotAddr::ReplicaOptional => match self.read_from_replica_strategy {
                 ReadFromReplicaStrategy::AlwaysFromPrimary => {
                     self.connection_for_address(addrs.primary.as_str())
                 }
@@ -110,6 +110,7 @@ where
                     self.round_robin_read_from_replica(slot_map_value)
                 }
             },
+            SlotAddr::ReplicaRequired => self.round_robin_read_from_replica(slot_map_value),
         }
     }
 
@@ -118,7 +119,7 @@ where
         route: &Route,
     ) -> Option<ConnectionAndIdentifier<Connection>> {
         self.lookup_route(route).or_else(|| {
-            if route.slot_addr() == SlotAddr::Replica {
+            if route.slot_addr() != SlotAddr::Master {
                 self.lookup_route(&Route::new(route.slot(), SlotAddr::Master))
             } else {
                 None
@@ -257,7 +258,9 @@ mod tests {
         expected_connections.contains(&found)
     }
 
-    fn create_container() -> ConnectionsContainer<usize> {
+    fn create_container_with_strategy(
+        stragey: ReadFromReplicaStrategy,
+    ) -> ConnectionsContainer<usize> {
         let slot_map = SlotMap::new(
             vec![
                 Slot::new(1, 1000, "primary1".to_owned(), Vec::new()),
@@ -305,8 +308,12 @@ mod tests {
         ConnectionsContainer {
             slot_map,
             connection_map,
-            read_from_replica_strategy: ReadFromReplicaStrategy::RoundRobin,
+            read_from_replica_strategy: stragey,
         }
+    }
+
+    fn create_container() -> ConnectionsContainer<usize> {
+        create_container_with_strategy(ReadFromReplicaStrategy::RoundRobin)
     }
 
     #[test]
@@ -367,13 +374,13 @@ mod tests {
         let container = create_container();
 
         assert!(container
-            .connection_for_route(&Route::new(1001, SlotAddr::Replica))
+            .connection_for_route(&Route::new(1001, SlotAddr::ReplicaOptional))
             .is_none());
 
         assert_eq!(
             21,
             container
-                .connection_for_route(&Route::new(1002, SlotAddr::Replica))
+                .connection_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
@@ -381,13 +388,13 @@ mod tests {
         assert_eq!(
             21,
             container
-                .connection_for_route(&Route::new(1500, SlotAddr::Replica))
+                .connection_for_route(&Route::new(1500, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
 
         assert!(one_of(
-            container.connection_for_route(&Route::new(2001, SlotAddr::Replica)),
+            container.connection_for_route(&Route::new(2001, SlotAddr::ReplicaOptional)),
             &[31, 32],
         ));
     }
@@ -397,13 +404,13 @@ mod tests {
         let container = create_container();
 
         assert!(container
-            .connection_for_route(&Route::new(0, SlotAddr::Replica))
+            .connection_for_route(&Route::new(0, SlotAddr::ReplicaOptional))
             .is_none());
 
         assert_eq!(
             1,
             container
-                .connection_for_route(&Route::new(500, SlotAddr::Replica))
+                .connection_for_route(&Route::new(500, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
@@ -411,7 +418,7 @@ mod tests {
         assert_eq!(
             1,
             container
-                .connection_for_route(&Route::new(1000, SlotAddr::Replica))
+                .connection_for_route(&Route::new(1000, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
@@ -425,10 +432,21 @@ mod tests {
         assert_eq!(
             31,
             container
-                .connection_for_route(&Route::new(2001, SlotAddr::Replica))
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaRequired))
                 .unwrap()
                 .1
         );
+    }
+
+    #[test]
+    fn get_replica_connection_for_replica_route_if_replica_is_required_even_if_strategy_is_always_from_primary(
+    ) {
+        let container = create_container_with_strategy(ReadFromReplicaStrategy::AlwaysFromPrimary);
+
+        assert!(one_of(
+            container.connection_for_route(&Route::new(2001, SlotAddr::ReplicaRequired)),
+            &[31, 32],
+        ));
     }
 
     #[test]
@@ -439,7 +457,7 @@ mod tests {
         assert_eq!(
             2,
             container
-                .connection_for_route(&Route::new(1002, SlotAddr::Replica))
+                .connection_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
@@ -447,7 +465,7 @@ mod tests {
         assert_eq!(
             2,
             container
-                .connection_for_route(&Route::new(1500, SlotAddr::Replica))
+                .connection_for_route(&Route::new(1500, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
@@ -455,7 +473,7 @@ mod tests {
         assert_eq!(
             3,
             container
-                .connection_for_route(&Route::new(2001, SlotAddr::Replica))
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaOptional))
                 .unwrap()
                 .1
         );
