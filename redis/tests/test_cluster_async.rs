@@ -1583,3 +1583,129 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn test_async_cluster_read_from_primary() {
+    let name = "node";
+    let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ports_clone = found_ports.clone();
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                received_cmd,
+                Some(vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![6380, 6381],
+                        slot_range: (0..8191),
+                    },
+                    MockSlotRange {
+                        primary_port: 6382,
+                        replica_ports: vec![6383, 6384],
+                        slot_range: (8192..16383),
+                    },
+                ]),
+            )?;
+            ports_clone.lock().unwrap().push(port);
+            Err(Ok(Value::Nil))
+        },
+    );
+
+    runtime.block_on(async {
+        cmd("GET")
+            .arg("foo")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("bar")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("foo")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("bar")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+    });
+
+    found_ports.lock().unwrap().sort();
+    assert_eq!(*found_ports.lock().unwrap(), vec![6379, 6379, 6382, 6382]);
+}
+
+#[test]
+fn test_async_cluster_round_robin_read_from_replica() {
+    let name = "node";
+    let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ports_clone = found_ports.clone();
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                received_cmd,
+                Some(vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![6380, 6381],
+                        slot_range: (0..8191),
+                    },
+                    MockSlotRange {
+                        primary_port: 6382,
+                        replica_ports: vec![6383, 6384],
+                        slot_range: (8192..16383),
+                    },
+                ]),
+            )?;
+            ports_clone.lock().unwrap().push(port);
+            Err(Ok(Value::Nil))
+        },
+    );
+
+    runtime.block_on(async {
+        cmd("GET")
+            .arg("foo")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("bar")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("foo")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+        cmd("GET")
+            .arg("bar")
+            .query_async::<_, ()>(&mut connection)
+            .await
+            .unwrap();
+    });
+
+    found_ports.lock().unwrap().sort();
+    assert_eq!(*found_ports.lock().unwrap(), vec![6380, 6381, 6383, 6384]);
+}

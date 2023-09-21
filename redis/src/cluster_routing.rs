@@ -2,8 +2,6 @@ use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::iter::{Iterator, Once};
@@ -197,7 +195,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
 fn get_route(is_readonly: bool, key: &[u8]) -> Route {
     let slot = get_slot(key);
     if is_readonly {
-        Route::new(slot, SlotAddr::Replica)
+        Route::new(slot, SlotAddr::ReplicaOptional)
     } else {
         Route::new(slot, SlotAddr::Master)
     }
@@ -285,7 +283,7 @@ impl ResponsePolicy {
 
 impl RoutingInfo {
     /// Returns the routing info for `r`.
-    pub fn for_routable<R>(r: &R, allow_replica: bool) -> Option<RoutingInfo>
+    pub fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
@@ -338,8 +336,7 @@ impl RoutingInfo {
                 if key_count == 0 {
                     Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
                 } else {
-                    r.arg_idx(3)
-                        .map(|key| RoutingInfo::for_key(cmd, key, allow_replica))
+                    r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
             b"XGROUP CREATE"
@@ -349,24 +346,22 @@ impl RoutingInfo {
             | b"XGROUP SETID"
             | b"XINFO CONSUMERS"
             | b"XINFO GROUPS"
-            | b"XINFO STREAM" => r
-                .arg_idx(2)
-                .map(|key| RoutingInfo::for_key(cmd, key, allow_replica)),
+            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
-                    .map(|key| RoutingInfo::for_key(cmd, key, allow_replica))
+                    .map(|key| RoutingInfo::for_key(cmd, key))
             }
             _ => match r.arg_idx(1) {
-                Some(key) => Some(RoutingInfo::for_key(cmd, key, allow_replica)),
+                Some(key) => Some(RoutingInfo::for_key(cmd, key)),
                 None => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
             },
         }
     }
 
-    fn for_key(cmd: &[u8], key: &[u8], allow_replica: bool) -> RoutingInfo {
+    fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
-            allow_replica && is_readonly_cmd(cmd),
+            is_readonly_cmd(cmd),
             key,
         )))
     }
@@ -572,13 +567,17 @@ impl Slot {
     }
 }
 
-/// What type of node should a request be routed to.
+/// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
 pub enum SlotAddr {
-    /// Primary node
+    /// The request must be routed to primary node
     Master,
-    /// Replica node
-    Replica,
+    /// The request may be routed to a replica node.
+    /// For example, a GET command can be routed either to replica or primary.
+    ReplicaOptional,
+    /// The request must be routed to replica node, if one exists.
+    /// For example, by user requested routing.
+    ReplicaRequired,
 }
 
 /// This is just a simplified version of [`Slot`],
@@ -587,24 +586,13 @@ pub enum SlotAddr {
 /// a command is executed
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct SlotAddrs {
-    primary: String,
-    replicas: Vec<String>,
+    pub(crate) primary: String,
+    pub(crate) replicas: Vec<String>,
 }
 
 impl SlotAddrs {
     pub(crate) fn new(primary: String, replicas: Vec<String>) -> Self {
         Self { primary, replicas }
-    }
-
-    pub(crate) fn slot_addr(&self, slot_addr: SlotAddr) -> &str {
-        match slot_addr {
-            SlotAddr::Master => &self.primary,
-            SlotAddr::Replica => self
-                .replicas
-                .choose(&mut thread_rng())
-                .unwrap_or(&self.primary),
-        }
-        .as_str()
     }
 
     pub(crate) fn from_slot(slot: Slot) -> Self {
@@ -658,16 +646,16 @@ mod tests {
         lower.arg("streams").arg("foo").arg(0);
 
         assert_eq!(
-            RoutingInfo::for_routable(&upper, false).unwrap(),
-            RoutingInfo::for_routable(&lower, false).unwrap()
+            RoutingInfo::for_routable(&upper).unwrap(),
+            RoutingInfo::for_routable(&lower).unwrap()
         );
 
         let mut mixed = cmd("xReAd");
         mixed.arg("StReAmS").arg("foo").arg(0);
 
         assert_eq!(
-            RoutingInfo::for_routable(&lower, false).unwrap(),
-            RoutingInfo::for_routable(&mixed, false).unwrap()
+            RoutingInfo::for_routable(&lower).unwrap(),
+            RoutingInfo::for_routable(&mixed).unwrap()
         );
     }
 
@@ -718,8 +706,8 @@ mod tests {
         for cmd in test_cmds {
             let value = parse_redis_value(&cmd.get_packed_command()).unwrap();
             assert_eq!(
-                RoutingInfo::for_routable(&value, false).unwrap(),
-                RoutingInfo::for_routable(&cmd, false).unwrap(),
+                RoutingInfo::for_routable(&value).unwrap(),
+                RoutingInfo::for_routable(&cmd).unwrap(),
             );
         }
 
@@ -727,7 +715,7 @@ mod tests {
 
         for cmd in [cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("PING")] {
             assert_eq!(
-                RoutingInfo::for_routable(&cmd, false),
+                RoutingInfo::for_routable(&cmd),
                 Some(RoutingInfo::MultiNode((
                     MultipleNodeRoutingInfo::AllMasters,
                     Some(ResponsePolicy::AllSucceeded)
@@ -736,7 +724,7 @@ mod tests {
         }
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("DBSIZE"), false),
+            RoutingInfo::for_routable(&cmd("DBSIZE")),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
@@ -744,7 +732,7 @@ mod tests {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("SCRIPT KILL"), false),
+            RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::OneSucceeded)
@@ -752,7 +740,7 @@ mod tests {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("INFO"), false),
+            RoutingInfo::for_routable(&cmd("INFO")),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::Special)
@@ -760,7 +748,7 @@ mod tests {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("KEYS"), false),
+            RoutingInfo::for_routable(&cmd("KEYS")),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::CombineArrays)
@@ -776,7 +764,7 @@ mod tests {
             cmd("BITOP"),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(&cmd, false),
+                RoutingInfo::for_routable(&cmd),
                 None,
                 "{}",
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
@@ -788,7 +776,7 @@ mod tests {
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(cmd, false),
+                RoutingInfo::for_routable(cmd),
                 Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             );
         }
@@ -822,7 +810,7 @@ mod tests {
                 Some(RoutingInfo::SingleNode(
                     SingleNodeRoutingInfo::SpecificNode(Route::new(
                         slot(b"foo"),
-                        SlotAddr::Replica,
+                        SlotAddr::ReplicaOptional,
                     )),
                 )),
             ),
@@ -852,48 +840,13 @@ mod tests {
                 Some(RoutingInfo::SingleNode(
                     SingleNodeRoutingInfo::SpecificNode(Route::new(
                         slot(b"mystream"),
-                        SlotAddr::Replica,
+                        SlotAddr::ReplicaOptional,
                     )),
                 )),
             ),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(cmd, true),
-                expected,
-                "{}",
-                std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
-            );
-        }
-    }
-
-    #[test]
-    fn test_routing_info_without_allowing_replicas() {
-        for (cmd, expected) in [
-            (
-                cmd("XINFO").arg("GROUPS").arg("foo"),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"foo"), SlotAddr::Master)),
-                )),
-            ),
-            (
-                cmd("XREAD")
-                    .arg("COUNT")
-                    .arg("2")
-                    .arg("STREAMS")
-                    .arg("mystream")
-                    .arg("writers")
-                    .arg("0-0")
-                    .arg("0-0"),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"mystream"),
-                        SlotAddr::Master,
-                    )),
-                )),
-            ),
-        ] {
-            assert_eq!(
-                RoutingInfo::for_routable(cmd, false),
+                RoutingInfo::for_routable(cmd),
                 expected,
                 "{}",
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
@@ -906,28 +859,28 @@ mod tests {
         assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
                 244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
-            ]).unwrap(), true), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Replica)))) if slot == 964));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964));
 
         assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
                 197, 111, 180, 254, 5, 175, 143, 146, 171, 39, 172, 23, 164, 145, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap(), true), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352));
 
         assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 169, 233,
                 247, 59, 50, 247, 100, 232, 123, 140, 2, 101, 125, 221, 66, 170, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap(), true), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210));
     }
 
     #[test]
     fn test_multi_shard() {
         let mut cmd = cmd("DEL");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
-        let routing = RoutingInfo::for_routable(&cmd, true);
+        let routing = RoutingInfo::for_routable(&cmd);
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(4813, SlotAddr::Master), vec![3]);
         expected.insert(Route(5061, SlotAddr::Master), vec![2, 4]);
@@ -943,11 +896,11 @@ mod tests {
 
         let mut cmd = crate::cmd("MGET");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
-        let routing = RoutingInfo::for_routable(&cmd, true);
+        let routing = RoutingInfo::for_routable(&cmd);
         let mut expected = std::collections::HashMap::new();
-        expected.insert(Route(4813, SlotAddr::Replica), vec![3]);
-        expected.insert(Route(5061, SlotAddr::Replica), vec![2, 4]);
-        expected.insert(Route(12182, SlotAddr::Replica), vec![1]);
+        expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![3]);
+        expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![2, 4]);
+        expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![1]);
 
         assert!(
             matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::CombineArrays)))) if {
@@ -962,7 +915,7 @@ mod tests {
     fn test_combine_multi_shard_to_single_node_when_all_keys_are_in_same_slot() {
         let mut cmd = cmd("DEL");
         cmd.arg("foo").arg("{foo}bar").arg("{foo}baz");
-        let routing = RoutingInfo::for_routable(&cmd, true);
+        let routing = RoutingInfo::for_routable(&cmd);
 
         assert!(
             matches!(

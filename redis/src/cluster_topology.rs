@@ -1,17 +1,12 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
 use crate::cluster::get_connection_addr;
-use crate::cluster_routing::MultipleNodeRoutingInfo;
-use crate::cluster_routing::Route;
-use crate::cluster_routing::SlotAddr;
-use crate::cluster_routing::SlotAddrs;
-use crate::{cluster::TlsMode, cluster_routing::Slot, ErrorKind, RedisError, RedisResult, Value};
+use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, Slot, SlotAddr, SlotAddrs};
+use crate::{cluster::TlsMode, ErrorKind, RedisError, RedisResult, Value};
 use derivative::Derivative;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 use tracing::trace;
 
@@ -58,9 +53,10 @@ impl TopologyView {
 }
 
 #[derive(Debug)]
-struct SlotMapValue {
+pub(crate) struct SlotMapValue {
     start: u16,
-    addrs: SlotAddrs,
+    pub(crate) addrs: SlotAddrs,
+    pub(crate) latest_used_replica: AtomicUsize,
 }
 
 impl SlotMapValue {
@@ -68,17 +64,51 @@ impl SlotMapValue {
         Self {
             start: slot.start(),
             addrs: SlotAddrs::from_slot(slot),
+            latest_used_replica: AtomicUsize::new(0),
         }
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Copy)]
+pub(crate) enum ReadFromReplicaStrategy {
+    #[default]
+    AlwaysFromPrimary,
+    RoundRobin,
+}
+
 #[derive(Debug, Default)]
-pub(crate) struct SlotMap(BTreeMap<u16, SlotMapValue>);
+pub(crate) struct SlotMap {
+    slots: BTreeMap<u16, SlotMapValue>,
+    read_from_replica: ReadFromReplicaStrategy,
+}
+
+fn get_address_from_slot(
+    slot: &SlotMapValue,
+    read_from_replica: ReadFromReplicaStrategy,
+    slot_addr: SlotAddr,
+) -> &str {
+    if slot_addr == SlotAddr::Master || slot.addrs.replicas.is_empty() {
+        return slot.addrs.primary.as_str();
+    }
+    match read_from_replica {
+        ReadFromReplicaStrategy::AlwaysFromPrimary => slot.addrs.primary.as_str(),
+        ReadFromReplicaStrategy::RoundRobin => {
+            let index = slot
+                .latest_used_replica
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                % slot.addrs.replicas.len();
+            slot.addrs.replicas[index].as_str()
+        }
+    }
+}
 
 impl SlotMap {
-    pub fn new(slots: Vec<Slot>) -> Self {
-        let mut this = Self(BTreeMap::new());
-        this.0.extend(
+    pub(crate) fn new(slots: Vec<Slot>, read_from_replica: ReadFromReplicaStrategy) -> Self {
+        let mut this = Self {
+            slots: BTreeMap::new(),
+            read_from_replica,
+        };
+        this.slots.extend(
             slots
                 .into_iter()
                 .map(|slot| (slot.end(), SlotMapValue::from_slot(slot))),
@@ -87,28 +117,36 @@ impl SlotMap {
         this
     }
 
-    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
+    pub fn slot_value_for_route(&self, route: &Route) -> Option<&SlotMapValue> {
         let slot = route.slot();
-        self.0.range(slot..).next().and_then(|(end, slot_value)| {
-            if slot <= *end && slot_value.start <= slot {
-                Some(slot_value.addrs.slot_addr(route.slot_addr()))
-            } else {
-                None
-            }
+        self.slots
+            .range(slot..)
+            .next()
+            .and_then(|(end, slot_value)| {
+                if slot <= *end && slot_value.start <= slot {
+                    Some(slot_value)
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
+        self.slot_value_for_route(route).map(|slot_value| {
+            get_address_from_slot(slot_value, self.read_from_replica, route.slot_addr())
         })
     }
 
     pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
-        self.0.values().map(|slot_value| &slot_value.addrs)
+        self.slots.values().map(|slot_value| &slot_value.addrs)
     }
 
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
         let mut addresses = HashSet::new();
         for slot in self.values() {
-            if only_primaries {
-                addresses.insert(slot.slot_addr(SlotAddr::Master));
-            } else {
-                addresses.extend(slot.into_iter().map(|str| str.as_str()));
+            addresses.insert(slot.primary.as_str());
+            if !only_primaries {
+                addresses.extend(slot.replicas.iter().map(|str| str.as_str()));
             }
         }
 
@@ -243,6 +281,7 @@ pub(crate) fn calculate_topology(
     curr_retry: usize,
     tls_mode: Option<TlsMode>,
     num_of_queried_nodes: usize,
+    read_from_replica: ReadFromReplicaStrategy,
 ) -> Result<SlotMap, RedisError> {
     if topology_views.is_empty() {
         return Err(RedisError::from((
@@ -316,7 +355,7 @@ pub(crate) fn calculate_topology(
                 "Failed to parse the slots on the majority view",
             )))?;
 
-        Ok(SlotMap::new(slots_data))
+        Ok(SlotMap::new(slots_data, read_from_replica))
     };
 
     if non_unique_max_node_count {
@@ -432,7 +471,14 @@ mod tests {
             get_view(&ViewType::SingleNodeViewFullCoverage),
             get_view(&ViewType::TwoNodesViewFullCoverage),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
+        let topology_view = calculate_topology(
+            topology_results,
+            1,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        )
+        .unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let expected: Vec<&SlotAddrs> = vec![&node_1];
@@ -448,7 +494,13 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes);
+        let topology_view = calculate_topology(
+            topology_results,
+            1,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        );
         assert!(topology_view.is_err());
     }
 
@@ -461,7 +513,14 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 3, None, queried_nodes).unwrap();
+        let topology_view = calculate_topology(
+            topology_results,
+            3,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        )
+        .unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
@@ -477,7 +536,14 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
+        let topology_view = calculate_topology(
+            topology_results,
+            1,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        )
+        .unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let node_2 = get_node_addr("node2", 6380);
@@ -494,7 +560,14 @@ mod tests {
             get_view(&ViewType::SingleNodeViewMissingSlots),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
+        let topology_view = calculate_topology(
+            topology_results,
+            1,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        )
+        .unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node3", 6381);
         let node_2 = get_node_addr("node4", 6382);
@@ -511,7 +584,14 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
             get_view(&ViewType::SingleNodeViewMissingSlots),
         ];
-        let topology_view = calculate_topology(topology_results, 1, None, queried_nodes).unwrap();
+        let topology_view = calculate_topology(
+            topology_results,
+            1,
+            None,
+            queried_nodes,
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        )
+        .unwrap();
         let res: Vec<_> = topology_view.values().collect();
         let node_1 = get_node_addr("node1", 6379);
         let expected: Vec<&SlotAddrs> = vec![&node_1];
@@ -520,20 +600,23 @@ mod tests {
 
     #[test]
     fn test_slot_map_retrieve_routes() {
-        let slot_map = SlotMap::new(vec![
-            Slot::new(
-                1,
-                1000,
-                "node1:6379".to_owned(),
-                vec!["replica1:6379".to_owned()],
-            ),
-            Slot::new(
-                1002,
-                2000,
-                "node2:6379".to_owned(),
-                vec!["replica2:6379".to_owned()],
-            ),
-        ]);
+        let slot_map = SlotMap::new(
+            vec![
+                Slot::new(
+                    1,
+                    1000,
+                    "node1:6379".to_owned(),
+                    vec!["replica1:6379".to_owned()],
+                ),
+                Slot::new(
+                    1002,
+                    2000,
+                    "node2:6379".to_owned(),
+                    vec!["replica2:6379".to_owned()],
+                ),
+            ],
+            ReadFromReplicaStrategy::AlwaysFromPrimary,
+        );
 
         assert!(slot_map
             .slot_addr_for_route(&Route::new(0, SlotAddr::Master))
@@ -583,42 +666,45 @@ mod tests {
             .is_none());
     }
 
-    fn get_slot_map() -> SlotMap {
-        SlotMap::new(vec![
-            Slot::new(
-                1,
-                1000,
-                "node1:6379".to_owned(),
-                vec!["replica1:6379".to_owned()],
-            ),
-            Slot::new(
-                1002,
-                2000,
-                "node2:6379".to_owned(),
-                vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
-            ),
-            Slot::new(
-                2001,
-                3000,
-                "node3:6379".to_owned(),
-                vec![
-                    "replica4:6379".to_owned(),
-                    "replica5:6379".to_owned(),
-                    "replica6:6379".to_owned(),
-                ],
-            ),
-            Slot::new(
-                3001,
-                4000,
-                "node2:6379".to_owned(),
-                vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
-            ),
-        ])
+    fn get_slot_map(read_from_replica: ReadFromReplicaStrategy) -> SlotMap {
+        SlotMap::new(
+            vec![
+                Slot::new(
+                    1,
+                    1000,
+                    "node1:6379".to_owned(),
+                    vec!["replica1:6379".to_owned()],
+                ),
+                Slot::new(
+                    1002,
+                    2000,
+                    "node2:6379".to_owned(),
+                    vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+                ),
+                Slot::new(
+                    2001,
+                    3000,
+                    "node3:6379".to_owned(),
+                    vec![
+                        "replica4:6379".to_owned(),
+                        "replica5:6379".to_owned(),
+                        "replica6:6379".to_owned(),
+                    ],
+                ),
+                Slot::new(
+                    3001,
+                    4000,
+                    "node2:6379".to_owned(),
+                    vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+                ),
+            ],
+            read_from_replica,
+        )
     }
 
     #[test]
     fn test_slot_map_get_all_primaries() {
-        let slot_map = get_slot_map();
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::AlwaysFromPrimary);
         let mut addresses =
             slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllMasters);
         addresses.sort();
@@ -627,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_slot_map_get_all_nodes() {
-        let slot_map = get_slot_map();
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::AlwaysFromPrimary);
         let mut addresses =
             slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllNodes);
         addresses.sort();
@@ -649,11 +735,11 @@ mod tests {
 
     #[test]
     fn test_slot_map_get_multi_node() {
-        let slot_map = get_slot_map();
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
         let mut addresses =
             slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::MultiSlot(vec![
                 (Route::new(1, SlotAddr::Master), vec![]),
-                (Route::new(2001, SlotAddr::Replica), vec![]),
+                (Route::new(2001, SlotAddr::ReplicaOptional), vec![]),
             ]));
         addresses.sort();
         assert!(addresses.contains(&"node1:6379"));
@@ -661,6 +747,22 @@ mod tests {
             addresses.contains(&"replica4:6379")
                 || addresses.contains(&"replica5:6379")
                 || addresses.contains(&"replica6:6379")
+        );
+    }
+
+    #[test]
+    fn test_slot_map_rotate_read_replicas() {
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
+        let route = Route::new(2001, SlotAddr::ReplicaOptional);
+        let mut addresses = vec![
+            slot_map.slot_addr_for_route(&route).unwrap(),
+            slot_map.slot_addr_for_route(&route).unwrap(),
+            slot_map.slot_addr_for_route(&route).unwrap(),
+        ];
+        addresses.sort();
+        assert_eq!(
+            addresses,
+            vec!["replica4:6379", "replica5:6379", "replica6:6379"]
         );
     }
 }
