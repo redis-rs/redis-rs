@@ -79,7 +79,7 @@ use tokio::sync::{
     oneshot::{self, Receiver},
     RwLock,
 };
-use tracing::trace;
+use tracing::{info, trace, warn};
 
 use self::connections_container::{ConnectionAndIdentifier, Identifier as ConnectionIdentifier};
 
@@ -375,7 +375,6 @@ where
         };
         match ready!(future.poll(cx)) {
             (_, Ok(item)) => {
-                trace!("Ok");
                 self.respond(Ok(item));
                 Next::Done.into()
             }
@@ -426,11 +425,14 @@ where
                         });
                         self.poll(cx)
                     }
-                    ErrorKind::IoError => Next::Reconnect {
-                        request: this.request.take().unwrap(),
-                        target: identifier,
+                    ErrorKind::IoError => {
+                        warn!("disconnected with err: {}", err);
+                        Next::Reconnect {
+                            request: this.request.take().unwrap(),
+                            target: identifier,
+                        }
+                        .into()
                     }
-                    .into(),
                     _ => {
                         if err.is_retryable() {
                             Next::Retry {
@@ -585,6 +587,10 @@ where
         &mut self,
         identifiers: Vec<ConnectionIdentifier>,
     ) -> impl Future<Output = ()> {
+        info!(
+            "refresh connections started with {} identifiers",
+            identifiers.len()
+        );
         let inner = self.inner.clone();
         async move {
             let mut connections_container = inner.conn_lock.write().await;
@@ -609,6 +615,7 @@ where
                     },
                 )
                 .await;
+            info!("refresh connections completed");
         }
     }
 
@@ -720,6 +727,7 @@ where
 
     // Query a node to discover slot-> master mappings
     async fn refresh_slots(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
+        info!("refresh_slots started");
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes = read_guard.len();
         const MAX_REQUESTED_NODES: usize = 50;
@@ -796,6 +804,7 @@ where
             new_connections,
             inner.cluster_params.read_from_replicas,
         );
+        info!("refresh_slots found {} connections", write_guard.len());
         Ok(())
     }
 
@@ -805,6 +814,7 @@ where
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
+        trace!("execute_on_multiple_nodes");
         let connections_container = core.conn_lock.read().await;
 
         // This function maps the connections to senders & receivers of one-shot channels, and the receivers are mapped to `PendingRequest`s.
@@ -933,6 +943,7 @@ where
                 CommandRouting::Route(None) => None,
             }
         };
+        trace!("route request to single node");
 
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
@@ -948,6 +959,7 @@ where
         count: usize,
         conn: impl Future<Output = (ConnectionIdentifier, C)>,
     ) -> (OperationTarget, RedisResult<Response>) {
+        trace!("try_pipeline_request");
         let (identifier, mut conn) = conn.await;
         let result = conn
             .req_packed_commands(&pipeline, offset, count)
@@ -1281,7 +1293,6 @@ where
     }
 
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
-        trace!("start_send");
         let Message { cmd, sender } = msg;
 
         let redirect = None;
