@@ -188,7 +188,7 @@ impl ToRedisArgs for StreamReadOptions {
                 out.write_arg(i);
             }
         }
-        
+
         if let Some(ref ms) = self.block {
             out.write_arg(b"BLOCK");
             out.write_arg(format!("{ms}").as_bytes());
