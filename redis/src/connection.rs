@@ -883,7 +883,7 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisResult<Vec<Value>>;
 
-    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let pcmd = cmd.get_packed_command();
         self.req_packed_command(&pcmd)

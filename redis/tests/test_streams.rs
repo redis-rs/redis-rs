@@ -74,14 +74,14 @@ fn test_cmd_options() {
 
     assert_args!(
         &opts,
+        "GROUP",
+        "group-name",
+        "consumer-name",
         "BLOCK",
         "100",
         "COUNT",
         "200",
-        "NOACK",
-        "GROUP",
-        "group-name",
-        "consumer-name"
+        "NOACK"
     );
 
     // should skip noack because of missing group(,)

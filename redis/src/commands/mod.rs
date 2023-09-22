@@ -1752,7 +1752,7 @@ implement_commands! {
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     ///
-    /// XREADGROUP [BLOCK <milliseconds>] [COUNT <count>] [NOACK] [GROUP group-name consumer-name]
+    /// XREADGROUP [GROUP group-name consumer-name] [BLOCK <milliseconds>] [COUNT <count>] [NOACK] 
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     /// ```
