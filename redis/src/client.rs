@@ -237,7 +237,7 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    /// The multiplexer will return a timeout error on any request that takes longer then [response_timeout].
+    /// The multiplexer will return a timeout error on any request that takes longer then `response_timeout`.
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     pub async fn create_multiplexed_tokio_connection_with_response_timeout(
