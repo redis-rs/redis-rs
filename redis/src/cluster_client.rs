@@ -104,7 +104,7 @@ impl ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
-            connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
+            connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
         })
     }
