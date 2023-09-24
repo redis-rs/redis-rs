@@ -1169,16 +1169,16 @@ macro_rules! to_redis_args_for_tuple_peel {
 
 to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
-impl<T: ToRedisArgs, const N: usize> ToRedisArgs for [T; N] {
+impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::write_args_from_slice(self, out)
+        ToRedisArgs::write_args_from_slice(self.as_slice(), out)
     }
 
     fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(self)
+        ToRedisArgs::is_single_vec_arg(self.as_slice())
     }
 }
 
