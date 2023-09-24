@@ -390,11 +390,11 @@ fn test_large_usize_array_to_redis_args_and_back() {
     use redis::ToRedisArgs;
 
     let mut array = [0; 1000];
-    for i in 0..array.len() {
-        array[i] = i;
+    for (i, item) in array.iter_mut().enumerate() {
+        *item = i;
     }
 
-    let vec = array.to_redis_args();
+    let vec = (&array).to_redis_args();
     assert_eq!(array.len(), vec.len());
 
     let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
@@ -411,11 +411,11 @@ fn test_large_u8_array_to_redis_args_and_back() {
     use redis::ToRedisArgs;
 
     let mut array: [u8; 1000] = [0; 1000];
-    for i in 0..array.len() {
-        array[i] = (i % 256) as u8;
+    for (i, item) in array.iter_mut().enumerate() {
+        *item = (i % 256) as u8;
     }
 
-    let vec = array.to_redis_args();
+    let vec = (&array).to_redis_args();
     assert_eq!(vec.len(), 1);
     assert_eq!(array.len(), vec[0].len());
 
@@ -433,11 +433,11 @@ fn test_large_string_array_to_redis_args_and_back() {
     use redis::ToRedisArgs;
 
     let mut array: [String; 1000] = [(); 1000].map(|_| String::new());
-    for i in 0..array.len() {
-        array[i] = format!("{i}");
+    for (i, item) in array.iter_mut().enumerate() {
+        *item = format!("{i}");
     }
 
-    let vec = array.to_redis_args();
+    let vec = (&array).to_redis_args();
     assert_eq!(array.len(), vec.len());
 
     let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
@@ -455,7 +455,7 @@ fn test_0_length_usize_array_to_redis_args_and_back() {
 
     let array: [usize; 0] = [0; 0];
 
-    let vec = array.to_redis_args();
+    let vec = (&array).to_redis_args();
     assert_eq!(array.len(), vec.len());
 
     let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
