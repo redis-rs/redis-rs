@@ -816,13 +816,11 @@ pub trait ToRedisArgs: Sized {
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
-    fn make_arg_vec<W>(items: &[Self], out: &mut W)
+    fn write_args_from_slice<W>(items: &[Self], out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
-        for item in items.iter() {
-            item.write_redis_args(out);
-        }
+        Self::make_arg_iter_ref(items.iter(), out)
     }
 
     /// This only exists internally as a workaround for the lack of
@@ -912,7 +910,7 @@ impl ToRedisArgs for u8 {
         out.write_arg(s.as_bytes())
     }
 
-    fn make_arg_vec<W>(items: &[u8], out: &mut W)
+    fn write_args_from_slice<W>(items: &[u8], out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
@@ -1007,7 +1005,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(self, out)
+        ToRedisArgs::write_args_from_slice(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
@@ -1020,7 +1018,7 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::make_arg_vec(self, out)
+        ToRedisArgs::write_args_from_slice(self, out)
     }
 
     fn is_single_arg(&self) -> bool {
