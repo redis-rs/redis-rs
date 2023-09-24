@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use redis::{FromRedisValue, ToRedisArgs, Value};
 mod support;
 
@@ -62,17 +64,62 @@ fn test_u32() {
     assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
+fn bulk_strings_value() -> (Value, Vec<usize>) {
+    (
+        Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("3".into()),
+        ]),
+        vec![1, 2, 3],
+    )
+}
+
+fn data_value() -> (Value, Vec<u8>) {
+    let bytes = b"\x01\x02\x03\x04".to_vec();
+    (Value::Data(bytes.clone()), bytes)
+}
+
 #[test]
 fn test_vec() {
-    use redis::{FromRedisValue, Value};
+    let (value, expected) = bulk_strings_value();
+    let vec: Vec<usize> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(vec, expected);
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
-    ]));
+    let (value, expected) = data_value();
+    let vec: Vec<u8> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(vec, expected);
 
-    assert_eq!(v, Ok(vec![1i32, 2, 3]));
+    let vec: Vec<u8> = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
+    assert_eq!(vec, vec![]);
+}
+
+#[test]
+fn test_box_slice_from_redis_value() {
+    let (value, expected) = bulk_strings_value();
+    let parsed_box: Box<[usize]> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(parsed_box, expected.into());
+
+    let (value, expected) = data_value();
+    let parsed_box: Box<[u8]> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(parsed_box, expected.into());
+
+    let parsed_box: Box<[u8]> = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
+    assert_eq!(parsed_box, vec![].into());
+}
+
+#[test]
+fn test_arc_slice_from_redis_value() {
+    let (value, expected) = bulk_strings_value();
+    let arc: Arc<[usize]> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(arc, expected.into());
+
+    let (value, expected) = data_value();
+    let arc: Arc<[u8]> = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(arc, expected.into());
+
+    let arc: Arc<[u8]> = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
+    assert_eq!(arc, vec![].into());
 }
 
 #[test]

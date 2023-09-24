@@ -8,6 +8,7 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
+use std::sync::Arc;
 
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
@@ -990,7 +991,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     }
 }
 
-impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
+impl<T: ToRedisArgs> ToRedisArgs for &[T] {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1353,22 +1354,39 @@ impl FromRedisValue for String {
     }
 }
 
-impl<T: FromRedisValue> FromRedisValue for Vec<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<Vec<T>> {
-        match *v {
-            // All binary data except u8 will try to parse into a single element vector.
-            Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
-                Some(x) => Ok(x),
-                None => invalid_type_error!(
-                    v,
-                    format!("Conversion to Vec<{}> failed.", std::any::type_name::<T>())
-                ),
-            },
-            Value::Bulk(ref items) => FromRedisValue::from_redis_values(items),
-            Value::Nil => Ok(vec![]),
-            _ => invalid_type_error!(v, "Response type not vector compatible."),
+macro_rules! collection_from_redis_value {
+    ($t:ty, $conversion_function:expr) => {
+        fn from_redis_value(v: &Value) -> RedisResult<$t> {
+            let conversion_function = $conversion_function;
+            match *v {
+                // All binary data except u8 will try to parse into a single element vector.
+                Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                    Some(x) => Ok(conversion_function(x)),
+                    None => invalid_type_error!(
+                        v,
+                        format!("Conversion to {} failed.", std::any::type_name::<T>())
+                    ),
+                },
+                Value::Bulk(ref items) => {
+                    FromRedisValue::from_redis_values(items).map(conversion_function)
+                }
+                Value::Nil => Ok(conversion_function(vec![])),
+                _ => invalid_type_error!(v, "Response type not collection compatible."),
+            }
         }
-    }
+    };
+}
+
+impl<T: FromRedisValue> FromRedisValue for Vec<T> {
+    collection_from_redis_value!(Vec<T>, |v| v);
+}
+
+impl<T: FromRedisValue> FromRedisValue for Box<[T]> {
+    collection_from_redis_value!(Box<[T]>, |v| Vec::into_boxed_slice(v));
+}
+
+impl<T: FromRedisValue> FromRedisValue for Arc<[T]> {
+    collection_from_redis_value!(Arc<[T]>, |v: Vec<T>| v.into());
 }
 
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
