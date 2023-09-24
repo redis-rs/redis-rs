@@ -1280,3 +1280,32 @@ fn test_set_options_options() {
 
     assert_args!(&opts, "EX", "1000");
 }
+
+#[test]
+fn test_blocking_sorted_set_api() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    assert_eq!(con.zadd("a", "1a", 1), Ok(()));
+    assert_eq!(con.zadd("b", "2b", 2), Ok(()));
+    assert_eq!(con.zadd("c", "3c", 3), Ok(()));
+    assert_eq!(con.zadd("d", "4d", 4), Ok(()));
+    assert_eq!(con.zadd("a", "5a", 1), Ok(()));
+    assert_eq!(con.zadd("b", "6b", 2), Ok(()));
+    assert_eq!(con.zadd("c", "7c", 3), Ok(()));
+    assert_eq!(con.zadd("d", "8d", 4), Ok(()));
+
+    let result_multiple_min = con
+        .bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(0, vec!["a", "b", "c", "d"].as_slice(), 1);
+    let result_multiple_max  = con
+        .bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(0, vec!["a", "b", "c", "d"].as_slice(), 1);
+
+    let result_min = con.bzpopmin::<&str, (String, String, String)>("b", 0);
+    let result_max = con.bzpopmin::<&str, (String, String, String)>("b", 0);
+
+    assert_eq!(result_multiple_min.unwrap().1[0][0], (String::from("1a"), String::from("1")));
+    assert_eq!(result_multiple_max.unwrap().1[0][0], (String::from("5a"), String::from("1")));
+
+    assert_eq!(result_min.unwrap(), (String::from("b"), String::from("2b"), String::from("2")));
+    assert_eq!(result_max.unwrap(), (String::from("b"), String::from("6b"), String::from("2")));
+}
