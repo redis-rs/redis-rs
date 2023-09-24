@@ -1,7 +1,8 @@
+use redis::{FromRedisValue, ToRedisArgs, Value};
+mod support;
+
 #[test]
 fn test_is_single_arg() {
-    use redis::ToRedisArgs;
-
     let sslice: &[_] = &["foo"][..];
     let nestslice: &[_] = &[sslice][..];
     let nestvec = vec![nestslice];
@@ -303,4 +304,89 @@ fn test_types_to_redis_args() {
         .collect::<HashMap<_, _>>()
         .to_redis_args()
         .is_empty());
+}
+
+#[test]
+fn test_large_usize_array_to_redis_args_and_back() {
+    use crate::support::encode_value;
+    use redis::ToRedisArgs;
+
+    let mut array = [0; 1000];
+    for i in 0..array.len() {
+        array[i] = i;
+    }
+
+    let vec = array.to_redis_args();
+    assert_eq!(array.len(), vec.len());
+
+    let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
+    let mut encoded_input = Vec::new();
+    encode_value(&value, &mut encoded_input).unwrap();
+
+    let new_array: [usize; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(new_array, array);
+}
+
+#[test]
+fn test_large_u8_array_to_redis_args_and_back() {
+    use crate::support::encode_value;
+    use redis::ToRedisArgs;
+
+    let mut array: [u8; 1000] = [0; 1000];
+    for i in 0..array.len() {
+        array[i] = (i % 256) as u8;
+    }
+
+    let vec = array.to_redis_args();
+    assert_eq!(vec.len(), 1);
+    assert_eq!(array.len(), vec[0].len());
+
+    let value = Value::Bulk(vec[0].iter().map(|val| Value::Int(*val as i64)).collect());
+    let mut encoded_input = Vec::new();
+    encode_value(&value, &mut encoded_input).unwrap();
+
+    let new_array: [u8; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(new_array, array);
+}
+
+#[test]
+fn test_large_string_array_to_redis_args_and_back() {
+    use crate::support::encode_value;
+    use redis::ToRedisArgs;
+
+    let mut array: [String; 1000] = [(); 1000].map(|_| String::new());
+    for i in 0..array.len() {
+        array[i] = format!("{i}");
+    }
+
+    let vec = array.to_redis_args();
+    assert_eq!(array.len(), vec.len());
+
+    let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
+    let mut encoded_input = Vec::new();
+    encode_value(&value, &mut encoded_input).unwrap();
+
+    let new_array: [String; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(new_array, array);
+}
+
+#[test]
+fn test_0_length_usize_array_to_redis_args_and_back() {
+    use crate::support::encode_value;
+    use redis::ToRedisArgs;
+
+    let array: [usize; 0] = [0; 0];
+
+    let vec = array.to_redis_args();
+    assert_eq!(array.len(), vec.len());
+
+    let value = Value::Bulk(vec.iter().map(|val| Value::Data(val.clone())).collect());
+    let mut encoded_input = Vec::new();
+    encode_value(&value, &mut encoded_input).unwrap();
+
+    let new_array: [usize; 0] = FromRedisValue::from_redis_value(&value).unwrap();
+    assert_eq!(new_array, array);
+
+    let new_array: [usize; 0] = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
+    assert_eq!(new_array, array);
 }
