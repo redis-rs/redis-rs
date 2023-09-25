@@ -310,4 +310,9 @@ impl TestClusterContext {
             assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
         }
     }
+
+    pub fn get_version(&self) -> super::Version {
+        let mut conn = self.connection();
+        super::get_version(&mut conn)
+    }
 }
