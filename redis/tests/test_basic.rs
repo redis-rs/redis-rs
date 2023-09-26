@@ -1314,7 +1314,7 @@ fn test_blocking_sorted_set_api() {
         (String::from("b"), String::from("6b"), String::from("6"))
     );
 
-    if redis_version.0 > 7 {
+    if redis_version.0 >= 7 {
         let min = con.bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(
             0,
             vec!["a", "b", "c", "d"].as_slice(),
