@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry};
+use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry, SetExpiry, ExistenceCheck};
 
 #[macro_use]
 mod macros;
@@ -34,32 +34,7 @@ use crate::acl;
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         cmd,
-        // @admin
-        b"LASTSAVE" |
-        // @bitmap
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"GETBIT" |
-        // @connection
-        b"CLIENT" | b"ECHO" |
-        // @geo
-        b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUSBYMEMBER_RO" | b"GEORADIUS_RO" | b"GEOSEARCH" |
-        // @hash
-        b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HRANDFIELD" | b"HSCAN" | b"HSTRLEN" | b"HVALS" |
-        // @hyperloglog
-        b"PFCOUNT" |
-        // @keyspace
-        b"DBSIZE" | b"DUMP" | b"EXISTS" | b"EXPIRETIME" | b"KEYS" | b"OBJECT" | b"PEXPIRETIME" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"TOUCH" | b"TTL" | b"TYPE" |
-        // @list
-        b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"SORT_RO" |
-        // @scripting
-        b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL_RO" |
-        // @set
-        b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"SRANDMEMBER" | b"SSCAN" | b"SUNION" |
-        // @sortedset
-        b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANDMEMBER" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" | b"ZUNION" |
-        // @stream
-        b"XINFO" | b"XLEN" | b"XPENDING" | b"XRANGE" | b"XREAD" | b"XREVRANGE" |
-        // @string
-        b"GET" | b"GETRANGE" | b"LCS" | b"MGET" | b"STRALGO" | b"STRLEN" | b"SUBSTR"
+        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DBSIZE" | b"DUMP" | b"EVALSHA_RO" | b"EVAL_RO" | b"EXISTS" | b"EXPIRETIME" | b"FCALL_RO" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GEORADIUSBYMEMBER_RO" | b"GEORADIUS_RO" | b"GEOSEARCH" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HRANDFIELD" | b"HSCAN" | b"HSTRLEN" | b"HVALS" | b"KEYS" | b"LCS" | b"LINDEX" | b"LLEN" | b"LOLWUT" | b"LPOS" | b"LRANGE" | b"MEMORY USAGE" | b"MGET" | b"OBJECT ENCODING" | b"OBJECT FREQ" | b"OBJECT IDLETIME" | b"OBJECT REFCOUNT" | b"PEXPIRETIME" | b"PFCOUNT" | b"PTTL" | b"RANDOMKEY" | b"SCAN" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"SORT_RO" | b"SRANDMEMBER" | b"SSCAN" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TOUCH" | b"TTL" | b"TYPE" | b"XINFO CONSUMERS" | b"XINFO GROUPS" | b"XINFO STREAM" | b"XLEN" | b"XPENDING" | b"XRANGE" | b"XREAD" | b"XREVRANGE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANDMEMBER" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCAN" | b"ZSCORE" | b"ZUNION"
     )
 }
 
@@ -87,8 +62,20 @@ implement_commands! {
         cmd("SET").arg(key).arg(value)
     }
 
+    /// Set the string value of a key with options.
+    fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) {
+        cmd("SET").arg(key).arg(value).arg(options)
+    }
+
     /// Sets multiple keys to their values.
+    #[allow(deprecated)]
+    #[deprecated(since = "0.22.4", note = "Renamed to mset() to reflect Redis name")]
     fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
+        cmd("MSET").arg(items)
+    }
+
+    /// Sets multiple keys to their values.
+    fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
         cmd("MSET").arg(items)
     }
 
@@ -135,6 +122,11 @@ implement_commands! {
     /// Determine if a key exists.
     fn exists<K: ToRedisArgs>(key: K) {
         cmd("EXISTS").arg(key)
+    }
+
+    /// Determine the type of a key.
+    fn key_type<K: ToRedisArgs>(key: K) {
+        cmd("TYPE").arg(key)
     }
 
     /// Set a key's time to live in seconds.
@@ -191,12 +183,12 @@ implement_commands! {
     }
 
     /// Rename a key.
-    fn rename<K: ToRedisArgs>(key: K, new_key: K) {
+    fn rename<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
         cmd("RENAME").arg(key).arg(new_key)
     }
 
     /// Rename a key, only if the new key does not exist.
-    fn rename_nx<K: ToRedisArgs>(key: K, new_key: K) {
+    fn rename_nx<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
@@ -249,25 +241,25 @@ implement_commands! {
 
     /// Perform a bitwise AND between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_and<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise OR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_or<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise XOR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_xor<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise NOT of the key (containing string values)
     /// and store the result in the destination key.
-    fn bit_not<K: ToRedisArgs>(dstkey: K, srckey: K) {
+    fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
@@ -341,7 +333,7 @@ implement_commands! {
 
     /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
-    fn blmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction, timeout: usize) {
+    fn blmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: usize) {
         cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
@@ -363,7 +355,7 @@ implement_commands! {
 
     /// Pop a value from a list, push it to another list and return it;
     /// or block until one is available.
-    fn brpoplpush<K: ToRedisArgs>(srckey: K, dstkey: K, timeout: usize) {
+    fn brpoplpush<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, timeout: usize) {
         cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
     }
 
@@ -390,7 +382,7 @@ implement_commands! {
     }
 
     /// Pop an element a list, push it to another list and return it
-    fn lmove<K: ToRedisArgs>(srckey: K, dstkey: K, src_dir: Direction, dst_dir: Direction) {
+    fn lmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction) {
         cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
     }
 
@@ -453,7 +445,7 @@ implement_commands! {
     }
 
     /// Pop a value from a list, push it to another list and return it.
-    fn rpoplpush<K: ToRedisArgs>(key: K, dstkey: K) {
+    fn rpoplpush<K: ToRedisArgs, D: ToRedisArgs>(key: K, dstkey: D) {
         cmd("RPOPLPUSH").arg(key).arg(dstkey)
     }
 
@@ -486,7 +478,7 @@ implement_commands! {
     }
 
     /// Subtract multiple sets and store the resulting set in a key.
-    fn sdiffstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sdiffstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SDIFFSTORE").arg(dstkey).arg(keys)
     }
 
@@ -496,7 +488,7 @@ implement_commands! {
     }
 
     /// Intersect multiple sets and store the resulting set in a key.
-    fn sinterstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SINTERSTORE").arg(dstkey).arg(keys)
     }
 
@@ -511,7 +503,7 @@ implement_commands! {
     }
 
     /// Move a member from one set to another.
-    fn smove<K: ToRedisArgs, M: ToRedisArgs>(srckey: K, dstkey: K, member: M) {
+    fn smove<S: ToRedisArgs, D: ToRedisArgs, M: ToRedisArgs>(srckey: S, dstkey: D, member: M) {
         cmd("SMOVE").arg(srckey).arg(dstkey).arg(member)
     }
 
@@ -541,7 +533,7 @@ implement_commands! {
     }
 
     /// Add multiple sets and store the resulting set in a key.
-    fn sunionstore<K: ToRedisArgs>(dstkey: K, keys: K) {
+    fn sunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) {
         cmd("SUNIONSTORE").arg(dstkey).arg(keys)
     }
 
@@ -575,26 +567,26 @@ implement_commands! {
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
-    fn zinterstore<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys)
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
-    fn zinterstore_min<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
-    fn zinterstore_max<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zinterstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
 
     /// [`Commands::zinterstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
     }
@@ -602,7 +594,7 @@ implement_commands! {
     /// [`Commands::zinterstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
     }
@@ -610,13 +602,13 @@ implement_commands! {
     /// [`Commands::zinterstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zinterstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zinterstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
-    fn zlexcount<K: ToRedisArgs, L: ToRedisArgs>(key: K, min: L, max: L) {
+    fn zlexcount<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
     }
 
@@ -786,26 +778,26 @@ implement_commands! {
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
-    fn zunionstore<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys)
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
-    fn zunionstore_min<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
-    fn zunionstore_max<K: ToRedisArgs>(dstkey: K, keys: &'a [K]) {
+    fn zunionstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: &'a [K]) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
 
     /// [`Commands::zunionstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("WEIGHTS").arg(weights)
     }
@@ -813,7 +805,7 @@ implement_commands! {
     /// [`Commands::zunionstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_min_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
     }
@@ -821,7 +813,7 @@ implement_commands! {
     /// [`Commands::zunionstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
-    fn zunionstore_max_weights<K: ToRedisArgs, W: ToRedisArgs>(dstkey: K, keys: &'a [(K, W)]) {
+    fn zunionstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight)| (key, weight)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.len()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
@@ -840,7 +832,7 @@ implement_commands! {
     }
 
     /// Merge N different HyperLogLogs into a single one.
-    fn pfmerge<K: ToRedisArgs>(dstkey: K, srckeys: K) {
+    fn pfmerge<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
 
@@ -1768,7 +1760,7 @@ implement_commands! {
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     ///
-    /// XREADGROUP [BLOCK <milliseconds>] [COUNT <count>] [NOACK] [GROUP group-name consumer-name]
+    /// XREADGROUP [GROUP group-name consumer-name] [BLOCK <milliseconds>] [COUNT <count>] [NOACK] 
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     /// ```
@@ -2055,5 +2047,93 @@ impl ToRedisArgs for Direction {
             Direction::Right => b"RIGHT",
         };
         out.write_arg(s);
+    }
+}
+
+/// Options for the [SET](https://redis.io/commands/set) command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// fn set_key_value(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     value: &str,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = SetOptions::default()
+///         .conditional_set(ExistenceCheck::NX)
+///         .get(true)
+///         .with_expiration(SetExpiry::EX(60));
+///     con.set_options(key, value, opts)
+/// }
+/// ```
+#[derive(Default)]
+pub struct SetOptions {
+    conditional_set: Option<ExistenceCheck>,
+    get: bool,
+    expiration: Option<SetExpiry>,
+}
+
+impl SetOptions {
+    /// Set the existence check for the SET command
+    pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
+        self.conditional_set = Some(existence_check);
+        self
+    }
+
+    /// Set the GET option for the SET command
+    pub fn get(mut self, get: bool) -> Self {
+        self.get = get;
+        self
+    }
+
+    /// Set the expiration for the SET command
+    pub fn with_expiration(mut self, expiration: SetExpiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+}
+
+impl ToRedisArgs for SetOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref conditional_set) = self.conditional_set {
+            match conditional_set {
+                ExistenceCheck::NX => {
+                    out.write_arg(b"NX");
+                }
+                ExistenceCheck::XX => {
+                    out.write_arg(b"XX");
+                }
+            }
+        }
+        if self.get {
+            out.write_arg(b"GET");
+        }
+        if let Some(ref expiration) = self.expiration {
+            match expiration {
+                SetExpiry::EX(secs) => {
+                    out.write_arg(b"EX");
+                    out.write_arg(format!("{}", secs).as_bytes());
+                }
+                SetExpiry::PX(millis) => {
+                    out.write_arg(b"PX");
+                    out.write_arg(format!("{}", millis).as_bytes());
+                }
+                SetExpiry::EXAT(unix_time) => {
+                    out.write_arg(b"EXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::PXAT(unix_time) => {
+                    out.write_arg(b"PXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::KEEPTTL => {
+                    out.write_arg(b"KEEPTTL");
+                }
+            }
+        }
     }
 }

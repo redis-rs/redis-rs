@@ -179,6 +179,16 @@ impl ToRedisArgs for StreamReadOptions {
     where
         W: ?Sized + RedisWrite,
     {
+        if let Some(ref group) = self.group {
+            out.write_arg(b"GROUP");
+            for i in &group.0 {
+                out.write_arg(i);
+            }
+            for i in &group.1 {
+                out.write_arg(i);
+            }
+        }
+
         if let Some(ref ms) = self.block {
             out.write_arg(b"BLOCK");
             out.write_arg(format!("{ms}").as_bytes());
@@ -189,18 +199,10 @@ impl ToRedisArgs for StreamReadOptions {
             out.write_arg(format!("{n}").as_bytes());
         }
 
-        if let Some(ref group) = self.group {
+        if self.group.is_some() {
             // noack is only available w/ xreadgroup
             if self.noack == Some(true) {
                 out.write_arg(b"NOACK");
-            }
-
-            out.write_arg(b"GROUP");
-            for i in &group.0 {
-                out.write_arg(i);
-            }
-            for i in &group.1 {
-                out.write_arg(i);
             }
         }
     }
@@ -253,18 +255,13 @@ pub struct StreamClaimReply {
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum StreamPendingReply {
     /// The stream is empty.
+    #[default]
     Empty,
     /// Data with payload exists in the stream.
     Data(StreamPendingData),
-}
-
-impl Default for StreamPendingReply {
-    fn default() -> StreamPendingReply {
-        StreamPendingReply::Empty
-    }
 }
 
 impl StreamPendingReply {

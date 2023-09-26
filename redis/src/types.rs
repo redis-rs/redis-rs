@@ -45,6 +45,28 @@ pub enum Expiry {
     PERSIST,
 }
 
+/// Helper enum that is used to define expiry time for SET command
+pub enum SetExpiry {
+    /// EX seconds -- Set the specified expire time, in seconds.
+    EX(usize),
+    /// PX milliseconds -- Set the specified expire time, in milliseconds.
+    PX(usize),
+    /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
+    EXAT(usize),
+    /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
+    PXAT(usize),
+    /// KEEPTTL -- Retain the time to live associated with the key.
+    KEEPTTL,
+}
+
+/// Helper enum that is used to define existence checks
+pub enum ExistenceCheck {
+    /// NX -- Only set the key if it does not already exist.
+    NX,
+    /// XX -- Only set the key if it already exists.
+    XX,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -99,6 +121,14 @@ pub enum ErrorKind {
     ExtensionError,
     /// Attempt to write to a read-only server
     ReadOnly,
+    /// Requested name not found among masters returned by the sentinels
+    MasterNameNotFoundBySentinel,
+    /// No valid replicas found in the sentinels, for a given master name
+    NoValidReplicasFoundBySentinel,
+    /// At least one sentinel connection info is required
+    EmptySentinelList,
+    /// Attempted to kill a script/function while they werent' executing
+    NotBusy,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -292,13 +322,39 @@ impl From<NulError> for RedisError {
     }
 }
 
-#[cfg(feature = "tls")]
+#[cfg(feature = "tls-native-tls")]
 impl From<native_tls::Error> for RedisError {
     fn from(err: native_tls::Error) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+impl From<rustls::Error> for RedisError {
+    fn from(err: rustls::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+impl From<rustls::client::InvalidDnsNameError> for RedisError {
+    fn from(err: rustls::client::InvalidDnsNameError) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "TLS Error",
                 err.to_string(),
             ),
         }
@@ -351,9 +407,15 @@ impl error::Error for RedisError {
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.repr {
-            ErrorRepr::WithDescription(_, desc) => desc.fmt(f),
-            ErrorRepr::WithDescriptionAndDetail(_, desc, ref detail) => {
+            ErrorRepr::WithDescription(kind, desc) => {
                 desc.fmt(f)?;
+                f.write_str("- ")?;
+                fmt::Debug::fmt(&kind, f)
+            }
+            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
+                desc.fmt(f)?;
+                f.write_str(" - ")?;
+                fmt::Debug::fmt(&kind, f)?;
                 f.write_str(": ")?;
                 detail.fmt(f)
             }
@@ -408,6 +470,7 @@ impl RedisError {
             ErrorKind::CrossSlot => Some("CROSSSLOT"),
             ErrorKind::MasterDown => Some("MASTERDOWN"),
             ErrorKind::ReadOnly => Some("READONLY"),
+            ErrorKind::NotBusy => Some("NOTBUSY"),
             _ => match self.repr {
                 ErrorRepr::ExtensionError(ref code, _) => Some(code),
                 _ => None,
@@ -435,6 +498,10 @@ impl RedisError {
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
             ErrorKind::ReadOnly => "read-only",
+            ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
+            ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
+            ErrorKind::EmptySentinelList => "empty sentinel list",
+            ErrorKind::NotBusy => "not busy",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
         }
@@ -498,7 +565,9 @@ impl RedisError {
         match self.repr {
             ErrorRepr::IoError(ref err) => matches!(
                 err.kind(),
-                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::UnexpectedEof
             ),
             _ => false,
         }
@@ -554,6 +623,39 @@ impl RedisError {
             )),
         };
         Self { repr }
+    }
+
+    // TODO: In addition to/instead of returning a bool here, consider a method
+    // that returns an enum with more detail about _how_ to retry errors, e.g.,
+    // `RetryImmediately`, `WaitAndRetry`, etc.
+    #[cfg(feature = "cluster")] // Used to avoid "unused method" warning
+    pub(crate) fn is_retryable(&self) -> bool {
+        match self.kind() {
+            ErrorKind::BusyLoadingError => true,
+            ErrorKind::Moved => true,
+            ErrorKind::Ask => true,
+            ErrorKind::TryAgain => true,
+            ErrorKind::MasterDown => true,
+            ErrorKind::IoError => true,
+            ErrorKind::ReadOnly => true,
+            ErrorKind::ClusterDown => true,
+            ErrorKind::MasterNameNotFoundBySentinel => true,
+            ErrorKind::NoValidReplicasFoundBySentinel => true,
+
+            ErrorKind::ExtensionError => false,
+            ErrorKind::ExecAbortError => false,
+            ErrorKind::ResponseError => false,
+            ErrorKind::AuthenticationFailed => false,
+            ErrorKind::TypeError => false,
+            ErrorKind::NoScriptError => false,
+            ErrorKind::InvalidClientConfig => false,
+            ErrorKind::CrossSlot => false,
+            ErrorKind::ClientError => false,
+            ErrorKind::EmptySentinelList => false,
+            ErrorKind::NotBusy => false,
+            #[cfg(feature = "json")]
+            ErrorKind::Serialize => false,
+        }
     }
 }
 
@@ -1208,7 +1310,7 @@ impl FromRedisValue for bool {
 impl FromRedisValue for CString {
     fn from_redis_value(v: &Value) -> RedisResult<CString> {
         match *v {
-            Value::Data(ref bytes) => Ok(CString::new(bytes.clone())?),
+            Value::Data(ref bytes) => Ok(CString::new(bytes.as_slice())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),

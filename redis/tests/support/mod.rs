@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+use std::path::Path;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
     time::Duration,
 };
 
 use futures::Future;
-use redis::Value;
+use redis::{ConnectionAddr, InfoDict, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -39,7 +40,21 @@ where
 mod cluster;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+mod mock_cluster;
+
+mod util;
+
+#[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::cluster::*;
+
+#[cfg(any(feature = "cluster", feature = "cluster-async"))]
+pub use self::mock_cluster::*;
+
+#[cfg(feature = "sentinel")]
+mod sentinel;
+
+#[cfg(feature = "sentinel")]
+pub use self::sentinel::*;
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -53,7 +68,7 @@ pub enum Module {
 
 pub struct RedisServer {
     pub process: process::Child,
-    tempdir: Option<tempfile::TempDir>,
+    tempdir: tempfile::TempDir,
     addr: redis::ConnectionAddr,
 }
 
@@ -67,9 +82,10 @@ impl ServerType {
             Some("tcp") => ServerType::Tcp { tls: false },
             Some("tcp+tls") => ServerType::Tcp { tls: true },
             Some("unix") => ServerType::Unix,
-            val => {
+            Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
+            None => ServerType::Tcp { tls: false },
         }
     }
 }
@@ -79,27 +95,18 @@ impl RedisServer {
         RedisServer::with_modules(&[])
     }
 
-    pub fn with_modules(modules: &[Module]) -> RedisServer {
+    pub fn get_addr(port: u16) -> ConnectionAddr {
         let server_type = ServerType::get_intended();
-        let addr = match server_type {
+        match server_type {
             ServerType::Tcp { tls } => {
-                // this is technically a race but we can't do better with
-                // the tools that redis gives us :(
-                let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-                let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-                socket.set_reuse_address(true).unwrap();
-                socket.bind(addr).unwrap();
-                socket.listen(1).unwrap();
-                let listener = TcpListener::from(socket);
-                let redis_port = listener.local_addr().unwrap().port();
                 if tls {
                     redis::ConnectionAddr::TcpTls {
                         host: "127.0.0.1".to_string(),
-                        port: redis_port,
+                        port,
                         insecure: true,
                     }
                 } else {
-                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), redis_port)
+                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
                 }
             }
             ServerType::Unix => {
@@ -107,20 +114,45 @@ impl RedisServer {
                 let path = format!("/tmp/redis-rs-test-{a}-{b}.sock");
                 redis::ConnectionAddr::Unix(PathBuf::from(&path))
             }
-        };
-        RedisServer::new_with_addr(addr, None, modules, |cmd| {
+        }
+    }
+
+    pub fn with_modules(modules: &[Module]) -> RedisServer {
+        // this is technically a race but we can't do better with
+        // the tools that redis gives us :(
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
             cmd.spawn()
                 .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
         })
     }
 
-    pub fn new_with_addr<F: FnOnce(&mut process::Command) -> process::Child>(
+    pub fn new_with_addr_and_modules(
         addr: redis::ConnectionAddr,
+        modules: &[Module],
+    ) -> RedisServer {
+        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
+            cmd.spawn()
+                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+        })
+    }
+
+    pub fn new_with_addr_tls_modules_and_spawner<
+        F: FnOnce(&mut process::Command) -> process::Child,
+    >(
+        addr: redis::ConnectionAddr,
+        config_file: Option<&Path>,
         tls_paths: Option<TlsFilePaths>,
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
         let mut redis_cmd = process::Command::new("redis-server");
+
+        if let Some(config_path) = config_file {
+            redis_cmd.arg(config_path);
+        }
 
         // Load Redis Modules
         for module in modules {
@@ -142,6 +174,7 @@ impl RedisServer {
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
+        redis_cmd.arg("--logfile").arg(Self::log_file(&tempdir));
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -152,7 +185,7 @@ impl RedisServer {
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
-                    tempdir: None,
+                    tempdir,
                     addr,
                 }
             }
@@ -184,7 +217,7 @@ impl RedisServer {
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
-                    tempdir: Some(tempdir),
+                    tempdir,
                     addr,
                 }
             }
@@ -196,7 +229,7 @@ impl RedisServer {
                     .arg(path);
                 RedisServer {
                     process: spawner(&mut redis_cmd),
-                    tempdir: Some(tempdir),
+                    tempdir,
                     addr,
                 }
             }
@@ -221,6 +254,25 @@ impl RedisServer {
             fs::remove_file(path).ok();
         }
     }
+
+    pub fn log_file(tempdir: &TempDir) -> PathBuf {
+        tempdir.path().join("redis.log")
+    }
+}
+
+/// Finds a random open port available for listening at, by spawning a TCP server with
+/// port "zero" (which prompts the OS to just use any available port). Between calling
+/// this function and trying to bind to this port, the port may be given to another
+/// process, so this must be used with care (since here we only use it for tests, it's
+/// mostly okay).
+pub fn get_random_available_port() -> u16 {
+    let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(addr).unwrap();
+    socket.listen(1).unwrap();
+    let listener = TcpListener::from(socket);
+    listener.local_addr().unwrap().port()
 }
 
 impl Drop for RedisServer {
@@ -310,6 +362,11 @@ impl TestContext {
         let client = self.client.clone();
         async move { client.get_multiplexed_async_std_connection().await }
     }
+
+    pub fn get_version(&self) -> Version {
+        let mut conn = self.connection();
+        get_version(&mut conn)
+    }
 }
 
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
@@ -352,6 +409,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     let ca_serial = tempdir.path().join("ca.txt");
     let redis_crt = tempdir.path().join("redis.crt");
     let redis_key = tempdir.path().join("redis.key");
+    let ext_file = tempdir.path().join("openssl.cnf");
 
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         process::Command::new("openssl")
@@ -395,6 +453,10 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .wait()
         .expect("failed to create CA cert");
 
+    // Build x509v3 extensions file
+    fs::write(&ext_file, b"keyUsage = digitalSignature, keyEncipherment")
+        .expect("failed to create x509v3 extensions file");
+
     // Read redis key
     let mut key_cmd = process::Command::new("openssl")
         .arg("req")
@@ -423,6 +485,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg("-CAcreateserial")
         .arg("-days")
         .arg("365")
+        .arg("-extfile")
+        .arg(&ext_file)
         .arg("-out")
         .arg(&redis_crt)
         .stdin(key_cmd.stdout.take().expect("should have stdout"))
@@ -440,4 +504,26 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         redis_key,
         ca_crt,
     }
+}
+
+pub type Version = (u16, u16, u16);
+
+fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
+    let info: InfoDict = redis::Cmd::new().arg("INFO").query(conn).unwrap();
+    let version: String = info.get("redis_version").unwrap();
+    let versions: Vec<u16> = version
+        .split('.')
+        .map(|version| version.parse::<u16>().unwrap())
+        .collect();
+    assert_eq!(versions.len(), 3);
+    (versions[0], versions[1], versions[2])
+}
+
+pub fn is_major_version(expected_version: u16, version: Version) -> bool {
+    expected_version <= version.0
+}
+
+pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
+    expected_major_minor.0 < version.0
+        || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
 }

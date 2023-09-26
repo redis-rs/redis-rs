@@ -152,7 +152,7 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
     type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
-        let mut this = self.get_mut();
+        let this = self.get_mut();
         let inner = std::mem::replace(&mut this.inner, IterOrFuture::Empty);
         match inner {
             IterOrFuture::Iter(mut iter) => {
@@ -323,6 +323,15 @@ impl Cmd {
         Cmd {
             data: vec![],
             args: vec![],
+            cursor: None,
+        }
+    }
+
+    /// Creates a new empty command, with at least the requested capcity.
+    pub fn with_capacity(arg_count: usize, size_of_data: usize) -> Cmd {
+        Cmd {
+            data: Vec::with_capacity(size_of_data),
+            args: Vec::with_capacity(arg_count),
             cursor: None,
         }
     }

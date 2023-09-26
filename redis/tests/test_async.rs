@@ -638,3 +638,52 @@ mod pub_sub {
         .unwrap();
     }
 }
+
+#[cfg(feature = "connection-manager")]
+async fn wait_for_server_to_become_ready(client: redis::Client) {
+    let millisecond = std::time::Duration::from_millis(1);
+    let mut retries = 0;
+    loop {
+        match client.get_multiplexed_async_connection().await {
+            Err(err) => {
+                if err.is_connection_refusal() {
+                    tokio::time::sleep(millisecond).await;
+                    retries += 1;
+                    if retries > 100000 {
+                        panic!("Tried to connect too many times, last error: {err}");
+                    }
+                } else {
+                    panic!("Could not connect: {err}");
+                }
+            }
+            Ok(mut con) => {
+                let _: RedisResult<()> = redis::cmd("FLUSHDB").query_async(&mut con).await;
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "connection-manager")]
+fn test_connection_manager_reconnect_after_delay() {
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
+            .await
+            .unwrap();
+        let server = ctx.server;
+        let addr = server.client_addr().clone();
+        drop(server);
+
+        let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
+        wait_for_server_to_become_ready(ctx.client.clone()).await;
+
+        let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(result, redis::Value::Okay);
+    });
+}

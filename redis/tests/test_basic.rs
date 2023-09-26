@@ -1,8 +1,8 @@
 #![allow(clippy::let_unit_value)]
 
 use redis::{
-    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
-    RedisResult,
+    Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
+    PubSubCommands, RedisResult, SetExpiry, SetOptions, ToRedisArgs,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,6 +55,52 @@ fn test_getset() {
         redis::cmd("GET").arg("bar").query(&mut con),
         Ok(b"foo".to_vec())
     );
+}
+
+//unit test for key_type function
+#[test]
+fn test_key_type() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    //The key is a simple value
+    redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+    let string_key_type: String = con.key_type("foo").unwrap();
+    assert_eq!(string_key_type, "string");
+
+    //The key is a list
+    redis::cmd("LPUSH")
+        .arg("list_bar")
+        .arg("foo")
+        .execute(&mut con);
+    let list_key_type: String = con.key_type("list_bar").unwrap();
+    assert_eq!(list_key_type, "list");
+
+    //The key is a set
+    redis::cmd("SADD")
+        .arg("set_bar")
+        .arg("foo")
+        .execute(&mut con);
+    let set_key_type: String = con.key_type("set_bar").unwrap();
+    assert_eq!(set_key_type, "set");
+
+    //The key is a sorted set
+    redis::cmd("ZADD")
+        .arg("sorted_set_bar")
+        .arg("1")
+        .arg("foo")
+        .execute(&mut con);
+    let zset_key_type: String = con.key_type("sorted_set_bar").unwrap();
+    assert_eq!(zset_key_type, "zset");
+
+    //The key is a hash
+    redis::cmd("HSET")
+        .arg("hset_bar")
+        .arg("hset_key_1")
+        .arg("foo")
+        .execute(&mut con);
+    let hash_key_type: String = con.key_type("hset_bar").unwrap();
+    assert_eq!(hash_key_type, "hash");
 }
 
 #[test]
@@ -791,7 +837,7 @@ fn test_auto_m_versions() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    assert_eq!(con.set_multiple(&[("key1", 1), ("key2", 2)]), Ok(()));
+    assert_eq!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(()));
     assert_eq!(con.get(&["key1", "key2"]), Ok((1, 2)));
     assert_eq!(con.get(vec!["key1", "key2"]), Ok((1, 2)));
     assert_eq!(con.get(&vec!["key1", "key2"]), Ok((1, 2)));
@@ -1172,4 +1218,65 @@ fn test_variable_length_get() {
     assert_eq!(keys.len(), 1);
     let data: Vec<String> = con.get(&keys).unwrap();
     assert_eq!(data, vec!["1"]);
+}
+
+#[test]
+fn test_multi_generics() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    assert_eq!(con.sadd(b"set1", vec![5, 42]), Ok(2));
+    assert_eq!(con.sadd(999_i64, vec![42, 123]), Ok(2));
+    let _: () = con.rename(999_i64, b"set2").unwrap();
+    assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
+}
+
+#[test]
+fn test_set_options_with_get() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let opts = SetOptions::default().get(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, None);
+
+    let opts = SetOptions::default().get(true);
+    let data: Option<String> = con.set_options(1, "1", opts).unwrap();
+    assert_eq!(data, Some("1".to_string()));
+}
+
+#[test]
+fn test_set_options_options() {
+    let empty = SetOptions::default();
+    assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::NX)
+        .get(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(&opts, "NX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .get(true)
+        .with_expiration(SetExpiry::PX(1000));
+
+    assert_args!(&opts, "XX", "GET", "PX", "1000");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::KEEPTTL);
+
+    assert_args!(&opts, "XX", "KEEPTTL");
+
+    let opts = SetOptions::default()
+        .conditional_set(ExistenceCheck::XX)
+        .with_expiration(SetExpiry::EXAT(100));
+
+    assert_args!(&opts, "XX", "EXAT", "100");
+
+    let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
+
+    assert_args!(&opts, "EX", "1000");
 }

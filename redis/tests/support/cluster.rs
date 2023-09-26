@@ -35,9 +35,10 @@ impl ClusterType {
         {
             Some("tcp") => ClusterType::Tcp,
             Some("tcp+tls") => ClusterType::TcpTls,
-            val => {
+            Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
+            None => ClusterType::Tcp,
         }
     }
 
@@ -95,8 +96,9 @@ impl RedisCluster {
         for node in 0..nodes {
             let port = start_port + node;
 
-            servers.push(RedisServer::new_with_addr(
+            servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
+                None,
                 tls_paths.clone(),
                 modules,
                 |cmd| {
@@ -130,7 +132,6 @@ impl RedisCluster {
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{port}"));
-                    dbg!(&cmd);
                     cmd.spawn().unwrap()
                 },
             ));
@@ -150,13 +151,15 @@ impl RedisCluster {
         if is_tls {
             cmd.arg("--tls").arg("--insecure");
         }
-        let status = dbg!(cmd).status().unwrap();
-        assert!(status.success());
+        let output = cmd.output().unwrap();
+        assert!(output.status.success(), "output: {output:?}");
 
         let cluster = RedisCluster { servers, folders };
         if replicas > 0 {
             cluster.wait_for_replicas(replicas);
         }
+
+        wait_for_status_ok(&cluster);
         cluster
     }
 
@@ -199,6 +202,23 @@ impl RedisCluster {
     }
 }
 
+fn wait_for_status_ok(cluster: &RedisCluster) {
+    'server: for server in &cluster.servers {
+        let log_file = RedisServer::log_file(&server.tempdir);
+
+        for _ in 1..500 {
+            let contents =
+                std::fs::read_to_string(&log_file).expect("Should have been able to read the file");
+
+            if contents.contains("Cluster state changed: ok") {
+                continue 'server;
+            }
+            sleep(Duration::from_millis(20));
+        }
+        panic!("failed to reach state change: OK");
+    }
+}
+
 impl Drop for RedisCluster {
     fn drop(&mut self) {
         self.stop()
@@ -208,8 +228,6 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
-    #[cfg(feature = "cluster-async")]
-    pub async_client: redis::cluster_async::Client,
 }
 
 impl TestClusterContext {
@@ -230,19 +248,12 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
-        #[cfg(feature = "cluster-async")]
-        let async_client = redis::cluster_async::Client::open(initial_nodes).unwrap();
 
-        TestClusterContext {
-            cluster,
-            client,
-            #[cfg(feature = "cluster-async")]
-            async_client,
-        }
+        TestClusterContext { cluster, client }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
@@ -250,8 +261,8 @@ impl TestClusterContext {
     }
 
     #[cfg(feature = "cluster-async")]
-    pub async fn async_connection(&self) -> redis::cluster_async::Connection {
-        self.async_client.get_connection().await.unwrap()
+    pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
+        self.client.get_async_connection().await.unwrap()
     }
 
     #[cfg(feature = "cluster-async")]
@@ -259,9 +270,9 @@ impl TestClusterContext {
         C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
     >(
         &self,
-    ) -> redis::cluster_async::Connection<C> {
-        self.async_client
-            .get_generic_connection::<C>()
+    ) -> redis::cluster_async::ClusterConnection<C> {
+        self.client
+            .get_async_generic_connection::<C>()
             .await
             .unwrap()
     }
@@ -298,5 +309,10 @@ impl TestClusterContext {
             let mut con = client.get_connection().unwrap();
             assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
         }
+    }
+
+    pub fn get_version(&self) -> super::Version {
+        let mut conn = self.connection();
+        super::get_version(&mut conn)
     }
 }

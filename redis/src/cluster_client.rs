@@ -1,6 +1,62 @@
-use crate::cluster::{ClusterConnection, TlsMode};
+use std::time::Duration;
+
+use rand::Rng;
+
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
+use crate::{cluster, TlsMode};
+
+#[cfg(feature = "cluster-async")]
+use crate::cluster_async;
+
+/// Parameters specific to builder, so that
+/// builder parameters may have different types
+/// than final ClusterParams
+#[derive(Default)]
+struct BuilderParams {
+    password: Option<String>,
+    username: Option<String>,
+    read_from_replicas: bool,
+    tls: Option<TlsMode>,
+    retries_configuration: RetryParams,
+}
+
+#[derive(Clone)]
+pub(crate) struct RetryParams {
+    pub(crate) number_of_retries: u32,
+    max_wait_time: u64,
+    min_wait_time: u64,
+    exponent_base: u64,
+    factor: u64,
+}
+
+impl Default for RetryParams {
+    fn default() -> Self {
+        const DEFAULT_RETRIES: u32 = 16;
+        const DEFAULT_MAX_RETRY_WAIT_TIME: u64 = 655360;
+        const DEFAULT_MIN_RETRY_WAIT_TIME: u64 = 1280;
+        const DEFAULT_EXPONENT_BASE: u64 = 2;
+        const DEFAULT_FACTOR: u64 = 10;
+        Self {
+            number_of_retries: DEFAULT_RETRIES,
+            max_wait_time: DEFAULT_MAX_RETRY_WAIT_TIME,
+            min_wait_time: DEFAULT_MIN_RETRY_WAIT_TIME,
+            exponent_base: DEFAULT_EXPONENT_BASE,
+            factor: DEFAULT_FACTOR,
+        }
+    }
+}
+
+impl RetryParams {
+    pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
+        let base_wait = self.exponent_base.pow(retry) * self.factor;
+        let clamped_wait = base_wait
+            .min(self.max_wait_time)
+            .max(self.min_wait_time + 1);
+        let jittered_wait = rand::thread_rng().gen_range(self.min_wait_time..clamped_wait);
+        Duration::from_millis(jittered_wait)
+    }
+}
 
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
@@ -12,12 +68,25 @@ pub(crate) struct ClusterParams {
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
+    pub(crate) retry_params: RetryParams,
+}
+
+impl From<BuilderParams> for ClusterParams {
+    fn from(value: BuilderParams) -> Self {
+        Self {
+            password: value.password,
+            username: value.username,
+            read_from_replicas: value.read_from_replicas,
+            tls: value.tls,
+            retry_params: value.retries_configuration,
+        }
+    }
 }
 
 /// Used to configure and build a [`ClusterClient`].
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
-    cluster_params: ClusterParams,
+    builder_params: BuilderParams,
 }
 
 impl ClusterClientBuilder {
@@ -30,7 +99,7 @@ impl ClusterClientBuilder {
                 .into_iter()
                 .map(|x| x.into_connection_info())
                 .collect(),
-            cluster_params: ClusterParams::default(),
+            builder_params: Default::default(),
         }
     }
 
@@ -56,7 +125,7 @@ impl ClusterClientBuilder {
             }
         };
 
-        let mut cluster_params = self.cluster_params;
+        let mut cluster_params: ClusterParams = self.builder_params.into();
         let password = if cluster_params.password.is_none() {
             cluster_params.password = first_node.redis.password.clone();
             &cluster_params.password
@@ -115,22 +184,48 @@ impl ClusterClientBuilder {
 
     /// Sets password for the new ClusterClient.
     pub fn password(mut self, password: String) -> ClusterClientBuilder {
-        self.cluster_params.password = Some(password);
+        self.builder_params.password = Some(password);
         self
     }
 
     /// Sets username for the new ClusterClient.
     pub fn username(mut self, username: String) -> ClusterClientBuilder {
-        self.cluster_params.username = Some(username);
+        self.builder_params.username = Some(username);
+        self
+    }
+
+    /// Sets number of retries for the new ClusterClient.
+    pub fn retries(mut self, retries: u32) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.number_of_retries = retries;
+        self
+    }
+
+    /// Sets maximal wait time in millisceonds between retries for the new ClusterClient.
+    pub fn max_retry_wait(mut self, max_wait: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.max_wait_time = max_wait;
+        self
+    }
+
+    /// Sets minimal wait time in millisceonds between retries for the new ClusterClient.
+    pub fn min_retry_wait(mut self, min_wait: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.min_wait_time = min_wait;
+        self
+    }
+
+    /// Sets the factor and exponent base for the retry wait time.
+    /// The formula for the wait is rand(min_wait_retry .. min(max_retry_wait , factor * exponent_base ^ retry))ms.
+    pub fn retry_wait_formula(mut self, factor: u64, exponent_base: u64) -> ClusterClientBuilder {
+        self.builder_params.retries_configuration.factor = factor;
+        self.builder_params.retries_configuration.exponent_base = exponent_base;
         self
     }
 
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
-    #[cfg(feature = "tls")]
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
-        self.cluster_params.tls = Some(tls);
+        self.builder_params.tls = Some(tls);
         self
     }
 
@@ -139,7 +234,7 @@ impl ClusterClientBuilder {
     /// If enabled, then read queries will go to the replica nodes & write queries will go to the
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.cluster_params.read_from_replicas = true;
+        self.builder_params.read_from_replicas = true;
         self
     }
 
@@ -152,12 +247,12 @@ impl ClusterClientBuilder {
     /// Use `read_from_replicas()`.
     #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
     pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.cluster_params.read_from_replicas = read_from_replicas;
+        self.builder_params.read_from_replicas = read_from_replicas;
         self
     }
 }
 
-/// This is a Redis cluster client.
+/// This is a Redis Cluster client.
 #[derive(Clone)]
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
@@ -183,14 +278,52 @@ impl ClusterClient {
         ClusterClientBuilder::new(initial_nodes)
     }
 
-    /// Creates new connections to Redis Cluster nodes and return a
-    /// [`ClusterConnection`].
+    /// Creates new connections to Redis Cluster nodes and returns a
+    /// [`cluster::ClusterConnection`].
     ///
     /// # Errors
     ///
     /// An error is returned if there is a failure while creating connections or slots.
-    pub fn get_connection(&self) -> RedisResult<ClusterConnection> {
-        ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    pub fn get_connection(&self) -> RedisResult<cluster::ClusterConnection> {
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    }
+
+    /// Creates new connections to Redis Cluster nodes and returns a
+    /// [`cluster_async::ClusterConnection`].
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if there is a failure while creating connections or slots.
+    #[cfg(feature = "cluster-async")]
+    pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
+    }
+
+    #[doc(hidden)]
+    pub fn get_generic_connection<C>(&self) -> RedisResult<cluster::ClusterConnection<C>>
+    where
+        C: crate::ConnectionLike + crate::cluster::Connect + Send,
+    {
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "cluster-async")]
+    pub async fn get_async_generic_connection<C>(
+        &self,
+    ) -> RedisResult<cluster_async::ClusterConnection<C>>
+    where
+        C: crate::aio::ConnectionLike
+            + cluster_async::Connect
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
+    {
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
     }
 
     /// Use `new()`.

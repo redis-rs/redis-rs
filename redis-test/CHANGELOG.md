@@ -1,3 +1,25 @@
+### 0.2.3 (2023-09-01)
+
+* Track redis 0.23.3 release
+
+### 0.2.2 (2023-08-10)
+
+* Track redis 0.23.2 release
+
+### 0.2.1 (2023-07-28)
+
+* Track redis 0.23.1 release
+
+<a name="0.2.0"></a>
+### 0.2.0 (2023-04-05)
+
+* Track redis 0.23.0 release
+
+<a name="0.2.0-beta.1"></a>
+### 0.2.0-beta.1 (2023-03-28)
+
+* Track redis 0.23.0-beta.1 release
+
 <a name="0.1.1"></a>
 ### 0.1.1 (2022-10-18)
 

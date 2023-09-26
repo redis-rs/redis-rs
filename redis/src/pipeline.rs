@@ -305,7 +305,7 @@ macro_rules! implement_pipeline_commands {
             }
 
             fn make_pipeline_results(&self, resp: Vec<Value>) -> Value {
-                let mut rv = vec![];
+                let mut rv = Vec::with_capacity(resp.len() - self.ignored_commands.len());
                 for (idx, result) in resp.into_iter().enumerate() {
                     if !self.ignored_commands.contains(&idx) {
                         rv.push(result);
