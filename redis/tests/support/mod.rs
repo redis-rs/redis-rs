@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::{ConnectionAddr, Value};
+use redis::{ConnectionAddr, InfoDict, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -362,6 +362,11 @@ impl TestContext {
         let client = self.client.clone();
         async move { client.get_multiplexed_async_std_connection().await }
     }
+
+    pub fn get_version(&self) -> Version {
+        let mut conn = self.connection();
+        get_version(&mut conn)
+    }
 }
 
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
@@ -499,4 +504,26 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         redis_key,
         ca_crt,
     }
+}
+
+pub type Version = (u16, u16, u16);
+
+fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
+    let info: InfoDict = redis::Cmd::new().arg("INFO").query(conn).unwrap();
+    let version: String = info.get("redis_version").unwrap();
+    let versions: Vec<u16> = version
+        .split('.')
+        .map(|version| version.parse::<u16>().unwrap())
+        .collect();
+    assert_eq!(versions.len(), 3);
+    (versions[0], versions[1], versions[2])
+}
+
+pub fn is_major_version(expected_version: u16, version: Version) -> bool {
+    expected_version <= version.0
+}
+
+pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
+    expected_major_minor.0 < version.0
+        || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
 }
