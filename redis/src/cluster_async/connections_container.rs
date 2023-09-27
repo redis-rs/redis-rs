@@ -5,7 +5,7 @@ use arcstr::ArcStr;
 use rand::seq::IteratorRandom;
 
 use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, SlotAddr};
-use crate::cluster_topology::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
+use crate::cluster_topology::{ReadFromReplicaStrategy, SlotMap, SlotMapValue, TopologyHash};
 
 type IdentifierType = ArcStr;
 
@@ -32,6 +32,7 @@ pub(crate) struct ConnectionsContainer<Connection> {
     connection_map: HashMap<Identifier, Option<ClusterNode<Connection>>>,
     slot_map: SlotMap,
     read_from_replica_strategy: ReadFromReplicaStrategy,
+    topology_hash: TopologyHash,
 }
 
 impl<Connection> Default for ConnectionsContainer<Connection> {
@@ -40,6 +41,7 @@ impl<Connection> Default for ConnectionsContainer<Connection> {
             connection_map: Default::default(),
             slot_map: Default::default(),
             read_from_replica_strategy: ReadFromReplicaStrategy::AlwaysFromPrimary,
+            topology_hash: 0,
         }
     }
 }
@@ -54,6 +56,7 @@ where
         slot_map: SlotMap,
         connection_map: HashMap<ArcStr, ClusterNode<Connection>>,
         read_from_replica_strategy: ReadFromReplicaStrategy,
+        topology_hash: TopologyHash,
     ) -> Self {
         Self {
             connection_map: connection_map
@@ -62,6 +65,7 @@ where
                 .collect(),
             slot_map,
             read_from_replica_strategy,
+            topology_hash,
         }
     }
 
@@ -221,6 +225,10 @@ where
             .filter(|(_, conn_option)| conn_option.is_some())
             .count()
     }
+
+    pub(crate) fn get_current_topology_hash(&self) -> TopologyHash {
+        self.topology_hash
+    }
 }
 
 #[cfg(test)]
@@ -310,6 +318,7 @@ mod tests {
             slot_map,
             connection_map,
             read_from_replica_strategy: stragey,
+            topology_hash: 0,
         }
     }
 

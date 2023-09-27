@@ -21,6 +21,7 @@ struct BuilderParams {
     tls: Option<TlsMode>,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
+    topology_checks_interval: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -72,6 +73,7 @@ pub(crate) struct ClusterParams {
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
     pub(crate) connection_timeout: Duration,
+    pub(crate) topology_checks_interval: Option<Duration>,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -83,6 +85,7 @@ impl From<BuilderParams> for ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
+            topology_checks_interval: value.topology_checks_interval,
         }
     }
 }
@@ -247,6 +250,17 @@ impl ClusterClientBuilder {
     /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
     pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Enables periodic topology checks for this client.
+    ///
+    /// If enabled, periodic topology checks will be executed at the configured intervals to examine whether there
+    /// have been any changes in the cluster's topology. If a change is detected, it will trigger a slot refresh.
+    /// Unlike slot refreshments, the periodic topology checks only examine a limited number of nodes to query their
+    /// topology, ensuring that the check remains quick and efficient.
+    pub fn periodic_topology_checks(mut self, interval: Duration) -> ClusterClientBuilder {
+        self.builder_params.topology_checks_interval = Some(interval);
         self
     }
 

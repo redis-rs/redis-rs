@@ -32,7 +32,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{
-        atomic::{self, AtomicUsize},
+        atomic::{self, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     task::{self, Poll},
@@ -48,12 +48,13 @@ use crate::{
         SingleNodeRoutingInfo,
     },
     cluster_topology::{
-        calculate_topology, DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
-        DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+        calculate_topology, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
+        DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL, DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
     },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
+use std::time::Duration;
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
@@ -68,13 +69,15 @@ use backoff_tokio::future::retry;
 #[cfg(feature = "tokio-comp")]
 use backoff_tokio::{Error, ExponentialBackoff};
 
+use dispose::{Disposable, Dispose};
 use futures::{
     future::{self, BoxFuture},
     prelude::*,
     ready, stream,
 };
-use futures_time::future::FutureExt;
+use futures_time::{future::FutureExt, task::sleep};
 use pin_project_lite::pin_project;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::{
     mpsc,
     oneshot::{self, Receiver},
@@ -198,6 +201,7 @@ struct InnerCore<C> {
     conn_lock: RwLock<ConnectionsContainer<C>>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<Response, C>>>,
+    slot_refresh_in_progress: AtomicBool,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -212,6 +216,14 @@ struct ClusterConnInner<C> {
         >,
     >,
     refresh_error: Option<RedisError>,
+    // A flag indicating the connection's closure and the requirement to shut down all related tasks.
+    shutdown_flag: Arc<AtomicBool>,
+}
+
+impl<C> Dispose for ClusterConnInner<C> {
+    fn dispose(self) {
+        self.shutdown_flag.store(true, Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone)]
@@ -480,25 +492,42 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> RedisResult<Self> {
+    ) -> RedisResult<Disposable<Self>> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let topology_checks_interval = cluster_params.topology_checks_interval;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new(ConnectionsContainer::new(
                 Default::default(),
                 connections,
                 cluster_params.read_from_replicas,
+                0,
             )),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
+            slot_refresh_in_progress: AtomicBool::new(false),
         });
-        let mut connection = ClusterConnInner {
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let connection = ClusterConnInner {
             inner,
             in_flight_requests: Default::default(),
             refresh_error: None,
             state: ConnectionState::PollComplete,
+            shutdown_flag: shutdown_flag.clone(),
         };
-        connection.refresh_slots_with_retries().await?;
-        Ok(connection)
+        Self::refresh_slots_with_retries(connection.inner.clone()).await?;
+        if let Some(duration) = topology_checks_interval {
+            let periodic_task = ClusterConnInner::periodic_topology_check(
+                connection.inner.clone(),
+                duration,
+                shutdown_flag,
+            );
+            #[cfg(feature = "tokio-comp")]
+            tokio::spawn(periodic_task);
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            AsyncStd::spawn(periodic_task);
+        }
+
+        Ok(Disposable::new(connection))
     }
 
     /// Go through each of the initial nodes and attempt to retrieve all IP entries from them.
@@ -707,26 +736,87 @@ where
     }
 
     // Query a node to discover slot-> master mappings with retries
-    fn refresh_slots_with_retries(&mut self) -> impl Future<Output = RedisResult<()>> {
-        let inner = self.inner.clone();
-        async move {
+    async fn refresh_slots_with_retries(inner: Arc<InnerCore<C>>) -> RedisResult<()> {
+        if inner
+            .slot_refresh_in_progress
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let retry_strategy = ExponentialBackoff {
+            initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
+            max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+            ..Default::default()
+        };
+        let retries_counter = AtomicUsize::new(0);
+        let res = retry(retry_strategy, || {
+            let curr_retry = retries_counter.fetch_add(1, atomic::Ordering::Relaxed);
+            Self::refresh_slots(inner.clone(), curr_retry).map_err(Error::from)
+        })
+        .await;
+        inner
+            .slot_refresh_in_progress
+            .store(false, Ordering::Relaxed);
+        res
+    }
+
+    async fn periodic_topology_check(
+        inner: Arc<InnerCore<C>>,
+        interval_duration: Duration,
+        shutdown_flag: Arc<AtomicBool>,
+    ) {
+        loop {
+            if shutdown_flag.load(Ordering::Relaxed) {
+                return;
+            }
+            let _ = sleep(interval_duration.into()).await;
+
             let retry_strategy = ExponentialBackoff {
                 initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
                 max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
                 ..Default::default()
             };
-            let retries_counter = AtomicUsize::new(0);
-            retry(retry_strategy, || {
-                retries_counter.fetch_add(1, atomic::Ordering::Relaxed);
-                Self::refresh_slots(
-                    inner.clone(),
-                    retries_counter.load(atomic::Ordering::Relaxed),
-                )
-                .map_err(Error::from)
+            let topology_check_res = retry(retry_strategy, || {
+                Self::check_for_topology_diff(inner.clone()).map_err(Error::from)
             })
-            .await?;
-            Ok(())
+            .await;
+            if let Ok(true) = topology_check_res {
+                let _ = Self::refresh_slots_with_retries(inner.clone()).await;
+            };
         }
+    }
+
+    /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
+    /// topology view differs from the one currently stored in the connection manager.
+    /// Returns true if change was detected, otherwise false.
+    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> RedisResult<bool> {
+        let read_guard = inner.conn_lock.read().await;
+        let num_of_nodes: usize = read_guard.len();
+        // TODO: Starting from Rust V1.67, integers has logarithms support.
+        // When we no longer need to support Rust versions < 1.67, remove fast_math and transition to the ilog2 function.
+        let num_of_nodes_to_query =
+            std::cmp::max(fast_math::log2_raw(num_of_nodes as f32) as usize, 1);
+        let requested_nodes = read_guard.random_connections(num_of_nodes_to_query);
+        let topology_join_results =
+            futures::future::join_all(requested_nodes.map(|conn| async move {
+                let mut conn: C = conn.1.await;
+                conn.req_packed_command(&slot_cmd()).await
+            }))
+            .await;
+        let topology_values: Vec<_> = topology_join_results
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+        let (_, found_topology_hash) = calculate_topology(
+            topology_values,
+            DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
+            inner.cluster_params.tls,
+            num_of_nodes_to_query,
+            inner.cluster_params.read_from_replicas,
+        )?;
+        let change_found = read_guard.get_current_topology_hash() != found_topology_hash;
+        Ok(change_found)
     }
 
     // Query a node to discover slot-> master mappings
@@ -747,7 +837,7 @@ where
             .into_iter()
             .filter_map(|r| r.ok())
             .collect();
-        let new_slots = calculate_topology(
+        let (new_slots, topology_hash) = calculate_topology(
             topology_values,
             curr_retry,
             inner.cluster_params.tls,
@@ -808,6 +898,7 @@ where
             new_slots,
             new_connections,
             inner.cluster_params.read_from_replicas,
+            topology_hash,
         );
         info!("refresh_slots found {} nodes", write_guard.len());
         Ok(())
@@ -1088,7 +1179,7 @@ where
                 }
                 Poll::Ready(Err(err)) => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                        self.refresh_slots_with_retries(),
+                        Self::refresh_slots_with_retries(self.inner.clone()),
                     )));
                     Poll::Ready(Err(err))
                 }
@@ -1263,7 +1354,7 @@ impl PollFlushAction {
     }
 }
 
-impl<C> Sink<Message<C>> for ClusterConnInner<C>
+impl<C> Sink<Message<C>> for Disposable<ClusterConnInner<C>>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + Unpin + 'static,
 {
@@ -1344,9 +1435,10 @@ where
                 ConnectionState::PollComplete => match ready!(self.poll_complete(cx)) {
                     PollFlushAction::None => return Poll::Ready(Ok(())),
                     PollFlushAction::RebuildSlots => {
-                        self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(
-                            Box::pin(self.refresh_slots_with_retries()),
-                        ));
+                        self.state =
+                            ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
+                                ClusterConnInner::refresh_slots_with_retries(self.inner.clone()),
+                            )));
                     }
                     PollFlushAction::Reconnect(identifiers) => {
                         self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(

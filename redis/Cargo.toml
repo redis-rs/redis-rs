@@ -43,6 +43,8 @@ pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
 socket2 = { version = "0.4", default-features = false, optional = true }
+fast-math = { version = "0.1.1", optional = true }
+dispose = { version = "0.5.0", optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.1.0", optional = true }
@@ -92,7 +94,7 @@ arcstr = "1.1.5"
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
-aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait", "futures-time"]
+aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "tokio/sync", "combine/tokio", "async-trait", "futures-time", "fast-math", "dispose"]
 geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand", "derivative"]

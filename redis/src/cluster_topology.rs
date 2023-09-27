@@ -17,12 +17,13 @@ pub const DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT: Duration = Duration::from_secs(1)
 pub const DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
+pub(crate) type TopologyHash = u64;
 
 #[derive(Derivative)]
 #[derivative(PartialEq, Eq)]
 #[derive(Debug)]
 pub(crate) struct TopologyView {
-    pub(crate) hash_value: u64,
+    pub(crate) hash_value: TopologyHash,
     #[derivative(PartialEq = "ignore")]
     pub(crate) topology_value: Value,
     #[derivative(PartialEq = "ignore")]
@@ -280,7 +281,7 @@ pub(crate) fn calculate_topology(
     tls_mode: Option<TlsMode>,
     num_of_queried_nodes: usize,
     read_from_replica: ReadFromReplicaStrategy,
-) -> Result<SlotMap, RedisError> {
+) -> Result<(SlotMap, TopologyHash), RedisError> {
     if topology_views.is_empty() {
         return Err(RedisError::from((
             ErrorKind::ResponseError,
@@ -353,7 +354,10 @@ pub(crate) fn calculate_topology(
                 "Failed to parse the slots on the majority view",
             )))?;
 
-        Ok(SlotMap::new(slots_data, read_from_replica))
+        Ok((
+            SlotMap::new(slots_data, read_from_replica),
+            most_frequent_topology.hash_value,
+        ))
     };
 
     if non_unique_max_node_count {
@@ -469,7 +473,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewFullCoverage),
             get_view(&ViewType::TwoNodesViewFullCoverage),
         ];
-        let topology_view = calculate_topology(
+        let (topology_view, _) = calculate_topology(
             topology_results,
             1,
             None,
@@ -511,7 +515,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(
+        let (topology_view, _) = calculate_topology(
             topology_results,
             3,
             None,
@@ -534,7 +538,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(
+        let (topology_view, _) = calculate_topology(
             topology_results,
             1,
             None,
@@ -558,7 +562,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewMissingSlots),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
-        let topology_view = calculate_topology(
+        let (topology_view, _) = calculate_topology(
             topology_results,
             1,
             None,
@@ -582,7 +586,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
             get_view(&ViewType::SingleNodeViewMissingSlots),
         ];
-        let topology_view = calculate_topology(
+        let (topology_view, _) = calculate_topology(
             topology_results,
             1,
             None,

@@ -8,9 +8,15 @@ use std::sync::{
     Arc,
 };
 
+use crate::support::*;
 use futures::prelude::*;
 use futures::stream;
+use futures_time::task::sleep;
 use once_cell::sync::Lazy;
+use redis::cluster_routing::Route;
+use redis::cluster_routing::SingleNodeRoutingInfo;
+use redis::cluster_routing::SlotAddr;
+
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
@@ -20,9 +26,8 @@ use redis::{
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Script, Value,
 };
-
-use crate::support::*;
-
+use std::str::from_utf8;
+use std::time::Duration;
 #[test]
 fn test_async_cluster_basic_cmd() {
     let cluster = TestClusterContext::new(3, 0);
@@ -1715,4 +1720,90 @@ fn test_async_cluster_round_robin_read_from_replica() {
 
     found_ports.lock().unwrap().sort();
     assert_eq!(*found_ports.lock().unwrap(), vec![6380, 6381, 6383, 6384]);
+}
+
+fn get_queried_node_id_if_master(cluster_nodes_output: Value) -> Option<String> {
+    // Returns the node ID of the connection that was queried for CLUSTER NODES (using the 'myself' flag), if it's a master.
+    // Otherwise, returns None.
+    match cluster_nodes_output {
+        Value::Data(val) => match from_utf8(&val) {
+            Ok(str_res) => {
+                let parts: Vec<&str> = str_res.split('\n').collect();
+                for node_entry in parts {
+                    if node_entry.contains("myself") && node_entry.contains("master") {
+                        let node_entry_parts: Vec<&str> = node_entry.split(' ').collect();
+                        let node_id = node_entry_parts[0];
+                        return Some(node_id.to_string());
+                    }
+                }
+                None
+            }
+            Err(e) => panic!("failed to decode INFO response: {:?}", e),
+        },
+        _ => panic!("Recieved unexpected response: {:?}", cluster_nodes_output),
+    }
+}
+#[test]
+fn test_async_cluster_periodic_checks_update_topology_after_failover() {
+    // This test aims to validate the functionality of periodic topology checks by detecting and updating topology changes.
+    // We will repeatedly execute CLUSTER NODES commands against the primary node responsible for slot 0, recording its node ID.
+    // Once we've successfully completed commands with the current primary, we will initiate a failover within the same shard.
+    // Since we are not executing key-based commands, we won't encounter MOVED errors that trigger a slot refresh.
+    // Consequently, we anticipate that only the periodic topology check will detect this change and trigger topology refresh.
+    // If successful, the node to which we route the CLUSTER NODES command should be the newly promoted node with a different node ID.
+    let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
+        builder.periodic_topology_checks(Duration::from_millis(100))
+    });
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let mut prev_master_id = "".to_string();
+        let max_requests = 10000;
+        let mut i = 0;
+        loop {
+            if i == 10 {
+                let mut cmd = redis::cmd("CLUSTER");
+                cmd.arg("FAILOVER");
+                cmd.arg("TAKEOVER");
+                let res = connection
+                    .send_packed_command(
+                        &cmd,
+                        Some(RoutingInfo::SingleNode(
+                            SingleNodeRoutingInfo::SpecificNode(Route::new(
+                                0,
+                                SlotAddr::ReplicaRequired,
+                            )),
+                        )),
+                    )
+                    .await;
+                assert!(res.is_ok());
+            } else if i == max_requests {
+                break;
+            } else {
+                let mut cmd = redis::cmd("CLUSTER");
+                cmd.arg("NODES");
+                let res = connection
+                    .send_packed_command(
+                        &cmd,
+                        Some(RoutingInfo::SingleNode(
+                            SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master)),
+                        )),
+                    )
+                    .await
+                    .expect("Failed executing CLUSTER NODES");
+                let node_id = get_queried_node_id_if_master(res);
+                if let Some(current_master_id) = node_id {
+                    if prev_master_id.is_empty() {
+                        prev_master_id = current_master_id;
+                    } else if prev_master_id != current_master_id {
+                        return Ok::<_, RedisError>(());
+                    }
+                }
+            }
+            i += 1;
+            let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
+        }
+        panic!("Topology change wasn't found!");
+    })
+    .unwrap();
 }
