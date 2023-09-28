@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+use arcstr::ArcStr;
 use rand::seq::IteratorRandom;
 
 use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, SlotAddr};
 use crate::cluster_topology::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
 
-type IdentifierType = String;
+type IdentifierType = ArcStr;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub(crate) struct ClusterNode<Connection> {
@@ -51,7 +52,7 @@ where
 {
     pub(crate) fn new(
         slot_map: SlotMap,
-        connection_map: HashMap<String, ClusterNode<Connection>>,
+        connection_map: HashMap<ArcStr, ClusterNode<Connection>>,
         read_from_replica_strategy: ReadFromReplicaStrategy,
     ) -> Self {
         Self {
@@ -173,7 +174,7 @@ where
     pub(crate) fn address_for_identifier<'a, 'b: 'a>(
         &'a self,
         identifier: &'a Identifier,
-    ) -> Option<String> {
+    ) -> Option<ArcStr> {
         if self.connection_map.contains_key(identifier) {
             Some(identifier.0.clone())
         } else {
@@ -199,7 +200,7 @@ where
 
     pub(crate) fn replace_or_add_connection_for_address(
         &mut self,
-        address: impl Into<String>,
+        address: impl Into<ArcStr>,
         node: ClusterNode<Connection>,
     ) -> Identifier {
         let identifier = Identifier(address.into());
@@ -686,12 +687,12 @@ mod tests {
         let mut container = create_container();
 
         let address = container.address_for_identifier(&Identifier("primary1".into()));
-        assert_eq!(address, Some("primary1".to_string()));
+        assert_eq!(address, Some("primary1".into()));
 
         container.remove_connection(&Identifier("primary1".into()));
 
         let address = container.address_for_identifier(&Identifier("primary1".into()));
-        assert_eq!(address, Some("primary1".to_string()));
+        assert_eq!(address, Some("primary1".into()));
     }
 
     #[test]
