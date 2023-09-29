@@ -96,6 +96,21 @@ pub enum MultipleNodeRoutingInfo {
     MultiSlot(Vec<(Route, Vec<usize>)>),
 }
 
+/// Takes a routable and an iterator of indices, which is assued to be created from`MultipleNodeRoutingInfo::MultiSlot`,
+/// and returns a command with the arguments matching the indices.
+pub fn command_for_multi_slot_indices<'a>(
+    original_cmd: &'a impl Routable,
+    indices: impl Iterator<Item = &'a usize> + 'a,
+) -> Cmd {
+    let mut new_cmd = Cmd::new();
+    let command_length = 1; // TODO - the +1 should change if we have multi-slot commands with 2 command words.
+    new_cmd.arg(original_cmd.arg_idx(0));
+    for index in indices {
+        new_cmd.arg(original_cmd.arg_idx(index + command_length));
+    }
+    new_cmd
+}
+
 pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
     let initial_value = match op {
         AggregateOp::Min => i64::MAX,
@@ -680,9 +695,11 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
+    use core::panic;
+
     use super::{
-        get_hashtag, slot, MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotAddr, SlotMap,
+        command_for_multi_slot_indices, get_hashtag, slot, MultipleNodeRoutingInfo, Route,
+        RoutingInfo, SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
     };
     use crate::{
         cluster_routing::{AggregateOp, ResponsePolicy},
@@ -971,6 +988,36 @@ mod tests {
             }),
             "{routing:?}"
         );
+    }
+
+    #[test]
+    fn test_command_creation_for_multi_shard() {
+        let mut original_cmd = cmd("DEL");
+        original_cmd
+            .arg("foo")
+            .arg("bar")
+            .arg("baz")
+            .arg("{bar}vaz");
+        let routing = RoutingInfo::for_routable(&original_cmd);
+        let expected = vec![vec![0], vec![1, 3], vec![2]];
+
+        let mut indices: Vec<_> = match routing {
+            Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), _))) => {
+                vec.into_iter().map(|(_, indices)| indices).collect()
+            }
+            _ => panic!("unexpected routing: {routing:?}"),
+        };
+        indices.sort_by(|prev, next| prev.iter().next().unwrap().cmp(next.iter().next().unwrap())); // sorting because the `for_routable` doesn't return values in a consistent order between runs.
+
+        for (index, indices) in indices.into_iter().enumerate() {
+            let cmd = command_for_multi_slot_indices(&original_cmd, indices.iter());
+            let expected_indices = &expected[index];
+            assert_eq!(original_cmd.arg_idx(0), cmd.arg_idx(0));
+            for (index, target_index) in expected_indices.iter().enumerate() {
+                let target_index = target_index + 1;
+                assert_eq!(original_cmd.arg_idx(target_index), cmd.arg_idx(index + 1));
+            }
+        }
     }
 
     #[test]
