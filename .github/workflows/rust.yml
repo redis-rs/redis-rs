@@ -44,7 +44,7 @@ jobs:
       with:
         path: |
           /tmp/librejson.so
-        key: ${{ runner.os }}-redisjson
+        key: ${{ runner.os }}-redisjson-new
 
     - name: Install redis
       if: steps.cache-redis.outputs.cache-hit != 'true'
