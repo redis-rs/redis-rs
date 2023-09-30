@@ -125,7 +125,7 @@ fn test_acl_cat() {
         assert!(res.contains(*cat), "Category `{cat}` does not exist");
     }
 
-    let expects = vec!["pfmerge", "pfcount", "pfselftest", "pfadd"];
+    let expects = ["pfmerge", "pfcount", "pfselftest", "pfadd"];
     let res: HashSet<String> = con
         .acl_cat_categoryname("hyperloglog")
         .expect("Got commands of a category");
