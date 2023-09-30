@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, PushKind, PushSender};
+use crate::{cmd, ConnectionInfo, PushKind};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
@@ -480,12 +480,7 @@ impl ConnectionLike for MultiplexedConnection {
 }
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
-    /// Result is a channel id to unsubscribe.
-    pub async fn subscribe(
-        &mut self,
-        channel_name: String,
-        sender: PushSender,
-    ) -> RedisResult<usize> {
+    pub async fn subscribe(&mut self, channel_name: String) -> RedisResult<()> {
         if !self.resp3 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
@@ -495,41 +490,25 @@ impl MultiplexedConnection {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name.clone());
         cmd.query_async(self).await?;
-        Ok(self.push_manager.pb_subscribe(channel_name, sender))
+        Ok(())
     }
 
-    /// Unsubscribes from channel. If `channel_id` is not provided all subscriptions to a channel cancelled.
-    /// If `channel_id` is provided only specific channel is unsubscribed from,
-    /// It's a no-op if `channel_id` is invalid.
-    pub async fn unsubscribe(
-        &mut self,
-        channel_name: String,
-        channel_id: Option<usize>,
-    ) -> RedisResult<()> {
+    /// Unsubscribes from channel.
+    pub async fn unsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
         if !self.resp3 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
             )));
         }
-        if self
-            .push_manager
-            .pb_unsubscribe(channel_name.clone(), channel_id)
-        {
-            let mut cmd = cmd("UNSUBSCRIBE");
-            cmd.arg(channel_name);
-            cmd.query_async(self).await?;
-        }
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.query_async(self).await?;
         Ok(())
     }
 
     /// Subscribes to a new channel with pattern.
-    /// Result is a channel id to unsubscribe.
-    pub async fn psubscribe(
-        &mut self,
-        channel_pattern: String,
-        sender: PushSender,
-    ) -> RedisResult<usize> {
+    pub async fn psubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
         if !self.resp3 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
@@ -539,31 +518,20 @@ impl MultiplexedConnection {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern.clone());
         cmd.query_async(self).await?;
-        Ok(self.push_manager.pb_psubscribe(channel_pattern, sender))
+        Ok(())
     }
 
-    /// Unsubscribes from channel pattern. If `channel_id` is not provided all subscriptions to a channel cancelled.
-    /// If `channel_id` is provided only specific channel is unsubscribed from,
-    /// It's a no-op if `channel_id` is invalid.
-    pub async fn punsubscribe(
-        &mut self,
-        channel_pattern: String,
-        channel_id: Option<usize>,
-    ) -> RedisResult<()> {
+    /// Unsubscribes from channel pattern.
+    pub async fn punsubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
         if !self.resp3 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
             )));
         }
-        if self
-            .push_manager
-            .pb_punsubscribe(channel_pattern.clone(), channel_id)
-        {
-            let mut cmd = cmd("PUNSUBSCRIBE");
-            cmd.arg(channel_pattern);
-            cmd.query_async(self).await?;
-        }
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.query_async(self).await?;
         Ok(())
     }
 }

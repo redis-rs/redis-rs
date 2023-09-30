@@ -14,13 +14,13 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
         redis:
           - 6.2.13
-          - 7.0.12
+          - 7.2.0
         rust:
           - stable
           - beta
@@ -29,118 +29,110 @@ jobs:
 
     steps:
 
-      - name: Cache redis
-        id: cache-redis
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/redis-cli
-            ~/redis-server
-          key: ${{ runner.os }}-${{ matrix.redis }}-redis
+    - name: Cache redis
+      id: cache-redis
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/redis-cli
+          ~/redis-server
+        key: ${{ runner.os }}-${{ matrix.redis }}-redis
 
-      - name: Cache RedisJSON
-        id: cache-redisjson
-        uses: actions/cache@v3
-        with:
-          path: |
-            /tmp/librejson.so
-          key: ${{ runner.os }}-redisjson-new
+    - name: Cache RedisJSON
+      id: cache-redisjson
+      uses: actions/cache@v3
+      with:
+        path: |
+          /tmp/librejson.so
+        key: ${{ runner.os }}-redisjson
 
-      - name: Install redis
-        if: steps.cache-redis.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
-          tar -xzvf ${{ matrix.redis }}.tar.gz;
-          pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli $HOME && popd;
-          echo $PATH
+    - name: Install redis
+      if: steps.cache-redis.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
+        tar -xzvf ${{ matrix.redis }}.tar.gz;
+        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli $HOME && popd;
+        echo $PATH
 
-      - name: set PATH
-        run: |
-          echo "$HOME" >> $GITHUB_PATH
+    - name: set PATH
+      run: |
+        echo "$HOME" >> $GITHUB_PATH
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          override: true
-          components: rustfmt
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain/@master
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt
 
-      - uses: Swatinem/rust-cache@v1
+    - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-      - name: Run tests
-        run: make test
-        env:
-          REDIS_VERSION: ${{ matrix.redis }}
+    - name: Run tests
+      run: make test
 
-      - name: Checkout RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true'
-        uses: actions/checkout@v2
-        with:
-          repository: "RedisJSON/RedisJSON"
-          path: "./__ci/redis-json"
-          set-safe-directory: false
+    - name: Checkout RedisJSON
+      if: steps.cache-redisjson.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: "RedisJSON/RedisJSON"
+        path: "./__ci/redis-json"
+        set-safe-directory: false
 
-        # When cargo is invoked, it'll go up many directories to see if it can find a workspace
-        # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
-        #
-        #   1. Copy the untouched file (into Cargo.toml.actual)
-        #   2. Exclude ./__ci/redis-json from the workspace
-        #      (preventing it from being compiled as a workspace module)
-        #   3. Build RedisJSON
-        #   4. Move the built RedisJSON Module (librejson.so) to /tmp
-        #   5. Restore Cargo.toml to its untouched state
-        #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
-        #
-        # This shouldn't cause issues in the future so long as no profiles or patches
-        # are applied to the workspace Cargo.toml file
-      - name: Compile RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true'
-        run: |
-          cp ./Cargo.toml ./Cargo.toml.actual
-          echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
-          cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-          mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
-          rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
-          rm -rf ./__ci/redis-json
+      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
+      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
+      #
+      #   1. Copy the untouched file (into Cargo.toml.actual)
+      #   2. Exclude ./__ci/redis-json from the workspace
+      #      (preventing it from being compiled as a workspace module)
+      #   3. Build RedisJSON
+      #   4. Move the built RedisJSON Module (librejson.so) to /tmp
+      #   5. Restore Cargo.toml to its untouched state
+      #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
+      #
+      # This shouldn't cause issues in the future so long as no profiles or patches
+      # are applied to the workspace Cargo.toml file
+    - name: Compile RedisJSON
+      if: steps.cache-redisjson.outputs.cache-hit != 'true'
+      run: |
+        cp ./Cargo.toml ./Cargo.toml.actual
+        echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+        cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
+        mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
+        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+        rm -rf ./__ci/redis-json
 
-      - name: Run module-specific tests
-        run: make test-module
-        env:
-          REDIS_VERSION: ${{ matrix.redis }}
+    - name: Run module-specific tests
+      run: make test-module
+      env:
+        REDIS_VERSION: ${{ matrix.redis }}
 
-      - name: Check features
-        run: |
-          cargo check --benches --all-features
-          cargo check --no-default-features --features tokio-comp
-          # Remove dev-dependencies so they do not enable features accidentally
-          # https://github.com/rust-lang/cargo/issues/4664
-          sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-          cargo check --all-features
-          
-          cargo check --no-default-features --features async-std-comp
+    - name: Check features
+      run: |
+        cargo check --benches --all-features
+        cargo check --no-default-features --features tokio-comp
+        # Remove dev-dependencies so they do not enable features accidentally
+        # https://github.com/rust-lang/cargo/issues/4664
+        sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
+        cargo check --all-features
+
+        cargo check --no-default-features --features async-std-comp
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain/@master
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-features --all-targets -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+        name: fmt
+
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+        name: clippy
       - name: doc
         run: cargo doc --no-deps --document-private-items
         env:

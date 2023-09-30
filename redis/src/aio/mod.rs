@@ -74,7 +74,7 @@ pub trait ConnectionLike {
     /// actually connected.
     fn get_db(&self) -> i64;
 
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    /// Returns `PushManager` of Connection, this method is used to replace mpsc channel in PushManager.
     fn get_push_manager(&self) -> PushManager;
 }
 
