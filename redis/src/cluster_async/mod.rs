@@ -379,11 +379,10 @@ where
                 Next::Done.into()
             }
             (target, Err(err)) => {
-                trace!("Request error {}", err);
-
                 let identifier = match target {
                     OperationTarget::Node { identifier } => identifier,
                     OperationTarget::FanOut => {
+                        trace!("Request error `{}` multi-node request", err);
                         // Fanout operation are retried per internal request, and don't need additional retries.
                         self.respond(Err(err));
                         return Next::Done.into();
@@ -391,6 +390,7 @@ where
                 };
 
                 let request = this.request.as_mut().unwrap();
+                trace!("Request error `{}` on node `{:?}", err, identifier);
 
                 if request.retry >= this.retry_params.number_of_retries {
                     self.respond(Err(err));
@@ -426,7 +426,7 @@ where
                         self.poll(cx)
                     }
                     ErrorKind::IoError => {
-                        warn!("disconnected with err: {}", err);
+                        warn!("disconnected from {:?}", identifier);
                         Next::Reconnect {
                             request: this.request.take().unwrap(),
                             target: identifier,
@@ -588,7 +588,7 @@ where
         identifiers: Vec<ConnectionIdentifier>,
     ) -> impl Future<Output = ()> {
         info!(
-            "refresh connections started with {} identifiers",
+            "Started refreshing connections to {} nodes",
             identifiers.len()
         );
         let inner = self.inner.clone();
@@ -750,6 +750,7 @@ where
             num_of_nodes_to_query,
             inner.cluster_params.read_from_replicas,
         )?;
+        info!("Found slot map: {new_slots:?}");
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
         let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
@@ -804,7 +805,7 @@ where
             new_connections,
             inner.cluster_params.read_from_replicas,
         );
-        info!("refresh_slots found {} connections", write_guard.len());
+        info!("refresh_slots found {} nodes", write_guard.len());
         Ok(())
     }
 

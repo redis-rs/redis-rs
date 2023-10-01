@@ -8,7 +8,6 @@ use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
-use tracing::trace;
 
 /// The default number of refersh topology retries
 pub const DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES: usize = 3;
@@ -113,7 +112,6 @@ impl SlotMap {
                 .into_iter()
                 .map(|slot| (slot.end(), SlotMapValue::from_slot(slot))),
         );
-        trace!("{:?}", this);
         this
     }
 
