@@ -57,6 +57,7 @@ use crate::{
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
+use arcstr::ArcStr;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use backoff_std_async::future::retry;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -189,7 +190,7 @@ where
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
-type ConnectionMap<C> = HashMap<String, AsyncClusterNode<C>>;
+type ConnectionMap<C> = HashMap<ArcStr, AsyncClusterNode<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
 
@@ -563,7 +564,7 @@ where
                 |mut connections: (ConnectionMap<C>, Option<String>), addr_conn_res| async move {
                     match addr_conn_res {
                         Ok((addr, node)) => {
-                            connections.0.insert(addr, node);
+                            connections.0.insert(addr.into(), node);
                             (connections.0, None)
                         }
                         Err(e) => (connections.0, Some(e.to_string())),
@@ -613,7 +614,7 @@ where
     }
 
     async fn aggregate_results(
-        receivers: Vec<(String, oneshot::Receiver<RedisResult<Response>>)>,
+        receivers: Vec<(ArcStr, oneshot::Receiver<RedisResult<Response>>)>,
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
@@ -687,7 +688,10 @@ where
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok(Value::Bulk(vec![Value::Data(addr.into_bytes()), result]))
+                    Ok(Value::Bulk(vec![
+                        Value::Data(addr.as_bytes().to_vec()),
+                        result,
+                    ]))
                 }))
                 .await
                 .map(Value::Bulk)
@@ -770,7 +774,7 @@ where
         });
         let addresses_and_connections_iter =
             futures::future::join_all(addresses_and_connections_iter).await;
-        let new_connections: HashMap<String, AsyncClusterNode<C>> =
+        let new_connections: HashMap<ArcStr, AsyncClusterNode<C>> =
             stream::iter(addresses_and_connections_iter)
                 .fold(
                     HashMap::with_capacity(nodes_len),
@@ -779,7 +783,7 @@ where
                             Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
                         if let Ok((conn, ip)) = conn {
                             connections.insert(
-                                addr.to_string(),
+                                addr.into(),
                                 ClusterNode::new(async { conn }.boxed().shared(), ip),
                             );
                         }
@@ -815,7 +819,7 @@ where
             iterator: impl Iterator<Item = (Arc<Cmd>, ConnectionAndIdentifier<ConnectionFuture<C>>)>,
             connections_container: &ConnectionsContainer<C>,
         ) -> (
-            Vec<(String, Receiver<Result<Response, RedisError>>)>,
+            Vec<(ArcStr, Receiver<Result<Response, RedisError>>)>,
             Vec<PendingRequest<Response, C>>,
         ) {
             iterator
