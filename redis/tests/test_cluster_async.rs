@@ -1,5 +1,6 @@
 #![cfg(feature = "cluster-async")]
 mod support;
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{
     atomic::{self, AtomicI32, AtomicU16},
@@ -423,8 +424,10 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
 
     let requests = atomic::AtomicUsize::new(0);
     let started = atomic::AtomicBool::new(false);
-    let refreshed = atomic::AtomicBool::new(false);
-
+    let refreshed_map = HashMap::from([
+        (6379, atomic::AtomicBool::new(false)),
+        (6380, atomic::AtomicBool::new(false)),
+    ]);
     let MockEnv {
         runtime,
         async_connection: mut connection,
@@ -451,8 +454,12 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
             )),
             _ => {
                 if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                    // Should not attempt to refresh slots more than once:
-                    assert!(!refreshed.swap(true, Ordering::SeqCst));
+                    // Should not attempt to refresh slots more than once,
+                    // so we expect a single CLUSTER NODES request for each node
+                    assert!(!refreshed_map
+                        .get(&port)
+                        .unwrap()
+                        .swap(true, Ordering::SeqCst));
                     Err(Ok(Value::Bulk(vec![
                         Value::Bulk(vec![
                             Value::Int(0),
