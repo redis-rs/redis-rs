@@ -224,7 +224,7 @@ where
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new()),
+            slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
             auto_reconnect: RefCell::new(true),
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
@@ -375,10 +375,7 @@ where
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
             if let Ok(slots_data) = parse_slots(value, self.cluster_params.tls) {
-                new_slots = Some(SlotMap::from_slots(
-                    &slots_data,
-                    self.cluster_params.read_from_replicas,
-                ));
+                new_slots = Some(SlotMap::from_slots(slots_data, self.cluster_params.read_from_replicas));
                 break;
             }
         }

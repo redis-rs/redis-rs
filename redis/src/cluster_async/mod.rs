@@ -224,7 +224,7 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
             (Some(chosen_route), Some(next_cmd_route)) => {
                 if chosen_route.slot() != next_cmd_route.slot() {
                     Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
-                } else if chosen_route.slot_addr() == &SlotAddr::Replica {
+                } else if chosen_route.slot_addr() != &SlotAddr::Master {
                     Ok(Some(next_cmd_route))
                 } else {
                     Ok(Some(chosen_route))
@@ -451,7 +451,7 @@ where
     ) -> RedisResult<Self> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((connections, Default::default())),
+            conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
         });
@@ -545,9 +545,9 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, inner.cluster_params.tls).and_then(|v: Vec<Slot>| {
-                    Self::build_slot_map(slots, v, inner.cluster_params.read_from_replicas)
-                }) {
+                match parse_slots(value, inner.cluster_params.tls)
+                    .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+                {
                     Ok(_) => {
                         result = Ok(());
                         break;
@@ -583,13 +583,9 @@ where
         }
     }
 
-    fn build_slot_map(
-        slot_map: &mut SlotMap,
-        slots_data: Vec<Slot>,
-        read_from_replicas: bool,
-    ) -> RedisResult<()> {
+    fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
         slot_map.clear();
-        slot_map.fill_slots(&slots_data, read_from_replicas);
+        slot_map.fill_slots(slots_data);
         trace!("{:?}", slot_map);
         Ok(())
     }
@@ -1283,7 +1279,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new(12182, SlotAddr::Replica)))
+            Ok(Some(Route::new(12182, SlotAddr::ReplicaOptional)))
         );
     }
 
