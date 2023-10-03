@@ -28,6 +28,20 @@ where
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub(crate) struct Identifier(IdentifierType);
 
+pub(crate) struct ConnectionsMap<Connection>(pub(crate) HashMap<ArcStr, ClusterNode<Connection>>);
+
+impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (key, value) in self.0.iter() {
+            match value.ip {
+                Some(ip) => writeln!(f, "{key} - {ip}")?,
+                None => writeln!(f, "{key}")?,
+            };
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct ConnectionsContainer<Connection> {
     connection_map: HashMap<Identifier, Option<ClusterNode<Connection>>>,
     slot_map: SlotMap,
@@ -54,12 +68,13 @@ where
 {
     pub(crate) fn new(
         slot_map: SlotMap,
-        connection_map: HashMap<ArcStr, ClusterNode<Connection>>,
+        connection_map: ConnectionsMap<Connection>,
         read_from_replica_strategy: ReadFromReplicaStrategy,
         topology_hash: TopologyHash,
     ) -> Self {
         Self {
             connection_map: connection_map
+                .0
                 .into_iter()
                 .map(|(address, node)| (Identifier(address), Some(node)))
                 .collect(),

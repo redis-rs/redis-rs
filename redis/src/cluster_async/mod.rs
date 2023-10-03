@@ -85,7 +85,9 @@ use tokio::sync::{
 };
 use tracing::{info, trace, warn};
 
-use self::connections_container::{ConnectionAndIdentifier, Identifier as ConnectionIdentifier};
+use self::connections_container::{
+    ConnectionAndIdentifier, ConnectionsMap, Identifier as ConnectionIdentifier,
+};
 
 /// This represents an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
@@ -192,8 +194,7 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
-type ConnectionMap<C> = HashMap<ArcStr, AsyncClusterNode<C>>;
+type ConnectionMap<C> = connections_container::ConnectionsMap<ConnectionFuture<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
 
@@ -591,11 +592,14 @@ where
             })
             .buffer_unordered(initial_nodes.len())
             .fold(
-                (HashMap::with_capacity(initial_nodes.len()), None),
+                (
+                    ConnectionsMap(HashMap::with_capacity(initial_nodes.len())),
+                    None,
+                ),
                 |mut connections: (ConnectionMap<C>, Option<String>), addr_conn_res| async move {
                     match addr_conn_res {
                         Ok((addr, node)) => {
-                            connections.0.insert(addr.into(), node);
+                            connections.0 .0.insert(addr.into(), node);
                             (connections.0, None)
                         }
                         Err(e) => (connections.0, Some(e.to_string())),
@@ -603,13 +607,14 @@ where
                 },
             )
             .await;
-        if connections.0.is_empty() {
+        if connections.0 .0.is_empty() {
             return Err(RedisError::from((
                 ErrorKind::IoError,
                 "Failed to create initial connections",
                 connections.1.unwrap_or("".to_string()),
             )));
         }
+        info!("create_initial_connections found nodes:\n{}", connections.0);
         Ok(connections.0)
     }
 
@@ -617,10 +622,7 @@ where
         &mut self,
         identifiers: Vec<ConnectionIdentifier>,
     ) -> impl Future<Output = ()> {
-        info!(
-            "Started refreshing connections to {} nodes",
-            identifiers.len()
-        );
+        info!("Started refreshing connections to {:?}", identifiers);
         let inner = self.inner.clone();
         async move {
             let mut connections_container = inner.conn_lock.write().await;
@@ -873,25 +875,25 @@ where
         });
         let addresses_and_connections_iter =
             futures::future::join_all(addresses_and_connections_iter).await;
-        let new_connections: HashMap<ArcStr, AsyncClusterNode<C>> =
-            stream::iter(addresses_and_connections_iter)
-                .fold(
-                    HashMap::with_capacity(nodes_len),
-                    |mut connections, (addr, connection)| async {
-                        let conn =
-                            Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                        if let Ok((conn, ip)) = conn {
-                            connections.insert(
-                                addr.into(),
-                                ClusterNode::new(async { conn }.boxed().shared(), ip),
-                            );
-                        }
-                        connections
-                    },
-                )
-                .await;
+        let new_connections: ConnectionMap<C> = stream::iter(addresses_and_connections_iter)
+            .fold(
+                ConnectionsMap(HashMap::with_capacity(nodes_len)),
+                |mut connections, (addr, connection)| async {
+                    let conn =
+                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                    if let Ok((conn, ip)) = conn {
+                        connections.0.insert(
+                            addr.into(),
+                            ClusterNode::new(async { conn }.boxed().shared(), ip),
+                        );
+                    }
+                    connections
+                },
+            )
+            .await;
 
         drop(read_guard);
+        info!("refresh_slots found nodes:\n{new_connections}");
         // Replace the current slot map and connection vector with the new ones
         let mut write_guard = inner.conn_lock.write().await;
         *write_guard = ConnectionsContainer::new(
@@ -900,7 +902,6 @@ where
             inner.cluster_params.read_from_replicas,
             topology_hash,
         );
-        info!("refresh_slots found {} nodes", write_guard.len());
         Ok(())
     }
 
@@ -1311,7 +1312,7 @@ where
 
     async fn get_or_create_conn(
         addr: &str,
-        node: Option<AsyncClusterNode<C>>,
+        node: Option<ClusterNode<ConnectionFuture<C>>>,
         params: &ClusterParams,
     ) -> RedisResult<(C, Option<IpAddr>)> {
         if let Some(node) = node {
