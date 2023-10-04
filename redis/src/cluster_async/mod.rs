@@ -233,6 +233,15 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
         },
     )
 }
+
+fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
+    #[cfg(feature = "tokio-comp")]
+    return Box::pin(tokio::time::sleep(duration));
+
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    return Box::pin(async_std::task::sleep(duration));
+}
+
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -240,6 +249,7 @@ enum Response {
 
 enum OperationTarget {
     Node { address: String },
+    NotFound,
     FanOut,
 }
 
@@ -324,6 +334,7 @@ enum Next<I, C> {
     },
     RefreshSlots {
         request: PendingRequest<I, C>,
+        sleep_duration: Option<Duration>,
     },
     Done,
 }
@@ -342,7 +353,9 @@ where
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,
             RequestStateProj::Sleep { sleep } => {
+                println!("sleeping");
                 ready!(sleep.poll(cx));
+                println!("done sleeping");
                 return Next::Retry {
                     request: self.project().request.take().unwrap(),
                 }
@@ -359,23 +372,34 @@ where
             (target, Err(err)) => {
                 trace!("Request error {}", err);
 
-                let address = match target {
-                    OperationTarget::Node { address } => address,
-                    OperationTarget::FanOut => {
-                        // Fanout operation are retried per internal request, and don't need additional retries.
-                        self.respond(Err(err));
-                        return Next::Done.into();
-                    }
-                };
-
                 let request = this.request.as_mut().unwrap();
-
                 if request.retry >= this.retry_params.number_of_retries {
                     self.respond(Err(err));
                     return Next::Done.into();
                 }
                 request.retry = request.retry.saturating_add(1);
+                let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
 
+                let address = match target {
+                    OperationTarget::Node { address } => Some(address),
+                    OperationTarget::FanOut => {
+                        // Fanout operation are retried per internal request, and don't need additional retries.
+                        self.respond(Err(err));
+                        return Next::Done.into();
+                    }
+                    OperationTarget::NotFound => {
+                        println!("target not found. retry: {}", request.retry);
+                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
+                        let request = this.request.take().unwrap();
+                        return Next::RefreshSlots {
+                            request,
+                            sleep_duration: Some(sleep_duration),
+                        }
+                        .into();
+                    }
+                };
+
+                println!("received {err}. retry: {}", request.retry);
                 match err.kind() {
                     ErrorKind::Ask => {
                         let mut request = this.request.take().unwrap();
@@ -389,25 +413,36 @@ where
                         request.info.redirect = err
                             .redirect_node()
                             .map(|(node, _slot)| Redirect::Moved(node.to_string()));
-                        Next::RefreshSlots { request }.into()
+                        Next::RefreshSlots {
+                            request,
+                            sleep_duration: None,
+                        }
+                        .into()
                     }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
+                        println!("set try-again sleep");
                         // Sleep and retry.
-                        let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
                         this.future.set(RequestState::Sleep {
-                            #[cfg(feature = "tokio-comp")]
-                            sleep: Box::pin(tokio::time::sleep(sleep_duration)),
-
-                            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                            sleep: Box::pin(async_std::task::sleep(sleep_duration)),
+                            sleep: boxed_sleep(sleep_duration),
                         });
                         self.poll(cx)
                     }
-                    ErrorKind::IoError => Next::Reconnect {
-                        request: this.request.take().unwrap(),
-                        target: address,
+                    ErrorKind::IoError => {
+                        if let Some(address) = address {
+                            Next::Reconnect {
+                                request: this.request.take().unwrap(),
+                                target: address,
+                            }
+                            .into()
+                        } else {
+                            let request = this.request.take().unwrap();
+                            Next::RefreshSlots {
+                                request,
+                                sleep_duration: Some(sleep_duration),
+                            }
+                            .into()
+                        }
                     }
-                    .into(),
                     _ => {
                         if err.is_retryable() {
                             Next::Retry {
@@ -529,6 +564,7 @@ where
 
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
+        println!("refresh slots started");
         let inner = self.inner.clone();
 
         async move {
@@ -578,6 +614,7 @@ where
                     },
                 )
                 .await;
+            println!("refresh slots completed");
 
             Ok(())
         }
@@ -748,7 +785,6 @@ where
         redirect: Option<Redirect>,
         routing: CommandRouting<C>,
         core: Core<C>,
-        asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
         let route = if redirect.is_some() {
             // if we have a redirect, we don't take info from `routing`.
@@ -761,7 +797,6 @@ where
                     multi_node_routing,
                     response_policy,
                 ))) => {
-                    assert!(!asking);
                     assert!(redirect.is_none());
                     return Self::execute_on_multiple_nodes(
                         &cmd,
@@ -784,34 +819,40 @@ where
             }
         };
 
-        let (addr, mut conn) = Self::get_connection(redirect, route, core, asking).await;
-        let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-        (addr.into(), result)
+        match Self::get_connection(redirect, route, core).await {
+            Ok((addr, mut conn)) => {
+                let result = conn.req_packed_command(&cmd).await.map(Response::Single);
+                (addr.into(), result)
+            }
+            Err(err) => (OperationTarget::NotFound, Err(err)),
+        }
     }
 
     async fn try_pipeline_request(
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = (String, C)>,
+        conn: impl Future<Output = RedisResult<(String, C)>>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let (addr, mut conn) = conn.await;
-        let result = conn
-            .req_packed_commands(&pipeline, offset, count)
-            .await
-            .map(Response::Multiple);
-        (OperationTarget::Node { address: addr }, result)
+        match conn.await {
+            Ok((addr, mut conn)) => {
+                let result = conn
+                    .req_packed_commands(&pipeline, offset, count)
+                    .await
+                    .map(Response::Multiple);
+                (OperationTarget::Node { address: addr }, result)
+            }
+            Err(err) => (OperationTarget::NotFound, Err(err)),
+        }
     }
 
     async fn try_request(
         info: RequestInfo<C>,
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
-
         match info.cmd {
             CmdArg::Cmd { cmd, routing } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, core, asking).await
+                Self::try_cmd_request(cmd, info.redirect, routing, core).await
             }
             CmdArg::Pipeline {
                 pipeline,
@@ -823,7 +864,7 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(info.redirect, route, core, asking),
+                    Self::get_connection(info.redirect, route, core),
                 )
                 .await
             }
@@ -831,23 +872,23 @@ where
     }
 
     async fn get_connection(
-        mut redirect: Option<Redirect>,
+        redirect: Option<Redirect>,
         route: SingleNodeRoutingInfo,
         core: Core<C>,
-        asking: bool,
-    ) -> (String, C) {
+    ) -> RedisResult<(String, C)> {
+        if let Some(redirect) = redirect {
+            // redirected requests shouldn't use a random connection, so they have a separate codepath.
+            return Self::get_redirected_connection(redirect, core).await;
+        }
+
         let read_guard = core.conn_lock.read().await;
 
-        let conn = match redirect.take() {
-            Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
-            Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
-            None => match route {
-                SingleNodeRoutingInfo::Random => None,
-                SingleNodeRoutingInfo::SpecificNode(route) => read_guard
-                    .1
-                    .slot_addr_for_route(&route)
-                    .map(|addr| addr.to_string()),
-            },
+        let conn = match route {
+            SingleNodeRoutingInfo::Random => None,
+            SingleNodeRoutingInfo::SpecificNode(route) => read_guard
+                .1
+                .slot_addr_for_route(&route)
+                .map(|addr| addr.to_string()),
         }
         .map(|addr| {
             let conn = read_guard.0.get(&addr).cloned();
@@ -864,19 +905,47 @@ where
             None => None,
         };
 
-        let (addr, mut conn) = match addr_conn_option {
+        let (addr, conn) = match addr_conn_option {
             Some(tuple) => tuple,
             None => {
                 let read_guard = core.conn_lock.read().await;
-                let (random_addr, random_conn_future) = get_random_connection(&read_guard.0);
-                drop(read_guard);
-                (random_addr, random_conn_future.await)
+                if let Some((random_addr, random_conn_future)) =
+                    get_random_connection(&read_guard.0)
+                {
+                    drop(read_guard);
+                    (random_addr, random_conn_future.await)
+                } else {
+                    return Err(
+                        (ErrorKind::ClusterConnectionNotFound, "No connections found").into(),
+                    );
+                }
             }
+        };
+
+        Ok((addr, conn))
+    }
+
+    async fn get_redirected_connection(
+        redirect: Redirect,
+        core: Core<C>,
+    ) -> RedisResult<(String, C)> {
+        let asking = matches!(redirect, Redirect::Ask(_));
+        let addr = match redirect {
+            Redirect::Moved(addr) => addr,
+            Redirect::Ask(addr) => addr,
+        };
+        let read_guard = core.conn_lock.read().await;
+        let conn = read_guard.0.get(&addr).cloned();
+        drop(read_guard);
+        let mut conn = match conn {
+            Some(conn) => conn.await,
+            None => connect_and_check(&addr, core.cluster_params.clone()).await?,
         };
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
         }
-        (addr, conn)
+
+        Ok((addr, conn))
     }
 
     fn poll_recover(
@@ -960,16 +1029,34 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots { request } => {
+                Next::RefreshSlots {
+                    request,
+                    sleep_duration,
+                } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future = Self::try_request(request.info.clone(), self.inner.clone());
+                    let future: RequestState<
+                        Pin<
+                            Box<
+                                dyn Future<Output = (OperationTarget, RedisResult<Response>)>
+                                    + Send,
+                            >,
+                        >,
+                    > = match sleep_duration {
+                        Some(sleep_duration) => RequestState::Sleep {
+                            sleep: boxed_sleep(sleep_duration),
+                        },
+                        None => RequestState::Future {
+                            future: Box::pin(Self::try_request(
+                                request.info.clone(),
+                                self.inner.clone(),
+                            )),
+                        },
+                    };
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
-                        future: RequestState::Future {
-                            future: Box::pin(future),
-                        },
+                        future,
                     }));
                 }
                 Next::Reconnect {
@@ -1259,22 +1346,18 @@ where
     Ok(())
 }
 
-// TODO: This function can panic and should probably
-// return an Option instead:
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> (String, ConnectionFuture<C>)
+fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, ConnectionFuture<C>)>
 where
     C: Clone,
 {
-    let addr = connections
+    connections
         .keys()
         .choose(&mut thread_rng())
-        .expect("Connections is empty")
-        .to_string();
-    let conn = connections
-        .get(&addr)
-        .expect("Connections is empty")
-        .clone();
-    (addr, conn)
+        .and_then(|addr| {
+            connections
+                .get(addr)
+                .map(|conn| (addr.clone(), conn.clone()))
+        })
 }
 
 #[cfg(test)]

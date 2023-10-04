@@ -131,6 +131,8 @@ pub enum ErrorKind {
     EmptySentinelList,
     /// Attempted to kill a script/function while they werent' executing
     NotBusy,
+    /// Used when a cluster connection cannot find a connection to a valid node.
+    ClusterConnectionNotFound,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -551,6 +553,7 @@ impl RedisError {
             ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
             ErrorKind::NotBusy => "not busy",
+            ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
         }
@@ -690,6 +693,7 @@ impl RedisError {
             ErrorKind::ClusterDown => true,
             ErrorKind::MasterNameNotFoundBySentinel => true,
             ErrorKind::NoValidReplicasFoundBySentinel => true,
+            ErrorKind::ClusterConnectionNotFound => true,
 
             ErrorKind::ExtensionError => false,
             ErrorKind::ExecAbortError => false,
