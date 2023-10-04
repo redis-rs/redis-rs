@@ -194,6 +194,7 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
+type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
 type ConnectionMap<C> = connections_container::ConnectionsMap<ConnectionFuture<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
@@ -614,7 +615,7 @@ where
                 connections.1.unwrap_or("".to_string()),
             )));
         }
-        info!("create_initial_connections found nodes:\n{}", connections.0);
+        info!("Connected to initial nodes:\n{}", connections.0);
         Ok(connections.0)
     }
 
@@ -1312,7 +1313,7 @@ where
 
     async fn get_or_create_conn(
         addr: &str,
-        node: Option<ClusterNode<ConnectionFuture<C>>>,
+        node: Option<AsyncClusterNode<C>>,
         params: &ClusterParams,
     ) -> RedisResult<(C, Option<IpAddr>)> {
         if let Some(node) = node {

@@ -32,10 +32,10 @@ pub(crate) struct ConnectionsMap<Connection>(pub(crate) HashMap<ArcStr, ClusterN
 
 impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (key, value) in self.0.iter() {
-            match value.ip {
-                Some(ip) => writeln!(f, "{key} - {ip}")?,
-                None => writeln!(f, "{key}")?,
+        for (address, node) in self.0.iter() {
+            match node.ip {
+                Some(ip) => writeln!(f, "{address} - {ip}")?,
+                None => writeln!(f, "{address}")?,
             };
         }
         Ok(())
