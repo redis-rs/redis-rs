@@ -844,7 +844,7 @@ where
             num_of_nodes_to_query,
             inner.cluster_params.read_from_replicas,
         )?;
-        info!("Found slot map: {new_slots:?}");
+        info!("Found slot map: {new_slots}");
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
         let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();

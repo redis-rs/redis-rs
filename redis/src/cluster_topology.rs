@@ -5,6 +5,7 @@ use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, Slot, SlotAddr, Slo
 use crate::{cluster::TlsMode, ErrorKind, RedisError, RedisResult, Value};
 use derivative::Derivative;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
@@ -165,6 +166,23 @@ impl SlotMap {
                 .flat_map(|(route, _)| self.slot_addr_for_route(route))
                 .collect(),
         }
+    }
+}
+
+impl Display for SlotMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Strategy: {:?}. Slot mapping:", self.read_from_replica)?;
+        for (end, slot_map_value) in self.slots.iter() {
+            writeln!(
+                f,
+                "({}-{}): primary: {}, replicas: {:?}",
+                slot_map_value.start,
+                end,
+                slot_map_value.addrs.primary,
+                slot_map_value.addrs.replicas
+            )?;
+        }
+        Ok(())
     }
 }
 
