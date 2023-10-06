@@ -30,20 +30,20 @@ pub enum AggregateOp {
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
-/// Policy on how to combine multiple responses into one.
+/// Policy defining how to combine multiple responses into one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResponsePolicy {
-    /// Waits for one request to succeed, and return its results. Return error if all requests fail.
+    /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
-    /// Waits for one request to succeed with a non-empty value. Returns error if all requests fail or return `Nil`.
+    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
     OneSucceededNonEmpty,
     /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
-    /// Aggregates success results according to a logical bitwise operator. Returns error on any failed request, or on a response that doesn't conform to 0 or 1.
+    /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
     AggregateLogical(LogicalAggregateOp),
-    /// Aggregates success results according to a numeric operator. Returns error on any failed request, or on a response that isn't an integer.
+    /// Aggregate success results according to a numeric operator. Return error on any failed request or on a response that isn't an integer.
     Aggregate(AggregateOp),
-    /// Aggreagte array responses into a single array. Returns error on any failed request, or on a response that isn't an array.
+    /// Aggregate array responses into a single array. Return error on any failed request or on a response that isn't an array.
     CombineArrays,
     /// Handling is not defined by the Redis standard. Will receive a special case
     Special,
@@ -67,15 +67,38 @@ pub enum SingleNodeRoutingInfo {
     SpecificNode(Route),
 }
 
+impl From<Option<Route>> for SingleNodeRoutingInfo {
+    fn from(value: Option<Route>) -> Self {
+        value
+            .map(SingleNodeRoutingInfo::SpecificNode)
+            .unwrap_or(SingleNodeRoutingInfo::Random)
+    }
+}
+
 /// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
 pub enum MultipleNodeRoutingInfo {
-    /// route to all nodes in the clusters
+    /// Route to all nodes in the clusters
     AllNodes,
     /// Route to all primaries in the cluster
     AllMasters,
-    /// Instructions on how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand and the indices of the arguments from the original command that should be copied to the subcommand.
+    /// Instructions for how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand, and the indices of the arguments from the original command that should be copied to the subcommand.
     MultiSlot(Vec<(Route, Vec<usize>)>),
+}
+
+/// Takes a routable and an iterator of indices, which is assued to be created from`MultipleNodeRoutingInfo::MultiSlot`,
+/// and returns a command with the arguments matching the indices.
+pub fn command_for_multi_slot_indices<'a>(
+    original_cmd: &'a impl Routable,
+    indices: impl Iterator<Item = &'a usize> + 'a,
+) -> Cmd {
+    let mut new_cmd = Cmd::new();
+    let command_length = 1; // TODO - the +1 should change if we have multi-slot commands with 2 command words.
+    new_cmd.arg(original_cmd.arg_idx(0));
+    for index in indices {
+        new_cmd.arg(original_cmd.arg_idx(index + command_length));
+    }
+    new_cmd
 }
 
 pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
@@ -167,12 +190,22 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
     Ok(Value::Bulk(results))
 }
 
+/// Combines multiple call results in the `values` field, each assume to be an array of results,
+/// into a single array. `sorting_order` defines the order of the results in the returned array -
+/// for each array of results, `sorting_order` should contain a matching array with the indices of
+/// the results in the final array.
 pub(crate) fn combine_and_sort_array_results<'a>(
     values: Vec<Value>,
-    sorting_order: impl IntoIterator<Item = &'a Vec<usize>> + ExactSizeIterator,
+    sorting_order: impl Iterator<Item = &'a Vec<usize>> + ExactSizeIterator,
 ) -> RedisResult<Value> {
     let mut results = Vec::new();
-    results.resize(values.len(), Value::Nil);
+    results.resize(
+        values.iter().fold(0, |acc, value| match value {
+            Value::Bulk(values) => values.len() + acc,
+            _ => 0,
+        }),
+        Value::Nil,
+    );
     assert_eq!(values.len(), sorting_order.len());
 
     for (key_indices, value) in sorting_order.into_iter().zip(values) {
@@ -180,7 +213,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
             Value::Bulk(values) => {
                 assert_eq!(values.len(), key_indices.len());
                 for (index, value) in key_indices.iter().zip(values) {
-                    results[*index - 1] = value;
+                    results[*index] = value;
                 }
             }
             _ => {
@@ -201,8 +234,18 @@ fn get_route(is_readonly: bool, key: &[u8]) -> Route {
     }
 }
 
+/// Takes the given `routable` and creates a multi-slot routing info.
+/// This is used for commands like MSET & MGET, where if the command's keys
+/// are hashed to multiple slots, the command should be split into sub-commands,
+/// each targetting a single slot. The results of these sub-commands are then
+/// usually reassembled using `combine_and_sort_array_results`. In order to do this,
+/// `MultipleNodeRoutingInfo::MultiSlot` contains the routes for each sub-command, and
+/// the indices in the final combined result for each result from the sub-command.
+///
+/// If all keys are routed to the same slot, there's no need to split the command,
+/// so a single node routing info will be returned.
 fn multi_shard<R>(
-    r: &R,
+    routable: &R,
     cmd: &[u8],
     first_key_index: usize,
     has_values: bool,
@@ -212,19 +255,19 @@ where
 {
     let is_readonly = is_readonly_cmd(cmd);
     let mut routes = HashMap::new();
-    let mut index = first_key_index;
-    while let Some(key) = r.arg_idx(index) {
+    let mut key_index = 0;
+    while let Some(key) = routable.arg_idx(first_key_index + key_index) {
         let route = get_route(is_readonly, key);
         let entry = routes.entry(route);
         let keys = entry.or_insert(Vec::new());
-        keys.push(index);
+        keys.push(key_index);
 
         if has_values {
-            index += 1;
-            r.arg_idx(index)?; // check that there's a value for the key
-            keys.push(index);
+            key_index += 1;
+            routable.arg_idx(first_key_index + key_index)?; // check that there's a value for the key
+            keys.push(key_index);
         }
-        index += 1
+        key_index += 1;
     }
 
     let mut routes: Vec<(Route, Vec<usize>)> = routes.into_iter().collect();
@@ -632,10 +675,11 @@ impl Route {
 #[cfg(test)]
 mod tests {
     use super::{
-        AggregateOp, MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo, SlotAddr,
+        command_for_multi_slot_indices, AggregateOp, MultipleNodeRoutingInfo, ResponsePolicy,
+        Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
     };
-    use crate::{cluster_topology::slot, cmd, parser::parse_redis_value};
+    use crate::{cluster_topology::slot, cmd, parser::parse_redis_value, Value};
+    use core::panic;
 
     #[test]
     fn test_routing_info_mixed_capatalization() {
@@ -882,9 +926,9 @@ mod tests {
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&cmd);
         let mut expected = std::collections::HashMap::new();
-        expected.insert(Route(4813, SlotAddr::Master), vec![3]);
-        expected.insert(Route(5061, SlotAddr::Master), vec![2, 4]);
-        expected.insert(Route(12182, SlotAddr::Master), vec![1]);
+        expected.insert(Route(4813, SlotAddr::Master), vec![2]);
+        expected.insert(Route(5061, SlotAddr::Master), vec![1, 3]);
+        expected.insert(Route(12182, SlotAddr::Master), vec![0]);
 
         assert!(
             matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
@@ -898,9 +942,9 @@ mod tests {
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&cmd);
         let mut expected = std::collections::HashMap::new();
-        expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![3]);
-        expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![2, 4]);
-        expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![1]);
+        expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![2]);
+        expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3]);
+        expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![0]);
 
         assert!(
             matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::CombineArrays)))) if {
@@ -909,6 +953,36 @@ mod tests {
             }),
             "{routing:?}"
         );
+    }
+
+    #[test]
+    fn test_command_creation_for_multi_shard() {
+        let mut original_cmd = cmd("DEL");
+        original_cmd
+            .arg("foo")
+            .arg("bar")
+            .arg("baz")
+            .arg("{bar}vaz");
+        let routing = RoutingInfo::for_routable(&original_cmd);
+        let expected = vec![vec![0], vec![1, 3], vec![2]];
+
+        let mut indices: Vec<_> = match routing {
+            Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), _))) => {
+                vec.into_iter().map(|(_, indices)| indices).collect()
+            }
+            _ => panic!("unexpected routing: {routing:?}"),
+        };
+        indices.sort_by(|prev, next| prev.iter().next().unwrap().cmp(next.iter().next().unwrap())); // sorting because the `for_routable` doesn't return values in a consistent order between runs.
+
+        for (index, indices) in indices.into_iter().enumerate() {
+            let cmd = command_for_multi_slot_indices(&original_cmd, indices.iter());
+            let expected_indices = &expected[index];
+            assert_eq!(original_cmd.arg_idx(0), cmd.arg_idx(0));
+            for (index, target_index) in expected_indices.iter().enumerate() {
+                let target_index = target_index + 1;
+                assert_eq!(original_cmd.arg_idx(target_index), cmd.arg_idx(index + 1));
+            }
+        }
     }
 
     #[test]
@@ -925,6 +999,32 @@ mod tests {
                 ))
             ),
             "{routing:?}"
+        );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array() {
+        let res1 = Value::Bulk(vec![Value::Nil, Value::Okay]);
+        let res2 = Value::Bulk(vec![
+            Value::Data("1".as_bytes().to_vec()),
+            Value::Data("4".as_bytes().to_vec()),
+        ]);
+        let res3 = Value::Bulk(vec![Value::Status("2".to_string()), Value::Int(3)]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2, res3],
+            [vec![0, 5], vec![1, 4], vec![2, 3]].iter(),
+        );
+
+        assert_eq!(
+            results.unwrap(),
+            Value::Bulk(vec![
+                Value::Nil,
+                Value::Data("1".as_bytes().to_vec()),
+                Value::Status("2".to_string()),
+                Value::Int(3),
+                Value::Data("4".as_bytes().to_vec()),
+                Value::Okay,
+            ])
         );
     }
 }

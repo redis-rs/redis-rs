@@ -1280,3 +1280,59 @@ fn test_set_options_options() {
 
     assert_args!(&opts, "EX", "1000");
 }
+
+#[test]
+fn test_blocking_sorted_set_api() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // setup version & input data followed by assertions that take into account Redis version
+    // BZPOPMIN & BZPOPMAX are available from Redis version 5.0.0
+    // BZMPOP is available from Redis version 7.0.0
+
+    let redis_version = ctx.get_version();
+    assert!(redis_version.0 >= 5);
+
+    assert_eq!(con.zadd("a", "1a", 1), Ok(()));
+    assert_eq!(con.zadd("b", "2b", 2), Ok(()));
+    assert_eq!(con.zadd("c", "3c", 3), Ok(()));
+    assert_eq!(con.zadd("d", "4d", 4), Ok(()));
+    assert_eq!(con.zadd("a", "5a", 5), Ok(()));
+    assert_eq!(con.zadd("b", "6b", 6), Ok(()));
+    assert_eq!(con.zadd("c", "7c", 7), Ok(()));
+    assert_eq!(con.zadd("d", "8d", 8), Ok(()));
+
+    let min = con.bzpopmin::<&str, (String, String, String)>("b", 0);
+    let max = con.bzpopmax::<&str, (String, String, String)>("b", 0);
+
+    assert_eq!(
+        min.unwrap(),
+        (String::from("b"), String::from("2b"), String::from("2"))
+    );
+    assert_eq!(
+        max.unwrap(),
+        (String::from("b"), String::from("6b"), String::from("6"))
+    );
+
+    if redis_version.0 >= 7 {
+        let min = con.bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(
+            0,
+            vec!["a", "b", "c", "d"].as_slice(),
+            1,
+        );
+        let max = con.bzmpop_max::<&str, (String, Vec<Vec<(String, String)>>)>(
+            0,
+            vec!["a", "b", "c", "d"].as_slice(),
+            1,
+        );
+
+        assert_eq!(
+            min.unwrap().1[0][0],
+            (String::from("1a"), String::from("1"))
+        );
+        assert_eq!(
+            max.unwrap().1[0][0],
+            (String::from("5a"), String::from("5"))
+        );
+    }
+}

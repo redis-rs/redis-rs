@@ -123,20 +123,14 @@ where
     }
 
     /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
-    pub async fn send_packed_command(
-        &mut self,
-        cmd: &Cmd,
-        routing: Option<RoutingInfo>,
-    ) -> RedisResult<Value> {
-        trace!("send_packed_command");
+    pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
+        trace!("route_command");
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    routing: CommandRouting::Route(
-                        routing.or_else(|| RoutingInfo::for_routable(cmd)),
-                    ),
+                    routing: CommandRouting::Route(Some(routing)),
                 },
                 sender,
             })
@@ -162,7 +156,7 @@ where
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be computed from `pipeline`.
-    pub async fn send_packed_commands<'a>(
+    pub async fn route_pipeline<'a>(
         &'a mut self,
         pipeline: &'a crate::Pipeline,
         offset: usize,
@@ -972,11 +966,10 @@ where
                     connections_container
                         .connection_for_route(route)
                         .map(|tuple| {
-                            let mut new_cmd = Cmd::new();
-                            new_cmd.arg(cmd.arg_idx(0));
-                            for index in indices {
-                                new_cmd.arg(cmd.arg_idx(*index));
-                            }
+                            let new_cmd = crate::cluster_routing::command_for_multi_slot_indices(
+                                cmd.as_ref(),
+                                indices.iter(),
+                            );
                             (Arc::new(new_cmd), tuple)
                         })
                 }),
@@ -1479,7 +1472,7 @@ where
     C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        self.send_packed_command(cmd, None).boxed()
+        self.route_command(cmd, None).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -1488,8 +1481,7 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        self.send_packed_commands(pipeline, offset, count, None)
-            .boxed()
+        self.route_pipeline(pipeline, offset, count, None).boxed()
     }
 
     fn get_db(&self) -> i64 {

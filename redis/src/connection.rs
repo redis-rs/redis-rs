@@ -39,6 +39,8 @@ static DEFAULT_PORT: u16 = 6379;
 #[inline(always)]
 fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
+    #[cfg(feature = "tcp_nodelay")]
+    socket.set_nodelay(true)?;
     #[cfg(feature = "keep-alive")]
     {
         //For now rely on system defaults
@@ -57,6 +59,8 @@ fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
 #[inline(always)]
 fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
+    #[cfg(feature = "tcp_nodelay")]
+    socket.set_nodelay(true)?;
     #[cfg(feature = "keep-alive")]
     {
         //For now rely on system defaults
@@ -883,7 +887,7 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisResult<Vec<Value>>;
 
-    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let pcmd = cmd.get_packed_command();
         self.req_packed_command(&pcmd)

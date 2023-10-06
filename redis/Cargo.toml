@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.23.2"
+version = "0.23.3"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -114,6 +114,7 @@ streams = []
 cluster-async = ["cluster", "futures", "futures-util"]
 keep-alive = ["socket2"]
 sentinel = ["rand"]
+tcp_nodelay = []
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
