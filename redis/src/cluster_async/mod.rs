@@ -707,14 +707,11 @@ where
                 read_guard.0.get(addr).cloned().map(|conn| {
                     let cmd = match routing {
                         MultipleNodeRoutingInfo::MultiSlot(vec) => {
-                            let mut new_cmd = Cmd::new();
-                            let command_length = 1; // TODO - the +1 should change if we have multi-slot commands with 2 command words.
-                            new_cmd.arg(cmd.arg_idx(0));
                             let (_, indices) = vec.get(index).unwrap();
-                            for index in indices {
-                                new_cmd.arg(cmd.arg_idx(*index + command_length));
-                            }
-                            Arc::new(new_cmd)
+                            Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
+                                cmd.as_ref(),
+                                indices.iter(),
+                            ))
                         }
                         _ => cmd.clone(),
                     };
