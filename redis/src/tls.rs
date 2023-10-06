@@ -1,4 +1,4 @@
-use std::io::{BufRead, Cursor, Error, ErrorKind as IOErrorKind};
+use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
 
 use rustls::{Certificate, OwnedTrustAnchor, PrivateKey, RootCertStore};
 
@@ -69,10 +69,10 @@ pub(crate) fn retrieve_tls_certificates(
         client_key,
     }) = client_tls
     {
-        let mut certs = rustls_pemfile::certs(&mut Cursor::new(client_cert))?;
+        let mut certs = rustls_pemfile::certs(&mut client_cert.as_slice() as &mut dyn BufRead)?;
         let client_cert_chain = certs.drain(..).map(Certificate).collect();
 
-        let client_key = load_key(&mut Cursor::new(client_key))?;
+        let client_key = load_key(&mut client_key.as_slice() as &mut dyn BufRead)?;
 
         Some(ClientTlsParams {
             client_cert_chain,
@@ -83,7 +83,7 @@ pub(crate) fn retrieve_tls_certificates(
     };
 
     let root_cert_store = if let Some(root_cert) = root_cert {
-        let certs = rustls_pemfile::certs(&mut Cursor::new(root_cert))?;
+        let certs = rustls_pemfile::certs(&mut root_cert.as_slice() as &mut dyn BufRead)?;
 
         let trust_anchors = certs
             .iter()

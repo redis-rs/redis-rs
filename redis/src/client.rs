@@ -353,13 +353,14 @@ impl Client {
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.
     ///
     /// - `conn_info` - URL using the `rediss://` scheme.
-    /// - `client_tls_params` - Optional pair of byte readers yielding PEM formatted files for:
-    ///   0. client's certificate chain
-    ///   1. client's private key
-    /// - `root_cert` - Optional byte readers yielding PEM formatted file for root certificates.
+    /// - `tls_certs` - `CertificatesBinary` structure containing:
+    /// -- `client_tls` - Optional `ClientTlsBinary` containing byte streams for
+    /// --- `client_cert` - client's byte stream containing client certificate in PEM format
+    /// --- `client_key` - client's byte stream containing private key in PEM format
+    /// -- `root_cert` - Optional byte stream yielding PEM formatted file for root certificates.
     ///
-    /// If client cert+key pair is not provided, then client-side authentication is not enabled. If
-    /// trust anchors are not provided, then system root certificates are used instead.
+    /// If `ClientTlsBinary` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
+    /// If `root_cert` is not provided, then system root certificates are used instead.
     ///
     /// # Examples
     ///

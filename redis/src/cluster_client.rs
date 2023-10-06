@@ -140,11 +140,7 @@ impl ClusterClientBuilder {
                 .clone()
                 .map(retrieve_tls_certificates);
 
-            if let Some(tls_params) = retrieved_tls_params {
-                Some(tls_params?)
-            } else {
-                None
-            }
+            retrieved_tls_params.transpose()?
         };
 
         let first_node = match initial_nodes.first() {
@@ -270,9 +266,14 @@ impl ClusterClientBuilder {
     /// All certificates must be provided as byte streams loaded from PEM files their consistency is
     /// checked during `build()` call.
     ///
-    /// - `client_tls` - Pair containing client certificate and key respectively used for
-    ///   client-side authentication.
-    /// - `root_cert` - CA root certificate. If not provided, it uses certificates in trust store.
+    /// - `certificates` - `CertificatesBinary` structure containing:
+    /// -- `client_tls` - Optional `ClientTlsBinary` containing byte streams for
+    /// --- `client_cert` - client's byte stream containing client certificate in PEM format
+    /// --- `client_key` - client's byte stream containing private key in PEM format
+    /// -- `root_cert` - Optional byte stream yielding PEM formatted file for root certificates.
+    ///
+    /// If `ClientTlsBinary` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
+    /// If `root_cert` is not provided, then system root certificates are used instead.
     #[cfg(feature = "tls-rustls")]
     pub fn certs(mut self, certificates: CertificatesBinary) -> ClusterClientBuilder {
         self.builder_params.tls = Some(TlsMode::Secure);
