@@ -93,12 +93,7 @@ where
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
     /// If `routing` is [None], the request will be sent to a random node.
-    pub async fn route_command(
-        &mut self,
-        cmd: &Cmd,
-        routing: RoutingInfo,
-        response_policy: Option<ResponsePolicy>,
-    ) -> RedisResult<Value> {
+    pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
         self.0
@@ -106,7 +101,6 @@ where
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
                     routing: CommandRouting::Route(routing),
-                    response_policy,
                 },
                 sender,
             })
@@ -200,7 +194,6 @@ enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
         routing: CommandRouting<C>,
-        response_policy: Option<ResponsePolicy>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
@@ -736,7 +729,6 @@ where
                                 cmd: CmdArg::Cmd {
                                     cmd,
                                     routing: CommandRouting::Connection { addr, conn },
-                                    response_policy: None,
                                 },
                                 redirect: None,
                             },
@@ -759,7 +751,6 @@ where
         cmd: Arc<Cmd>,
         redirect: Option<Redirect>,
         routing: CommandRouting<C>,
-        response_policy: Option<ResponsePolicy>,
         core: Core<C>,
         asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
@@ -770,7 +761,10 @@ where
         } else {
             match routing {
                 // commands that are sent to multiple nodes are handled here.
-                CommandRouting::Route(RoutingInfo::MultiNode(multi_node_routing)) => {
+                CommandRouting::Route(RoutingInfo::MultiNode((
+                    multi_node_routing,
+                    response_policy,
+                ))) => {
                     assert!(!asking);
                     assert!(redirect.is_none());
                     return Self::execute_on_multiple_nodes(
@@ -820,13 +814,8 @@ where
         let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
 
         match info.cmd {
-            CmdArg::Cmd {
-                cmd,
-                routing,
-                response_policy,
-            } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, response_policy, core, asking)
-                    .await
+            CmdArg::Cmd { cmd, routing } => {
+                Self::try_cmd_request(cmd, info.redirect, routing, core, asking).await
             }
             CmdArg::Pipeline {
                 pipeline,
@@ -1190,8 +1179,7 @@ where
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         let routing = RoutingInfo::for_routable(cmd)
             .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
-        let response_policy = ResponsePolicy::for_routable(cmd);
-        self.route_command(cmd, routing, response_policy).boxed()
+        self.route_command(cmd, routing).boxed()
     }
 
     fn req_packed_commands<'a>(

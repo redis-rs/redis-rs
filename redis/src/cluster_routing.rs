@@ -23,7 +23,7 @@ pub(crate) enum Redirect {
 }
 
 /// Logical bitwise aggregating operators.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LogicalAggregateOp {
     /// Aggregate by bitwise &&
     And,
@@ -31,7 +31,7 @@ pub enum LogicalAggregateOp {
 }
 
 /// Numerical aggreagting operators.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AggregateOp {
     /// Choose minimal value
     Min,
@@ -40,8 +40,8 @@ pub enum AggregateOp {
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
-/// Policy for combining multiple responses into one.
-#[derive(Debug, Clone, Copy)]
+/// Policy defining how to combine multiple responses into one.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResponsePolicy {
     /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
@@ -65,7 +65,7 @@ pub enum RoutingInfo {
     /// Route to single node
     SingleNode(SingleNodeRoutingInfo),
     /// Route to multiple nodes
-    MultiNode(MultipleNodeRoutingInfo),
+    MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
 }
 
 /// Defines which single node should receive a request.
@@ -279,47 +279,48 @@ where
     Some(if routes.len() == 1 {
         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(routes.pop().unwrap().0))
     } else {
-        RoutingInfo::MultiNode(MultipleNodeRoutingInfo::MultiSlot(routes))
+        RoutingInfo::MultiNode((
+            MultipleNodeRoutingInfo::MultiSlot(routes),
+            ResponsePolicy::for_command(cmd),
+        ))
     })
 }
 
 impl ResponsePolicy {
-    pub(crate) fn for_routable<R>(r: &R) -> Option<ResponsePolicy>
-    where
-        R: Routable + ?Sized,
-    {
-        use ResponsePolicy::*;
-        let cmd = &r.command()?[..];
+    /// Parse the command for the matching response policy.
+    pub fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
         match cmd {
-            b"SCRIPT EXISTS" => Some(AggregateLogical(LogicalAggregateOp::And)),
+            b"SCRIPT EXISTS" => Some(ResponsePolicy::AggregateLogical(LogicalAggregateOp::And)),
 
             b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK" => {
-                Some(Aggregate(AggregateOp::Sum))
+                Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
             }
 
-            b"WAIT" => Some(Aggregate(AggregateOp::Min)),
+            b"WAIT" => Some(ResponsePolicy::Aggregate(AggregateOp::Min)),
 
             b"CONFIG SET" | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
             | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"LATENCY RESET" | b"MEMORY PURGE"
             | b"MSET" | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
-                Some(AllSucceeded)
+                Some(ResponsePolicy::AllSucceeded)
             }
 
-            b"KEYS" | b"MGET" | b"SLOWLOG GET" => Some(CombineArrays),
+            b"KEYS" | b"MGET" | b"SLOWLOG GET" => Some(ResponsePolicy::CombineArrays),
 
-            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(OneSucceeded),
+            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(OneSucceededNonEmpty),
+            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceededNonEmpty),
 
             b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
-            | b"LATENCY LATEST" => Some(Special),
+            | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
 
-            b"FUNCTION STATS" => Some(Special),
+            b"FUNCTION STATS" => Some(ResponsePolicy::Special),
 
-            b"MEMORY MALLOC-STATS" | b"MEMORY DOCTOR" | b"MEMORY STATS" => Some(Special),
+            b"MEMORY MALLOC-STATS" | b"MEMORY DOCTOR" | b"MEMORY STATS" => {
+                Some(ResponsePolicy::Special)
+            }
 
-            b"INFO" => Some(Special),
+            b"INFO" => Some(ResponsePolicy::Special),
 
             _ => None,
         }
@@ -353,12 +354,18 @@ impl RoutingInfo {
             | b"MEMORY MALLOC-STATS"
             | b"MEMORY DOCTOR"
             | b"MEMORY STATS"
-            | b"INFO" => Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters)),
+            | b"INFO" => Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllMasters,
+                ResponsePolicy::for_command(cmd),
+            ))),
 
             b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"CONFIG SET"
             | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH"
             | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
-                Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllNodes))
+                Some(RoutingInfo::MultiNode((
+                    MultipleNodeRoutingInfo::AllNodes,
+                    ResponsePolicy::for_command(cmd),
+                )))
             }
 
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
@@ -677,7 +684,12 @@ mod tests {
         get_hashtag, slot, MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo,
         Slot, SlotAddr, SlotMap,
     };
-    use crate::{cmd, parser::parse_redis_value, Value};
+    use crate::{
+        cluster_routing::{AggregateOp, ResponsePolicy},
+        cmd,
+        parser::parse_redis_value,
+        Value,
+    };
 
     #[test]
     fn test_get_hashtag() {
@@ -762,20 +774,47 @@ mod tests {
 
         // Assert expected RoutingInfo explicitly:
 
-        for cmd in vec![
-            cmd("FLUSHALL"),
-            cmd("FLUSHDB"),
-            cmd("DBSIZE"),
-            cmd("PING"),
-            cmd("INFO"),
-            cmd("KEYS"),
-            cmd("SCRIPT KILL"),
-        ] {
+        for cmd in [cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("PING")] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
-                Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::AllMasters))
+                Some(RoutingInfo::MultiNode((
+                    MultipleNodeRoutingInfo::AllMasters,
+                    Some(ResponsePolicy::AllSucceeded)
+                )))
             );
         }
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd("DBSIZE")),
+            Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllMasters,
+                Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
+            )))
+        );
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
+            Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllMasters,
+                Some(ResponsePolicy::OneSucceeded)
+            )))
+        );
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd("INFO")),
+            Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllMasters,
+                Some(ResponsePolicy::Special)
+            )))
+        );
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd("KEYS")),
+            Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllMasters,
+                Some(ResponsePolicy::CombineArrays)
+            )))
+        );
 
         for cmd in vec![
             cmd("SCAN"),
@@ -910,7 +949,7 @@ mod tests {
         expected.insert(Route(12182, SlotAddr::Master), vec![0]);
 
         assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::MultiSlot(vec))) if {
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes
             }),
@@ -926,7 +965,7 @@ mod tests {
         expected.insert(Route(12182, SlotAddr::Replica), vec![0]);
 
         assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode(MultipleNodeRoutingInfo::MultiSlot(vec))) if {
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::CombineArrays)))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected ==routes
             }),
