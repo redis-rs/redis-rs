@@ -2,7 +2,7 @@ use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
 
 use rustls::{Certificate, OwnedTrustAnchor, PrivateKey, RootCertStore};
 
-use crate::{Client, ConnectionAddr, ErrorKind, IntoConnectionInfo, RedisError, RedisResult};
+use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
 ///
@@ -26,11 +26,10 @@ pub struct CertificatesBinary {
     pub root_cert: Option<Vec<u8>>,
 }
 
-pub(crate) fn inner_build_with_tls<C: IntoConnectionInfo>(
-    conn_info: C,
+pub(crate) fn inner_build_with_tls(
+    mut connection_info: ConnectionInfo,
     certificates: CertificatesBinary,
 ) -> RedisResult<Client> {
-    let mut connection_info = conn_info.into_connection_info()?;
     let tls_params = retrieve_tls_certificates(certificates)?;
 
     connection_info.addr = if let ConnectionAddr::TcpTls {

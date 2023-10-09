@@ -433,7 +433,9 @@ impl Client {
         conn_info: C,
         tls_certs: CertificatesBinary,
     ) -> RedisResult<Client> {
-        inner_build_with_tls(conn_info, tls_certs)
+        let connection_info = conn_info.into_connection_info()?;
+
+        inner_build_with_tls(connection_info, tls_certs)
     }
 }
 
