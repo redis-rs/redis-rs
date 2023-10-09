@@ -45,7 +45,9 @@ use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{MultipleNodeRoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+use crate::cluster_routing::{
+    MultipleNodeRoutingInfo, ResponsePolicy, SingleNodeRoutingInfo, SlotAddr,
+};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -61,6 +63,92 @@ use crate::{
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+
+#[derive(Clone)]
+enum Input<'a> {
+    Slice {
+        cmd: &'a [u8],
+        routable: Value,
+    },
+    Cmd(&'a Cmd),
+    Commands {
+        cmd: &'a [u8],
+        routable: Value,
+
+        offset: usize,
+        count: usize,
+    },
+}
+
+impl<'a> Input<'a> {
+    fn send(&'a self, connection: &mut impl ConnectionLike) -> RedisResult<Output> {
+        match self {
+            Input::Slice { cmd, routable: _ } => {
+                connection.req_packed_command(cmd).map(Output::Single)
+            }
+            Input::Cmd(cmd) => connection.req_command(cmd).map(Output::Single),
+            Input::Commands {
+                cmd,
+                routable: _,
+                offset,
+                count,
+            } => connection
+                .req_packed_commands(cmd, *offset, *count)
+                .map(Output::Multi),
+        }
+    }
+}
+
+impl<'a> Routable for Input<'a> {
+    fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
+        match self {
+            Input::Slice { cmd: _, routable } => routable.arg_idx(idx),
+            Input::Cmd(cmd) => cmd.arg_idx(idx),
+            Input::Commands {
+                cmd: _,
+                routable,
+                offset: _,
+                count: _,
+            } => routable.arg_idx(idx),
+        }
+    }
+
+    fn position(&self, candidate: &[u8]) -> Option<usize> {
+        match self {
+            Input::Slice { cmd: _, routable } => routable.position(candidate),
+            Input::Cmd(cmd) => cmd.position(candidate),
+            Input::Commands {
+                cmd: _,
+                routable,
+                offset: _,
+                count: _,
+            } => routable.position(candidate),
+        }
+    }
+}
+
+enum Output {
+    Single(Value),
+    Multi(Vec<Value>),
+}
+
+impl From<Output> for Value {
+    fn from(value: Output) -> Self {
+        match value {
+            Output::Single(value) => value,
+            Output::Multi(values) => Value::Bulk(values),
+        }
+    }
+}
+
+impl From<Output> for Vec<Value> {
+    fn from(value: Output) -> Self {
+        match value {
+            Output::Single(value) => vec![value],
+            Output::Multi(values) => values,
+        }
+    }
+}
 
 /// Implements the process of connecting to a Redis server
 /// and obtaining and configuring a connection handle.
@@ -438,45 +526,133 @@ where
         Ok(result)
     }
 
-    fn execute_on_multiple_nodes<T, F>(
+    fn execute_on_multiple_nodes(
         &self,
-        mut func: F,
+        input: Input,
         routing: MultipleNodeRoutingInfo,
-    ) -> RedisResult<T>
-    where
-        T: MergeResults,
-        F: FnMut(&mut C) -> RedisResult<T>,
-    {
+        response_policy: Option<ResponsePolicy>,
+    ) -> RedisResult<Value> {
         let mut connections = self.connections.borrow_mut();
         let slots = self.slots.borrow_mut();
-        let mut results = HashMap::new();
+        let addresses = slots.addresses_for_multi_routing(&routing);
 
         // TODO: reconnect and shit
-        let addresses = slots.addresses_for_multi_routing(&routing);
-        for addr in addresses {
-            let addr = addr.to_string();
-            if let Some(connection) = connections.get_mut(&addr) {
-                results.insert(addr, func(connection)?);
+        let results = addresses.iter().enumerate().map(|(index, addr)| {
+            if let Some(connection) = connections.get_mut(*addr) {
+                match &routing {
+                    MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                        let (_, indices) = vec.get(index).unwrap();
+                        let cmd = crate::cluster_routing::command_for_multi_slot_indices(
+                            &input,
+                            indices.iter(),
+                        );
+                        connection.req_command(&cmd)
+                    }
+                    _ => match input {
+                        Input::Slice { cmd, routable: _ } => connection.req_packed_command(cmd),
+                        Input::Cmd(cmd) => connection.req_command(cmd),
+                        Input::Commands {
+                            cmd,
+                            routable: _,
+                            offset,
+                            count,
+                        } => connection
+                            .req_packed_commands(cmd, offset, count)
+                            .map(Value::Bulk),
+                    },
+                }
+            } else {
+                Err((
+                    ErrorKind::IoError,
+                    "connection error",
+                    format!("Disconnected from {addr}"),
+                )
+                    .into())
+            }
+        });
+        match response_policy {
+            Some(ResponsePolicy::AllSucceeded) => {
+                for result in results {
+                    result?;
+                }
+
+                Ok(Value::Okay)
+            }
+            Some(ResponsePolicy::OneSucceeded) => {
+                let mut last_failure = None;
+
+                for result in results {
+                    match result {
+                        Ok(val) => return Ok(val),
+                        Err(err) => last_failure = Some(err),
+                    }
+                }
+
+                Err(last_failure
+                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+            }
+            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+                let mut last_failure = None;
+
+                for result in results {
+                    match result {
+                        Ok(Value::Nil) => continue,
+                        Ok(val) => return Ok(val),
+                        Err(err) => last_failure = Some(err),
+                    }
+                }
+                Err(last_failure
+                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+            }
+            Some(ResponsePolicy::Aggregate(op)) => {
+                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                crate::cluster_routing::aggregate(results, op)
+            }
+            Some(ResponsePolicy::AggregateLogical(op)) => {
+                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                crate::cluster_routing::logical_aggregate(results, op)
+            }
+            Some(ResponsePolicy::CombineArrays) => {
+                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                match routing {
+                    MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                        crate::cluster_routing::combine_and_sort_array_results(
+                            results,
+                            vec.iter().map(|(_, indices)| indices),
+                        )
+                    }
+                    _ => crate::cluster_routing::combine_array_results(results),
+                }
+            }
+            Some(ResponsePolicy::Special) | None => {
+                // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
+                // TODO - once RESP3 is merged, return a map value here.
+                // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
+                let results = results
+                    .enumerate()
+                    .map(|(index, result)| {
+                        let addr = addresses[index];
+                        result.map(|val| {
+                            Value::Bulk(vec![Value::Data(addr.as_bytes().to_vec()), val])
+                        })
+                    })
+                    .collect::<RedisResult<Vec<_>>>()?;
+                Ok(Value::Bulk(results))
             }
         }
-
-        Ok(T::merge_results(results))
     }
 
     #[allow(clippy::unnecessary_unwrap)]
-    fn request<R, T, F>(&self, cmd: &R, mut func: F) -> RedisResult<T>
-    where
-        R: ?Sized + Routable,
-        T: MergeResults + std::fmt::Debug,
-        F: FnMut(&mut C) -> RedisResult<T>,
-    {
-        let route = match RoutingInfo::for_routable(cmd) {
+    fn request(&self, input: Input) -> RedisResult<Output> {
+        let route = match RoutingInfo::for_routable(&input) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
             }
-            Some(RoutingInfo::MultiNode(multi_node_routing)) => {
-                return self.execute_on_multiple_nodes(func, multi_node_routing);
+            Some(RoutingInfo::MultiNode((multi_node_routing, response_policy))) => {
+                return self
+                    .execute_on_multiple_nodes(input, multi_node_routing, response_policy)
+                    .map(Output::Single);
             }
             None => fail!(UNROUTABLE_ERROR),
         };
@@ -506,7 +682,7 @@ where
                 } else {
                     self.get_connection(&mut connections, route.as_ref().unwrap())?
                 };
-                (addr, func(conn))
+                (addr, input.send(conn))
             };
 
             match rv {
@@ -578,7 +754,7 @@ where
         // retry logic that handles these cases.
         for retry_idx in to_retry {
             let cmd = &cmds[retry_idx];
-            results[retry_idx] = self.request(cmd, move |conn| conn.req_command(cmd))?;
+            results[retry_idx] = self.request(Input::Cmd(cmd))?.into();
         }
         Ok(results)
     }
@@ -630,12 +806,16 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
     }
 
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        self.request(cmd, move |conn| conn.req_command(cmd))
+        self.request(Input::Cmd(cmd)).map(|res| res.into())
     }
 
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         let value = parse_redis_value(cmd)?;
-        self.request(&value, move |conn| conn.req_packed_command(cmd))
+        self.request(Input::Slice {
+            cmd,
+            routable: value,
+        })
+        .map(|res| res.into())
     }
 
     fn req_packed_commands(
@@ -645,9 +825,13 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         count: usize,
     ) -> RedisResult<Vec<Value>> {
         let value = parse_redis_value(cmd)?;
-        self.request(&value, move |conn| {
-            conn.req_packed_commands(cmd, offset, count)
+        self.request(Input::Commands {
+            cmd,
+            offset,
+            count,
+            routable: value,
         })
+        .map(|res| res.into())
     }
 
     fn get_db(&self) -> i64 {
@@ -672,28 +856,6 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             }
         }
         true
-    }
-}
-
-trait MergeResults {
-    fn merge_results(_values: HashMap<String, Self>) -> Self
-    where
-        Self: Sized;
-}
-
-impl MergeResults for Value {
-    fn merge_results(values: HashMap<String, Value>) -> Value {
-        let mut items = vec![];
-        for (addr, value) in values.into_iter() {
-            items.push(Value::Bulk(vec![Value::Data(addr.into_bytes()), value]));
-        }
-        Value::Bulk(items)
-    }
-}
-
-impl MergeResults for Vec<Value> {
-    fn merge_results(_values: HashMap<String, Vec<Value>>) -> Vec<Value> {
-        unreachable!("attempted to merge a pipeline. This should not happen");
     }
 }
 
