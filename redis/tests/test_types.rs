@@ -110,6 +110,31 @@ fn test_box_slice() {
 }
 
 #[test]
+fn test_arc_slice() {
+    use std::sync::Arc;
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Data("1".into()),
+        Value::Data("2".into()),
+        Value::Data("3".into()),
+    ]));
+    assert_eq!(v, Ok(Arc::from(vec![1i32, 2, 3])));
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(Arc::from(content_vec)));
+
+    let content: &[u8] = b"1";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(Arc::from(vec![b'1'])));
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(Arc::from(vec![1_u16])));
+}
+
+#[test]
 fn test_single_bool_vec() {
     use redis::{FromRedisValue, Value};
 
