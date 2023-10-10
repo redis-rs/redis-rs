@@ -107,6 +107,13 @@ fn test_box_slice() {
     assert_eq!(v, Ok(vec![b'1'].into_boxed_slice()));
     let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
     assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
+
+    assert_eq!(
+        Box::<[i32]>::from_redis_value(
+            &Value::Data("just a string".into())
+        ).unwrap_err().to_string(),
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+    );
 }
 
 #[test]
@@ -132,6 +139,13 @@ fn test_arc_slice() {
     assert_eq!(v, Ok(Arc::from(vec![b'1'])));
     let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
     assert_eq!(v, Ok(Arc::from(vec![1_u16])));
+
+    assert_eq!(
+        Arc::<[i32]>::from_redis_value(
+            &Value::Data("just a string".into())
+        ).unwrap_err().to_string(),
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+    );
 }
 
 #[test]
