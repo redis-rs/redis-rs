@@ -111,8 +111,8 @@ fn test_box_slice() {
 
 #[test]
 fn test_arc_slice() {
-    use std::sync::Arc;
     use redis::{FromRedisValue, Value};
+    use std::sync::Arc;
 
     let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
         Value::Data("1".into()),
