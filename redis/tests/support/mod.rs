@@ -102,7 +102,12 @@ impl ServerType {
 
 impl RedisServer {
     pub fn new() -> RedisServer {
-        RedisServer::with_modules(&[])
+        RedisServer::with_modules(&[], false)
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_mtls() -> RedisServer {
+        RedisServer::with_modules(&[], true)
     }
 
     pub fn get_addr(port: u16) -> ConnectionAddr {
@@ -128,26 +133,41 @@ impl RedisServer {
         }
     }
 
-    pub fn with_modules(modules: &[Module]) -> RedisServer {
+    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> RedisServer {
         // this is technically a race but we can't do better with
         // the tools that redis gives us :(
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
 
-        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
-            cmd.spawn()
-                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-        })
+        RedisServer::new_with_addr_tls_modules_and_spawner(
+            addr,
+            None,
+            None,
+            mtls_enabled,
+            modules,
+            |cmd| {
+                cmd.spawn()
+                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+            },
+        )
     }
 
     pub fn new_with_addr_and_modules(
         addr: redis::ConnectionAddr,
         modules: &[Module],
+        mtls_enabled: bool,
     ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_spawner(addr, None, None, modules, |cmd| {
-            cmd.spawn()
-                .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-        })
+        RedisServer::new_with_addr_tls_modules_and_spawner(
+            addr,
+            None,
+            None,
+            mtls_enabled,
+            modules,
+            |cmd| {
+                cmd.spawn()
+                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+            },
+        )
     }
 
     pub fn new_with_addr_tls_modules_and_spawner<
@@ -156,6 +176,7 @@ impl RedisServer {
         addr: redis::ConnectionAddr,
         config_file: Option<&Path>,
         tls_paths: Option<TlsFilePaths>,
+        mtls_enabled: bool,
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
@@ -204,7 +225,7 @@ impl RedisServer {
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
                 let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
 
-                let auth_client = if is_tls_enabled() { "yes" } else { "no" };
+                let auth_client = if mtls_enabled { "yes" } else { "no" };
 
                 // prepare redis with TLS
                 redis_cmd
@@ -223,8 +244,8 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(host);
 
-                // Insecure only disabled if `tls` is enabled
-                let insecure = !is_tls_enabled();
+                // Insecure only disabled if `mtls` is enabled
+                let insecure = !mtls_enabled;
 
                 let addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
@@ -312,10 +333,15 @@ pub(crate) fn is_tls_enabled() -> bool {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        TestContext::with_modules(&[])
+        TestContext::with_modules(&[], false)
     }
 
-    pub fn with_tls(tls_files: TlsFilePaths) -> TestContext {
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_mtls() -> TestContext {
+        Self::with_modules(&[], true)
+    }
+
+    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
 
@@ -323,6 +349,7 @@ impl TestContext {
             addr,
             None,
             Some(tls_files),
+            mtls_enabled,
             &[],
             |cmd| {
                 cmd.spawn()
@@ -331,7 +358,8 @@ impl TestContext {
         );
 
         #[cfg(feature = "tls-rustls")]
-        let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+        let client =
+            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
         #[cfg(not(feature = "tls-rustls"))]
         let client = redis::Client::open(server.connection_info()).unwrap();
 
@@ -363,11 +391,12 @@ impl TestContext {
         TestContext { server, client }
     }
 
-    pub fn with_modules(modules: &[Module]) -> TestContext {
-        let server = RedisServer::with_modules(modules);
+    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
+        let server = RedisServer::with_modules(modules, mtls_enabled);
 
         #[cfg(feature = "tls-rustls")]
-        let client = build_single_client(server.connection_info(), &server.tls_paths).unwrap();
+        let client =
+            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
         #[cfg(not(feature = "tls-rustls"))]
         let client = redis::Client::open(server.connection_info()).unwrap();
 
@@ -643,8 +672,9 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> CertificatesBinary {
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     tls_file_params: &Option<TlsFilePaths>,
+    mtls_enabled: bool,
 ) -> redis::RedisResult<redis::Client> {
-    if is_tls_enabled() && tls_file_params.is_some() {
+    if mtls_enabled && tls_file_params.is_some() {
         redis::Client::build_with_tls(
             connection_info,
             load_certs_from_file(

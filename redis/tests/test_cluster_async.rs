@@ -46,6 +46,29 @@ fn test_async_cluster_basic_cmd() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_async_cluster_basic_cmd_with_mtls() {
+    let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        cmd("SET")
+            .arg("test")
+            .arg("test_data")
+            .query_async(&mut connection)
+            .await?;
+        let res: String = cmd("GET")
+            .arg("test")
+            .clone()
+            .query_async(&mut connection)
+            .await?;
+        assert_eq!(res, "test_data");
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_async_cluster_basic_eval() {
     let cluster = TestClusterContext::new(3, 0);
 
@@ -65,8 +88,48 @@ fn test_async_cluster_basic_eval() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_async_cluster_basic_eval_with_mtls() {
+    let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let res: String = cmd("EVAL")
+            .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
+            .arg(1)
+            .arg("key")
+            .arg("test")
+            .query_async(&mut connection)
+            .await?;
+        assert_eq!(res, "test");
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_async_cluster_basic_script() {
     let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let res: String = Script::new(
+            r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
+        )
+        .key("key")
+        .arg("test")
+        .invoke_async(&mut connection)
+        .await?;
+        assert_eq!(res, "test");
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_async_cluster_basic_script_with_mtls() {
+    let cluster = TestClusterContext::new_with_mtls(3, 0);
 
     block_on_all(async move {
         let mut connection = cluster.async_connection().await;
@@ -230,7 +293,7 @@ fn test_async_cluster_multi_shard_commands() {
 #[test]
 fn test_async_cluster_basic_failover() {
     block_on_all(async move {
-        test_failover(&TestClusterContext::new(6, 1), 10, 123).await;
+        test_failover(&TestClusterContext::new(6, 1), 10, 123, false).await;
         Ok::<_, RedisError>(())
     })
     .unwrap()
@@ -241,7 +304,9 @@ async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<()
     Ok(())
 }
 
-async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
+// parameter `mtls_enabled` can only be used if `feature = tls-rustls` is active
+#[allow(dead_code)]
+async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls_enabled: bool) {
     let completed = Arc::new(AtomicI32::new(0));
 
     let connection = env.async_connection().await;
@@ -254,8 +319,9 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
                 let addr = server.client_addr();
 
                 #[cfg(feature = "tls-rustls")]
-                let client = build_single_client(server.connection_info(), &server.tls_paths)
-                    .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
+                let client =
+                    build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled)
+                        .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
 
                 #[cfg(not(feature = "tls-rustls"))]
                 let client = redis::Client::open(server.connection_info())
@@ -1341,11 +1407,16 @@ fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
 
 #[test]
 fn test_async_cluster_with_username_and_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password(RedisCluster::password().to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        },
+        false,
+    );
     cluster.disable_default_user();
 
     block_on_all(async move {

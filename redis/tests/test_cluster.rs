@@ -31,12 +31,68 @@ fn test_cluster_basics() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_cluster_basics_with_mtls() {
+    let cluster = TestClusterContext::new_with_mtls(3, 0);
+    let mut con = cluster.connection();
+
+    redis::cmd("SET")
+        .arg("{x}key1")
+        .arg(b"foo")
+        .execute(&mut con);
+    redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+
+    assert_eq!(
+        redis::cmd("MGET")
+            .arg(&["{x}key1", "{x}key2"])
+            .query(&mut con),
+        Ok(("foo".to_string(), b"bar".to_vec()))
+    );
+}
+
+#[test]
 fn test_cluster_with_username_and_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password(RedisCluster::password().to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        },
+        false,
+    );
+    cluster.disable_default_user();
+
+    let mut con = cluster.connection();
+
+    redis::cmd("SET")
+        .arg("{x}key1")
+        .arg(b"foo")
+        .execute(&mut con);
+    redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+
+    assert_eq!(
+        redis::cmd("MGET")
+            .arg(&["{x}key1", "{x}key2"])
+            .query(&mut con),
+        Ok(("foo".to_string(), b"bar".to_vec()))
+    );
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_cluster_with_username_and_password_with_mtls() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        },
+        true,
+    );
     cluster.disable_default_user();
 
     let mut con = cluster.connection();
@@ -57,19 +113,54 @@ fn test_cluster_with_username_and_password() {
 
 #[test]
 fn test_cluster_with_bad_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password("not the right password".to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password("not the right password".to_string())
+        },
+        false,
+    );
     assert!(cluster.client.get_connection().is_err());
 }
 
 #[test]
 fn test_cluster_read_from_replicas() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
-        builder.read_from_replicas()
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        6,
+        1,
+        |builder| builder.read_from_replicas(),
+        false,
+    );
+    let mut con = cluster.connection();
+
+    // Write commands would go to the primary nodes
+    redis::cmd("SET")
+        .arg("{x}key1")
+        .arg(b"foo")
+        .execute(&mut con);
+    redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+
+    // Read commands would go to the replica nodes
+    assert_eq!(
+        redis::cmd("MGET")
+            .arg(&["{x}key1", "{x}key2"])
+            .query(&mut con),
+        Ok(("foo".to_string(), b"bar".to_vec()))
+    );
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_cluster_read_from_replicas_with_mtls() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        6,
+        1,
+        |builder| builder.read_from_replicas(),
+        true,
+    );
     let mut con = cluster.connection();
 
     // Write commands would go to the primary nodes
@@ -121,6 +212,28 @@ fn test_cluster_multi_shard_commands() {
     assert_eq!(res, "OK");
     let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).unwrap();
     assert_eq!(res, vec!["bazz", "bar", "foo"]);
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_cluster_eval_with_mtls() {
+    let cluster = TestClusterContext::new_with_mtls(3, 0);
+    let mut con = cluster.connection();
+
+    let rv = redis::cmd("EVAL")
+        .arg(
+            r#"
+            redis.call("SET", KEYS[1], "1");
+            redis.call("SET", KEYS[2], "2");
+            return redis.call("MGET", KEYS[1], KEYS[2]);
+        "#,
+        )
+        .arg("2")
+        .arg("{x}a")
+        .arg("{x}b")
+        .query(&mut con);
+
+    assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
 }
 
 #[test]

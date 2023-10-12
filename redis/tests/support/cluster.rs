@@ -14,7 +14,7 @@ use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use tempfile::TempDir;
 
-use crate::support::{build_keys_and_certs_for_tls, is_tls_enabled, Module};
+use crate::support::{build_keys_and_certs_for_tls, Module};
 
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
@@ -74,10 +74,20 @@ impl RedisCluster {
     }
 
     pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
-        RedisCluster::with_modules(nodes, replicas, &[])
+        RedisCluster::with_modules(nodes, replicas, &[], false)
     }
 
-    pub fn with_modules(nodes: u16, replicas: u16, modules: &[Module]) -> RedisCluster {
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_mtls(nodes: u16, replicas: u16) -> RedisCluster {
+        RedisCluster::with_modules(nodes, replicas, &[], true)
+    }
+
+    pub fn with_modules(
+        nodes: u16,
+        replicas: u16,
+        modules: &[Module],
+        mtls_enabled: bool,
+    ) -> RedisCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -105,6 +115,7 @@ impl RedisCluster {
                 ClusterType::build_addr(port),
                 None,
                 tls_paths.clone(),
+                mtls_enabled,
                 modules,
                 |cmd| {
                     let tempdir = tempfile::Builder::new()
@@ -155,7 +166,7 @@ impl RedisCluster {
         cmd.arg("--cluster-yes");
 
         if is_tls {
-            if is_tls_enabled() {
+            if mtls_enabled {
                 if let Some(TlsFilePaths {
                     redis_crt,
                     redis_key,
@@ -184,14 +195,16 @@ impl RedisCluster {
             tls_paths,
         };
         if replicas > 0 {
-            cluster.wait_for_replicas(replicas);
+            cluster.wait_for_replicas(replicas, mtls_enabled);
         }
 
         wait_for_status_ok(&cluster);
         cluster
     }
 
-    fn wait_for_replicas(&self, replicas: u16) {
+    // parameter `mtls_enabled` can only be used if `feature = tls-rustls` is active
+    #[allow(dead_code)]
+    fn wait_for_replicas(&self, replicas: u16, mtls_enabled: bool) {
         'server: for server in &self.servers {
             let conn_info = server.connection_info();
             eprintln!(
@@ -200,7 +213,9 @@ impl RedisCluster {
             );
 
             #[cfg(feature = "tls-rustls")]
-            let client = build_single_client(server.connection_info(), &self.tls_paths).unwrap();
+            let client =
+                build_single_client(server.connection_info(), &self.tls_paths, mtls_enabled)
+                    .unwrap();
             #[cfg(not(feature = "tls-rustls"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 
@@ -261,17 +276,24 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
+    pub mtls_enabled: bool,
 }
 
 impl TestClusterContext {
     pub fn new(nodes: u16, replicas: u16) -> TestClusterContext {
-        Self::new_with_cluster_client_builder(nodes, replicas, identity)
+        Self::new_with_cluster_client_builder(nodes, replicas, identity, false)
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_mtls(nodes: u16, replicas: u16) -> TestClusterContext {
+        Self::new_with_cluster_client_builder(nodes, replicas, identity, true)
     }
 
     pub fn new_with_cluster_client_builder<F>(
         nodes: u16,
         replicas: u16,
         initializer: F,
+        mtls_enabled: bool,
     ) -> TestClusterContext
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
@@ -284,7 +306,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
 
         #[cfg(feature = "tls-rustls")]
-        if is_tls_enabled() {
+        if mtls_enabled {
             if let Some(tls_file_paths) = &cluster.tls_paths {
                 builder = builder.certs(load_certs_from_file(tls_file_paths));
             }
@@ -294,7 +316,11 @@ impl TestClusterContext {
 
         let client = builder.build().unwrap();
 
-        TestClusterContext { cluster, client }
+        TestClusterContext {
+            cluster,
+            client,
+            mtls_enabled,
+        }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
@@ -338,8 +364,12 @@ impl TestClusterContext {
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
             #[cfg(feature = "tls-rustls")]
-            let client =
-                build_single_client(server.connection_info(), &self.cluster.tls_paths).unwrap();
+            let client = build_single_client(
+                server.connection_info(),
+                &self.cluster.tls_paths,
+                self.mtls_enabled,
+            )
+            .unwrap();
             #[cfg(not(feature = "tls-rustls"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 

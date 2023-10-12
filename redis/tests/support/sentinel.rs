@@ -16,13 +16,13 @@ use crate::support::build_single_client;
 
 use super::build_keys_and_certs_for_tls;
 use super::get_random_available_port;
-use super::is_tls_enabled;
 use super::load_certs_from_file;
 use super::Module;
 use super::RedisServer;
 use super::TlsFilePaths;
 
 const LOCALHOST: &str = "127.0.0.1";
+const MTLS_NOT_ENABLED: bool = false;
 
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
@@ -49,6 +49,7 @@ fn spawn_master_server(
         get_addr(port),
         None,
         Some(tlspaths.clone()),
+        MTLS_NOT_ENABLED,
         modules,
         |cmd| {
             // Minimize startup delay
@@ -77,6 +78,7 @@ fn spawn_replica_server(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),
+        MTLS_NOT_ENABLED,
         modules,
         |cmd| {
             cmd.arg("--replicaof")
@@ -113,6 +115,7 @@ fn spawn_sentinel_server(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),
+        MTLS_NOT_ENABLED,
         modules,
         |cmd| {
             cmd.arg("--sentinel");
@@ -198,7 +201,7 @@ fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
         let master_addr = servers[cluster_index * cluster_size].connection_info();
         let tls_paths = &servers.get(0).unwrap().tls_paths;
         let r = wait_for_master_server(|| {
-            Ok(build_single_client(master_addr.clone(), tls_paths).unwrap())
+            Ok(build_single_client(master_addr.clone(), tls_paths, MTLS_NOT_ENABLED).unwrap())
         });
         if r.is_err() {
             panic!("failed waiting for master to be ready");
@@ -208,7 +211,7 @@ fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
             let replica_addr =
                 servers[(cluster_index * cluster_size) + 1 + replica_index].connection_info();
             let r = wait_for_replica(|| {
-                Ok(build_single_client(replica_addr.clone(), tls_paths).unwrap())
+                Ok(build_single_client(replica_addr.clone(), tls_paths, MTLS_NOT_ENABLED).unwrap())
             });
             if r.is_err() {
                 panic!("failed waiting for replica to be ready and in sync");
@@ -325,6 +328,7 @@ pub struct TestSentinelContext {
     pub cluster: RedisSentinelCluster,
     pub sentinel: redis::sentinel::Sentinel,
     pub sentinels_connection_info: Vec<ConnectionInfo>,
+    mtls_enabled: bool, // for future tests
 }
 
 impl TestSentinelContext {
@@ -349,6 +353,7 @@ impl TestSentinelContext {
             cluster,
             sentinel,
             sentinels_connection_info: initial_nodes,
+            mtls_enabled: MTLS_NOT_ENABLED,
         };
         context.wait_for_cluster_up();
         context
@@ -367,7 +372,7 @@ impl TestSentinelContext {
     }
 
     pub fn sentinel_node_connection_info(&self) -> SentinelNodeConnectionInfo {
-        let certificates = if is_tls_enabled() {
+        let certificates = if self.mtls_enabled {
             let tls_files = self
                 .cluster
                 .servers

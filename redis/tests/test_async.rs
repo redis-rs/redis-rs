@@ -31,6 +31,32 @@ fn test_args() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_args_with_mtls() {
+    let ctx = TestContext::new_with_mtls();
+    let connect = ctx.async_connection();
+
+    block_on_all(connect.and_then(|mut con| async move {
+        redis::cmd("SET")
+            .arg("key1")
+            .arg(b"foo")
+            .query_async(&mut con)
+            .await?;
+        redis::cmd("SET")
+            .arg(&["key2", "bar"])
+            .query_async(&mut con)
+            .await?;
+        let result = redis::cmd("MGET")
+            .arg(&["key1", "key2"])
+            .query_async(&mut con)
+            .await;
+        assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
+        result
+    }))
+    .unwrap();
+}
+
+#[test]
 fn dont_panic_on_closed_multiplexed_connection() {
     let ctx = TestContext::new();
     let connect = ctx.multiplexed_async_connection();
@@ -98,9 +124,74 @@ fn test_pipeline_transaction() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_pipeline_transaction_with_mtls() {
+    let ctx = TestContext::new_with_mtls();
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+        let mut pipe = redis::pipe();
+        pipe.atomic()
+            .cmd("SET")
+            .arg("key_1")
+            .arg(42)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(43)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"]);
+        pipe.query_async(&mut con)
+            .map_ok(|((k1, k2),): ((i32, i32),)| {
+                assert_eq!(k1, 42);
+                assert_eq!(k2, 43);
+            })
+            .await
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_pipeline_transaction_with_errors() {
     use redis::RedisError;
     let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+        con.set::<_, _, ()>("x", 42).await.unwrap();
+
+        // Make Redis a replica of a nonexistent master, thereby making it read-only.
+        redis::cmd("slaveof")
+            .arg("1.1.1.1")
+            .arg("1")
+            .query_async::<_, ()>(&mut con)
+            .await
+            .unwrap();
+
+        // Ensure that a write command fails with a READONLY error
+        let err: RedisResult<()> = redis::pipe()
+            .atomic()
+            .set("x", 142)
+            .ignore()
+            .get("x")
+            .query_async(&mut con)
+            .await;
+
+        assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+
+        let x: i32 = con.get("x").await.unwrap();
+        assert_eq!(x, 42);
+
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_pipeline_transaction_with_errors_with_mtls() {
+    use redis::RedisError;
+    let ctx = TestContext::new_with_mtls();
 
     block_on_all(async move {
         let mut con = ctx.async_connection().await?;
@@ -194,8 +285,53 @@ fn test_args_multiplexed_connection() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_args_multiplexed_connection_with_mtls() {
+    let ctx = TestContext::new_with_mtls();
+    block_on_all(async move {
+        ctx.multiplexed_async_connection()
+            .and_then(|con| {
+                let cmds = (0..100).map(move |i| test_cmd(&con, i));
+                future::try_join_all(cmds).map_ok(|results| {
+                    assert_eq!(results.len(), 100);
+                })
+            })
+            .map_err(|err| panic!("{}", err))
+            .await
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_args_with_errors_multiplexed_connection() {
     let ctx = TestContext::new();
+    block_on_all(async move {
+        ctx.multiplexed_async_connection()
+            .and_then(|con| {
+                let cmds = (0..100).map(move |i| {
+                    let con = con.clone();
+                    async move {
+                        if i % 2 == 0 {
+                            test_cmd(&con, i).await
+                        } else {
+                            test_error(&con).await
+                        }
+                    }
+                });
+                future::try_join_all(cmds).map_ok(|results| {
+                    assert_eq!(results.len(), 100);
+                })
+            })
+            .map_err(|err| panic!("{}", err))
+            .await
+    })
+    .unwrap();
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_args_with_errors_multiplexed_connection_with_mtls() {
+    let ctx = TestContext::new_with_mtls();
     block_on_all(async move {
         ctx.multiplexed_async_connection()
             .and_then(|con| {
@@ -449,11 +585,33 @@ async fn invalid_password_issue_343() {
             password: Some("asdcasc".to_string()),
         },
     };
-    #[cfg(not(feature = "tls-rustls"))]
     let client = redis::Client::open(coninfo).unwrap();
 
-    #[cfg(feature = "tls-rustls")]
-    let client = build_single_client(coninfo, &ctx.server.tls_paths).unwrap();
+    let err = client
+        .get_multiplexed_tokio_connection()
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(
+        err.kind(),
+        ErrorKind::AuthenticationFailed,
+        "Unexpected error: {err}",
+    );
+}
+
+#[tokio::test]
+#[cfg(feature = "tls-rustls")]
+async fn invalid_password_issue_343_with_mtls() {
+    let ctx = TestContext::new_with_mtls();
+    let coninfo = redis::ConnectionInfo {
+        addr: ctx.server.client_addr().clone(),
+        redis: redis::RedisConnectionInfo {
+            db: 0,
+            username: None,
+            password: Some("asdcasc".to_string()),
+        },
+    };
+    let client = build_single_client(coninfo, &ctx.server.tls_paths, true).unwrap();
     let err = client
         .get_multiplexed_tokio_connection()
         .await
@@ -677,7 +835,7 @@ fn test_connection_manager_reconnect_after_delay() {
         .expect("failed to create tempdir");
     let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
-    let ctx = TestContext::with_tls(tls_files.clone());
+    let ctx = TestContext::with_tls(tls_files.clone(), false);
     block_on_all(async move {
         let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
             .await
@@ -690,20 +848,47 @@ fn test_connection_manager_reconnect_after_delay() {
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let _new_server = if is_tls_enabled() {
-            RedisServer::new_with_addr_tls_modules_and_spawner(
-                addr.clone(),
-                None,
-                Some(tls_files),
-                &[],
-                |cmd| {
-                    cmd.spawn()
-                        .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-                },
-            )
-        } else {
-            RedisServer::new_with_addr_and_modules(addr.clone(), &[])
-        };
+        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
+        wait_for_server_to_become_ready(ctx.client.clone()).await;
+
+        let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(result, redis::Value::Okay);
+    });
+}
+
+#[test]
+#[cfg(all(feature = "connection-manager", feature = "tls-rustls"))]
+fn test_connection_manager_reconnect_after_delay_with_mtls() {
+    let tempdir = tempfile::Builder::new()
+        .prefix("redis")
+        .tempdir()
+        .expect("failed to create tempdir");
+    let tls_files = build_keys_and_certs_for_tls(&tempdir);
+
+    let ctx = TestContext::with_tls(tls_files.clone(), true);
+    block_on_all(async move {
+        let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
+            .await
+            .unwrap();
+        let server = ctx.server;
+        let addr = server.client_addr().clone();
+        drop(server);
+
+        let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let _new_server = RedisServer::new_with_addr_tls_modules_and_spawner(
+            addr.clone(),
+            None,
+            Some(tls_files),
+            false,
+            &[],
+            |cmd| {
+                cmd.spawn()
+                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
+            },
+        );
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
