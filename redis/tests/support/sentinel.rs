@@ -16,7 +16,6 @@ use crate::support::build_single_client;
 
 use super::build_keys_and_certs_for_tls;
 use super::get_random_available_port;
-use super::load_certs_from_file;
 use super::Module;
 use super::RedisServer;
 use super::TlsFilePaths;
@@ -372,20 +371,6 @@ impl TestSentinelContext {
     }
 
     pub fn sentinel_node_connection_info(&self) -> SentinelNodeConnectionInfo {
-        let certificates = if self.mtls_enabled {
-            let tls_files = self
-                .cluster
-                .servers
-                .get(0)
-                .unwrap()
-                .tls_paths
-                .as_ref()
-                .unwrap();
-            Some(load_certs_from_file(tls_files))
-        } else {
-            None
-        };
-
         SentinelNodeConnectionInfo {
             tls_mode: if let ConnectionAddr::TcpTls { insecure, .. } =
                 self.cluster.servers[0].client_addr()
