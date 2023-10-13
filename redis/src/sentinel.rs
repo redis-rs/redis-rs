@@ -54,7 +54,6 @@
 //!         "master_name",
 //!         Some(&SentinelNodeConnectionInfo {
 //!             tls_mode: None,
-//!             certificates: None,
 //!             redis_connection_info: Some(RedisConnectionInfo {
 //!                 db: 1,
 //!                 username: Some(String::from("foo")),
@@ -71,7 +70,6 @@
 //!         "master_name",
 //!         Some(&SentinelNodeConnectionInfo {
 //!             tls_mode: Some(redis::TlsMode::Secure),
-//!             certificates: None,
 //!             redis_connection_info: None,
 //!         }),
 //!     )
@@ -91,7 +89,6 @@
 //!     String::from("master1"),
 //!     Some(SentinelNodeConnectionInfo {
 //!         tls_mode: Some(redis::TlsMode::Insecure),
-//!         certificates: None,
 //!         redis_connection_info: Some(RedisConnectionInfo {
 //!             db: 0,
 //!             username: Some(String::from("user")),
@@ -118,13 +115,6 @@ use crate::{
     FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
 };
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::CertificatesBinary;
-
-#[cfg(not(feature = "tls-rustls"))]
-#[derive(Clone, Debug)]
-struct CertificatesBinary;
-
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
 pub struct Sentinel {
@@ -145,31 +135,18 @@ pub struct SentinelNodeConnectionInfo {
 
     /// The Redis specific/connection independent information to be used.
     pub redis_connection_info: Option<RedisConnectionInfo>,
-    /// TESTING
-    pub certificates: Option<CertificatesBinary>,
 }
 
 impl SentinelNodeConnectionInfo {
     fn create_connection_info(&self, ip: String, port: u16) -> ConnectionInfo {
         let addr = match self.tls_mode {
             None => crate::ConnectionAddr::Tcp(ip, port),
-            Some(TlsMode::Secure) => {
-                let tls_params = if cfg!(feature = "tls-rustls") {
-                    self.certificates.as_ref().map(|cert| {
-                        crate::tls::retrieve_tls_certificates(cert.clone())
-                            .expect("Expected certificates provided are valid")
-                    })
-                } else {
-                    None
-                };
-
-                crate::ConnectionAddr::TcpTls {
-                    host: ip,
-                    port,
-                    insecure: false,
-                    tls_params,
-                }
-            }
+            Some(TlsMode::Secure) => crate::ConnectionAddr::TcpTls {
+                host: ip,
+                port,
+                insecure: false,
+                tls_params: None,
+            },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
                 port,
@@ -190,7 +167,6 @@ impl Default for &SentinelNodeConnectionInfo {
         static DEFAULT_VALUE: SentinelNodeConnectionInfo = SentinelNodeConnectionInfo {
             tls_mode: None,
             redis_connection_info: None,
-            certificates: None,
         };
         &DEFAULT_VALUE
     }
