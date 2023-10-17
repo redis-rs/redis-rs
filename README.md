@@ -105,7 +105,7 @@ then you should be able to connect to a redis instance using the `rediss://` URL
 let client = redis::Client::open("rediss://127.0.0.1/")?;
 ```
 
-to enable insecure mode, append `#insecure` at the end of the URL:
+To enable insecure mode, append `#insecure` at the end of the URL:
 
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
