@@ -205,7 +205,8 @@ impl IntoConnectionInfo for ConnectionInfo {
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
-/// - Specifying DB: `redis://127.0.0.1:6379/database`
+/// - Password only: `redis://:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/0`
 /// - Enabling TLS: `rediss://127.0.0.1:6379`
 /// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl<'a> IntoConnectionInfo for &'a str {
@@ -233,7 +234,8 @@ where
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
-/// - Specifying DB: `redis://127.0.0.1:6379/database`
+/// - Password only: `redis://:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/0`
 /// - Enabling TLS: `rediss://127.0.0.1:6379`
 /// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl IntoConnectionInfo for String {
