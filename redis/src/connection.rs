@@ -201,9 +201,9 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
-/// URL format: `redis://[<username>][:<password>@]<hostname>[:port][/<db>]`
+/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
 ///
-/// - Basic: `{redis|rediss}://127.0.0.1:6379`
+/// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
 /// - Specifying DB: `redis://127.0.0.1:6379/database`
 /// - Enabling TLS: `rediss://127.0.0.1:6379`
