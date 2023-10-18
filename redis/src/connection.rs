@@ -201,14 +201,16 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
-// Implementing IntoConnectionInfo for primitive string. Allowing a primitive string
-// type to be converted into ConnectionInfo struct. Examples of valid strings below.
-// URL format: redis://[<username>][:<password>@]<hostname>[:port][/<db>]
-// Basic: redis://127.0.0.1:6379
-// Username & Password: redis://user:password@127.0.0.1:6379
-// Specifying DB: redis://127.0.0.1:6379/database
-// Enabling TLS: rediss://127.0.0.1:6379
-// Enabling Insecure TLS: rediss://127.0.0.1:6379/#insecure
+/// Implementing IntoConnectionInfo for primitive string. Allowing a primitive string
+/// type to be converted into ConnectionInfo struct. Examples of valid strings below.
+///
+/// URL format: `redis://[<username>][:<password>@]<hostname>[:port][/<db>]`
+///
+/// - Basic: `redis://127.0.0.1:6379`
+/// - Username & Password: `redis://user:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/database`
+/// - Enabling TLS: `rediss://127.0.0.1:6379`
+/// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
@@ -230,14 +232,16 @@ where
     }
 }
 
-// Implementing IntoConnectionInfo for String. Allowing a String type
-// to be converted into ConnectionInfo struct. Examples of valid Strings below.
-// URL format: redis://[<username>][:<password>@]<hostname>[:port][/<db>]
-// Basic: redis://127.0.0.1:6379
-// Username & Password: redis://user:password@127.0.0.1:6379
-// Specifying DB: redis://127.0.0.1:6379/database
-// Enabling TLS: rediss://127.0.0.1:6379
-// Enabling Insecure TLS: rediss://127.0.0.1:6379/#insecure
+/// Implementing IntoConnectionInfo for String. Allowing a String type
+/// to be converted into ConnectionInfo struct. Examples of valid Strings below.
+///
+/// URL format: `redis://[<username>][:<password>@]<hostname>[:port][/<db>]`
+///
+/// - Basic: `redis://127.0.0.1:6379`
+/// - Username & Password: `redis://user:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/database`
+/// - Enabling TLS: `rediss://127.0.0.1:6379`
+/// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl IntoConnectionInfo for String {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(&self) {
