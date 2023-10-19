@@ -1,6 +1,6 @@
 #![cfg(feature = "streams")]
 
-use redis::streams::*;
+use redis::{streams::*, Value};
 use redis::{Commands, Connection, RedisResult, ToRedisArgs};
 
 mod support;
@@ -109,7 +109,8 @@ fn test_assorted_1() {
     assert_eq!(result.unwrap(), "1000-0");
 
     // xread reply
-    let reply: StreamReadReply = con.xread(&["k1", "k2", "k3"], &["0", "0", "0"]).unwrap();
+    let reply: StreamReadReply<String, Value> =
+        con.xread(&["k1", "k2", "k3"], &["0", "0", "0"]).unwrap();
 
     // verify reply contains 2 keys even though we asked for 3
     assert_eq!(&reply.keys.len(), &2usize);
@@ -135,7 +136,7 @@ fn test_assorted_1() {
     map.insert("ij", "kl");
     let _: RedisResult<String> = con.xadd_map("k3", "3000-0", map);
 
-    let reply: StreamRangeReply = con.xrange_all("k3").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange_all("k3").unwrap();
     assert!(reply.ids[0].contains_key(&"ab"));
     assert!(reply.ids[0].contains_key(&"ef"));
     assert!(reply.ids[0].contains_key(&"ij"));
@@ -170,14 +171,14 @@ fn test_xgroup_create() {
     xadd(&mut con);
 
     // no key exists... this call breaks the connection pipe for some reason
-    let reply: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k10");
+    let reply: RedisResult<StreamInfoStreamReply<Value>> = con.xinfo_stream("k10");
     assert!(reply.is_err());
 
     // redo the connection because the above error
     con = ctx.connection();
 
     // key should exist
-    let reply: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let reply: StreamInfoStreamReply<Value> = con.xinfo_stream("k1").unwrap();
     assert_eq!(&reply.first_entry.id, "1000-0");
     assert_eq!(&reply.last_entry.id, "1000-1");
     assert_eq!(&reply.last_generated_id, "1000-1");
@@ -245,7 +246,7 @@ fn test_assorted_2() {
     // using ID=">" means all undelivered ids
     // otherwise, ID="0 | ms-num" means all pending already
     // sent to this client
-    let reply: StreamReadReply = con
+    let reply: StreamReadReply<String, Value> = con
         .xread_options(
             &["k99"],
             &[">"],
@@ -264,7 +265,7 @@ fn test_assorted_2() {
 
     // get pending messages already seen by this client
     // we should only have one now..
-    let reply: StreamReadReply = con
+    let reply: StreamReadReply<String, Value> = con
         .xread_options(
             &["k99"],
             &["0"],
@@ -280,7 +281,7 @@ fn test_assorted_2() {
     // add more and read so we can test xpending
     let _: RedisResult<String> = con.xadd("k99", "1001-0", &[("i", "j"), ("k", "l")]);
     let _: RedisResult<String> = con.xadd("k99", "1001-1", &[("m", "n"), ("o", "p")]);
-    let _: StreamReadReply = con
+    let _: StreamReadReply<String, Value> = con
         .xread_options(
             &["k99"],
             &[">"],
@@ -344,7 +345,7 @@ fn test_xadd_maxlen_map() {
 
     let result: RedisResult<usize> = con.xlen("maxlen_map");
     assert_eq!(result, Ok(3));
-    let reply: StreamRangeReply = con.xrange_all("maxlen_map").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange_all("maxlen_map").unwrap();
 
     assert_eq!(reply.ids[0].get("idx"), Some("7".to_string()));
     assert_eq!(reply.ids[1].get("idx"), Some("8".to_string()));
@@ -361,7 +362,7 @@ fn test_xread_options_deleted_pel_entry() {
     let _: RedisResult<String> =
         con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h1", "w1")]);
     // read the pending items for this key & group
-    let result: StreamReadReply = con
+    let result: StreamReadReply<String, Value> = con
         .xread_options(
             &["k1"],
             &[">"],
@@ -371,7 +372,7 @@ fn test_xread_options_deleted_pel_entry() {
 
     let _: RedisResult<String> =
         con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h2", "w2")]);
-    let result_deleted_entry: StreamReadReply = con
+    let result_deleted_entry: StreamReadReply<String, Value> = con
         .xread_options(
             &["k1"],
             &["0"],
@@ -411,7 +412,7 @@ fn test_xclaim() {
     xadd_keyrange(&mut con, "k1", 0, 10);
 
     // read the pending items for this key & group
-    let reply: StreamReadReply = con
+    let reply: StreamReadReply<String, Value> = con
         .xread_options(
             &["k1"],
             &[">"],
@@ -434,7 +435,7 @@ fn test_xclaim() {
     sleep(Duration::from_millis(5));
 
     // grab this id if > 4ms
-    let reply: StreamClaimReply = con
+    let reply: StreamClaimReply<Value> = con
         .xclaim("k1", "g1", "c2", 4, &[claim.id.clone()])
         .unwrap();
     assert_eq!(reply.ids.len(), 1);
@@ -455,7 +456,7 @@ fn test_xclaim() {
 
     // lets test some of the xclaim_options
     // call force on the same claim.id
-    let _: StreamClaimReply = con
+    let _: StreamClaimReply<Value> = con
         .xclaim_options(
             "k1",
             "g1",
@@ -557,7 +558,7 @@ fn test_xgroup() {
     assert!(result.is_ok());
 
     // read from the group so we can register the consumer
-    let reply: StreamReadReply = con
+    let reply: StreamReadReply<String, Value> = con
         .xread_options(
             &["k1"],
             &[">"],
@@ -587,16 +588,16 @@ fn test_xrange() {
     xadd(&mut con);
 
     // xrange replies
-    let reply: StreamRangeReply = con.xrange_all("k1").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange_all("k1").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrange("k1", "1000-1", "+").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange("k1", "1000-1", "+").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrange("k1", "-", "1000-0").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange("k1", "-", "1000-0").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrange_count("k1", "-", "+", 1).unwrap();
+    let reply: StreamRangeReply<Value> = con.xrange_count("k1", "-", "+", 1).unwrap();
     assert_eq!(reply.ids.len(), 1);
 }
 
@@ -613,15 +614,15 @@ fn test_xrevrange() {
     xadd(&mut con);
 
     // xrange replies
-    let reply: StreamRangeReply = con.xrevrange_all("k1").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrevrange_all("k1").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrevrange("k1", "1000-1", "-").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrevrange("k1", "1000-1", "-").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrevrange("k1", "+", "1000-1").unwrap();
+    let reply: StreamRangeReply<Value> = con.xrevrange("k1", "+", "1000-1").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrevrange_count("k1", "+", "-", 1).unwrap();
+    let reply: StreamRangeReply<Value> = con.xrevrange_count("k1", "+", "-", 1).unwrap();
     assert_eq!(reply.ids.len(), 1);
 }

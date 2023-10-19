@@ -1343,7 +1343,7 @@ implement_commands! {
     /// currently checked out by another consumer.
     ///
     /// ```no_run
-    /// use redis::{Connection,Commands,RedisResult};
+    /// use redis::{Connection,Commands,RedisResult, Value};
     /// use redis::streams::{StreamClaimOptions,StreamClaimReply};
     /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
     /// let mut con = client.get_connection().unwrap();
@@ -1355,7 +1355,7 @@ implement_commands! {
     /// let opts = StreamClaimOptions::default()
     ///     .with_force()
     ///     .retry(2);
-    /// let results: RedisResult<StreamClaimReply> =
+    /// let results: RedisResult<StreamClaimReply<Value>> =
     ///     con.xclaim_options("k1", "g1", "c1", 10, &["0"], opts);
     ///
     /// // All optional arguments return a `Result<StreamClaimReply>` with one exception:
@@ -1757,7 +1757,7 @@ implement_commands! {
     /// This method handles setting optional arguments for
     /// `XREAD` or `XREADGROUP` Redis commands.
     /// ```no_run
-    /// use redis::{Connection,RedisResult,Commands};
+    /// use redis::{Connection,RedisResult,Commands, Value};
     /// use redis::streams::{StreamReadOptions,StreamReadReply};
     /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
     /// let mut con = client.get_connection().unwrap();
@@ -1767,7 +1767,7 @@ implement_commands! {
     ///
     /// let opts = StreamReadOptions::default()
     ///     .count(10);
-    /// let results: RedisResult<StreamReadReply> =
+    /// let results: RedisResult<StreamReadReply<String, Value>> =
     ///     con.xread_options(&["k1"], &["0"], &opts);
     ///
     /// // Read all undelivered messages for a given
@@ -1777,7 +1777,7 @@ implement_commands! {
     ///
     /// let opts = StreamReadOptions::default()
     ///     .group("group-1", "consumer-1");
-    /// let results: RedisResult<StreamReadReply> =
+    /// let results: RedisResult<StreamReadReply<String, Value>> =
     ///     con.xread_options(&["k1"], &[">"], &opts);
     /// ```
     ///
