@@ -105,6 +105,12 @@ then you should be able to connect to a redis instance using the `rediss://` URL
 let client = redis::Client::open("rediss://127.0.0.1/")?;
 ```
 
+To enable insecure mode, append `#insecure` at the end of the URL:
+
+```rust
+let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
+```
+
 **Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
 
 ## Cluster Support

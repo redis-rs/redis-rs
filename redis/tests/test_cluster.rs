@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, Commands, ErrorKind, RedisError, Value,
 };
 
 #[test]
@@ -107,6 +107,20 @@ fn test_cluster_eval() {
         .query(&mut con);
 
     assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
+}
+
+#[test]
+fn test_cluster_multi_shard_commands() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    let mut connection = cluster.connection();
+
+    let res: String = connection
+        .mset(&[("foo", "bar"), ("bar", "foo"), ("baz", "bazz")])
+        .unwrap();
+    assert_eq!(res, "OK");
+    let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).unwrap();
+    assert_eq!(res, vec!["bazz", "bar", "foo"]);
 }
 
 #[test]
@@ -697,4 +711,39 @@ fn test_cluster_fan_out_out_once_even_if_primary_has_multiple_slot_ranges() {
             },
         ]),
     );
+}
+
+#[test]
+fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
+    let name = "test_cluster_split_multi_shard_command_and_combine_arrays_of_values";
+    let mut cmd = cmd("MGET");
+    cmd.arg("foo").arg("bar").arg("baz");
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            let cmd_str = std::str::from_utf8(received_cmd).unwrap();
+            let results = ["foo", "bar", "baz"]
+                .iter()
+                .filter_map(|expected_key| {
+                    if cmd_str.contains(expected_key) {
+                        Some(Value::Data(format!("{expected_key}-{port}").into_bytes()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Err(Ok(Value::Bulk(results)))
+        },
+    );
+
+    let result = cmd.query::<Vec<String>>(&mut connection).unwrap();
+    assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
 }
