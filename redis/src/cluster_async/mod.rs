@@ -583,9 +583,14 @@ where
                 let params = params.clone();
                 async move {
                     let result = connect_and_check(&node_addr, params, socket_addr).await;
+                    let node_identifier = if let Some(socket_addr) = socket_addr {
+                        socket_addr.to_string()
+                    } else {
+                        node_addr
+                    };
                     result.map(|(conn, ip)| {
                         (
-                            node_addr,
+                            node_identifier,
                             ClusterNode::new(async { conn }.boxed().shared(), ip),
                         )
                     })
