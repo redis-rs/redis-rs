@@ -1866,14 +1866,12 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
                 cmd.arg("FAILOVER");
                 cmd.arg("TAKEOVER");
                 let res = connection
-                    .send_packed_command(
+                    .route_command(
                         &cmd,
-                        Some(RoutingInfo::SingleNode(
-                            SingleNodeRoutingInfo::SpecificNode(Route::new(
-                                0,
-                                SlotAddr::ReplicaRequired,
-                            )),
-                        )),
+                        RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+                            0,
+                            SlotAddr::ReplicaRequired,
+                        ))),
                     )
                     .await;
                 assert!(res.is_ok());
@@ -1883,11 +1881,12 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
                 let mut cmd = redis::cmd("CLUSTER");
                 cmd.arg("NODES");
                 let res = connection
-                    .send_packed_command(
+                    .route_command(
                         &cmd,
-                        Some(RoutingInfo::SingleNode(
-                            SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master)),
-                        )),
+                        RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+                            0,
+                            SlotAddr::Master,
+                        ))),
                     )
                     .await
                     .expect("Failed executing CLUSTER NODES");

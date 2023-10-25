@@ -130,7 +130,7 @@ where
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    routing: CommandRouting::Route(Some(routing)),
+                    routing: CommandRouting::Route(routing),
                 },
                 sender,
             })
@@ -161,7 +161,7 @@ where
         pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
-        route: Option<Route>,
+        route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
         self.0
@@ -170,7 +170,7 @@ where
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
                     offset,
                     count,
-                    route: route.or_else(|| route_pipeline(pipeline)),
+                    route,
                 },
                 sender,
             })
@@ -224,7 +224,7 @@ impl<C> Dispose for ClusterConnInner<C> {
 
 #[derive(Clone)]
 enum CommandRouting<C> {
-    Route(Option<RoutingInfo>),
+    Route(RoutingInfo),
     Connection {
         identifier: ConnectionIdentifier,
         conn: ConnectionFuture<C>,
@@ -241,7 +241,7 @@ enum CmdArg<C> {
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        route: Option<Route>,
+        route: SingleNodeRoutingInfo,
     },
 }
 
@@ -997,14 +997,14 @@ where
         let route_option = if redirect.is_some() {
             // if we have a redirect, we don't take info from `routing`.
             // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
-            None
+            SingleNodeRoutingInfo::Random
         } else {
             match routing {
                 // commands that are sent to multiple nodes are handled here.
-                CommandRouting::Route(Some(RoutingInfo::MultiNode((
+                CommandRouting::Route(RoutingInfo::MultiNode((
                     multi_node_routing,
                     response_policy,
-                )))) => {
+                ))) => {
                     assert!(!asking);
                     assert!(redirect.is_none());
                     return Self::execute_on_multiple_nodes(
@@ -1022,16 +1022,7 @@ where
                     let result = conn.req_packed_command(&cmd).await.map(Response::Single);
                     return (identifier.into(), result);
                 }
-
-                CommandRouting::Route(Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(route),
-                ))) => Some(route),
-
-                CommandRouting::Route(Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::Random,
-                ))) => None,
-
-                CommandRouting::Route(None) => None,
+                CommandRouting::Route(RoutingInfo::SingleNode(routing_info)) => routing_info,
             }
         };
         trace!("route request to single node");
@@ -1088,7 +1079,7 @@ where
 
     async fn get_connection(
         mut redirect: Option<Redirect>,
-        route: Option<Route>,
+        route: SingleNodeRoutingInfo,
         core: Core<C>,
         asking: bool,
     ) -> (ConnectionIdentifier, C) {
@@ -1107,10 +1098,12 @@ where
                     ConnectionCheck::Found,
                 )
             }
-            None => route
-                .as_ref()
-                .and_then(|route| read_guard.connection_for_route(route))
-                .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
+            None => match route {
+                SingleNodeRoutingInfo::SpecificNode(route) => read_guard
+                    .connection_for_route(&route)
+                    .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
+                SingleNodeRoutingInfo::Random => ConnectionCheck::Nothing,
+            },
         };
         drop(read_guard);
 
@@ -1472,7 +1465,9 @@ where
     C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        self.route_command(cmd, None).boxed()
+        let routing = RoutingInfo::for_routable(cmd)
+            .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+        self.route_command(cmd, routing).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -1481,7 +1476,8 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        self.route_pipeline(pipeline, offset, count, None).boxed()
+        let route = route_pipeline(pipeline).into();
+        self.route_pipeline(pipeline, offset, count, route).boxed()
     }
 
     fn get_db(&self) -> i64 {
