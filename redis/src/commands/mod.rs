@@ -604,9 +604,21 @@ implement_commands! {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
     }
 
+    /// Removes and returns the member with the highest score in a sorted set.
+    /// Blocks until a member is available otherwise.
+    fn bzpopmax<K: ToRedisArgs>(key: K, timeout: isize) {
+        cmd("BZPOPMAX").arg(key).arg(timeout)
+    }
+
     /// Removes and returns up to count members with the highest scores in a sorted set
     fn zpopmax<K: ToRedisArgs>(key: K, count: isize) {
         cmd("ZPOPMAX").arg(key).arg(count)
+    }
+
+    /// Removes and returns the member with the lowest score in a sorted set.
+    /// Blocks until a member is available otherwise.
+    fn bzpopmin<K: ToRedisArgs>(key: K, timeout: isize) {
+        cmd("BZPOPMIN").arg(key).arg(timeout)
     }
 
     /// Removes and returns up to count members with the lowest scores in a sorted set
@@ -616,8 +628,22 @@ implement_commands! {
 
     /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
+    /// Blocks until a member is available otherwise.
+    fn bzmpop_max<K: ToRedisArgs>(timeout: isize, keys: &'a [K], count: isize) {
+        cmd("BZMPOP").arg(timeout).arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
+    }
+
+    /// Removes and returns up to count members with the highest scores,
+    /// from the first non-empty sorted set in the provided list of key names.
     fn zmpop_max<K: ToRedisArgs>(keys: &'a [K], count: isize) {
         cmd("ZMPOP").arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
+    }
+
+    /// Removes and returns up to count members with the lowest scores,
+    /// from the first non-empty sorted set in the provided list of key names.
+    /// Blocks until a member is available otherwise.
+    fn bzmpop_min<K: ToRedisArgs>(timeout: isize, keys: &'a [K], count: isize) {
+        cmd("BZMPOP").arg(timeout).arg(keys.len()).arg(keys).arg("MIN").arg("COUNT").arg(count)
     }
 
     /// Removes and returns up to count members with the lowest scores,

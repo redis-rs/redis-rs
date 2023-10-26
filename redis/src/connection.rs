@@ -39,6 +39,8 @@ static DEFAULT_PORT: u16 = 6379;
 #[inline(always)]
 fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
+    #[cfg(feature = "tcp_nodelay")]
+    socket.set_nodelay(true)?;
     #[cfg(feature = "keep-alive")]
     {
         //For now rely on system defaults
@@ -57,6 +59,8 @@ fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
 #[inline(always)]
 fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
+    #[cfg(feature = "tcp_nodelay")]
+    socket.set_nodelay(true)?;
     #[cfg(feature = "keep-alive")]
     {
         //For now rely on system defaults
@@ -197,6 +201,14 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
+/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+///
+/// - Basic: `redis://127.0.0.1:6379`
+/// - Username & Password: `redis://user:password@127.0.0.1:6379`
+/// - Password only: `redis://:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/0`
+/// - Enabling TLS: `rediss://127.0.0.1:6379`
+/// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl<'a> IntoConnectionInfo for &'a str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
@@ -218,6 +230,14 @@ where
     }
 }
 
+/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+///
+/// - Basic: `redis://127.0.0.1:6379`
+/// - Username & Password: `redis://user:password@127.0.0.1:6379`
+/// - Password only: `redis://:password@127.0.0.1:6379`
+/// - Specifying DB: `redis://127.0.0.1:6379/0`
+/// - Enabling TLS: `rediss://127.0.0.1:6379`
+/// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 impl IntoConnectionInfo for String {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(&self) {

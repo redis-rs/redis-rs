@@ -1,4 +1,21 @@
-<a name="0.23.1"></a>
+### 0.23.3 (2023-09-01)
+
+Note that this release fixes a small regression in async Redis Cluster handling of the `PING` command.
+Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it 
+will again return a single response instead of an array.
+
+#### Features
+* Add `key_type` command ([#933](https://github.com/redis-rs/redis-rs/pull/933) @bruaba)
+* Async cluster: Group responses by response_policy. ([#888](https://github.com/redis-rs/redis-rs/pull/888))
+
+#### Fixes
+* Remove unnecessary heap allocation ([#939](https://github.com/redis-rs/redis-rs/pull/939) @thechampagne)
+* Sentinel tests: Ensure no ports are used twice ([#915](https://github.com/redis-rs/redis-rs/pull/915))
+* Fix lint issues ([#937](https://github.com/redis-rs/redis-rs/pull/937))
+* Fix JSON serialization error test ([#928](https://github.com/redis-rs/redis-rs/pull/928))
+* Remove unused dependencies ([#916](https://github.com/redis-rs/redis-rs/pull/916))
+
+<a name="0.23.2"></a>
 ### 0.23.2 (2023-08-10)
 
 #### Fixes
