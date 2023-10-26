@@ -386,7 +386,7 @@ pub(crate) async fn get_socket_addrs(
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
-    socket_addr: Option<SocketAddr>,
+    _socket_addr: Option<SocketAddr>,
 ) -> RedisResult<(T, Option<IpAddr>)> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
@@ -409,7 +409,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             port,
             insecure,
         } => {
-            if let Some(socket_addr) = socket_addr {
+            if let Some(socket_addr) = _socket_addr {
                 return Ok::<_, RedisError>((
                     <T>::connect_tcp_tls(host, socket_addr, insecure).await?,
                     Some(socket_addr.ip()),
