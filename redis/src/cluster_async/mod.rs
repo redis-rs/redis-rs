@@ -89,7 +89,7 @@ use tokio::sync::{
 use tracing::{info, trace, warn};
 
 use self::connections_container::{
-    ConnectionAndIdentifier, ConnectionsMap, Identifier as ConnectionIdentifier,
+    ConnectionAndIdentifier, ConnectionType, ConnectionsMap, Identifier as ConnectionIdentifier,
 };
 
 /// This represents an async Redis Cluster connection. It stores the
@@ -650,7 +650,7 @@ where
                     result.map(|(conn, ip)| {
                         (
                             node_identifier,
-                            ClusterNode::new(async { conn }.boxed().shared(), ip),
+                            ClusterNode::new(async { conn }.boxed().shared(), None, ip),
                         )
                     })
                 }
@@ -697,14 +697,14 @@ where
                     &mut *connections_container,
                     |connections_container, identifier| async move {
                         let addr_option = connections_container.address_for_identifier(&identifier);
-                        let node_option = connections_container.remove_connection(&identifier);
+                        let node_option = connections_container.remove_node(&identifier);
                         if let Some(addr) = addr_option {
                             let conn =
                                 Self::get_or_create_conn(&addr, node_option, cluster_params).await;
                             if let Ok((conn, ip)) = conn {
                                 connections_container.replace_or_add_connection_for_address(
                                     addr,
-                                    ClusterNode::new(async { conn }.boxed().shared(), ip),
+                                    ClusterNode::new(async { conn }.boxed().shared(), None, ip),
                                 );
                             }
                         }
@@ -860,7 +860,8 @@ where
         // When we no longer need to support Rust versions < 1.67, remove fast_math and transition to the ilog2 function.
         let num_of_nodes_to_query =
             std::cmp::max(fast_math::log2_raw(num_of_nodes as f32) as usize, 1);
-        let requested_nodes = read_guard.random_connections(num_of_nodes_to_query);
+        let requested_nodes =
+            read_guard.random_connections(num_of_nodes_to_query, ConnectionType::User);
         let topology_join_results =
             futures::future::join_all(requested_nodes.map(|conn| async move {
                 let mut conn: C = conn.1.await;
@@ -889,7 +890,8 @@ where
         let num_of_nodes = read_guard.len();
         const MAX_REQUESTED_NODES: usize = 50;
         let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
-        let requested_nodes = read_guard.random_connections(num_of_nodes_to_query);
+        let requested_nodes =
+            read_guard.random_connections(num_of_nodes_to_query, ConnectionType::User);
         let topology_join_results =
             futures::future::join_all(requested_nodes.map(|conn| async move {
                 let mut conn: C = conn.1.await;
@@ -953,7 +955,7 @@ where
                     if let Ok((conn, ip)) = conn {
                         connections.0.insert(
                             addr.into(),
-                            ClusterNode::new(async { conn }.boxed().shared(), ip),
+                            ClusterNode::new(async { conn }.boxed().shared(), None, ip),
                         );
                     }
                     connections
@@ -1168,6 +1170,7 @@ where
                             addr,
                             ClusterNode::new(
                                 async move { connection_clone.clone() }.boxed().shared(),
+                                None,
                                 ip,
                             ),
                         );
@@ -1184,8 +1187,10 @@ where
             Some(tuple) => tuple,
             None => {
                 let read_guard = core.conn_lock.read().await;
-                let (random_identifier, random_conn_future) =
-                    read_guard.random_connections(1).next().unwrap(); // TODO - this can panic. handle None.
+                let (random_identifier, random_conn_future) = read_guard
+                    .random_connections(1, ConnectionType::User)
+                    .next()
+                    .unwrap(); // TODO - this can panic. handle None.
                 drop(read_guard);
                 (random_identifier, random_conn_future.await)
             }
@@ -1351,7 +1356,7 @@ where
         params: &ClusterParams,
     ) -> RedisResult<(C, Option<IpAddr>)> {
         if let Some(node) = node {
-            let mut conn = node.connection.await;
+            let mut conn = node.user_connection.await;
             if let Some(ref ip) = node.ip {
                 if Self::is_dns_changed(addr, ip).await {
                     return connect_and_check(addr, params.clone(), None).await;
