@@ -15,7 +15,7 @@ use futures::Future;
 use redis::{ConnectionAddr, InfoDict, Value};
 
 #[cfg(feature = "tls-rustls")]
-use redis::{CertificatesBinary, ClientTlsBinary};
+use redis::{ClientTlsConfig, TlsCertificates};
 
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
@@ -640,7 +640,7 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
 }
 
 #[cfg(feature = "tls-rustls")]
-fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> CertificatesBinary {
+fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
     BufReader::new(ca_file)
@@ -659,8 +659,8 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> CertificatesBinary {
         .read_to_end(&mut client_key_vec)
         .expect("Unable to read client key file");
 
-    CertificatesBinary {
-        client_tls: Some(ClientTlsBinary {
+    TlsCertificates {
+        client_tls: Some(ClientTlsConfig {
             client_cert: client_cert_vec,
             client_key: client_key_vec,
         }),

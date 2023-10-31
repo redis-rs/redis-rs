@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{inner_build_with_tls, CertificatesBinary};
+use crate::tls::{inner_build_with_tls, TlsCertificates};
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -353,13 +353,13 @@ impl Client {
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.
     ///
     /// - `conn_info` - URL using the `rediss://` scheme.
-    /// - `tls_certs` - `CertificatesBinary` structure containing:
-    /// -- `client_tls` - Optional `ClientTlsBinary` containing byte streams for
+    /// - `tls_certs` - `TlsCertificates` structure containing:
+    /// -- `client_tls` - Optional `ClientTlsConfig` containing byte streams for
     /// --- `client_cert` - client's byte stream containing client certificate in PEM format
     /// --- `client_key` - client's byte stream containing private key in PEM format
     /// -- `root_cert` - Optional byte stream yielding PEM formatted file for root certificates.
     ///
-    /// If `ClientTlsBinary` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
+    /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
     ///
     /// # Examples
@@ -367,7 +367,7 @@ impl Client {
     /// ```no_run
     /// use std::{fs::File, io::{BufReader, Read}};
     ///
-    /// use redis::{Client, AsyncCommands as _, CertificatesBinary, ClientTlsBinary};
+    /// use redis::{Client, AsyncCommands as _, TlsCertificates, ClientTlsConfig};
     ///
     /// async fn do_redis_code(
     ///     url: &str,
@@ -395,8 +395,8 @@ impl Client {
     ///
     ///     let client = Client::build_with_tls(
     ///         url,
-    ///         CertificatesBinary {
-    ///             client_tls: Some(ClientTlsBinary{
+    ///         TlsCertificates {
+    ///             client_tls: Some(ClientTlsConfig{
     ///                 client_cert: client_cert_vec,
     ///                 client_key: client_key_vec,
     ///             }),
@@ -431,7 +431,7 @@ impl Client {
     #[cfg(feature = "tls-rustls")]
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
-        tls_certs: CertificatesBinary,
+        tls_certs: TlsCertificates,
     ) -> RedisResult<Client> {
         let connection_info = conn_info.into_connection_info()?;
 

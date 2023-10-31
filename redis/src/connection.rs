@@ -41,8 +41,10 @@ use rustls_native_certs::load_native_certs;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
 
+// Non-exhaustive to prevent construction outside this crate
 #[cfg(not(feature = "tls-rustls"))]
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TlsConnParams;
 
 static DEFAULT_PORT: u16 = 6379;
@@ -1230,13 +1232,7 @@ impl ConnectionLike for Connection {
     }
 
     fn check_connection(&mut self) -> bool {
-        match cmd("PING").query::<String>(self) {
-            Ok(_) => true,
-            Err(e) => {
-                println!("Error checking connection: {:?}", e);
-                false
-            }
-        }
+        cmd("PING").query::<String>(self).is_ok()
     }
 }
 

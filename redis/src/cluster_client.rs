@@ -16,7 +16,7 @@ use crate::connection::TlsConnParams;
 use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{retrieve_tls_certificates, CertificatesBinary};
+use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -28,7 +28,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
-    certs: Option<CertificatesBinary>,
+    certs: Option<TlsCertificates>,
     retries_configuration: RetryParams,
 }
 
@@ -266,16 +266,16 @@ impl ClusterClientBuilder {
     /// All certificates must be provided as byte streams loaded from PEM files their consistency is
     /// checked during `build()` call.
     ///
-    /// - `certificates` - `CertificatesBinary` structure containing:
-    /// -- `client_tls` - Optional `ClientTlsBinary` containing byte streams for
+    /// - `certificates` - `TlsCertificates` structure containing:
+    /// -- `client_tls` - Optional `ClientTlsConfig` containing byte streams for
     /// --- `client_cert` - client's byte stream containing client certificate in PEM format
     /// --- `client_key` - client's byte stream containing private key in PEM format
     /// -- `root_cert` - Optional byte stream yielding PEM formatted file for root certificates.
     ///
-    /// If `ClientTlsBinary` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
+    /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
     #[cfg(feature = "tls-rustls")]
-    pub fn certs(mut self, certificates: CertificatesBinary) -> ClusterClientBuilder {
+    pub fn certs(mut self, certificates: TlsCertificates) -> ClusterClientBuilder {
         self.builder_params.tls = Some(TlsMode::Secure);
         self.builder_params.certs = Some(certificates);
         self

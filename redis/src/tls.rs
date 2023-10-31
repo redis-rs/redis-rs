@@ -7,7 +7,7 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Redis
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
 ///
 #[derive(Clone)]
-pub struct ClientTlsBinary {
+pub struct ClientTlsConfig {
     /// client certificate byte stream in PEM format
     pub client_cert: Vec<u8>,
     /// client key byte stream in PEM format
@@ -15,20 +15,20 @@ pub struct ClientTlsBinary {
 }
 
 /// Structure to hold TLS certificates
-/// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsBinary` structure if mTLS is used
+/// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsConfig` structure if mTLS is used
 /// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
 ///
 #[derive(Clone)]
-pub struct CertificatesBinary {
-    /// 'ClientTlsBinary' containing client certificate and key if mTLS is to be used
-    pub client_tls: Option<ClientTlsBinary>,
+pub struct TlsCertificates {
+    /// 'ClientTlsConfig' containing client certificate and key if mTLS is to be used
+    pub client_tls: Option<ClientTlsConfig>,
     /// root certificate byte stream in PEM format if the local truststore is *not* to be used
     pub root_cert: Option<Vec<u8>>,
 }
 
 pub(crate) fn inner_build_with_tls(
     mut connection_info: ConnectionInfo,
-    certificates: CertificatesBinary,
+    certificates: TlsCertificates,
 ) -> RedisResult<Client> {
     let tls_params = retrieve_tls_certificates(certificates)?;
 
@@ -56,14 +56,14 @@ pub(crate) fn inner_build_with_tls(
 }
 
 pub(crate) fn retrieve_tls_certificates(
-    certificates: CertificatesBinary,
+    certificates: TlsCertificates,
 ) -> RedisResult<TlsConnParams> {
-    let CertificatesBinary {
+    let TlsCertificates {
         client_tls,
         root_cert,
     } = certificates;
 
-    let client_tls_params = if let Some(ClientTlsBinary {
+    let client_tls_params = if let Some(ClientTlsConfig {
         client_cert,
         client_key,
     }) = client_tls
