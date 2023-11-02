@@ -277,6 +277,7 @@ pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
     pub mtls_enabled: bool,
+    pub nodes: Vec<ConnectionInfo>,
 }
 
 impl TestClusterContext {
@@ -303,7 +304,7 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {
@@ -320,6 +321,7 @@ impl TestClusterContext {
             cluster,
             client,
             mtls_enabled,
+            nodes: initial_nodes,
         }
     }
 

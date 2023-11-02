@@ -687,3 +687,57 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
         redis::Client::open(connection_info)
     }
 }
+
+#[cfg(feature = "tls-rustls")]
+pub(crate) mod mtls_test {
+    use super::*;
+    use redis::{cluster::ClusterClient, ConnectionInfo, RedisError};
+
+    fn clean_node_info(nodes: &[ConnectionInfo]) -> Vec<ConnectionInfo> {
+        let nodes = nodes
+            .iter()
+            .map(|node| match node {
+                ConnectionInfo {
+                    addr: redis::ConnectionAddr::TcpTls { host, port, .. },
+                    redis,
+                } => ConnectionInfo {
+                    addr: redis::ConnectionAddr::TcpTls {
+                        host: host.to_owned(),
+                        port: *port,
+                        insecure: false,
+                        tls_params: None,
+                    },
+                    redis: redis.clone(),
+                },
+                _ => node.clone(),
+            })
+            .collect();
+        nodes
+    }
+
+    pub(crate) fn create_cluster_client_from_cluster(
+        cluster: &TestClusterContext,
+        mtls_enabled: bool,
+    ) -> Result<ClusterClient, RedisError> {
+        let server = cluster
+            .cluster
+            .servers
+            .get(0)
+            .expect("Expected at least 1 server");
+        let tls_paths = server.tls_paths.as_ref();
+        let nodes = clean_node_info(&cluster.nodes);
+        let builder = redis::cluster::ClusterClientBuilder::new(nodes);
+        if let Some(tls_paths) = tls_paths {
+            // server-side TLS available
+            if mtls_enabled {
+                builder.certs(load_certs_from_file(tls_paths))
+            } else {
+                builder
+            }
+        } else {
+            // server-side TLS NOT available
+            builder
+        }
+        .build()
+    }
+}

@@ -46,29 +46,6 @@ fn test_async_cluster_basic_cmd() {
 }
 
 #[test]
-#[cfg(feature = "tls-rustls")]
-fn test_async_cluster_basic_cmd_with_mtls() {
-    let cluster = TestClusterContext::new_with_mtls(3, 0);
-
-    block_on_all(async move {
-        let mut connection = cluster.async_connection().await;
-        cmd("SET")
-            .arg("test")
-            .arg("test_data")
-            .query_async(&mut connection)
-            .await?;
-        let res: String = cmd("GET")
-            .arg("test")
-            .clone()
-            .query_async(&mut connection)
-            .await?;
-        assert_eq!(res, "test_data");
-        Ok::<_, RedisError>(())
-    })
-    .unwrap();
-}
-
-#[test]
 fn test_async_cluster_basic_eval() {
     let cluster = TestClusterContext::new(3, 0);
 
@@ -88,48 +65,8 @@ fn test_async_cluster_basic_eval() {
 }
 
 #[test]
-#[cfg(feature = "tls-rustls")]
-fn test_async_cluster_basic_eval_with_mtls() {
-    let cluster = TestClusterContext::new_with_mtls(3, 0);
-
-    block_on_all(async move {
-        let mut connection = cluster.async_connection().await;
-        let res: String = cmd("EVAL")
-            .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
-            .arg(1)
-            .arg("key")
-            .arg("test")
-            .query_async(&mut connection)
-            .await?;
-        assert_eq!(res, "test");
-        Ok::<_, RedisError>(())
-    })
-    .unwrap();
-}
-
-#[test]
 fn test_async_cluster_basic_script() {
     let cluster = TestClusterContext::new(3, 0);
-
-    block_on_all(async move {
-        let mut connection = cluster.async_connection().await;
-        let res: String = Script::new(
-            r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
-        )
-        .key("key")
-        .arg("test")
-        .invoke_async(&mut connection)
-        .await?;
-        assert_eq!(res, "test");
-        Ok::<_, RedisError>(())
-    })
-    .unwrap();
-}
-
-#[test]
-#[cfg(feature = "tls-rustls")]
-fn test_async_cluster_basic_script_with_mtls() {
-    let cluster = TestClusterContext::new_with_mtls(3, 0);
 
     block_on_all(async move {
         let mut connection = cluster.async_connection().await;
@@ -1513,4 +1450,99 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(feature = "tls-rustls")]
+mod mtls_test {
+    use crate::support::mtls_test::create_cluster_client_from_cluster;
+    use redis::ConnectionInfo;
+
+    use super::*;
+
+    #[test]
+    fn test_async_cluster_basic_cmd_with_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+            let mut connection = client.get_async_connection().await.unwrap();
+            cmd("SET")
+                .arg("test")
+                .arg("test_data")
+                .query_async(&mut connection)
+                .await?;
+            let res: String = cmd("GET")
+                .arg("test")
+                .clone()
+                .query_async(&mut connection)
+                .await?;
+            assert_eq!(res, "test_data");
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_should_not_connect_without_mtls_enabled() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
+            let connection = client.get_async_connection().await;
+            match cluster.cluster.servers.get(0).unwrap().connection_info() {
+                ConnectionInfo {
+                    addr: redis::ConnectionAddr::TcpTls { .. },
+                    ..
+            } => {
+                if connection.is_ok() {
+                    panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                }
+            }
+            _ => {
+                if let Err(e) = connection {
+                    panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                }
+            }
+            }
+            Ok::<_, RedisError>(())
+        }).unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_basic_script_with_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+            let mut connection = client.get_async_connection().await.unwrap();
+            let res: String = Script::new(
+                r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
+            )
+            .key("key")
+            .arg("test")
+            .invoke_async(&mut connection)
+            .await?;
+            assert_eq!(res, "test");
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_basic_eval_with_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+            let mut connection = client.get_async_connection().await.unwrap();
+            let res: String = cmd("EVAL")
+                .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
+                .arg(1)
+                .arg("key")
+                .arg("test")
+                .query_async(&mut connection)
+                .await?;
+            assert_eq!(res, "test");
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }
