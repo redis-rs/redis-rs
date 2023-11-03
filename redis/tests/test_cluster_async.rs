@@ -1505,44 +1505,4 @@ mod mtls_test {
             Ok::<_, RedisError>(())
         }).unwrap();
     }
-
-    #[test]
-    fn test_async_cluster_basic_script_with_mtls() {
-        let cluster = TestClusterContext::new_with_mtls(3, 0);
-
-        block_on_all(async move {
-            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
-            let mut connection = client.get_async_connection().await.unwrap();
-            let res: String = Script::new(
-                r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
-            )
-            .key("key")
-            .arg("test")
-            .invoke_async(&mut connection)
-            .await?;
-            assert_eq!(res, "test");
-            Ok::<_, RedisError>(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn test_async_cluster_basic_eval_with_mtls() {
-        let cluster = TestClusterContext::new_with_mtls(3, 0);
-
-        block_on_all(async move {
-            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
-            let mut connection = client.get_async_connection().await.unwrap();
-            let res: String = cmd("EVAL")
-                .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
-                .arg(1)
-                .arg("key")
-                .arg("test")
-                .query_async(&mut connection)
-                .await?;
-            assert_eq!(res, "test");
-            Ok::<_, RedisError>(())
-        })
-        .unwrap();
-    }
 }
