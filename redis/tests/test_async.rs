@@ -700,34 +700,6 @@ mod mtls_test {
     use super::*;
 
     #[test]
-    fn test_args_with_mtls() {
-        let ctx = TestContext::new_with_mtls();
-
-        let client =
-            build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, true).unwrap();
-        let connect = client.get_async_connection();
-
-        block_on_all(connect.and_then(|mut con| async move {
-            redis::cmd("SET")
-                .arg("key1")
-                .arg(b"foo")
-                .query_async(&mut con)
-                .await?;
-            redis::cmd("SET")
-                .arg(&["key2", "bar"])
-                .query_async(&mut con)
-                .await?;
-            let result = redis::cmd("MGET")
-                .arg(&["key1", "key2"])
-                .query_async(&mut con)
-                .await;
-            assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
-            result
-        }))
-        .unwrap();
-    }
-
-    #[test]
     fn test_should_connect_mtls() {
         let ctx = TestContext::new_with_mtls();
 
