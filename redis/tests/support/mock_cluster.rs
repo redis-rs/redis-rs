@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use redis::cluster::{self, ClusterClient, ClusterClientBuilder};
+use redis::{
+    cluster::{self, ClusterClient, ClusterClientBuilder},
+    ErrorKind, FromRedisValue,
+};
 
 use {
     once_cell::sync::Lazy,
@@ -233,11 +236,29 @@ impl redis::ConnectionLike for MockConnection {
 
     fn req_packed_commands(
         &mut self,
-        _cmd: &[u8],
-        _offset: usize,
+        cmd: &[u8],
+        offset: usize,
         _count: usize,
     ) -> RedisResult<Vec<Value>> {
-        Ok(vec![])
+        let res = (self.handler)(cmd, self.port).expect_err("Handler did not specify a response");
+        match res {
+            Err(err) => Err(err),
+            Ok(res) => {
+                if let Value::Bulk(results) = res {
+                    match results.into_iter().nth(offset) {
+                        Some(Value::Bulk(res)) => Ok(res),
+                        _ => Err((ErrorKind::ResponseError, "non-array response").into()),
+                    }
+                } else {
+                    Err((
+                        ErrorKind::ResponseError,
+                        "non-array response",
+                        String::from_redis_value(&res).unwrap(),
+                    )
+                        .into())
+                }
+            }
+        }
     }
 
     fn get_db(&self) -> i64 {
