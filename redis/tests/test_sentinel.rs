@@ -35,6 +35,7 @@ fn assert_replica_role_and_master_addr(replication_info: String, expected_master
             host,
             port,
             insecure: _,
+            tls_params: _,
         } => (host, port),
         ConnectionAddr::Unix(..) => panic!("Unexpected master connection type"),
     };

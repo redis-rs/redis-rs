@@ -44,6 +44,12 @@ use crate::{
     Value,
 };
 
+#[cfg(feature = "tls-rustls")]
+use crate::tls::TlsConnParams;
+
+#[cfg(not(feature = "tls-rustls"))]
+use crate::connection::TlsConnParams;
+
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{
@@ -71,8 +77,9 @@ where
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<ClusterConnection<C>> {
-        ClusterConnInner::new(initial_nodes, cluster_params)
+        ClusterConnInner::new(initial_nodes, cluster_params, tls_params)
             .await
             .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
@@ -164,6 +171,7 @@ struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<Response, C>>>,
+    tls_params: Option<TlsConnParams>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -438,12 +446,15 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let connections =
+            Self::create_initial_connections(initial_nodes, &cluster_params, &tls_params).await?;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, Default::default())),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
+            tls_params,
         });
         let mut connection = ClusterConnInner {
             inner,
@@ -458,13 +469,15 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
+        tls_params: &Option<TlsConnParams>,
     ) -> RedisResult<ConnectionMap<C>> {
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
+                let tls_params = tls_params.clone();
                 async move {
                     let addr = info.addr.to_string();
-                    let result = connect_and_check(&addr, params).await;
+                    let result = connect_and_check(&addr, params, tls_params).await;
                     match result {
                         Ok(conn) => Some((addr, async { conn }.boxed().shared())),
                         Err(e) => {
@@ -504,6 +517,7 @@ where
                             &addr,
                             connections.remove(&addr),
                             &inner.cluster_params,
+                            inner.tls_params.clone(),
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -559,8 +573,13 @@ where
                 .fold(
                     HashMap::with_capacity(nodes_len),
                     |mut connections, (addr, connection)| async {
-                        let conn =
-                            Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                        let conn = Self::get_or_create_conn(
+                            addr,
+                            connection,
+                            &inner.cluster_params,
+                            inner.tls_params.clone(),
+                        )
+                        .await;
                         if let Ok(conn) = conn {
                             connections.insert(addr.to_string(), async { conn }.boxed().shared());
                         }
@@ -858,10 +877,12 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn.await)),
-            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone())
-                .await
-                .ok()
-                .map(|conn| (addr, conn)),
+            Some((addr, None)) => {
+                connect_and_check(&addr, core.cluster_params.clone(), core.tls_params.clone())
+                    .await
+                    .ok()
+                    .map(|conn| (addr, conn))
+            }
             None => None,
         };
 
@@ -1015,15 +1036,16 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: &ClusterParams,
+        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+                Err(_) => connect_and_check(addr, params.clone(), tls_params).await,
             }
         } else {
-            connect_and_check(addr, params.clone()).await
+            connect_and_check(addr, params.clone(), tls_params).await
         }
     }
 }
@@ -1221,12 +1243,16 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &str,
+    params: ClusterParams,
+    tls_params: Option<TlsConnParams>,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
-    let info = get_connection_info(node, params)?;
+    let info = get_connection_info(node, params, tls_params)?;
     let mut conn = C::connect(info).await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {

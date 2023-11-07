@@ -395,10 +395,13 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref host,
             port,
             insecure,
+            ref tls_params,
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(
-                socket_addrs.map(|socket_addr| <T>::connect_tcp_tls(host, socket_addr, insecure)),
+                socket_addrs.map(|socket_addr| {
+                    <T>::connect_tcp_tls(host, socket_addr, insecure, tls_params)
+                }),
             )
             .await?
             .0

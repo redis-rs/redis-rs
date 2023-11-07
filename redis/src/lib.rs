@@ -462,6 +462,12 @@ pub mod cluster_async;
 #[cfg(feature = "sentinel")]
 pub mod sentinel;
 
+#[cfg(feature = "tls-rustls")]
+mod tls;
+
+#[cfg(feature = "tls-rustls")]
+pub use crate::tls::{ClientTlsConfig, TlsCertificates};
+
 mod client;
 mod cmd;
 mod commands;

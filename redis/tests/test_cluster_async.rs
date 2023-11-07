@@ -18,6 +18,9 @@ use redis::{
     RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
+#[cfg(feature = "tls-rustls")]
+use support::build_single_client;
+
 use crate::support::*;
 
 #[test]
@@ -227,7 +230,7 @@ fn test_async_cluster_multi_shard_commands() {
 #[test]
 fn test_async_cluster_basic_failover() {
     block_on_all(async move {
-        test_failover(&TestClusterContext::new(6, 1), 10, 123).await;
+        test_failover(&TestClusterContext::new(6, 1), 10, 123, false).await;
         Ok::<_, RedisError>(())
     })
     .unwrap()
@@ -238,7 +241,9 @@ async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<()
     Ok(())
 }
 
-async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
+// parameter `mtls_enabled` can only be used if `feature = tls-rustls` is active
+#[allow(dead_code)]
+async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls_enabled: bool) {
     let completed = Arc::new(AtomicI32::new(0));
 
     let connection = env.async_connection().await;
@@ -249,8 +254,16 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32) {
         let cleared_nodes = async {
             for server in env.cluster.iter_servers() {
                 let addr = server.client_addr();
+
+                #[cfg(feature = "tls-rustls")]
+                let client =
+                    build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled)
+                        .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
+
+                #[cfg(not(feature = "tls-rustls"))]
                 let client = redis::Client::open(server.connection_info())
                     .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
+
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await
@@ -1331,11 +1344,16 @@ fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
 
 #[test]
 fn test_async_cluster_with_username_and_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password(RedisCluster::password().to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        },
+        false,
+    );
     cluster.disable_default_user();
 
     block_on_all(async move {
@@ -1432,4 +1450,59 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(feature = "tls-rustls")]
+mod mtls_test {
+    use crate::support::mtls_test::create_cluster_client_from_cluster;
+    use redis::ConnectionInfo;
+
+    use super::*;
+
+    #[test]
+    fn test_async_cluster_basic_cmd_with_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+            let mut connection = client.get_async_connection().await.unwrap();
+            cmd("SET")
+                .arg("test")
+                .arg("test_data")
+                .query_async(&mut connection)
+                .await?;
+            let res: String = cmd("GET")
+                .arg("test")
+                .clone()
+                .query_async(&mut connection)
+                .await?;
+            assert_eq!(res, "test_data");
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_should_not_connect_without_mtls_enabled() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+        block_on_all(async move {
+            let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
+            let connection = client.get_async_connection().await;
+            match cluster.cluster.servers.get(0).unwrap().connection_info() {
+                ConnectionInfo {
+                    addr: redis::ConnectionAddr::TcpTls { .. },
+                    ..
+            } => {
+                if connection.is_ok() {
+                    panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                }
+            }
+            _ => {
+                if let Err(e) = connection {
+                    panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                }
+            }
+            }
+            Ok::<_, RedisError>(())
+        }).unwrap();
+    }
 }

@@ -450,6 +450,7 @@ async fn invalid_password_issue_343() {
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
+
     let err = client
         .get_multiplexed_tokio_connection()
         .await
@@ -667,8 +668,13 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 #[test]
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
-    let ctx = TestContext::new();
+    let tempdir = tempfile::Builder::new()
+        .prefix("redis")
+        .tempdir()
+        .expect("failed to create tempdir");
+    let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
+    let ctx = TestContext::with_tls(tls_files.clone(), false);
     block_on_all(async move {
         let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
             .await
@@ -680,10 +686,73 @@ fn test_connection_manager_reconnect_after_delay() {
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
+
+        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
         assert_eq!(result, redis::Value::Okay);
     });
+}
+
+#[cfg(feature = "tls-rustls")]
+mod mtls_test {
+    use super::*;
+
+    #[test]
+    fn test_should_connect_mtls() {
+        let ctx = TestContext::new_with_mtls();
+
+        let client =
+            build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, true).unwrap();
+        let connect = client.get_async_connection();
+        block_on_all(connect.and_then(|mut con| async move {
+            redis::cmd("SET")
+                .arg("key1")
+                .arg(b"foo")
+                .query_async(&mut con)
+                .await?;
+            let result = redis::cmd("GET").arg(&["key1"]).query_async(&mut con).await;
+            assert_eq!(result, Ok("foo".to_string()));
+            result
+        }))
+        .unwrap();
+    }
+
+    #[test]
+    fn test_should_not_connect_if_tls_active() {
+        let ctx = TestContext::new_with_mtls();
+
+        let client =
+            build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, false)
+                .unwrap();
+        let connect = client.get_async_connection();
+        let result = block_on_all(connect.and_then(|mut con| async move {
+            redis::cmd("SET")
+                .arg("key1")
+                .arg(b"foo")
+                .query_async(&mut con)
+                .await?;
+            let result = redis::cmd("GET").arg(&["key1"]).query_async(&mut con).await;
+            assert_eq!(result, Ok("foo".to_string()));
+            result
+        }));
+
+        // depends on server type set (REDISRS_SERVER_TYPE)
+        match ctx.server.connection_info() {
+            redis::ConnectionInfo {
+                addr: redis::ConnectionAddr::TcpTls { .. },
+                ..
+            } => {
+                if result.is_ok() {
+                    panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                }
+            }
+            _ => {
+                if result.is_err() {
+                    panic!("Must be able to connect without client credentials if server does NOT accept TLS");
+                }
+            }
+        }
+    }
 }

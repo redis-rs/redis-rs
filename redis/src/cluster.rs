@@ -64,6 +64,12 @@ use crate::{
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
+#[cfg(feature = "tls-rustls")]
+use crate::tls::TlsConnParams;
+
+#[cfg(not(feature = "tls-rustls"))]
+use crate::connection::TlsConnParams;
+
 #[derive(Clone)]
 enum Input<'a> {
     Slice {
@@ -222,6 +228,7 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
+    tls_params: Option<TlsConnParams>,
     retry_params: RetryParams,
 }
 
@@ -232,6 +239,7 @@ where
     pub(crate) fn new(
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
+        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
@@ -243,6 +251,7 @@ where
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
+            tls_params,
             initial_nodes: initial_nodes.to_vec(),
             retry_params: cluster_params.retry_params,
         };
@@ -437,7 +446,7 @@ where
             tls: self.tls,
             ..Default::default()
         };
-        let info = get_connection_info(node, params)?;
+        let info = get_connection_info(node, params, self.tls_params.clone())?;
 
         let mut conn = C::connect(info, None)?;
         if self.read_from_replicas {
@@ -938,7 +947,8 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls).to_string())
+                        // This is only "stringifying" IP addresses, so `TLS parameters` are not required
+                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
                     } else {
                         None
                     }
@@ -963,6 +973,7 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
 pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
+    tls_params: Option<TlsConnParams>,
 ) -> RedisResult<ConnectionInfo> {
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
@@ -976,7 +987,7 @@ pub(crate) fn get_connection_info(
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls),
+        addr: get_connection_addr(host.to_string(), port, cluster_params.tls, tls_params),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -985,17 +996,24 @@ pub(crate) fn get_connection_info(
     })
 }
 
-fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
+fn get_connection_addr(
+    host: String,
+    port: u16,
+    tls: Option<TlsMode>,
+    tls_params: Option<TlsConnParams>,
+) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: false,
+            tls_params,
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: true,
+            tls_params,
         },
         _ => ConnectionAddr::Tcp(host, port),
     }
@@ -1033,13 +1051,13 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let res = get_connection_info(input, ClusterParams::default());
+            let res = get_connection_info(input, ClusterParams::default(), None);
             assert_eq!(res.unwrap().addr, expected);
         }
 
         let cases = vec![":0", "[]:6379"];
         for input in cases {
-            let res = get_connection_info(input, ClusterParams::default());
+            let res = get_connection_info(input, ClusterParams::default(), None);
             assert_eq!(
                 res.err(),
                 Some(RedisError::from((

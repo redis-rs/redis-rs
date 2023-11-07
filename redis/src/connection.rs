@@ -31,8 +31,21 @@ use rustls::OwnedTrustAnchor;
 #[cfg(feature = "tls-rustls-webpki-roots")]
 use webpki_roots::TLS_SERVER_ROOTS;
 
-#[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-webpki-roots")))]
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
 use rustls_native_certs::load_native_certs;
+
+#[cfg(feature = "tls-rustls")]
+use crate::tls::TlsConnParams;
+
+// Non-exhaustive to prevent construction outside this crate
+#[cfg(not(feature = "tls-rustls"))]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct TlsConnParams;
 
 static DEFAULT_PORT: u16 = 6379;
 
@@ -104,7 +117,7 @@ pub enum TlsMode {
 /// Not all connection addresses are supported on all platforms.  For instance
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
@@ -123,10 +136,41 @@ pub enum ConnectionAddr {
         /// trusted for use from any other. This introduces a significant
         /// vulnerability to man-in-the-middle attacks.
         insecure: bool,
+
+        /// TLS certificates and client key.
+        tls_params: Option<TlsConnParams>,
     },
     /// Format for this is the path to the unix socket.
     Unix(PathBuf),
 }
+
+impl PartialEq for ConnectionAddr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ConnectionAddr::Tcp(host1, port1), ConnectionAddr::Tcp(host2, port2)) => {
+                host1 == host2 && port1 == port2
+            }
+            (
+                ConnectionAddr::TcpTls {
+                    host: host1,
+                    port: port1,
+                    insecure: insecure1,
+                    tls_params: _,
+                },
+                ConnectionAddr::TcpTls {
+                    host: host2,
+                    port: port2,
+                    insecure: insecure2,
+                    tls_params: _,
+                },
+            ) => port1 == port2 && host1 == host2 && insecure1 == insecure2,
+            (ConnectionAddr::Unix(path1), ConnectionAddr::Unix(path2)) => path1 == path2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ConnectionAddr {}
 
 impl ConnectionAddr {
     /// Checks if this address is supported.
@@ -278,6 +322,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     host,
                     port,
                     insecure: true,
+                    tls_params: None,
                 },
                 Some(_) => fail!((
                     ErrorKind::InvalidClientConfig,
@@ -287,6 +332,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                     host,
                     port,
                     insecure: false,
+                    tls_params: None,
                 },
             }
         }
@@ -499,6 +545,7 @@ impl ActualConnection {
                 ref host,
                 port,
                 insecure,
+                ..
             } => {
                 let tls_connector = if insecure {
                     TlsConnector::builder()
@@ -558,9 +605,10 @@ impl ActualConnection {
                 ref host,
                 port,
                 insecure,
+                ref tls_params,
             } => {
                 let host: &str = host;
-                let config = create_rustls_config(insecure)?;
+                let config = create_rustls_config(insecure, tls_params.clone())?;
                 let conn = rustls::ClientConnection::new(Arc::new(config), host.try_into()?)?;
                 let reader = match timeout {
                     None => {
@@ -737,7 +785,12 @@ impl ActualConnection {
 }
 
 #[cfg(feature = "tls-rustls")]
-pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::ClientConfig> {
+pub(crate) fn create_rustls_config(
+    insecure: bool,
+    tls_params: Option<TlsConnParams>,
+) -> RedisResult<rustls::ClientConfig> {
+    use crate::tls::ClientTlsParams;
+
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
     root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -755,9 +808,34 @@ pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::Client
     let config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
-        .with_protocol_versions(rustls::ALL_VERSIONS)?
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+        .with_protocol_versions(rustls::ALL_VERSIONS)?;
+
+    let config = if let Some(tls_params) = tls_params {
+        let config_builder =
+            config.with_root_certificates(tls_params.root_cert_store.unwrap_or(root_store));
+
+        if let Some(ClientTlsParams {
+            client_cert_chain: client_cert,
+            client_key,
+        }) = tls_params.client_tls_params
+        {
+            config_builder
+                .with_client_auth_cert(client_cert, client_key)
+                .map_err(|err| {
+                    RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Unable to build client with TLS parameters provided.",
+                        err.to_string(),
+                    ))
+                })?
+        } else {
+            config_builder.with_no_client_auth()
+        }
+    } else {
+        config
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    };
 
     match (insecure, cfg!(feature = "tls-rustls-insecure")) {
         #[cfg(feature = "tls-rustls-insecure")]
