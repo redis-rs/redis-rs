@@ -38,7 +38,7 @@ use crate::{
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo, Slot, SlotMap,
+        SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
     },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
@@ -228,8 +228,21 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
     pipeline
         .cmd_iter()
         .map(route_for_command)
-        .find(|route| route.is_some())
-        .flatten()
+        .fold(None, |chosen_route, next_cmd_route| {
+            match (chosen_route, next_cmd_route) {
+                (None, _) => next_cmd_route,
+                (Some(route), None) => Some(route),
+                (Some(chosen_route), Some(next_cmd_route)) => {
+                    if chosen_route.slot() == next_cmd_route.slot()
+                        && chosen_route.slot_addr() == &SlotAddr::Replica
+                    {
+                        Some(next_cmd_route)
+                    } else {
+                        Some(chosen_route)
+                    }
+                }
+            }
+        })
 }
 enum Response {
     Single(Value),
@@ -1310,6 +1323,22 @@ mod pipeline_routing_tests {
         assert_eq!(
             route_for_pipeline(&pipeline),
             Some(Route::new(12182, SlotAddr::Replica))
+        );
+    }
+
+    #[test]
+    fn test_prefer_primary_route_over_replica() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .get("foo") // route to replica of slot 12182
+            .add_command(cmd("FLUSHALL")) // route to all masters
+            .add_command(cmd("EVAL"))// route randomly
+            .set("foo", "bar"); // route to primary of slot 12182
+
+        assert_eq!(
+            route_for_pipeline(&pipeline),
+            Some(Route::new(12182, SlotAddr::Master))
         );
     }
 
