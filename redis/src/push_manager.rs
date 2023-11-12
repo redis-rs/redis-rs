@@ -34,14 +34,12 @@ impl PushManager {
         if let Value::Push { kind, data } = value {
             let guard = self.sender.load();
             if let Some(sender) = guard.as_ref() {
-                if sender
-                    .send(PushInfo {
-                        kind: kind.clone(),
-                        data: data.clone(),
-                        con_addr: con_addr.clone(),
-                    })
-                    .is_err()
-                {
+                let push_info = PushInfo {
+                    kind: kind.clone(),
+                    data: data.clone(),
+                    con_addr: con_addr.clone(),
+                };
+                if sender.send(push_info).is_err() {
                     self.sender.compare_and_swap(guard, Arc::new(None));
                 }
             }

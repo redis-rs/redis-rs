@@ -229,8 +229,8 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes)
-            .use_resp3(use_resp3);
+        let mut builder =
+            redis::cluster::ClusterClientBuilder::new(initial_nodes).use_resp3(use_resp3);
         builder = initializer(builder);
 
         let client = builder.build().unwrap();

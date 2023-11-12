@@ -1244,7 +1244,11 @@ fn test_push_manager() {
     let mut con = ctx.connection();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     con.get_push_manager().replace_sender(tx.clone());
-    let _ = cmd("CLIENT").arg("TRACKING").arg("ON").query::<()>(&mut con).unwrap();
+    let _ = cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .query::<()>(&mut con)
+        .unwrap();
     let pipe = build_simple_pipeline_for_invalidation();
     for _ in 0..10 {
         let _: RedisResult<()> = pipe.query(&mut con);

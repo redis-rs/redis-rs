@@ -675,7 +675,6 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         }
         true
     }
-
 }
 
 trait MergeResults {
