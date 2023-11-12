@@ -264,7 +264,6 @@ impl TestContext {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
                 use_resp3,
-                client_tracking_options: Some(vec![]),
                 ..Default::default()
             },
         })

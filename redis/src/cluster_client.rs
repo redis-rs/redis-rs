@@ -18,7 +18,6 @@ struct BuilderParams {
     tls: Option<TlsMode>,
     retries: Option<u32>,
     use_resp3: bool,
-    client_tracking_options: Option<Vec<String>>,
 }
 
 /// Redis cluster specific parameters.
@@ -33,7 +32,6 @@ pub(crate) struct ClusterParams {
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retries: u32,
     pub(crate) use_resp3: bool,
-    pub(crate) client_tracking_options: Option<Vec<String>>,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -45,7 +43,6 @@ impl From<BuilderParams> for ClusterParams {
             tls: value.tls,
             retries: value.retries.unwrap_or(DEFAULT_RETRIES),
             use_resp3: value.use_resp3,
-            client_tracking_options: value.client_tracking_options,
         }
     }
 }
@@ -139,7 +136,6 @@ impl ClusterClientBuilder {
                 )));
             }
             node.redis.use_resp3 = cluster_params.use_resp3;
-            node.redis.client_tracking_options = cluster_params.client_tracking_options.clone();
             nodes.push(node);
         }
 
@@ -201,16 +197,6 @@ impl ClusterClientBuilder {
     /// Sets whether to use RESP3 for ClusterClient.
     pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
         self.builder_params.use_resp3 = use_resp3;
-        self
-    }
-
-    /// If a Vec is provided then the Connection will send `CLIENT TRACKING ON` command
-    /// also items in the Vec is appended to the command
-    pub fn client_tracking_options(
-        mut self,
-        client_tracking_options: Option<Vec<String>>,
-    ) -> ClusterClientBuilder {
-        self.builder_params.client_tracking_options = client_tracking_options;
         self
     }
 }

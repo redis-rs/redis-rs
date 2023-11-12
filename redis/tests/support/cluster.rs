@@ -230,8 +230,7 @@ impl TestClusterContext {
             .map(RedisServer::connection_info)
             .collect();
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes)
-            .use_resp3(use_resp3)
-            .client_tracking_options(Some(vec![])); //It's harmless to open for every test connections
+            .use_resp3(use_resp3);
         builder = initializer(builder);
 
         let client = builder.build().unwrap();

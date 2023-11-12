@@ -134,10 +134,6 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Use RESP 3 mode, Redis 6 or newer is required.
     pub use_resp3: bool,
-
-    /// If a Vec is provided then the Connection will send `CLIENT TRACKING ON` command
-    /// also items in the Vec is appended to the command
-    pub client_tracking_options: Option<Vec<String>>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -280,7 +276,6 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
-            client_tracking_options: None,
         },
     })
 }
@@ -307,7 +302,6 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
-            client_tracking_options: None,
         },
     })
 }
@@ -1592,7 +1586,6 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
-                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1660,7 +1653,6 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
-                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1673,7 +1665,6 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
-                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1689,7 +1680,6 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
-                        client_tracking_options: None,
                     },
                 },
             ),
@@ -1705,7 +1695,6 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
                         use_resp3: false,
-                        client_tracking_options: None,
                     },
                 },
             ),

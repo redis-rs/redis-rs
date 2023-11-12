@@ -6,10 +6,7 @@ use std::sync::{
 };
 
 use crate::support::*;
-use redis::{
-    cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, ConnectionLike, ErrorKind, RedisError, Value,
-};
+use redis::{cluster::{cluster_pipe, ClusterClient}, cmd, parse_redis_value, ErrorKind, RedisError, Value};
 
 #[test]
 fn test_cluster_basics() {
@@ -516,6 +513,7 @@ fn test_cluster_push_manager() {
         let mut con = cluster.connection();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         con.get_push_manager().replace_sender(tx.clone());
+        cmd("CLIENT").arg("TRACKING").arg("ON").query::<()>(&mut con).unwrap();
 
         let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
         let _ = build_cluster_pipeline_for_invalidation(&keys)

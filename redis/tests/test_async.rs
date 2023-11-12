@@ -472,7 +472,6 @@ async fn invalid_password_issue_343() {
             username: None,
             password: Some("asdcasc".to_string()),
             use_resp3: false,
-            client_tracking_options: None,
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
@@ -780,6 +779,7 @@ fn test_push_manager_cm() {
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         manager.get_push_manager().replace_sender(tx.clone());
+        manager.send_packed_command(cmd("CLIENT").arg("TRACKING").arg("ON")).await.unwrap();
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();

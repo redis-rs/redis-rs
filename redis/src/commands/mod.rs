@@ -2086,11 +2086,5 @@ pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Pipeline{
             .arg(username)
             .arg(connection_info.password.as_ref().unwrap());
     }
-    if let Some(client_tracking_options) = connection_info.client_tracking_options.as_ref() {
-        pipe.cmd("CLIENT").arg("TRACKING").arg("ON");
-        for option in client_tracking_options {
-            pipe.arg(option);
-        }
-    }
     pipe
 }

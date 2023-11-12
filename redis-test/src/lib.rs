@@ -28,7 +28,7 @@ use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};
 
 use redis::{
-    Cmd, ConnectionLike, ErrorKind, Pipeline, PushManager, RedisError, RedisResult, Value,
+    Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, Value,
 };
 
 #[cfg(feature = "aio")]

@@ -613,6 +613,11 @@ fn test_cluster_push_manager() {
             let mut con = cluster.async_connection().await;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             con.get_push_manager().replace_sender(tx.clone());
+
+            for _ in 0..10 {
+                // make sure each node receives CLIENT TRACKING ON
+                cmd("CLIENT").arg("TRACKING").arg("ON").query_async(&mut con).await?;
+            }
             let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
             for (i, key) in keys.iter().enumerate() {
                 let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
