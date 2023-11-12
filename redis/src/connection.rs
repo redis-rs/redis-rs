@@ -886,9 +886,6 @@ pub trait ConnectionLike {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
-
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
-    fn get_push_manager(&self) -> PushManager;
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -1078,6 +1075,11 @@ impl Connection {
         }
         result
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
 }
 
 impl ConnectionLike for Connection {
@@ -1176,10 +1178,6 @@ impl ConnectionLike for Connection {
     fn is_open(&self) -> bool {
         self.con.is_open()
     }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
-    }
 }
 
 impl<C, T> ConnectionLike for T
@@ -1218,10 +1216,6 @@ where
 
     fn is_open(&self) -> bool {
         self.deref().is_open()
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.deref().get_push_manager()
     }
 }
 

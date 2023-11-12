@@ -1,5 +1,4 @@
 use futures::{future, prelude::*, StreamExt};
-use redis::aio::ConnectionLike;
 use redis::PushInfo;
 use redis::{
     aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
@@ -814,41 +813,5 @@ fn test_push_manager_cm() {
             (kind, data)
         );
         assert_eq!(TryRecvError::Empty, new_rx.try_recv().err().unwrap());
-    });
-}
-
-#[test]
-fn test_push_manager() {
-    let ctx = TestContext::new();
-    if !ctx.use_resp3 {
-        return;
-    }
-    block_on_all(async move {
-        let mut con = ctx.async_connection().await.unwrap();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager().replace_sender(tx);
-        let pipe = build_simple_pipeline_for_invalidation();
-        let _: RedisResult<()> = pipe.query_async(&mut con).await;
-        let _: i32 = con.get("key_1").await.unwrap();
-        let PushInfo {
-            kind,
-            data,
-            con_addr: _con_addr,
-        } = rx.try_recv().unwrap();
-        assert_eq!(
-            (
-                PushKind::Invalidate,
-                vec![Value::Bulk(vec![Value::Data("key_1".as_bytes().to_vec())])]
-            ),
-            (kind, data)
-        );
-        {
-            drop(rx);
-            for _ in 0..10 {
-                let _: RedisResult<()> = pipe.query_async(&mut con).await;
-                let v: i32 = con.get("key_1").await.unwrap();
-                assert_eq!(v, 42);
-            }
-        }
     });
 }

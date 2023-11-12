@@ -473,10 +473,6 @@ impl ConnectionLike for MultiplexedConnection {
     fn get_db(&self) -> i64 {
         self.db
     }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
-    }
 }
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
@@ -533,5 +529,10 @@ impl MultiplexedConnection {
         cmd.arg(channel_pattern);
         cmd.query_async(self).await?;
         Ok(())
+    }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }

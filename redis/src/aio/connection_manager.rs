@@ -219,6 +219,11 @@ impl ConnectionManager {
         reconnect_if_dropped!(self, &result, guard);
         result
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
 }
 
 impl ConnectionLike for ConnectionManager {
@@ -237,9 +242,5 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.client.connection_info().redis.db
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
     }
 }

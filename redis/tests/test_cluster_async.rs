@@ -254,10 +254,6 @@ impl ConnectionLike for ErrorConnection {
     fn get_db(&self) -> i64 {
         self.inner.get_db()
     }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.inner.get_push_manager()
-    }
 }
 
 #[test]

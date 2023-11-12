@@ -160,6 +160,11 @@ where
             _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
         }
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
@@ -992,10 +997,6 @@ where
 
     fn get_db(&self) -> i64 {
         0
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
     }
 }
 

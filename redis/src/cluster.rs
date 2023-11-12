@@ -622,6 +622,11 @@ where
             None => Ok(to_retry),
         }
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
 }
 
 impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
@@ -674,9 +679,6 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         true
     }
 
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
-    }
 }
 
 trait MergeResults {

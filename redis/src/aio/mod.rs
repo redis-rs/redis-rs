@@ -2,7 +2,6 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{get_resp3_hello_command_error, RedisConnectionInfo};
 use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
-use crate::PushManager;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite};
@@ -73,9 +72,6 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
-
-    /// Returns `PushManager` of Connection, this method is used to replace mpsc channel in PushManager.
-    fn get_push_manager(&self) -> PushManager;
 }
 
 async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>

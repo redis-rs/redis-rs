@@ -213,10 +213,6 @@ impl aio::ConnectionLike for MockConnection {
     fn get_db(&self) -> i64 {
         0
     }
-
-    fn get_push_manager(&self) -> PushManager {
-        PushManager::default()
-    }
 }
 
 impl redis::ConnectionLike for MockConnection {
@@ -243,10 +239,6 @@ impl redis::ConnectionLike for MockConnection {
 
     fn is_open(&self) -> bool {
         true
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        PushManager::default()
     }
 }
 

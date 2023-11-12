@@ -9,7 +9,6 @@ use crate::connection::{
 };
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::push_manager::PushManager;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
 use crate::{from_redis_value, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -24,7 +23,6 @@ use futures_util::{
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
@@ -43,12 +41,6 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
 
     // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
-
-    push_manager: PushManager,
-
-    /// Connection ip address
-    /// This field used when sending Push Information to PushManager
-    con_addr: Arc<String>,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -67,8 +59,6 @@ impl<C> Connection<C> {
             db,
             pubsub,
             resp3,
-            push_manager,
-            con_addr,
         } = self;
         Connection {
             con: f(con),
@@ -77,8 +67,6 @@ impl<C> Connection<C> {
             db,
             pubsub,
             resp3,
-            push_manager,
-            con_addr,
         }
     }
 }
@@ -98,8 +86,6 @@ where
             db: redis_connection_info.db,
             pubsub: false,
             resp3: redis_connection_info.use_resp3,
-            push_manager: PushManager::default(),
-            con_addr: Arc::new(connection_info.addr.to_string()),
         };
         authenticate(redis_connection_info, &mut rv).await?;
         Ok(rv)
@@ -117,9 +103,7 @@ where
 
     /// Fetches a single response from the connection.
     async fn read_response(&mut self) -> RedisResult<Value> {
-        let result = crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await;
-        self.push_manager.try_send(&result, &self.con_addr);
-        result
+        crate::parser::parse_redis_value_async(&mut self.decoder, &mut self.con).await
     }
 
     /// Brings [`Connection`] out of `PubSub` mode.
@@ -310,10 +294,6 @@ where
 
     fn get_db(&self) -> i64 {
         self.db
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
     }
 }
 

@@ -6,7 +6,6 @@ use std::pin::Pin;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
-    PushManager,
 };
 
 /// The client type.
@@ -325,14 +324,6 @@ impl ConnectionLike for Client {
             conn.is_open()
         } else {
             false
-        }
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        if let Ok(conn) = self.get_connection() {
-            conn.get_push_manager()
-        } else {
-            PushManager::default() // this is messy!
         }
     }
 }

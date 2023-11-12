@@ -259,10 +259,6 @@ impl ConnectionLike for MockRedisConnection {
     fn is_open(&self) -> bool {
         true
     }
-
-    fn get_push_manager(&self) -> PushManager {
-        PushManager::default()
-    }
 }
 
 #[cfg(feature = "aio")]
@@ -294,10 +290,6 @@ impl AioConnectionLike for MockRedisConnection {
 
     fn get_db(&self) -> i64 {
         0
-    }
-
-    fn get_push_manager(&self) -> PushManager {
-        PushManager::default()
     }
 }
 
