@@ -211,7 +211,7 @@ enum CmdArg<C> {
     },
 }
 
-fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
+fn route_for_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
@@ -1207,7 +1207,7 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        let route = route_pipeline(pipeline).into();
+        let route = route_for_pipeline(pipeline).into();
         self.route_pipeline(pipeline, offset, count, route).boxed()
     }
 
@@ -1292,7 +1292,7 @@ where
 
 #[cfg(test)]
 mod pipeline_routing_tests {
-    use super::route_pipeline;
+    use super::route_for_pipeline;
     use crate::{
         cluster_routing::{Route, SlotAddr},
         cmd,
@@ -1308,7 +1308,7 @@ mod pipeline_routing_tests {
             .add_command(cmd("EVAL")); // route randomly
 
         assert_eq!(
-            route_pipeline(&pipeline),
+            route_for_pipeline(&pipeline),
             Some(Route::new(12182, SlotAddr::Replica))
         );
     }
@@ -1323,7 +1323,7 @@ mod pipeline_routing_tests {
             .get("foo"); // route to slot 12182
 
         assert_eq!(
-            route_pipeline(&pipeline),
+            route_for_pipeline(&pipeline),
             Some(Route::new(4813, SlotAddr::Master))
         );
     }
