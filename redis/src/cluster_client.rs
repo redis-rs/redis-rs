@@ -104,7 +104,9 @@ impl ClusterClientBuilder {
     /// Creates a new `ClusterClientBuilder` with the provided initial_nodes.
     ///
     /// This is the same as `ClusterClient::builder(initial_nodes)`.
-    pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
+    pub fn new<T: IntoConnectionInfo>(
+        initial_nodes: impl IntoIterator<Item = T>,
+    ) -> ClusterClientBuilder {
         ClusterClientBuilder {
             initial_nodes: initial_nodes
                 .into_iter()
@@ -322,12 +324,16 @@ impl ClusterClient {
     ///
     /// Upon failure to parse initial nodes or if the initial nodes have different passwords or
     /// usernames, an error is returned.
-    pub fn new<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
+    pub fn new<T: IntoConnectionInfo>(
+        initial_nodes: impl IntoIterator<Item = T>,
+    ) -> RedisResult<ClusterClient> {
         Self::builder(initial_nodes).build()
     }
 
     /// Creates a [`ClusterClientBuilder`] with the provided initial_nodes.
-    pub fn builder<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> ClusterClientBuilder {
+    pub fn builder<T: IntoConnectionInfo>(
+        initial_nodes: impl IntoIterator<Item = T>,
+    ) -> ClusterClientBuilder {
         ClusterClientBuilder::new(initial_nodes)
     }
 
