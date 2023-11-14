@@ -45,7 +45,7 @@ use crate::{
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo,
+        SingleNodeRoutingInfo, SlotAddr,
     },
     cluster_topology::{
         calculate_topology, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
@@ -245,8 +245,8 @@ enum CmdArg<C> {
     },
 }
 
-fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
-    let route_for_command = |cmd| -> Option<Route> {
+fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
+    fn route_for_command(cmd: &Cmd) -> Option<Route> {
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
@@ -255,15 +255,26 @@ fn route_pipeline(pipeline: &crate::Pipeline) -> Option<Route> {
             Some(RoutingInfo::MultiNode(_)) => None,
             None => None,
         }
-    };
+    }
 
     // Find first specific slot and send to it. There's no need to check If later commands
     // should be routed to a different slot, since the server will return an error indicating this.
-    pipeline
-        .cmd_iter()
-        .map(route_for_command)
-        .find(|route| route.is_some())
-        .flatten()
+    pipeline.cmd_iter().map(route_for_command).try_fold(
+        None,
+        |chosen_route, next_cmd_route| match (chosen_route, next_cmd_route) {
+            (None, _) => Ok(next_cmd_route),
+            (_, None) => Ok(chosen_route),
+            (Some(chosen_route), Some(next_cmd_route)) => {
+                if chosen_route.slot() != next_cmd_route.slot() {
+                    Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
+                } else if chosen_route.slot_addr() == SlotAddr::ReplicaOptional {
+                    Ok(Some(next_cmd_route))
+                } else {
+                    Ok(Some(chosen_route))
+                }
+            }
+        },
+    )
 }
 enum Response {
     Single(Value),
@@ -1489,8 +1500,12 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        let route = route_pipeline(pipeline).into();
-        self.route_pipeline(pipeline, offset, count, route).boxed()
+        async move {
+            let route = route_for_pipeline(pipeline)?;
+            self.route_pipeline(pipeline, offset, count, route.into())
+                .await
+        }
+        .boxed()
     }
 
     fn get_db(&self) -> i64 {
@@ -1588,7 +1603,7 @@ fn get_host_and_port_from_addr(addr: &str) -> Option<(&str, u16)> {
 
 #[cfg(test)]
 mod pipeline_routing_tests {
-    use super::route_pipeline;
+    use super::route_for_pipeline;
     use crate::{
         cluster_routing::{Route, SlotAddr},
         cmd,
@@ -1604,13 +1619,40 @@ mod pipeline_routing_tests {
             .add_command(cmd("EVAL")); // route randomly
 
         assert_eq!(
-            route_pipeline(&pipeline),
-            Some(Route::new(12182, SlotAddr::ReplicaOptional))
+            route_for_pipeline(&pipeline),
+            Ok(Some(Route::new(12182, SlotAddr::ReplicaOptional)))
         );
     }
 
     #[test]
-    fn test_ignore_conflicting_slots() {
+    fn test_return_none_if_no_route_is_found() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .add_command(cmd("FLUSHALL")) // route to all masters
+            .add_command(cmd("EVAL")); // route randomly
+
+        assert_eq!(route_for_pipeline(&pipeline), Ok(None));
+    }
+
+    #[test]
+    fn test_prefer_primary_route_over_replica() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .get("foo") // route to replica of slot 12182
+            .add_command(cmd("FLUSHALL")) // route to all masters
+            .add_command(cmd("EVAL"))// route randomly
+            .set("foo", "bar"); // route to primary of slot 12182
+
+        assert_eq!(
+            route_for_pipeline(&pipeline),
+            Ok(Some(Route::new(12182, SlotAddr::Master)))
+        );
+    }
+
+    #[test]
+    fn test_raise_cross_slot_error_on_conflicting_slots() {
         let mut pipeline = crate::Pipeline::new();
 
         pipeline
@@ -1619,8 +1661,8 @@ mod pipeline_routing_tests {
             .get("foo"); // route to slot 12182
 
         assert_eq!(
-            route_pipeline(&pipeline),
-            Some(Route::new(4813, SlotAddr::Master))
+            route_for_pipeline(&pipeline).unwrap_err().kind(),
+            crate::ErrorKind::CrossSlot
         );
     }
 }
