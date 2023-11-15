@@ -333,29 +333,29 @@ implement_commands! {
 
     /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
-    fn blmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: usize) {
+    fn blmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: f64) {
         cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
-    fn blmpop<K: ToRedisArgs>(timeout: usize, numkeys: usize, key: K, dir: Direction, count: usize){
+    fn blmpop<K: ToRedisArgs>(timeout: f64, numkeys: usize, key: K, dir: Direction, count: usize){
         cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
 
     /// Remove and get the first element in a list, or block until one is available.
-    fn blpop<K: ToRedisArgs>(key: K, timeout: usize) {
+    fn blpop<K: ToRedisArgs>(key: K, timeout: f64) {
         cmd("BLPOP").arg(key).arg(timeout)
     }
 
     /// Remove and get the last element in a list, or block until one is available.
-    fn brpop<K: ToRedisArgs>(key: K, timeout: usize) {
+    fn brpop<K: ToRedisArgs>(key: K, timeout: f64) {
         cmd("BRPOP").arg(key).arg(timeout)
     }
 
     /// Pop a value from a list, push it to another list and return it;
     /// or block until one is available.
-    fn brpoplpush<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, timeout: usize) {
+    fn brpoplpush<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, timeout: f64) {
         cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
     }
 
@@ -614,7 +614,7 @@ implement_commands! {
 
     /// Removes and returns the member with the highest score in a sorted set.
     /// Blocks until a member is available otherwise.
-    fn bzpopmax<K: ToRedisArgs>(key: K, timeout: isize) {
+    fn bzpopmax<K: ToRedisArgs>(key: K, timeout: f64) {
         cmd("BZPOPMAX").arg(key).arg(timeout)
     }
 
@@ -625,7 +625,7 @@ implement_commands! {
 
     /// Removes and returns the member with the lowest score in a sorted set.
     /// Blocks until a member is available otherwise.
-    fn bzpopmin<K: ToRedisArgs>(key: K, timeout: isize) {
+    fn bzpopmin<K: ToRedisArgs>(key: K, timeout: f64) {
         cmd("BZPOPMIN").arg(key).arg(timeout)
     }
 
@@ -637,7 +637,7 @@ implement_commands! {
     /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// Blocks until a member is available otherwise.
-    fn bzmpop_max<K: ToRedisArgs>(timeout: isize, keys: &'a [K], count: isize) {
+    fn bzmpop_max<K: ToRedisArgs>(timeout: f64, keys: &'a [K], count: isize) {
         cmd("BZMPOP").arg(timeout).arg(keys.len()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
 
@@ -650,7 +650,7 @@ implement_commands! {
     /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// Blocks until a member is available otherwise.
-    fn bzmpop_min<K: ToRedisArgs>(timeout: isize, keys: &'a [K], count: isize) {
+    fn bzmpop_min<K: ToRedisArgs>(timeout: f64, keys: &'a [K], count: isize) {
         cmd("BZMPOP").arg(timeout).arg(keys.len()).arg(keys).arg("MIN").arg("COUNT").arg(count)
     }
 
