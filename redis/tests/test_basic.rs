@@ -1302,8 +1302,8 @@ fn test_blocking_sorted_set_api() {
     assert_eq!(con.zadd("c", "7c", 7), Ok(()));
     assert_eq!(con.zadd("d", "8d", 8), Ok(()));
 
-    let min = con.bzpopmin::<&str, (String, String, String)>("b", 0);
-    let max = con.bzpopmax::<&str, (String, String, String)>("b", 0);
+    let min = con.bzpopmin::<&str, (String, String, String)>("b", 0.0);
+    let max = con.bzpopmax::<&str, (String, String, String)>("b", 0.0);
 
     assert_eq!(
         min.unwrap(),
@@ -1316,12 +1316,12 @@ fn test_blocking_sorted_set_api() {
 
     if redis_version.0 >= 7 {
         let min = con.bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(
-            0,
+            0.0,
             vec!["a", "b", "c", "d"].as_slice(),
             1,
         );
         let max = con.bzmpop_max::<&str, (String, Vec<Vec<(String, String)>>)>(
-            0,
+            0.0,
             vec!["a", "b", "c", "d"].as_slice(),
             1,
         );
