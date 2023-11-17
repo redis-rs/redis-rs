@@ -63,7 +63,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_push_manager() {
+    fn test_send_and_receive_push_info() {
         let push_manager = PushManager::new();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
@@ -107,20 +107,22 @@ mod tests {
         let push_manager = PushManager::new();
 
         let con_addr = Arc::new("127.0.0.1:6379".to_string());
-        let value = Ok(Value::Push {
+
+        push_manager.try_send(&Ok(Value::Push {
             kind: PushKind::Message,
             data: vec![Value::Data("hello".to_string().into_bytes())],
-        });
-
-        push_manager.try_send(&value, &con_addr); // nothing happens!
+        }), &con_addr); // nothing happens!
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
-        push_manager.try_send(&value, &con_addr);
+        push_manager.try_send(&Ok(Value::Push {
+            kind: PushKind::Message,
+            data: vec![Value::Data("hello2".to_string().into_bytes())],
+        }), &con_addr);
 
         assert_eq!(
             rx.try_recv().unwrap().data,
-            vec![Value::Data("hello".to_string().into_bytes())]
+            vec![Value::Data("hello2".to_string().into_bytes())]
         );
     }
     #[test]
@@ -150,6 +152,9 @@ mod tests {
         assert_eq!(rx1.try_recv().unwrap().data, vec![Value::Int(2)]);
 
         push_manager.replace_sender(tx2);
+        // make sure rx1 is disconnected after replacing tx1 with tx2.
+        assert_eq!(rx1.try_recv().err().unwrap(),tokio::sync::mpsc::error::TryRecvError::Disconnected);
+
         push_manager.try_send(&value1, &con_addr2);
         push_manager.try_send(&value2, &con_addr1);
 
