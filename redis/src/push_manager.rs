@@ -108,17 +108,23 @@ mod tests {
 
         let con_addr = Arc::new("127.0.0.1:6379".to_string());
 
-        push_manager.try_send(&Ok(Value::Push {
-            kind: PushKind::Message,
-            data: vec![Value::Data("hello".to_string().into_bytes())],
-        }), &con_addr); // nothing happens!
+        push_manager.try_send(
+            &Ok(Value::Push {
+                kind: PushKind::Message,
+                data: vec![Value::Data("hello".to_string().into_bytes())],
+            }),
+            &con_addr,
+        ); // nothing happens!
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
-        push_manager.try_send(&Ok(Value::Push {
-            kind: PushKind::Message,
-            data: vec![Value::Data("hello2".to_string().into_bytes())],
-        }), &con_addr);
+        push_manager.try_send(
+            &Ok(Value::Push {
+                kind: PushKind::Message,
+                data: vec![Value::Data("hello2".to_string().into_bytes())],
+            }),
+            &con_addr,
+        );
 
         assert_eq!(
             rx.try_recv().unwrap().data,
@@ -153,7 +159,10 @@ mod tests {
 
         push_manager.replace_sender(tx2);
         // make sure rx1 is disconnected after replacing tx1 with tx2.
-        assert_eq!(rx1.try_recv().err().unwrap(),tokio::sync::mpsc::error::TryRecvError::Disconnected);
+        assert_eq!(
+            rx1.try_recv().err().unwrap(),
+            tokio::sync::mpsc::error::TryRecvError::Disconnected
+        );
 
         push_manager.try_send(&value1, &con_addr2);
         push_manager.try_send(&value2, &con_addr1);
