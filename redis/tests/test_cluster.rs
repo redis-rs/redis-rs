@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, Commands, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, RedisError, Value,
 };
 
 #[test]
@@ -759,6 +759,98 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
 
     let result = cmd.query::<Vec<String>>(&mut connection).unwrap();
     assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
+}
+
+#[test]
+fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests() {
+    let name = "test_cluster_route_correctly_on_packed_transaction_with_single_node_requests";
+    let mut pipeline = redis::pipe();
+    pipeline.atomic().set("foo", "bar").get("foo");
+    let packed_pipeline = pipeline.get_packed_pipeline();
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                let results = vec![
+                    Value::Data("OK".as_bytes().to_vec()),
+                    Value::Data("QUEUED".as_bytes().to_vec()),
+                    Value::Data("QUEUED".as_bytes().to_vec()),
+                    Value::Bulk(vec![
+                        Value::Data("OK".as_bytes().to_vec()),
+                        Value::Data("bar".as_bytes().to_vec()),
+                    ]),
+                ];
+                return Err(Ok(Value::Bulk(results)));
+            }
+            Err(Err(RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                format!("wrong port: {port}"),
+            ))))
+        },
+    );
+
+    let result = connection
+        .req_packed_commands(&packed_pipeline, 3, 1)
+        .unwrap();
+    assert_eq!(
+        result,
+        vec![
+            Value::Data("OK".as_bytes().to_vec()),
+            Value::Data("bar".as_bytes().to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2() {
+    let name = "test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2";
+    let mut pipeline = redis::pipe();
+    pipeline.atomic().set("foo", "bar").get("foo");
+    let packed_pipeline = pipeline.get_packed_pipeline();
+    let results = vec![
+        Value::Data("OK".as_bytes().to_vec()),
+        Value::Data("QUEUED".as_bytes().to_vec()),
+        Value::Data("QUEUED".as_bytes().to_vec()),
+        Value::Bulk(vec![
+            Value::Data("OK".as_bytes().to_vec()),
+            Value::Data("bar".as_bytes().to_vec()),
+        ]),
+    ];
+    let expected_result = Value::Bulk(results);
+    let cloned_result = expected_result.clone();
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(cloned_result.clone()));
+            }
+            Err(Err(RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                format!("wrong port: {port}"),
+            ))))
+        },
+    );
+
+    let result = connection.req_packed_command(&packed_pipeline).unwrap();
+    assert_eq!(result, expected_result);
 }
 
 #[cfg(feature = "tls-rustls")]
