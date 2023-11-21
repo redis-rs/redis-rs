@@ -85,7 +85,7 @@ impl Client {
             }
         };
 
-        crate::aio::Connection::new(&self.connection_info, con).await
+        crate::aio::Connection::new(&self.connection_info.redis, con).await
     }
 
     /// Returns an async connection from the client.
@@ -327,6 +327,7 @@ impl ConnectionLike for Client {
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;

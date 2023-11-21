@@ -14,7 +14,7 @@ use redis::{
     cluster::ClusterClient,
     cluster_async::Connect,
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    PushManager, RedisError, RedisFuture, RedisResult, Script, Value,
+    RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -222,12 +222,12 @@ struct ErrorConnection {
 }
 
 impl Connect for ErrorConnection {
-    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         Box::pin(async {
-            let inner = MultiplexedConnection::connect(info, push_manager).await?;
+            let inner = MultiplexedConnection::connect(info).await?;
             Ok(ErrorConnection { inner })
         })
     }
@@ -603,93 +603,4 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn test_cluster_push_manager() {
-    let cluster = TestClusterContext::new(3, 0);
-    if cluster.use_resp3 {
-        block_on_all(async move {
-            let mut con = cluster.async_connection().await;
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            con.get_push_manager().replace_sender(tx.clone());
-
-            for _ in 0..10 {
-                // make sure each node receives CLIENT TRACKING ON
-                cmd("CLIENT")
-                    .arg("TRACKING")
-                    .arg("ON")
-                    .query_async(&mut con)
-                    .await?;
-            }
-            let keys = ["key_1", "key_2", "key_3", "key_4", "key_5"];
-            for (i, key) in keys.iter().enumerate() {
-                let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
-                cmd("SET").arg(key).arg(i).query_async(&mut con).await?;
-            }
-            for key in keys {
-                let _: Option<usize> = cmd("GET").arg(key).query_async(&mut con).await?;
-            }
-            // we should receive at most 5 Push Value from cluster
-            for _ in keys {
-                let _ = rx.try_recv().unwrap();
-            }
-            assert!(rx.try_recv().is_err());
-            Ok::<_, RedisError>(())
-        })
-        .unwrap();
-    }
-}
-
-#[test]
-fn test_cluster_pub_sub() {
-    let cluster = TestClusterContext::new(3, 0);
-    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
-    if cluster.use_resp3 && redis_ver.starts_with("7.") {
-        block_on_all(async move {
-            let pub_count = 1;
-            let mut channel_names = vec![
-                String::from("phonewave1"),
-                String::from("phonewave2"),
-                String::from("phonewave3"),
-                String::from("phonewave4"),
-            ];
-            let mut con = cluster.async_connection().await;
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            con.get_push_manager().replace_sender(tx);
-            for channel_name in &channel_names {
-                con.ssubscribe(channel_name.clone()).await.unwrap();
-                rx.recv().await.unwrap(); //wait for ssubscribe
-            }
-
-            for i in 0..pub_count {
-                for channel_name in &channel_names {
-                    con.spublish(channel_name.clone(), format!("banana {i}"))
-                        .await?;
-                }
-            }
-            for _ in 0..(pub_count * channel_names.len()) {
-                rx.recv().await.unwrap();
-            }
-            assert!(rx.try_recv().is_err());
-            {
-                let channel_data = channel_names.remove(1);
-                con.sunsubscribe(channel_data.clone()).await.unwrap();
-                rx.recv().await.unwrap(); //wait for sunsubscribe
-            }
-
-            for i in 0..pub_count {
-                for channel_name in &channel_names {
-                    con.spublish(channel_name.clone(), format!("banana {i}"))
-                        .await?;
-                }
-            }
-            for _ in 0..(pub_count * channel_names.len()) {
-                rx.recv().await.unwrap();
-            }
-            assert!(rx.try_recv().is_err());
-            Ok::<_, RedisError>(())
-        })
-        .unwrap();
-    }
 }

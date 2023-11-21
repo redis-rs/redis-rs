@@ -38,8 +38,8 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{Route, RoutingInfo, Slot, SlotAddr, SlotMap},
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushManager, RedisError, RedisFuture,
-    RedisResult, Value,
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
+    Value,
 };
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -61,10 +61,7 @@ const SLOT_SIZE: usize = 16384;
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
-pub struct ClusterConnection<C = MultiplexedConnection> {
-    tx: mpsc::Sender<Message<C>>,
-    push_manager: PushManager,
-}
+pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
 
 impl<C> ClusterConnection<C>
 where
@@ -74,8 +71,7 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
-        let push_manager = PushManager::default();
-        ClusterConnInner::new(initial_nodes, cluster_params, push_manager.clone())
+        ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
@@ -90,80 +86,8 @@ where
                 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
                 AsyncStd::spawn(stream);
 
-                ClusterConnection {
-                    tx,
-                    push_manager: push_manager.clone(),
-                }
+                ClusterConnection(tx)
             })
-    }
-
-    /// Subscribes to a new shard channel.
-    pub async fn ssubscribe(&mut self, channel_name: String) -> RedisResult<()> {
-        let mut cmd = crate::cmd("SSUBSCRIBE");
-        cmd.arg(channel_name.clone());
-        let (sender, receiver) = oneshot::channel();
-        self.tx
-            .send(Message {
-                cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    func: |mut conn, cmd| {
-                        Box::pin(
-                            async move { cmd.query_async(&mut conn).await.map(Response::Single) },
-                        )
-                    },
-                },
-                sender,
-            })
-            .await
-            .map_err(|_| {
-                RedisError::from(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "redis_cluster: Unable to send command",
-                ))
-            })?;
-        match receiver.await {
-            Ok(Ok(Response::Single(_))) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-            _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-        }
-    }
-
-    /// Unsubscribes from shard channel.
-    pub async fn sunsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
-        let mut cmd = crate::cmd("SUNSUBSCRIBE");
-        cmd.arg(channel_name.clone());
-        let (sender, receiver) = oneshot::channel();
-        self.tx
-            .send(Message {
-                cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    func: |mut conn, cmd| {
-                        Box::pin(
-                            async move { cmd.query_async(&mut conn).await.map(Response::Single) },
-                        )
-                    },
-                },
-                sender,
-            })
-            .await
-            .map_err(|_| {
-                RedisError::from(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "redis_cluster: Unable to send command",
-                ))
-            })?;
-        match receiver.await {
-            Ok(Ok(Response::Single(_))) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-            _ => Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))),
-        }
-    }
-
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
-    pub fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
     }
 }
 
@@ -181,7 +105,6 @@ struct ClusterConnInner<C> {
     refresh_error: Option<RedisError>,
     pending_requests: Vec<PendingRequest<Response, C>>,
     cluster_params: ClusterParams,
-    push_manager: PushManager,
 }
 
 #[derive(Clone)]
@@ -429,14 +352,9 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-        push_manager: PushManager,
     ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(
-            initial_nodes,
-            cluster_params.clone(),
-            push_manager.clone(),
-        )
-        .await?;
+        let connections =
+            Self::create_initial_connections(initial_nodes, cluster_params.clone()).await?;
         let mut connection = ClusterConnInner {
             connections,
             slots: Default::default(),
@@ -445,7 +363,6 @@ where
             pending_requests: Vec::new(),
             state: ConnectionState::PollComplete,
             cluster_params,
-            push_manager,
         };
         let (slots, connections) = connection.refresh_slots().await.map_err(|(err, _)| err)?;
         connection.slots = slots;
@@ -456,15 +373,13 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: ClusterParams,
-        push_manager: PushManager,
     ) -> RedisResult<ConnectionMap<C>> {
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
-                let pm = push_manager.clone();
                 async move {
                     let addr = info.addr.to_string();
-                    let result = connect_and_check(&addr, params, pm.clone()).await;
+                    let result = connect_and_check(&addr, params).await;
                     match result {
                         Ok(conn) => Some((addr, async { conn }.boxed().shared())),
                         Err(e) => {
@@ -498,17 +413,12 @@ where
     ) -> impl Future<Output = ConnectionMap<C>> {
         let connections = mem::take(&mut self.connections);
         let params = self.cluster_params.clone();
-        let push_manager = self.push_manager.clone();
         async move {
             stream::iter(addrs)
                 .fold(connections, |mut connections, addr| async {
-                    let conn = Self::get_or_create_conn(
-                        &addr,
-                        connections.remove(&addr),
-                        params.clone(),
-                        push_manager.clone(),
-                    )
-                    .await;
+                    let conn =
+                        Self::get_or_create_conn(&addr, connections.remove(&addr), params.clone())
+                            .await;
                     if let Ok(conn) = conn {
                         connections.insert(addr, async { conn }.boxed().shared());
                     }
@@ -525,7 +435,6 @@ where
     {
         let mut connections = mem::take(&mut self.connections);
         let cluster_params = self.cluster_params.clone();
-        let push_manager = self.push_manager.clone();
         async move {
             let mut result = Ok(SlotMap::new());
             for (_, conn) in connections.iter_mut() {
@@ -564,7 +473,6 @@ where
                             addr,
                             connections.remove(addr),
                             cluster_params.clone(),
-                            push_manager.clone(),
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -762,16 +670,15 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: ClusterParams,
-        push_manager: PushManager,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone(), push_manager).await,
+                Err(_) => connect_and_check(addr, params.clone()).await,
             }
         } else {
-            connect_and_check(addr, params.clone(), push_manager).await
+            connect_and_check(addr, params.clone()).await
         }
     }
 }
@@ -922,7 +829,7 @@ where
         trace!("req_packed_command");
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
-            self.tx
+            self.0
                 .send(Message {
                     cmd: CmdArg::Cmd {
                         cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
@@ -964,7 +871,7 @@ where
     ) -> RedisFuture<'a, Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
         Box::pin(async move {
-            self.tx
+            self.0
                 .send(Message {
                     cmd: CmdArg::Pipeline {
                         pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
@@ -999,18 +906,17 @@ where
         0
     }
 }
-
 /// Implements the process of connecting to a Redis server
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
 }
 
 impl Connect for MultiplexedConnection {
-    fn connect<'a, T>(info: T, push_manager: PushManager) -> RedisFuture<'a, MultiplexedConnection>
+    fn connect<'a, T>(info: T) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
@@ -1019,32 +925,22 @@ impl Connect for MultiplexedConnection {
             let client = crate::Client::open(connection_info)?;
 
             #[cfg(feature = "tokio-comp")]
-            let mut con = client.get_multiplexed_tokio_connection().await;
+            return client.get_multiplexed_tokio_connection().await;
 
             #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            let mut con = client.get_multiplexed_async_std_connection().await;
-
-            if let Ok(con) = con.as_mut() {
-                con.set_push_manager(push_manager).await;
-            }
-
-            con
+            return client.get_multiplexed_async_std_connection().await;
         }
         .boxed()
     }
 }
 
-async fn connect_and_check<C>(
-    node: &str,
-    params: ClusterParams,
-    push_manager: PushManager,
-) -> RedisResult<C>
+async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas;
     let info = get_connection_info(node, params)?;
-    let mut conn = C::connect(info, push_manager).await?;
+    let mut conn = C::connect(info).await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect

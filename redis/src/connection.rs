@@ -394,10 +394,6 @@ pub struct Connection {
     resp3: bool,
 
     push_manager: PushManager,
-
-    /// Connection address
-    /// This field used when sending Push Information to PushManager
-    con_addr: Arc<String>,
 }
 
 /// Represents a pubsub connection.
@@ -783,36 +779,35 @@ pub fn connect(
     push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, connection_info, push_manager)
+    setup_connection(con, &connection_info.redis, push_manager)
 }
 
 fn setup_connection(
     con: ActualConnection,
-    connection_info: &ConnectionInfo,
+    connection_info: &RedisConnectionInfo,
     push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
-    let redis_connection_info = &connection_info.redis;
     let mut rv = Connection {
         con,
         parser: Parser::new(),
-        db: redis_connection_info.db,
+        db: connection_info.db,
         pubsub: false,
-        resp3: redis_connection_info.use_resp3,
+        resp3: connection_info.use_resp3,
         push_manager: push_manager.unwrap_or_default(),
-        con_addr: Arc::new(connection_info.addr.to_string()),
     };
-    if redis_connection_info.use_resp3 {
-        let hello_cmd = resp3_hello(redis_connection_info);
+
+    if connection_info.use_resp3 {
+        let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query(&mut rv);
         if let Err(err) = val {
             return Err(get_resp3_hello_command_error(err));
         }
-    } else if redis_connection_info.password.is_some() {
-        connect_auth(&mut rv, redis_connection_info)?;
+    } else if connection_info.password.is_some() {
+        connect_auth(&mut rv, connection_info)?;
     }
-    if redis_connection_info.db != 0 {
+    if connection_info.db != 0 {
         match cmd("SELECT")
-            .arg(redis_connection_info.db)
+            .arg(connection_info.db)
             .query::<Value>(&mut rv)
         {
             Ok(Value::Okay) => {}
@@ -1013,27 +1008,27 @@ impl Connection {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result, &self.con_addr);
+                self.push_manager.try_send(&result);
                 result
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result, &self.con_addr);
+                self.push_manager.try_send(&result);
                 result
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result, &self.con_addr);
+                self.push_manager.try_send(&result);
                 result
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
                 let result = self.parser.parse_value(sock);
-                self.push_manager.try_send(&result, &self.con_addr);
+                self.push_manager.try_send(&result);
                 result
             }
         };

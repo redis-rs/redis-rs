@@ -90,13 +90,12 @@ where
 }
 
 pin_project! {
-    struct PipelineSink<T,  E> {
+    struct PipelineSink<T, E> {
         #[pin]
         sink_stream: T,
-        in_flight: VecDeque<InFlight< E>>,
+        in_flight: VecDeque<InFlight<E>>,
         error: Option<E>,
         push_manager: Arc<ArcSwap<PushManager>>,
-        con_addr: Arc<String>
     }
 }
 
@@ -104,11 +103,7 @@ impl<T, E> PipelineSink<T, E>
 where
     T: Stream<Item = Result<Value, E>> + 'static,
 {
-    fn new<SinkItem>(
-        sink_stream: T,
-        push_manager: Arc<ArcSwap<PushManager>>,
-        con_addr: Arc<String>,
-    ) -> Self
+    fn new<SinkItem>(sink_stream: T, push_manager: Arc<ArcSwap<PushManager>>) -> Self
     where
         T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
     {
@@ -117,7 +112,6 @@ where
             in_flight: VecDeque::new(),
             error: None,
             push_manager,
-            con_addr,
         }
     }
 
@@ -139,7 +133,7 @@ where
         let mut skip_value = false;
         if let Ok(res) = &result {
             if let Value::Push { kind, data: _data } = res {
-                self_.push_manager.load().try_send_raw(res, self_.con_addr);
+                self_.push_manager.load().try_send_raw(res);
                 if kind != &PushKind::Subscribe
                     && kind != &PushKind::SSubscribe
                     && kind != &PushKind::PSubscribe
@@ -284,7 +278,7 @@ where
     SinkItem: Send + 'static,
     E: Send + 'static,
 {
-    fn new<T>(sink_stream: T, con_addr: Arc<String>) -> (Self, impl Future<Output = ()>)
+    fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
         T: Send + 'static,
@@ -296,8 +290,7 @@ where
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
         let push_manager: Arc<ArcSwap<PushManager>> =
             Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
-        let sink =
-            PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone(), con_addr.clone());
+        let sink = PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
@@ -384,8 +377,7 @@ impl MultiplexedConnection {
         let codec = ValueCodec::default()
             .framed(stream)
             .and_then(|msg| async move { msg });
-        let con_addr = Arc::new(connection_info.addr.to_string());
-        let (mut pipeline, driver) = Pipeline::new(codec, con_addr.clone());
+        let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let pm = PushManager::default();
         pipeline.set_push_manager(pm.clone()).await;

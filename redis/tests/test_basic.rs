@@ -1253,11 +1253,7 @@ fn test_push_manager() {
     for _ in 0..10 {
         let _: RedisResult<()> = pipe.query(&mut con);
         let _: i32 = con.get("key_1").unwrap();
-        let PushInfo {
-            kind,
-            data,
-            con_addr: _con_addr,
-        } = rx.try_recv().unwrap();
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
             (
                 PushKind::Invalidate,
@@ -1271,11 +1267,7 @@ fn test_push_manager() {
     drop(rx);
     let _: RedisResult<()> = pipe.query(&mut con);
     let _: i32 = con.get("key_1").unwrap();
-    let PushInfo {
-        kind,
-        data,
-        con_addr: _con_addr,
-    } = new_rx.try_recv().unwrap();
+    let PushInfo { kind, data } = new_rx.try_recv().unwrap();
     assert_eq!(
         (
             PushKind::Invalidate,

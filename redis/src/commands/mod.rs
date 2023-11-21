@@ -29,7 +29,7 @@ use crate::streams;
 
 #[cfg(feature = "acl")]
 use crate::acl;
-use crate::{pipe, RedisConnectionInfo};
+use crate::RedisConnectionInfo;
 
 #[cfg(feature = "cluster")]
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
@@ -855,11 +855,6 @@ implement_commands! {
     /// Posts a message to the given channel.
     fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
         cmd("PUBLISH").arg(channel).arg(message)
-    }
-
-    /// Posts a message to the given sharded channel.
-    fn spublish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
-        cmd("SPUBLISH").arg(channel).arg(message)
     }
 
     // Object commands
@@ -2072,19 +2067,18 @@ impl ToRedisArgs for Direction {
 }
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
-pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Pipeline{
-    let mut pipe = pipe();
-    pipe.cmd("HELLO");
-    pipe.arg("3");
+pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd{
+    let mut hello_cmd = cmd("HELLO");
+    hello_cmd.arg("3");
     if connection_info.password.is_some() {
         let username:&str = match connection_info.username.as_ref() {
             None => "default",
             Some(username) => username
         };
-        pipe
+        hello_cmd
             .arg("AUTH")
             .arg(username)
             .arg(connection_info.password.as_ref().unwrap());
     }
-    pipe
+    hello_cmd
 }

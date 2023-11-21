@@ -9,9 +9,6 @@ pub struct PushInfo {
     pub kind: PushKind,
     /// Data from push message
     pub data: Vec<Value>,
-
-    /// Connection address to distinguish connections
-    pub con_addr: Arc<String>,
 }
 
 /// Manages Push messages for both tokio and std channels
@@ -22,22 +19,21 @@ pub struct PushManager {
 impl PushManager {
     /// It checks if value's type is Push
     /// then invokes `try_send_raw` method
-    pub(crate) fn try_send(&self, value: &RedisResult<Value>, con_addr: &Arc<String>) {
+    pub(crate) fn try_send(&self, value: &RedisResult<Value>) {
         if let Ok(value) = &value {
-            self.try_send_raw(value, con_addr);
+            self.try_send_raw(value);
         }
     }
 
     /// It checks if value's type is Push and there is a provided sender
     /// then creates PushInfo and invokes `send` method of sender
-    pub(crate) fn try_send_raw(&self, value: &Value, con_addr: &Arc<String>) {
+    pub(crate) fn try_send_raw(&self, value: &Value) {
         if let Value::Push { kind, data } = value {
             let guard = self.sender.load();
             if let Some(sender) = guard.as_ref() {
                 let push_info = PushInfo {
                     kind: kind.clone(),
                     data: data.clone(),
-                    con_addr: con_addr.clone(),
                 };
                 if sender.send(push_info).is_err() {
                     self.sender.compare_and_swap(guard, Arc::new(None));
@@ -68,13 +64,12 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
 
-        let con_addr = Arc::new("127.0.0.1:6379".to_string());
         let value = Ok(Value::Push {
             kind: PushKind::Message,
             data: vec![Value::Data("hello".to_string().into_bytes())],
         });
 
-        push_manager.try_send(&value, &con_addr);
+        push_manager.try_send(&value);
 
         let push_info = rx.try_recv().unwrap();
         assert_eq!(push_info.kind, PushKind::Message);
@@ -82,7 +77,6 @@ mod tests {
             push_info.data,
             vec![Value::Data("hello".to_string().into_bytes())]
         );
-        assert_eq!(*push_info.con_addr, "127.0.0.1:6379".to_string());
     }
     #[test]
     fn test_push_manager_receiver_dropped() {
@@ -90,7 +84,6 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
 
-        let con_addr = Arc::new("127.0.0.1:6379".to_string());
         let value = Ok(Value::Push {
             kind: PushKind::Message,
             data: vec![Value::Data("hello".to_string().into_bytes())],
@@ -98,33 +91,25 @@ mod tests {
 
         drop(rx);
 
-        push_manager.try_send(&value, &con_addr);
-        push_manager.try_send(&value, &con_addr);
-        push_manager.try_send(&value, &con_addr);
+        push_manager.try_send(&value);
+        push_manager.try_send(&value);
+        push_manager.try_send(&value);
     }
     #[test]
     fn test_push_manager_without_sender() {
         let push_manager = PushManager::new();
 
-        let con_addr = Arc::new("127.0.0.1:6379".to_string());
-
-        push_manager.try_send(
-            &Ok(Value::Push {
-                kind: PushKind::Message,
-                data: vec![Value::Data("hello".to_string().into_bytes())],
-            }),
-            &con_addr,
-        ); // nothing happens!
+        push_manager.try_send(&Ok(Value::Push {
+            kind: PushKind::Message,
+            data: vec![Value::Data("hello".to_string().into_bytes())],
+        })); // nothing happens!
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
-        push_manager.try_send(
-            &Ok(Value::Push {
-                kind: PushKind::Message,
-                data: vec![Value::Data("hello2".to_string().into_bytes())],
-            }),
-            &con_addr,
-        );
+        push_manager.try_send(&Ok(Value::Push {
+            kind: PushKind::Message,
+            data: vec![Value::Data("hello2".to_string().into_bytes())],
+        }));
 
         assert_eq!(
             rx.try_recv().unwrap().data,
@@ -138,9 +123,6 @@ mod tests {
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
         push_manager.replace_sender(tx1);
 
-        let con_addr1 = Arc::new("127.0.0.1:6379".to_string());
-        let con_addr2 = Arc::new("127.0.0.1:6380".to_string());
-
         let value1 = Ok(Value::Push {
             kind: PushKind::Message,
             data: vec![Value::Int(1)],
@@ -151,8 +133,8 @@ mod tests {
             data: vec![Value::Int(2)],
         });
 
-        push_manager.try_send(&value1, &con_addr1);
-        push_manager.try_send(&value2, &con_addr2);
+        push_manager.try_send(&value1);
+        push_manager.try_send(&value2);
 
         assert_eq!(rx1.try_recv().unwrap().data, vec![Value::Int(1)]);
         assert_eq!(rx1.try_recv().unwrap().data, vec![Value::Int(2)]);
@@ -164,8 +146,8 @@ mod tests {
             tokio::sync::mpsc::error::TryRecvError::Disconnected
         );
 
-        push_manager.try_send(&value1, &con_addr2);
-        push_manager.try_send(&value2, &con_addr1);
+        push_manager.try_send(&value1);
+        push_manager.try_send(&value2);
 
         assert_eq!(rx2.try_recv().unwrap().data, vec![Value::Int(1)]);
         assert_eq!(rx2.try_recv().unwrap().data, vec![Value::Int(2)]);
@@ -182,14 +164,12 @@ mod tests {
         let (tx3, mut rx3) = tokio::sync::mpsc::unbounded_channel();
         let (tx4, mut rx4) = tokio::sync::mpsc::unbounded_channel();
 
-        let con_addr = Arc::new("127.0.0.1:6379".to_string());
         let mut handles = vec![];
         let txs = vec![tx1, tx2, tx3, tx4];
         let mut expected_sum = 0;
         for i in 0..1000 {
             expected_sum += i;
             let push_manager_clone = push_manager.clone();
-            let con_addr = con_addr.clone();
             let new_tx = txs[(i % 4) as usize].clone();
             let value = Ok(Value::Push {
                 kind: PushKind::Message,
@@ -197,7 +177,7 @@ mod tests {
             });
             let handle = tokio::spawn(async move {
                 push_manager_clone.replace_sender(new_tx);
-                push_manager_clone.try_send(&value, &con_addr);
+                push_manager_clone.try_send(&value);
             });
             handles.push(handle);
         }

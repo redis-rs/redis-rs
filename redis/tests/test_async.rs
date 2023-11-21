@@ -786,11 +786,7 @@ fn test_push_manager_cm() {
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
-        let PushInfo {
-            kind,
-            data,
-            con_addr: _con_addr,
-        } = rx.try_recv().unwrap();
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
             (
                 PushKind::Invalidate,
@@ -803,11 +799,7 @@ fn test_push_manager_cm() {
         drop(rx);
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
-        let PushInfo {
-            kind,
-            data,
-            con_addr: _con_addr,
-        } = new_rx.try_recv().unwrap();
+        let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
             (
                 PushKind::Invalidate,

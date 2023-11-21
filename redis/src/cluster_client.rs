@@ -115,6 +115,7 @@ impl ClusterClientBuilder {
                 _ => None,
             };
         }
+
         let mut nodes = Vec::with_capacity(initial_nodes.len());
         for mut node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {

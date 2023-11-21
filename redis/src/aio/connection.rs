@@ -5,7 +5,7 @@ use super::{authenticate, AsyncStream, RedisRuntime};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
-    Msg,
+    Msg, RedisConnectionInfo,
 };
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -77,17 +77,16 @@ where
 {
     /// Constructs a new `Connection` out of a `AsyncRead + AsyncWrite` object
     /// and a `RedisConnectionInfo`
-    pub async fn new(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
-        let redis_connection_info = &connection_info.redis;
+    pub async fn new(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         let mut rv = Connection {
             con,
             buf: Vec::new(),
             decoder: combine::stream::Decoder::new(),
-            db: redis_connection_info.db,
+            db: connection_info.db,
             pubsub: false,
-            resp3: redis_connection_info.use_resp3,
+            resp3: connection_info.use_resp3,
         };
-        authenticate(redis_connection_info, &mut rv).await?;
+        authenticate(connection_info, &mut rv).await?;
         Ok(rv)
     }
 
@@ -195,7 +194,7 @@ where
 {
     /// Constructs a new `Connection` out of a `async_std::io::AsyncRead + async_std::io::AsyncWrite` object
     /// and a `RedisConnectionInfo`
-    pub async fn new_async_std(connection_info: &ConnectionInfo, con: C) -> RedisResult<Self> {
+    pub async fn new_async_std(connection_info: &RedisConnectionInfo, con: C) -> RedisResult<Self> {
         Connection::new(connection_info, async_std::AsyncStdWrapped::new(con)).await
     }
 }
@@ -205,7 +204,7 @@ where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
     let con = connect_simple::<C>(connection_info).await?;
-    Connection::new(connection_info, con).await
+    Connection::new(&connection_info.redis, con).await
 }
 
 impl<C> ConnectionLike for Connection<C>

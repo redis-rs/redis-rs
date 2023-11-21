@@ -56,7 +56,6 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
     number_of_retries: usize,
-
     push_manager: PushManager,
 }
 

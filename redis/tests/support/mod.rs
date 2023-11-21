@@ -6,8 +6,6 @@ use std::{
 };
 
 use futures::Future;
-#[cfg(feature = "cluster")]
-use redis::cluster::{cluster_pipe, ClusterPipeline};
 use redis::{Pipeline, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
@@ -292,6 +290,7 @@ impl TestContext {
             }
         }
         redis::cmd("FLUSHDB").execute(&mut con);
+
         TestContext {
             server,
             client,
@@ -535,27 +534,5 @@ pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
         .arg("key_1")
         .arg(42)
         .ignore();
-    pipe
-}
-#[cfg(feature = "cluster")]
-pub fn build_cluster_pipeline_for_invalidation(keys: &[&str]) -> ClusterPipeline {
-    let mut pipe = cluster_pipe();
-    for (i, key) in keys.iter().enumerate() {
-        pipe.cmd("GET")
-            .arg(key)
-            .ignore()
-            .cmd("SET")
-            .arg(key)
-            .arg(i)
-            .ignore();
-    }
-    pipe
-}
-#[cfg(feature = "cluster")]
-pub fn build_cluster_pipeline_for_invalidation_result(keys: &[&str]) -> ClusterPipeline {
-    let mut pipe = cluster_pipe();
-    for key in keys {
-        pipe.cmd("GET").arg(key).ignore();
-    }
     pipe
 }

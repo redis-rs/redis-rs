@@ -55,7 +55,6 @@ use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Route, SlotAddr, SlotMap},
-    PushManager,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -65,11 +64,7 @@ pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 /// and obtaining and configuring a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
-    fn connect<T>(
-        info: T,
-        timeout: Option<Duration>,
-        push_manager: Option<PushManager>,
-    ) -> RedisResult<Self>
+    fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
     where
         T: IntoConnectionInfo;
 
@@ -99,15 +94,11 @@ pub trait Connect: Sized {
 }
 
 impl Connect for Connection {
-    fn connect<T>(
-        info: T,
-        timeout: Option<Duration>,
-        push_manager: Option<PushManager>,
-    ) -> RedisResult<Self>
+    fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
     where
         T: IntoConnectionInfo,
     {
-        connect(&info.into_connection_info()?, timeout, push_manager)
+        connect(&info.into_connection_info()?, timeout, None)
     }
 
     fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
@@ -142,9 +133,7 @@ pub struct ClusterConnection<C = Connection> {
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
     retries: u32,
-
     use_resp3: bool,
-    push_manager: PushManager,
 }
 
 impl<C> ClusterConnection<C>
@@ -167,7 +156,6 @@ where
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
             retries: cluster_params.retries,
-            push_manager: PushManager::default(),
             use_resp3: cluster_params.use_resp3,
         };
         connection.create_initial_connections()?;
@@ -363,7 +351,8 @@ where
             ..Default::default()
         };
         let info = get_connection_info(node, params)?;
-        let mut conn = C::connect(info, None, Some(self.push_manager.clone()))?;
+
+        let mut conn = C::connect(info, None)?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
@@ -618,11 +607,6 @@ where
             Some(err) => Err(err),
             None => Ok(to_retry),
         }
-    }
-
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
-    pub fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
     }
 }
 
