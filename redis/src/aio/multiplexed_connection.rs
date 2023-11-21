@@ -26,13 +26,13 @@ use std::task::{self, Poll};
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
-type PipelineOutput = oneshot::Sender<RedisResult<Vec<Value>>>;
+type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
 struct InFlight {
     output: PipelineOutput,
     expected_response_count: usize,
     current_response_count: usize,
-    buffer: Vec<Value>,
+    buffer: Option<Value>,
     first_err: Option<RedisError>,
 }
 
@@ -42,7 +42,7 @@ impl InFlight {
             output,
             expected_response_count,
             current_response_count: 0,
-            buffer: Vec::new(),
+            buffer: None,
             first_err: None,
         }
     }
@@ -128,7 +128,19 @@ where
 
             match result {
                 Ok(item) => {
-                    entry.buffer.push(item);
+                    entry.buffer = Some(match entry.buffer.take() {
+                        Some(Value::Bulk(mut values)) => {
+                            values.push(item);
+                            Value::Bulk(values)
+                        }
+                        Some(value) => {
+                            let mut vec = Vec::with_capacity(entry.expected_response_count);
+                            vec.push(value);
+                            vec.push(item);
+                            Value::Bulk(vec)
+                        }
+                        None => item,
+                    });
                 }
                 Err(err) => {
                     if entry.first_err.is_none() {
@@ -147,7 +159,7 @@ where
         let entry = self_.in_flight.pop_front().unwrap();
         let response = match entry.first_err {
             Some(err) => Err(err),
-            None => Ok(entry.buffer),
+            None => Ok(entry.buffer.unwrap_or(Value::Bulk(vec![]))),
         };
 
         // `Err` means that the receiver was dropped in which case it does not
@@ -266,23 +278,20 @@ where
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send(
+    async fn send_single(
         &mut self,
         item: SinkItem,
         timeout: futures_time::time::Duration,
     ) -> Result<Value, Option<RedisError>> {
-        self.send_recv_multiple(item, 1, timeout)
-            .await
-            // We can unwrap since we do a request for `1` item
-            .map(|mut item| item.pop().unwrap())
+        self.send_recv(item, 1, timeout).await
     }
 
-    async fn send_recv_multiple(
+    async fn send_recv(
         &mut self,
         input: SinkItem,
         count: usize,
         timeout: futures_time::time::Duration,
-    ) -> Result<Vec<Value>, Option<RedisError>> {
+    ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
         self.0
@@ -391,7 +400,7 @@ impl MultiplexedConnection {
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         self.pipeline
-            .send(cmd.get_packed_command(), self.response_timeout)
+            .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
@@ -407,9 +416,9 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let mut value = self
+        let value = self
             .pipeline
-            .send_recv_multiple(
+            .send_recv(
                 cmd.get_packed_pipeline(),
                 offset + count,
                 self.response_timeout,
@@ -419,8 +428,13 @@ impl MultiplexedConnection {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             })?;
 
-        value.drain(..offset);
-        Ok(value)
+        match value {
+            Value::Bulk(mut values) => {
+                values.drain(..offset);
+                Ok(values)
+            }
+            _ => Ok(vec![value]),
+        }
     }
 }
 
