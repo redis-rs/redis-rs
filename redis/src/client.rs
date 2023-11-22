@@ -46,7 +46,7 @@ impl Client {
     /// (like unreachable host) so it's important that you handle those
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
-        connect(&self.connection_info, None, None)
+        connect(&self.connection_info, None)
     }
 
     /// Instructs the client to actually connect to redis with specified
@@ -55,7 +55,7 @@ impl Client {
     /// a variety of errors (like unreachable host) so it's important
     /// that you handle those errors.
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
-        connect(&self.connection_info, Some(timeout), None)
+        connect(&self.connection_info, Some(timeout))
     }
 
     /// Returns a reference of client connection info object.

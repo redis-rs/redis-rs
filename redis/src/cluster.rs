@@ -98,7 +98,7 @@ impl Connect for Connection {
     where
         T: IntoConnectionInfo,
     {
-        connect(&info.into_connection_info()?, timeout, None)
+        connect(&info.into_connection_info()?, timeout)
     }
 
     fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {

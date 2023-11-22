@@ -776,16 +776,14 @@ fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> 
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
-    push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
     let con = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, &connection_info.redis, push_manager)
+    setup_connection(con, &connection_info.redis)
 }
 
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
-    push_manager: Option<PushManager>,
 ) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
@@ -793,7 +791,7 @@ fn setup_connection(
         db: connection_info.db,
         pubsub: false,
         resp3: connection_info.use_resp3,
-        push_manager: push_manager.unwrap_or_default(),
+        push_manager: PushManager::new(),
     };
 
     if connection_info.use_resp3 {
