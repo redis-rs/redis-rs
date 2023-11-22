@@ -134,13 +134,7 @@ where
         if let Ok(res) = &result {
             if let Value::Push { kind, data: _data } = res {
                 self_.push_manager.load().try_send_raw(res);
-                if kind != &PushKind::Subscribe
-                    && kind != &PushKind::SSubscribe
-                    && kind != &PushKind::PSubscribe
-                    && kind != &PushKind::Unsubscribe
-                    && kind != &PushKind::SUnsubscribe
-                    && kind != &PushKind::PUnsubscribe
-                {
+                if !kind.has_reply() {
                     // If it's not true then push kind is converted to reply of a command
                     skip_value = true;
                 }
