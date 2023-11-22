@@ -175,6 +175,8 @@ pub enum VerbatimFormat {
 /// `Push` type's currently known kinds.
 #[derive(PartialEq, Clone, Debug)]
 pub enum PushKind {
+    /// `Disconnection` is sent from the **library** when connection is closed.
+    Disconnection,
     /// Other kind to catch future kinds.
     Other(String),
     /// `invalidate` is received when a key is changed/deleted.
@@ -223,6 +225,7 @@ impl fmt::Display for PushKind {
             PushKind::Subscribe => write!(f, "subscribe"),
             PushKind::PSubscribe => write!(f, "psubscribe"),
             PushKind::SSubscribe => write!(f, "ssubscribe"),
+            PushKind::Disconnection => write!(f, "disconnection"),
         }
     }
 }

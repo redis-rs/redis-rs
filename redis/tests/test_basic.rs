@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::vec;
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
 
@@ -1284,4 +1285,22 @@ fn test_push_manager() {
             assert_eq!(v, 42);
         }
     }
+}
+
+#[test]
+fn test_push_manager_disconnection() {
+    let ctx = TestContext::new();
+    if !ctx.use_resp3 {
+        return;
+    }
+    let mut con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(tx.clone());
+
+    let _: () = con.set("A", "1").unwrap();
+    assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+    drop(ctx);
+    let x: RedisResult<()> = con.set("A", "1");
+    assert!(x.is_err());
+    assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
 }

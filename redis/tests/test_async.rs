@@ -714,6 +714,30 @@ mod pub_sub {
         })
         .unwrap();
     }
+    #[test]
+    fn push_manager_disconnection() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        if !ctx.use_resp3 {
+            return;
+        }
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            conn.get_push_manager().replace_sender(tx.clone());
+
+            conn.set("A", "1").await?;
+            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+            drop(ctx);
+            let x: RedisResult<()> = conn.set("A", "1").await;
+            assert!(x.is_err());
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }
 
 #[cfg(feature = "connection-manager")]
@@ -752,15 +776,20 @@ fn test_connection_manager_reconnect_after_delay() {
             .unwrap();
         let server = ctx.server;
         let addr = server.client_addr().clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        manager.get_push_manager().replace_sender(tx.clone());
         drop(server);
 
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
-
+        if ctx.use_resp3 {
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+        }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[]);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
         assert_eq!(result, redis::Value::Okay);
     });
 }

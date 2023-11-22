@@ -407,13 +407,25 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let mut value = self
+        let result = self
             .pipeline
             .send_recv_multiple(cmd.get_packed_command(), !cmd.is_no_response() as usize)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
+            });
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        let mut value = result?;
         if cmd.is_no_response() {
             return Ok(Value::Nil);
         }
@@ -429,14 +441,25 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let mut value = self
+        let result = self
             .pipeline
             .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
-
+            });
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        let mut value = result?;
         value.drain(..offset);
         Ok(value)
     }

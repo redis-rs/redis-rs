@@ -890,7 +890,7 @@ impl Connection {
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
     pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         Ok(())
     }
 
@@ -953,13 +953,9 @@ impl Connection {
             let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
             let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
 
-            // Grab a reference to the underlying connection so that we may send
-            // the commands without immediately blocking for a response.
-            let con = &mut self.con;
-
             // Execute commands
-            con.send_bytes(&unsubscribe)?;
-            con.send_bytes(&punsubscribe)?;
+            self.send_bytes(&unsubscribe)?;
+            self.send_bytes(&punsubscribe)?;
         }
 
         // Receive responses
@@ -1039,6 +1035,11 @@ impl Connection {
                 None => false,
             };
             if shutdown {
+                // Notify the PushManager that the connection was lost
+                self.push_manager.try_send_raw(&Value::Push {
+                    kind: PushKind::Disconnection,
+                    data: vec![],
+                });
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
@@ -1069,6 +1070,22 @@ impl Connection {
     pub fn get_push_manager(&self) -> PushManager {
         self.push_manager.clone()
     }
+
+    fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+        let result = self.con.send_bytes(bytes);
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        result
+    }
 }
 
 impl ConnectionLike for Connection {
@@ -1079,7 +1096,7 @@ impl ConnectionLike for Connection {
             self.exit_pubsub()?;
         }
 
-        self.con.send_bytes(&pcmd)?;
+        self.send_bytes(&pcmd)?;
         if cmd.is_no_response() {
             return Ok(Value::Nil);
         }
@@ -1098,7 +1115,7 @@ impl ConnectionLike for Connection {
             self.exit_pubsub()?;
         }
 
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         loop {
             match self.read_response()? {
                 Value::Push {
@@ -1119,7 +1136,7 @@ impl ConnectionLike for Connection {
         if self.pubsub {
             self.exit_pubsub()?;
         }
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
         let mut count = count;
