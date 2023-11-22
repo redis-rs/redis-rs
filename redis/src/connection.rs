@@ -393,6 +393,8 @@ pub struct Connection {
     // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
 
+    /// `PushManager` instance for the connection.
+    /// This is used to manage Push messages in RESP3 mode.
     push_manager: PushManager,
 }
 

@@ -11,7 +11,7 @@ pub struct PushInfo {
     pub data: Vec<Value>,
 }
 
-/// Manages Push messages for both tokio and std channels
+/// Manages Push messages for single tokio channel
 #[derive(Clone, Default)]
 pub struct PushManager {
     sender: Arc<ArcSwap<Option<tokio::sync::mpsc::UnboundedSender<PushInfo>>>>,
