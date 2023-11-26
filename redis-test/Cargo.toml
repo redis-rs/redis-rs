@@ -13,7 +13,7 @@ rust-version = "1.65"
 bench = false
 
 [dependencies]
-redis = { path = "../redis" }
+redis = { version = "0.23.4", path = "../redis" }
 
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
@@ -22,5 +22,5 @@ futures = { version = "0.3", optional = true }
 aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
-redis = { path = "../redis", features = ["aio", "tokio-comp"] }
+redis = { version = "0.23.4", path = "../redis", features = ["aio", "tokio-comp"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
