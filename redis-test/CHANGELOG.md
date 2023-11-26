@@ -1,3 +1,9 @@
+### 0.2.4 (2023-11-26)
+* Track redis 0.23.4 release
+
+#### Changes
+* Remove redis version from Cargo. (#943)
+
 ### 0.2.3 (2023-09-01)
 
 * Track redis 0.23.3 release
