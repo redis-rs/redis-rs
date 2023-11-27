@@ -26,32 +26,32 @@ use std::task::{self, Poll};
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
-type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
+type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
-struct InFlight<O, E> {
-    output: PipelineOutput<O, E>,
+struct InFlight {
+    output: PipelineOutput,
     expected_response_count: usize,
     current_response_count: usize,
-    buffer: Vec<O>,
-    first_err: Option<E>,
+    buffer: Option<Value>,
+    first_err: Option<RedisError>,
 }
 
-impl<O, E> InFlight<O, E> {
-    fn new(output: PipelineOutput<O, E>, expected_response_count: usize) -> Self {
+impl InFlight {
+    fn new(output: PipelineOutput, expected_response_count: usize) -> Self {
         Self {
             output,
             expected_response_count,
             current_response_count: 0,
-            buffer: Vec::new(),
+            buffer: None,
             first_err: None,
         }
     }
 }
 
 // A single message sent through the pipeline
-struct PipelineMessage<S, I, E> {
+struct PipelineMessage<S> {
     input: S,
-    output: PipelineOutput<I, E>,
+    output: PipelineOutput,
     response_count: usize,
 }
 
@@ -59,19 +59,17 @@ struct PipelineMessage<S, I, E> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
+struct Pipeline<SinkItem>(mpsc::Sender<PipelineMessage<SinkItem>>);
 
-impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
+impl<SinkItem> Clone for Pipeline<SinkItem> {
     fn clone(&self) -> Self {
         Pipeline(self.0.clone())
     }
 }
 
-impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
+impl<SinkItem> Debug for Pipeline<SinkItem>
 where
     SinkItem: Debug,
-    I: Debug,
-    E: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Pipeline").field(&self.0).finish()
@@ -79,21 +77,21 @@ where
 }
 
 pin_project! {
-    struct PipelineSink<T, I, E> {
+    struct PipelineSink<T> {
         #[pin]
         sink_stream: T,
-        in_flight: VecDeque<InFlight<I, E>>,
-        error: Option<E>,
+        in_flight: VecDeque<InFlight>,
+        error: Option<RedisError>,
     }
 }
 
-impl<T, I, E> PipelineSink<T, I, E>
+impl<T> PipelineSink<T>
 where
-    T: Stream<Item = Result<I, E>> + 'static,
+    T: Stream<Item = RedisResult<Value>> + 'static,
 {
     fn new<SinkItem>(sink_stream: T) -> Self
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
         PipelineSink {
             sink_stream,
@@ -119,7 +117,7 @@ where
         }
     }
 
-    fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
+    fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
 
         {
@@ -130,7 +128,14 @@ where
 
             match result {
                 Ok(item) => {
-                    entry.buffer.push(item);
+                    entry.buffer = Some(match entry.buffer.take() {
+                        Some(Value::Bulk(mut values)) => {
+                            values.push(item);
+                            Value::Bulk(values)
+                        }
+                        Some(value) => Value::Bulk(vec![value, item]),
+                        None => item,
+                    });
                 }
                 Err(err) => {
                     if entry.first_err.is_none() {
@@ -149,7 +154,7 @@ where
         let entry = self_.in_flight.pop_front().unwrap();
         let response = match entry.first_err {
             Some(err) => Err(err),
-            None => Ok(entry.buffer),
+            None => Ok(entry.buffer.unwrap_or(Value::Bulk(vec![]))),
         };
 
         // `Err` means that the receiver was dropped in which case it does not
@@ -159,9 +164,9 @@ where
     }
 }
 
-impl<SinkItem, T, I, E> Sink<PipelineMessage<SinkItem, I, E>> for PipelineSink<T, I, E>
+impl<SinkItem, T> Sink<PipelineMessage<SinkItem>> for PipelineSink<T>
 where
-    T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+    T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
 {
     type Error = ();
 
@@ -185,7 +190,7 @@ where
             input,
             output,
             response_count,
-        }: PipelineMessage<SinkItem, I, E>,
+        }: PipelineMessage<SinkItem>,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
@@ -246,15 +251,13 @@ where
     }
 }
 
-impl<SinkItem, I, E> Pipeline<SinkItem, I, E>
+impl<SinkItem> Pipeline<SinkItem>
 where
     SinkItem: Send + 'static,
-    I: Send + 'static,
-    E: Send + 'static,
 {
     fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
         T: Send + 'static,
         T::Item: Send,
         T::Error: Send,
@@ -270,18 +273,15 @@ where
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
-        self.send_recv_multiple(item, 1)
-            .await
-            // We can unwrap since we do a request for `1` item
-            .map(|mut item| item.pop().unwrap())
+    async fn send_single(&mut self, item: SinkItem) -> Result<Value, Option<RedisError>> {
+        self.send_recv(item, 1).await
     }
 
-    async fn send_recv_multiple(
+    async fn send_recv(
         &mut self,
         input: SinkItem,
         count: usize,
-    ) -> Result<Vec<I>, Option<E>> {
+    ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
         self.0
@@ -307,7 +307,7 @@ where
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
+    pipeline: Pipeline<Vec<u8>>,
     db: i64,
 }
 
@@ -370,7 +370,7 @@ impl MultiplexedConnection {
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let value = self
             .pipeline
-            .send(cmd.get_packed_command())
+            .send_single(cmd.get_packed_command())
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
@@ -387,16 +387,21 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let mut value = self
+        let value = self
             .pipeline
-            .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
+            .send_recv(cmd.get_packed_pipeline(), offset + count)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             })?;
 
-        value.drain(..offset);
-        Ok(value)
+        match value {
+            Value::Bulk(mut values) => {
+                values.drain(..offset);
+                Ok(values)
+            }
+            _ => Ok(vec![value]),
+        }
     }
 }
 
