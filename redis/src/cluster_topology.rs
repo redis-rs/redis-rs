@@ -226,9 +226,9 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
     // Parse response.
     let mut result = Vec::with_capacity(2);
 
-    if let Value::Bulk(items) = raw_slot_resp {
+    if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.iter();
-        while let Some(Value::Bulk(item)) = iter.next() {
+        while let Some(Value::Array(item)) = iter.next() {
             if item.len() < 3 {
                 continue;
             }
@@ -249,12 +249,12 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
                 .iter()
                 .skip(2)
                 .filter_map(|node| {
-                    if let Value::Bulk(node) = node {
+                    if let Value::Array(node) = node {
                         if node.len() < 2 {
                             return None;
                         }
 
-                        let ip = if let Value::Data(ref ip) = node[0] {
+                        let ip = if let Value::BulkString(ref ip) = node[0] {
                             String::from_utf8_lossy(ip)
                         } else {
                             return None;
@@ -423,54 +423,54 @@ mod tests {
     }
     fn get_view(view_type: &ViewType) -> Value {
         match view_type {
-            ViewType::SingleNodeViewFullCoverage => Value::Bulk(vec![Value::Bulk(vec![
+            ViewType::SingleNodeViewFullCoverage => Value::Array(vec![Value::Array(vec![
                 Value::Int(0_i64),
                 Value::Int(16383_i64),
-                Value::Bulk(vec![
-                    Value::Data("node1".as_bytes().to_vec()),
+                Value::Array(vec![
+                    Value::BulkString("node1".as_bytes().to_vec()),
                     Value::Int(6379_i64),
                 ]),
             ])]),
-            ViewType::SingleNodeViewMissingSlots => Value::Bulk(vec![Value::Bulk(vec![
+            ViewType::SingleNodeViewMissingSlots => Value::Array(vec![Value::Array(vec![
                 Value::Int(0_i64),
                 Value::Int(4000_i64),
-                Value::Bulk(vec![
-                    Value::Data("node1".as_bytes().to_vec()),
+                Value::Array(vec![
+                    Value::BulkString("node1".as_bytes().to_vec()),
                     Value::Int(6379_i64),
                 ]),
             ])]),
-            ViewType::TwoNodesViewFullCoverage => Value::Bulk(vec![
-                Value::Bulk(vec![
+            ViewType::TwoNodesViewFullCoverage => Value::Array(vec![
+                Value::Array(vec![
                     Value::Int(0_i64),
                     Value::Int(4000_i64),
-                    Value::Bulk(vec![
-                        Value::Data("node1".as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString("node1".as_bytes().to_vec()),
                         Value::Int(6379_i64),
                     ]),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Int(4001_i64),
                     Value::Int(16383_i64),
-                    Value::Bulk(vec![
-                        Value::Data("node2".as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString("node2".as_bytes().to_vec()),
                         Value::Int(6380_i64),
                     ]),
                 ]),
             ]),
-            ViewType::TwoNodesViewMissingSlots => Value::Bulk(vec![
-                Value::Bulk(vec![
+            ViewType::TwoNodesViewMissingSlots => Value::Array(vec![
+                Value::Array(vec![
                     Value::Int(0_i64),
                     Value::Int(3000_i64),
-                    Value::Bulk(vec![
-                        Value::Data("node3".as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString("node3".as_bytes().to_vec()),
                         Value::Int(6381_i64),
                     ]),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Int(4001_i64),
                     Value::Int(16383_i64),
-                    Value::Bulk(vec![
-                        Value::Data("node4".as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString("node4".as_bytes().to_vec()),
                         Value::Int(6382_i64),
                     ]),
                 ]),

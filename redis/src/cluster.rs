@@ -54,12 +54,12 @@ use crate::connection::{
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
-use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo},
 };
+use crate::{IntoConnectionInfo, PushKind};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -131,7 +131,7 @@ impl From<Output> for Value {
     fn from(value: Output) -> Self {
         match value {
             Output::Single(value) => value,
-            Output::Multi(values) => Value::Bulk(values),
+            Output::Multi(values) => Value::Array(values),
         }
     }
 }
@@ -593,11 +593,11 @@ where
                     .map(|(index, result)| {
                         let addr = addresses[index];
                         result.map(|val| {
-                            Value::Bulk(vec![Value::Data(addr.as_bytes().to_vec()), val])
+                            Value::Array(vec![Value::BulkString(addr.as_bytes().to_vec()), val])
                         })
                     })
                     .collect::<RedisResult<Vec<_>>>()?;
-                Ok(Value::Bulk(results))
+                Ok(Value::Array(results))
             }
         }
     }
@@ -846,6 +846,10 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             }
         }
         true
+    }
+
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 

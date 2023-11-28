@@ -21,6 +21,7 @@ use redis::{aio, cluster_async, RedisFuture};
 #[cfg(feature = "cluster-async")]
 use futures::future;
 
+use redis::PushKind;
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
 
@@ -114,18 +115,18 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
 
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
+        Err(Ok(Value::Array(vec![Value::Array(vec![
             Value::Int(0),
             Value::Int(16383),
-            Value::Bulk(vec![
-                Value::Data(name.as_bytes().to_vec()),
+            Value::Array(vec![
+                Value::BulkString(name.as_bytes().to_vec()),
                 Value::Int(6379),
             ]),
         ])])))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -168,21 +169,21 @@ pub fn create_topology_from_config(name: &str, slots_config: Vec<MockSlotRange>)
             let mut config = vec![
                 Value::Int(slot_config.slot_range.start as i64),
                 Value::Int(slot_config.slot_range.end as i64),
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
+                Value::Array(vec![
+                    Value::BulkString(name.as_bytes().to_vec()),
                     Value::Int(slot_config.primary_port as i64),
                 ]),
             ];
             config.extend(slot_config.replica_ports.into_iter().map(|replica_port| {
-                Value::Bulk(vec![
-                    Value::Data(name.as_bytes().to_vec()),
+                Value::Array(vec![
+                    Value::BulkString(name.as_bytes().to_vec()),
                     Value::Int(replica_port as i64),
                 ])
             }));
-            Value::Bulk(config)
+            Value::Array(config)
         })
         .collect();
-    Value::Bulk(slots_vec)
+    Value::Array(slots_vec)
 }
 
 pub fn respond_startup_with_replica_using_config(
@@ -203,12 +204,12 @@ pub fn respond_startup_with_replica_using_config(
         },
     ]);
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         let slots = create_topology_from_config(name, slots_config);
         Err(Ok(slots))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -252,9 +253,9 @@ impl redis::ConnectionLike for MockConnection {
         match res {
             Err(err) => Err(err),
             Ok(res) => {
-                if let Value::Bulk(results) = res {
+                if let Value::Array(results) = res {
                     match results.into_iter().nth(offset) {
-                        Some(Value::Bulk(res)) => Ok(res),
+                        Some(Value::Array(res)) => Ok(res),
                         _ => Err((ErrorKind::ResponseError, "non-array response").into()),
                     }
                 } else {
@@ -279,6 +280,10 @@ impl redis::ConnectionLike for MockConnection {
 
     fn is_open(&self) -> bool {
         true
+    }
+
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 

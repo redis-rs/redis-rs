@@ -130,7 +130,7 @@ fn test_async_cluster_route_info_to_nodes() {
     let cluster = TestClusterContext::new(12, 1);
 
     let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
-        if let Value::Bulk(values) = res {
+        if let Value::Array(values) = res {
             let mut pairs: Vec<_> = values
                 .into_iter()
                 .map(|value| redis::from_redis_value::<(String, String)>(&value).unwrap())
@@ -471,7 +471,7 @@ fn test_async_cluster_retries() {
 
             match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                 0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
             }
         },
     );
@@ -565,13 +565,13 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
         started.store(true, atomic::Ordering::SeqCst);
 
         if contains_slice(cmd, b"PING") {
-            return Err(Ok(Value::Status("OK".into())));
+            return Err(Ok(Value::SimpleString("OK".into())));
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
         let is_get_cmd = contains_slice(cmd, b"GET");
-        let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+        let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
         match i {
             // Respond that the key exists on a node that does not yet have a connection:
             0 => Err(parse_redis_value(
@@ -585,20 +585,20 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
                         .get(&port)
                         .unwrap()
                         .swap(true, Ordering::SeqCst));
-                    Err(Ok(Value::Bulk(vec![
-                        Value::Bulk(vec![
+                    Err(Ok(Value::Array(vec![
+                        Value::Array(vec![
                             Value::Int(0),
                             Value::Int(1),
-                            Value::Bulk(vec![
-                                Value::Data(name.as_bytes().to_vec()),
+                            Value::Array(vec![
+                                Value::BulkString(name.as_bytes().to_vec()),
                                 Value::Int(6379),
                             ]),
                         ]),
-                        Value::Bulk(vec![
+                        Value::Array(vec![
                             Value::Int(2),
                             Value::Int(16383),
-                            Value::Bulk(vec![
-                                Value::Data(name.as_bytes().to_vec()),
+                            Value::Array(vec![
+                                Value::BulkString(name.as_bytes().to_vec()),
                                 Value::Int(6380),
                             ]),
                         ]),
@@ -649,12 +649,12 @@ fn test_cluster_refresh_topology_after_moved_assert_get_succeed_and_expected_ret
         started.store(true, atomic::Ordering::SeqCst);
 
         if contains_slice(cmd, b"PING") {
-            return Err(Ok(Value::Status("OK".into())));
+            return Err(Ok(Value::SimpleString("OK".into())));
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
         let is_get_cmd = contains_slice(cmd, b"GET");
-        let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+        let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
         let moved_node = ports[0];
         match i {
             // Respond that the key exists on a node that does not yet have a connection:
@@ -729,7 +729,7 @@ fn test_cluster_refresh_topology_in_client_init_get_succeed(
             let is_started = started.load(atomic::Ordering::SeqCst);
             if !is_started {
                 if contains_slice(cmd, b"PING") {
-                    return Err(Ok(Value::Status("OK".into())));
+                    return Err(Ok(Value::SimpleString("OK".into())));
                 } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                     let view_index = get_node_view_index(slots_config_vec.len(), &ports, port);
                     return Err(Ok(create_topology_from_config(
@@ -737,16 +737,16 @@ fn test_cluster_refresh_topology_in_client_init_get_succeed(
                         slots_config_vec[view_index].clone(),
                     )));
                 } else if contains_slice(cmd, b"READONLY") {
-                    return Err(Ok(Value::Status("OK".into())));
+                    return Err(Ok(Value::SimpleString("OK".into())));
                 }
             }
             started.store(true, atomic::Ordering::SeqCst);
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::Status("OK".into())));
+                return Err(Ok(Value::SimpleString("OK".into())));
             }
 
             let is_get_cmd = contains_slice(cmd, b"GET");
-            let get_response = Err(Ok(Value::Data(b"123".to_vec())));
+            let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
             {
                 assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
                 get_response
@@ -878,7 +878,7 @@ fn test_async_cluster_ask_redirect() {
                         }
                         2 => {
                             assert!(contains_slice(cmd, b"GET"));
-                            Err(Ok(Value::Data(b"123".to_vec())))
+                            Err(Ok(Value::BulkString(b"123".to_vec())))
                         }
                         _ => panic!("Node should not be called now"),
                     },
@@ -967,7 +967,7 @@ fn test_async_cluster_ask_error_when_new_node_is_added() {
         started.store(true, atomic::Ordering::SeqCst);
 
         if contains_slice(cmd, b"PING") {
-            return Err(Ok(Value::Status("OK".into())));
+            return Err(Ok(Value::SimpleString("OK".into())));
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -985,7 +985,7 @@ fn test_async_cluster_ask_error_when_new_node_is_added() {
             2 => {
                 assert_eq!(port, 6380);
                 assert!(contains_slice(cmd, b"GET"));
-                Err(Ok(Value::Data(b"123".to_vec())))
+                Err(Ok(Value::BulkString(b"123".to_vec())))
             }
             _ => {
                 panic!("Unexpected request: {:?}", cmd);
@@ -1020,7 +1020,7 @@ fn test_async_cluster_replica_read() {
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
             match port {
-                6380 => Err(Ok(Value::Data(b"123".to_vec()))),
+                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -1047,7 +1047,7 @@ fn test_async_cluster_replica_read() {
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
             match port {
-                6379 => Err(Ok(Value::Status("OK".into()))),
+                6379 => Err(Ok(Value::SimpleString("OK".into()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -1059,7 +1059,7 @@ fn test_async_cluster_replica_read() {
             .arg("123")
             .query_async::<_, Option<Value>>(&mut connection),
     );
-    assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
+    assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
 }
 
 fn test_cluster_fan_out(
@@ -1090,7 +1090,7 @@ fn test_cluster_fan_out(
             respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
             if received_cmd == packed_cmd {
                 ports_clone.lock().unwrap().push(port);
-                return Err(Ok(Value::Status("OK".into())));
+                return Err(Ok(Value::SimpleString("OK".into())));
             }
             Ok(())
         },
@@ -1267,14 +1267,14 @@ fn test_cluster_fan_out_and_aggregate_logical_array_response() {
             respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
             if port == 6381 {
-                return Err(Ok(Value::Bulk(vec![
+                return Err(Ok(Value::Array(vec![
                     Value::Int(0),
                     Value::Int(0),
                     Value::Int(1),
                     Value::Int(1),
                 ])));
             } else if port == 6379 {
-                return Err(Ok(Value::Bulk(vec![
+                return Err(Ok(Value::Array(vec![
                     Value::Int(0),
                     Value::Int(1),
                     Value::Int(0),
@@ -1437,7 +1437,7 @@ fn test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
         move |received_cmd: &[u8], port| {
             respond_startup_with_replica_using_config(name, received_cmd, None)?;
             if port == 6381 {
-                return Err(Ok(Value::Data("foo".as_bytes().to_vec())));
+                return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
             }
             Err(Ok(Value::Nil))
         },
@@ -1466,7 +1466,9 @@ fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() 
         name,
         move |received_cmd: &[u8], port| {
             respond_startup_with_replica_using_config(name, received_cmd, None)?;
-            Err(Ok(Value::Data(format!("latency: {port}").into_bytes())))
+            Err(Ok(Value::BulkString(
+                format!("latency: {port}").into_bytes(),
+            )))
         },
     );
 
@@ -1503,7 +1505,7 @@ fn test_cluster_fan_out_and_combine_arrays_of_values() {
         name,
         move |received_cmd: &[u8], port| {
             respond_startup_with_replica_using_config(name, received_cmd, None)?;
-            Err(Ok(Value::Bulk(vec![Value::Data(
+            Err(Ok(Value::Array(vec![Value::BulkString(
                 format!("key:{port}").into_bytes(),
             )])))
         },
@@ -1542,13 +1544,15 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
                 .iter()
                 .filter_map(|expected_key| {
                     if cmd_str.contains(expected_key) {
-                        Some(Value::Data(format!("{expected_key}-{port}").into_bytes()))
+                        Some(Value::BulkString(
+                            format!("{expected_key}-{port}").into_bytes(),
+                        ))
                     } else {
                         None
                     }
                 })
                 .collect();
-            Err(Ok(Value::Bulk(results)))
+            Err(Ok(Value::Array(results)))
         },
     );
 
@@ -1588,13 +1592,15 @@ fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
                 .iter()
                 .filter_map(|expected_key| {
                     if cmd_str.contains(expected_key) {
-                        Some(Value::Data(format!("{expected_key}-{port}").into_bytes()))
+                        Some(Value::BulkString(
+                            format!("{expected_key}-{port}").into_bytes(),
+                        ))
                     } else {
                         None
                     }
                 })
                 .collect();
-            Err(Ok(Value::Bulk(results)))
+            Err(Ok(Value::Array(results)))
         },
     );
 
@@ -1660,7 +1666,7 @@ fn test_async_cluster_io_error() {
                         std::io::ErrorKind::ConnectionReset,
                         "mock-io-error",
                     )))),
-                    _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 },
             }
         },
@@ -1845,7 +1851,7 @@ fn get_queried_node_id_if_master(cluster_nodes_output: Value) -> Option<String> 
     // Returns the node ID of the connection that was queried for CLUSTER NODES (using the 'myself' flag), if it's a master.
     // Otherwise, returns None.
     match cluster_nodes_output {
-        Value::Data(val) => match from_utf8(&val) {
+        Value::BulkString(val) => match from_utf8(&val) {
             Ok(str_res) => {
                 let parts: Vec<&str> = str_res.split('\n').collect();
                 for node_entry in parts {

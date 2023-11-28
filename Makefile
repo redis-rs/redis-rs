@@ -9,9 +9,14 @@ test:
 	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --no-default-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features"
+	@echo "Testing Connection Type TCP with all features and RESP2"
 	@echo "===================================================================="
 	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
+
+	@echo "===================================================================="
+	@echo "Testing Connection Type TCP with all features and RESP3"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test -p redis --all-features -- --nocapture --test-threads=1  --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
@@ -36,12 +41,12 @@ test:
 	@echo "===================================================================="
 	@echo "Testing async-std with Rustls"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1  --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing async-std with native-TLS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1  --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"

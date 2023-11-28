@@ -12,13 +12,17 @@ use std::{
 };
 
 use futures::Future;
-use redis::{ConnectionAddr, InfoDict, Value};
+use redis::{ConnectionAddr, InfoDict, RedisConnectionInfo, Value};
 
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
 
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
+
+fn use_resp3() -> bool {
+    env::var("RESP3").unwrap_or_default() == "true"
+}
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
@@ -284,7 +288,10 @@ impl RedisServer {
     pub fn connection_info(&self) -> redis::ConnectionInfo {
         redis::ConnectionInfo {
             addr: self.client_addr().clone(),
-            redis: Default::default(),
+            redis: RedisConnectionInfo {
+                use_resp3: use_resp3(),
+                ..Default::default()
+            },
         }
     }
 
@@ -325,6 +332,7 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
+    pub use_resp3: bool,
 }
 
 pub(crate) fn is_tls_enabled() -> bool {
@@ -388,7 +396,11 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext { server, client }
+        TestContext {
+            server,
+            client,
+            use_resp3: use_resp3(),
+        }
     }
 
     pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
@@ -425,7 +437,11 @@ impl TestContext {
         }
         redis::cmd("FLUSHDB").execute(&mut con);
 
-        TestContext { server, client }
+        TestContext {
+            server,
+            client,
+            use_resp3: use_resp3(),
+        }
     }
 
     pub fn connection(&self) -> redis::Connection {
@@ -474,6 +490,27 @@ impl TestContext {
     }
 }
 
+fn encode_iter<W>(values: &Vec<Value>, writer: &mut W, prefix: &str) -> io::Result<()>
+where
+    W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for val in values.iter() {
+        encode_value(val, writer)?;
+    }
+    Ok(())
+}
+fn encode_map<W>(values: &Vec<(Value, Value)>, writer: &mut W, prefix: &str) -> io::Result<()>
+where
+    W: io::Write,
+{
+    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    for (k, v) in values.iter() {
+        encode_value(k, writer)?;
+        encode_value(v, writer)?;
+    }
+    Ok(())
+}
 pub fn encode_value<W>(value: &Value, writer: &mut W) -> io::Result<()>
 where
     W: io::Write,
@@ -482,20 +519,48 @@ where
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
-        Value::Data(ref val) => {
+        Value::BulkString(ref val) => {
             write!(writer, "${}\r\n", val.len())?;
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
-        Value::Bulk(ref values) => {
-            write!(writer, "*{}\r\n", values.len())?;
-            for val in values.iter() {
+        Value::Array(ref values) => encode_iter(values, writer, "*"),
+        Value::Okay => write!(writer, "+OK\r\n"),
+        Value::SimpleString(ref s) => write!(writer, "+{s}\r\n"),
+        Value::Map(ref values) => encode_map(values, writer, "%"),
+        Value::Attribute {
+            ref data,
+            ref attributes,
+        } => {
+            encode_map(attributes, writer, "|")?;
+            encode_value(data, writer)?;
+            Ok(())
+        }
+        Value::Set(ref values) => encode_iter(values, writer, "~"),
+        // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
+        Value::Double(val) => write!(writer, ",{}\r\n", val),
+        Value::Boolean(v) => {
+            if v {
+                write!(writer, "#t\r\n")
+            } else {
+                write!(writer, "#f\r\n")
+            }
+        }
+        Value::VerbatimString {
+            ref format,
+            ref text,
+        } => {
+            // format is always 3 bytes
+            write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
+        }
+        Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
+        Value::Push { ref kind, ref data } => {
+            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
+            for val in data.iter() {
                 encode_value(val, writer)?;
             }
             Ok(())
         }
-        Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
     }
 }
 

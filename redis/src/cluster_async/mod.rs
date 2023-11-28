@@ -741,13 +741,13 @@ where
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok(Value::Bulk(vec![
-                        Value::Data(addr.as_bytes().to_vec()),
+                    Ok(Value::Array(vec![
+                        Value::BulkString(addr.as_bytes().to_vec()),
                         result,
                     ]))
                 }))
                 .await
-                .map(Value::Bulk)
+                .map(Value::Array)
             }
         }
     }

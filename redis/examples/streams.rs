@@ -220,7 +220,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
         for StreamId { id, map } in ids {
             println!("\tID {id}");
             for (n, s) in map {
-                if let Value::Data(bytes) = s {
+                if let Value::BulkString(bytes) = s {
                     println!("\t\t{}: {}", n, String::from_utf8(bytes).expect("utf8"))
                 } else {
                     panic!("Weird data")

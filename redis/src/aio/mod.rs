@@ -1,6 +1,6 @@
 //! Adds async IO support to redis.
 use crate::cmd::{cmd, Cmd};
-use crate::connection::RedisConnectionInfo;
+use crate::connection::{get_resp3_hello_command_error, RedisConnectionInfo};
 use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
@@ -84,7 +84,13 @@ async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C)
 where
     C: ConnectionLike,
 {
-    if let Some(password) = &connection_info.password {
+    if connection_info.use_resp3 {
+        let hello_cmd = resp3_hello(connection_info);
+        let val: RedisResult<Value> = hello_cmd.query_async(con).await;
+        if let Err(err) = val {
+            return Err(get_resp3_hello_command_error(err));
+        }
+    } else if let Some(password) = &connection_info.password {
         let mut command = cmd("AUTH");
         if let Some(username) = &connection_info.username {
             command.arg(username);
@@ -152,4 +158,5 @@ mod connection_manager;
 #[cfg(feature = "connection-manager")]
 pub use connection_manager::*;
 mod runtime;
+use crate::commands::resp3_hello;
 pub(super) use runtime::*;

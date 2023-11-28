@@ -28,6 +28,8 @@ pub struct Cmd {
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
     cursor: Option<u64>,
+    // If it's true command's response won't be read from socket. Useful for Pub/Sub.
+    no_response: bool,
 }
 
 /// Represents a redis iterator.
@@ -324,6 +326,7 @@ impl Cmd {
             data: vec![],
             args: vec![],
             cursor: None,
+            no_response: false,
         }
     }
 
@@ -333,6 +336,7 @@ impl Cmd {
             data: Vec::with_capacity(size_of_data),
             args: Vec::with_capacity(arg_count),
             cursor: None,
+            no_response: false,
         }
     }
 
@@ -563,6 +567,19 @@ impl Cmd {
             return None;
         }
         Some(&self.data[start..end])
+    }
+
+    /// Client won't read and wait for results. Currently only used for Pub/Sub commands in RESP3.
+    #[inline]
+    pub fn set_no_response(&mut self, nr: bool) -> &mut Cmd {
+        self.no_response = nr;
+        self
+    }
+
+    /// Check whether command's result will be waited for.
+    #[inline]
+    pub fn is_no_response(&self) -> bool {
+        self.no_response
     }
 }
 
