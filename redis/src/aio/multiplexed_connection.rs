@@ -403,7 +403,7 @@ impl MultiplexedConnection {
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let result = self
             .pipeline
-            .send_recv_multiple(cmd.get_packed_command(), !cmd.is_no_response() as usize)
+            .send_recv_multiple(cmd.get_packed_command(), 1)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
@@ -420,9 +420,6 @@ impl MultiplexedConnection {
             }
         }
         let mut value = result?;
-        if cmd.is_no_response() {
-            return Ok(Value::Nil);
-        }
         Ok(value.pop().unwrap())
     }
 
