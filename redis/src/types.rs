@@ -1382,10 +1382,8 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
 }
 
 #[cfg(feature = "ahash")]
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for ahash::AHashMap<K, V, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V, S>> {
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash::AHashMap<K, V> {
+    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V>> {
         match *v {
             Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
             _ => v
@@ -1423,10 +1421,8 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
 }
 
 #[cfg(feature = "ahash")]
-impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
-    for ahash::AHashSet<T, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T, S>> {
+impl<T: FromRedisValue + Eq + Hash> FromRedisValue for ahash::AHashSet<T> {
+    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T>> {
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
