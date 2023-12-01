@@ -153,3 +153,7 @@ mod connection_manager;
 pub use connection_manager::*;
 mod runtime;
 pub(super) use runtime::*;
+
+#[cfg(feature = "connection-manager")]
+/// Asynchronous transactions support
+pub mod async_transactions;
