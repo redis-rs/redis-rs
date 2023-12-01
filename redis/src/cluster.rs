@@ -228,7 +228,6 @@ where
     pub(crate) fn new(
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
-        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
@@ -240,7 +239,7 @@ where
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
             tls: cluster_params.tls,
-            tls_params,
+            tls_params: cluster_params.tls_params,
             initial_nodes: initial_nodes.to_vec(),
             retry_params: cluster_params.retry_params,
         };
@@ -433,9 +432,10 @@ where
             password: self.password.clone(),
             username: self.username.clone(),
             tls: self.tls,
+            tls_params: self.tls_params.clone(),
             ..Default::default()
         };
-        let info = get_connection_info(node, params, self.tls_params.clone())?;
+        let info = get_connection_info(node, params)?;
 
         let mut conn = C::connect(info, None)?;
         if self.read_from_replicas {
@@ -991,7 +991,6 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
 pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
-    tls_params: Option<TlsConnParams>,
 ) -> RedisResult<ConnectionInfo> {
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
@@ -1005,7 +1004,12 @@ pub(crate) fn get_connection_info(
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls, tls_params),
+        addr: get_connection_addr(
+            host.to_string(),
+            port,
+            cluster_params.tls,
+            cluster_params.tls_params,
+        ),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -1069,13 +1073,13 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let res = get_connection_info(input, ClusterParams::default(), None);
+            let res = get_connection_info(input, ClusterParams::default());
             assert_eq!(res.unwrap().addr, expected);
         }
 
         let cases = vec![":0", "[]:6379"];
         for input in cases {
-            let res = get_connection_info(input, ClusterParams::default(), None);
+            let res = get_connection_info(input, ClusterParams::default());
             assert_eq!(
                 res.err(),
                 Some(RedisError::from((
