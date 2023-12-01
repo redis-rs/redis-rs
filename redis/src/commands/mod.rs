@@ -80,12 +80,12 @@ implement_commands! {
     }
 
     /// Set the value and expiration of a key.
-    fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: usize) {
+    fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: u64) {
         cmd("SETEX").arg(key).arg(seconds).arg(value)
     }
 
     /// Set the value and expiration in milliseconds of a key.
-    fn pset_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, milliseconds: usize) {
+    fn pset_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, milliseconds: u64) {
         cmd("PSETEX").arg(key).arg(milliseconds).arg(value)
     }
 
@@ -130,22 +130,22 @@ implement_commands! {
     }
 
     /// Set a key's time to live in seconds.
-    fn expire<K: ToRedisArgs>(key: K, seconds: usize) {
+    fn expire<K: ToRedisArgs>(key: K, seconds: i64) {
         cmd("EXPIRE").arg(key).arg(seconds)
     }
 
     /// Set the expiration for a key as a UNIX timestamp.
-    fn expire_at<K: ToRedisArgs>(key: K, ts: usize) {
+    fn expire_at<K: ToRedisArgs>(key: K, ts: i64) {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
     /// Set a key's time to live in milliseconds.
-    fn pexpire<K: ToRedisArgs>(key: K, ms: usize) {
+    fn pexpire<K: ToRedisArgs>(key: K, ms: i64) {
         cmd("PEXPIRE").arg(key).arg(ms)
     }
 
     /// Set the expiration for a key as a UNIX timestamp in milliseconds.
-    fn pexpire_at<K: ToRedisArgs>(key: K, ts: usize) {
+    fn pexpire_at<K: ToRedisArgs>(key: K, ts: i64) {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
