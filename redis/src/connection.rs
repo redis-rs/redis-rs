@@ -793,6 +793,7 @@ pub(crate) fn create_rustls_config(
 ) -> RedisResult<rustls::ClientConfig> {
     use crate::tls::ClientTlsParams;
 
+    #[allow(unused_mut)]
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
     root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -802,7 +803,11 @@ pub(crate) fn create_rustls_config(
             ta.name_constraints,
         )
     }));
-    #[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-webpki-roots")))]
+    #[cfg(all(
+        feature = "tls-rustls",
+        not(feature = "tls-native-tls"),
+        not(feature = "tls-rustls-webpki-roots")
+    ))]
     for cert in load_native_certs()? {
         root_store.add(&rustls::Certificate(cert.0))?;
     }
