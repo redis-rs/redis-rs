@@ -80,17 +80,29 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
+    pub(crate) tls_params: Option<TlsConnParams>,
 }
 
-impl From<BuilderParams> for ClusterParams {
-    fn from(value: BuilderParams) -> Self {
-        Self {
+impl ClusterParams {
+    fn from(value: BuilderParams) -> RedisResult<Self> {
+        #[cfg(not(feature = "tls-rustls"))]
+        let tls_params = None;
+
+        #[cfg(feature = "tls-rustls")]
+        let tls_params = {
+            let retrieved_tls_params = value.certs.clone().map(retrieve_tls_certificates);
+
+            retrieved_tls_params.transpose()?
+        };
+
+        Ok(Self {
             password: value.password,
             username: value.username,
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retry_params: value.retries_configuration,
-        }
+            tls_params,
+        })
     }
 }
 
@@ -131,20 +143,6 @@ impl ClusterClientBuilder {
     pub fn build(self) -> RedisResult<ClusterClient> {
         let initial_nodes = self.initial_nodes?;
 
-        #[cfg(not(feature = "tls-rustls"))]
-        let tls_params = None;
-
-        #[cfg(feature = "tls-rustls")]
-        let tls_params = {
-            let retrieved_tls_params = self
-                .builder_params
-                .certs
-                .clone()
-                .map(retrieve_tls_certificates);
-
-            retrieved_tls_params.transpose()?
-        };
-
         let first_node = match initial_nodes.first() {
             Some(node) => node,
             None => {
@@ -155,7 +153,7 @@ impl ClusterClientBuilder {
             }
         };
 
-        let mut cluster_params: ClusterParams = self.builder_params.into();
+        let mut cluster_params = ClusterParams::from(self.builder_params)?;
         let password = if cluster_params.password.is_none() {
             cluster_params.password = first_node.redis.password.clone();
             &cluster_params.password
@@ -210,7 +208,6 @@ impl ClusterClientBuilder {
         Ok(ClusterClient {
             initial_nodes: nodes,
             cluster_params,
-            tls_params,
         })
     }
 
@@ -311,7 +308,6 @@ impl ClusterClientBuilder {
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
     cluster_params: ClusterParams,
-    tls_params: Option<TlsConnParams>,
 }
 
 impl ClusterClient {
@@ -344,11 +340,7 @@ impl ClusterClient {
     ///
     /// An error is returned if there is a failure while creating connections or slots.
     pub fn get_connection(&self) -> RedisResult<cluster::ClusterConnection> {
-        cluster::ClusterConnection::new(
-            self.cluster_params.clone(),
-            self.initial_nodes.clone(),
-            self.tls_params.clone(),
-        )
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
     }
 
     /// Creates new connections to Redis Cluster nodes and returns a
@@ -359,12 +351,8 @@ impl ClusterClient {
     /// An error is returned if there is a failure while creating connections or slots.
     #[cfg(feature = "cluster-async")]
     pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
-        cluster_async::ClusterConnection::new(
-            &self.initial_nodes,
-            self.cluster_params.clone(),
-            self.tls_params.clone(),
-        )
-        .await
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
     }
 
     #[doc(hidden)]
@@ -372,11 +360,7 @@ impl ClusterClient {
     where
         C: crate::ConnectionLike + crate::cluster::Connect + Send,
     {
-        cluster::ClusterConnection::new(
-            self.cluster_params.clone(),
-            self.initial_nodes.clone(),
-            self.tls_params.clone(),
-        )
+        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
     }
 
     #[doc(hidden)]
@@ -393,12 +377,8 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::ClusterConnection::new(
-            &self.initial_nodes,
-            self.cluster_params.clone(),
-            self.tls_params.clone(),
-        )
-        .await
+        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
+            .await
     }
 
     /// Use `new()`.

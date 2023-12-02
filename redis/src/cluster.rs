@@ -43,7 +43,6 @@ use std::time::Duration;
 
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
-use crate::cluster_client::RetryParams;
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
@@ -211,14 +210,9 @@ pub struct ClusterConnection<C = Connection> {
     connections: RefCell<HashMap<String, C>>,
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
-    read_from_replicas: bool,
-    username: Option<String>,
-    password: Option<String>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
-    tls: Option<TlsMode>,
-    tls_params: Option<TlsConnParams>,
-    retry_params: RetryParams,
+    cluster_params: ClusterParams,
 }
 
 impl<C> ClusterConnection<C>
@@ -228,21 +222,15 @@ where
     pub(crate) fn new(
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
-        tls_params: Option<TlsConnParams>,
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
-            read_from_replicas: cluster_params.read_from_replicas,
-            username: cluster_params.username,
-            password: cluster_params.password,
             read_timeout: RefCell::new(None),
             write_timeout: RefCell::new(None),
-            tls: cluster_params.tls,
-            tls_params,
             initial_nodes: initial_nodes.to_vec(),
-            retry_params: cluster_params.retry_params,
+            cluster_params,
         };
         connection.create_initial_connections()?;
 
@@ -387,7 +375,7 @@ where
 
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            if let Ok(mut slots_data) = parse_slots(value, self.tls) {
+            if let Ok(mut slots_data) = parse_slots(value, self.cluster_params.tls) {
                 slots_data.sort_by_key(|s| s.start());
                 let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
                     if prev_end != slot_data.start() {
@@ -413,7 +401,10 @@ where
                     )));
                 }
 
-                new_slots = Some(SlotMap::from_slots(&slots_data, self.read_from_replicas));
+                new_slots = Some(SlotMap::from_slots(
+                    &slots_data,
+                    self.cluster_params.read_from_replicas,
+                ));
                 break;
             }
         }
@@ -429,16 +420,11 @@ where
     }
 
     fn connect(&self, node: &str) -> RedisResult<C> {
-        let params = ClusterParams {
-            password: self.password.clone(),
-            username: self.username.clone(),
-            tls: self.tls,
-            ..Default::default()
-        };
-        let info = get_connection_info(node, params, self.tls_params.clone())?;
+        let params = self.cluster_params.clone();
+        let info = get_connection_info(node, params)?;
 
         let mut conn = C::connect(info, None)?;
-        if self.read_from_replicas {
+        if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
         }
@@ -698,7 +684,7 @@ where
             match rv {
                 Ok(rv) => return Ok(rv),
                 Err(err) => {
-                    if retries == self.retry_params.number_of_retries {
+                    if retries == self.cluster_params.retry_params.number_of_retries {
                         return Err(err);
                     }
                     retries += 1;
@@ -719,7 +705,10 @@ where
                         }
                         ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                             // Sleep and retry.
-                            let sleep_time = self.retry_params.wait_time_for_retry(retries);
+                            let sleep_time = self
+                                .cluster_params
+                                .retry_params
+                                .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
                         ErrorKind::IoError => {
@@ -991,7 +980,6 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
 pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
-    tls_params: Option<TlsConnParams>,
 ) -> RedisResult<ConnectionInfo> {
     let invalid_error = || (ErrorKind::InvalidClientConfig, "Invalid node string");
 
@@ -1005,7 +993,12 @@ pub(crate) fn get_connection_info(
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls, tls_params),
+        addr: get_connection_addr(
+            host.to_string(),
+            port,
+            cluster_params.tls,
+            cluster_params.tls_params,
+        ),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -1069,13 +1062,13 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let res = get_connection_info(input, ClusterParams::default(), None);
+            let res = get_connection_info(input, ClusterParams::default());
             assert_eq!(res.unwrap().addr, expected);
         }
 
         let cases = vec![":0", "[]:6379"];
         for input in cases {
-            let res = get_connection_info(input, ClusterParams::default(), None);
+            let res = get_connection_info(input, ClusterParams::default());
             assert_eq!(
                 res.err(),
                 Some(RedisError::from((
