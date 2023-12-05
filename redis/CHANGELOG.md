@@ -1,8 +1,7 @@
-### 0.23.4 (2023-11-26)
-
+### 0.24.0 (2023-12-05)
 
 #### Features
-* Support Mutual TLS ([#858](https://github.com/redis-rs/redis-rs/pull/858) @sp-angel)
+* **Breaking change**: Support Mutual TLS ([#858](https://github.com/redis-rs/redis-rs/pull/858) @sp-angel)
 * Implement `FromRedisValue` for `Box<[T]>` and `Arc<[T]>` ([#799](https://github.com/redis-rs/redis-rs/pull/799) @JOT85)
 * Sync Cluster: support multi-slot operations. ([#967](https://github.com/redis-rs/redis-rs/pull/967))
 * Execute multi-node requests using try_request. ([#919](https://github.com/redis-rs/redis-rs/pull/919))
@@ -11,13 +10,19 @@
 * Add `tcp_nodelay` feature ([#941](https://github.com/redis-rs/redis-rs/pull/941) @PureWhiteWu)
 * Add support for multi-shard commands. ([#900](https://github.com/redis-rs/redis-rs/pull/900))
 
-
 #### Changes
+* Order in usage of ClusterParams. ([#997](https://github.com/redis-rs/redis-rs/pull/997))
+* **Breaking change**: Fix StreamId::contains_key signature ([#783](https://github.com/redis-rs/redis-rs/pull/783) @Ayush1325)
+* **Breaking change**: Update Command expiration values to be an appropriate type ([#589](https://github.com/redis-rs/redis-rs/pull/589) @joshleeb)
+* **Breaking change**: Bump aHash to v0.8.6 ([#966](https://github.com/redis-rs/redis-rs/pull/966) @aumetra)
+* Fix features for `load_native_certs`. ([#996](https://github.com/redis-rs/redis-rs/pull/996))
+* Revert redis-test versioning changes ([#993](https://github.com/redis-rs/redis-rs/pull/993))
+* Tests: Add retries to test cluster creation ([#994](https://github.com/redis-rs/redis-rs/pull/994))
 * Fix sync cluster behavior with transactions. ([#983](https://github.com/redis-rs/redis-rs/pull/983))
 * Sync Pub/Sub - cache received pub/sub messages. ([#910](https://github.com/redis-rs/redis-rs/pull/910))
 * Prefer routing to primary in a transaction. ([#986](https://github.com/redis-rs/redis-rs/pull/986))
 * Accept iterator at `ClusterClient` initialization ([#987](https://github.com/redis-rs/redis-rs/pull/987) @ruanpetterson)
-* Change timeouts from usize and isize to f64 ([#988](https://github.com/redis-rs/redis-rs/pull/988) @eythorhel19)
+* **Breaking change**: Change timeouts from usize and isize to f64 ([#988](https://github.com/redis-rs/redis-rs/pull/988) @eythorhel19)
 * Update minimal rust version to 1.6.5 ([#982](https://github.com/redis-rs/redis-rs/pull/982))
 * Disable JSON module tests for redis 6.2.4. ([#980](https://github.com/redis-rs/redis-rs/pull/980))
 * Add connection string examples ([#976](https://github.com/redis-rs/redis-rs/pull/976) @NuclearOreo)
@@ -33,8 +38,11 @@
 * CI: Increase timeouts and use newer redis. ([#949](https://github.com/redis-rs/redis-rs/pull/949))
 * Remove redis version from redis-test. ([#943](https://github.com/redis-rs/redis-rs/pull/943))
 
+### 0.23.4 (2023-11-26)
+**Yanked** -- Inadvertently introduced breaking changes (sorry!). The changes in this tag
+have been pushed to 0.24.0.
 
-### 0.23.4 (2023-09-01)
+### 0.23.3 (2023-09-01)
 
 Note that this release fixes a small regression in async Redis Cluster handling of the `PING` command.
 Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it 
