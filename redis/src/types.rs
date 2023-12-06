@@ -343,8 +343,8 @@ impl From<rustls::Error> for RedisError {
 }
 
 #[cfg(feature = "tls-rustls")]
-impl From<rustls::client::InvalidDnsNameError> for RedisError {
-    fn from(err: rustls::client::InvalidDnsNameError) -> RedisError {
+impl From<rustls_pki_types::InvalidDnsNameError> for RedisError {
+    fn from(err: rustls_pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,

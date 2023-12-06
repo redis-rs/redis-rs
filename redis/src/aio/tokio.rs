@@ -19,7 +19,7 @@ use native_tls::TlsConnector;
 #[cfg(feature = "tls-rustls")]
 use crate::connection::create_rustls_config;
 #[cfg(feature = "tls-rustls")]
-use std::{convert::TryInto, sync::Arc};
+use std::sync::Arc;
 #[cfg(feature = "tls-rustls")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
@@ -160,7 +160,10 @@ impl RedisRuntime for Tokio {
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector
-            .connect(hostname.try_into()?, connect_tcp(&socket_addr).await?)
+            .connect(
+                rustls_pki_types::ServerName::try_from(hostname)?.to_owned(),
+                connect_tcp(&socket_addr).await?,
+            )
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }

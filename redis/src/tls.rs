@@ -1,6 +1,7 @@
 use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
 
-use rustls::{Certificate, OwnedTrustAnchor, PrivateKey, RootCertStore};
+use rustls::RootCertStore;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
@@ -68,10 +69,18 @@ pub(crate) fn retrieve_tls_certificates(
         client_key,
     }) = client_tls
     {
-        let mut certs = rustls_pemfile::certs(&mut client_cert.as_slice() as &mut dyn BufRead)?;
-        let client_cert_chain = certs.drain(..).map(Certificate).collect();
+        let buf = &mut client_cert.as_slice() as &mut dyn BufRead;
+        let certs = rustls_pemfile::certs(buf);
+        let client_cert_chain = certs.collect::<Result<Vec<_>, _>>()?;
 
-        let client_key = load_key(&mut client_key.as_slice() as &mut dyn BufRead)?;
+        let client_key =
+            rustls_pemfile::private_key(&mut client_key.as_slice() as &mut dyn BufRead)?
+                .ok_or_else(|| {
+                    Error::new(
+                        IOErrorKind::Other,
+                        "Unable to extract private key from PEM file",
+                    )
+                })?;
 
         Some(ClientTlsParams {
             client_cert_chain,
@@ -82,25 +91,17 @@ pub(crate) fn retrieve_tls_certificates(
     };
 
     let root_cert_store = if let Some(root_cert) = root_cert {
-        let certs = rustls_pemfile::certs(&mut root_cert.as_slice() as &mut dyn BufRead)?;
-
-        let trust_anchors = certs
-            .iter()
-            .map(|cert| {
-                let ta = webpki::TrustAnchor::try_from_cert_der(cert).map_err(|_| {
-                    Error::new(IOErrorKind::Other, "Unable to parse TLS trust anchors")
-                })?;
-
-                Ok(OwnedTrustAnchor::from_subject_spki_name_constraints(
-                    ta.subject,
-                    ta.spki,
-                    ta.name_constraints,
-                ))
-            })
-            .collect::<RedisResult<Vec<_>>>()?;
-
+        let buf = &mut root_cert.as_slice() as &mut dyn BufRead;
+        let certs = rustls_pemfile::certs(buf);
         let mut root_cert_store = RootCertStore::empty();
-        root_cert_store.add_trust_anchors(trust_anchors.into_iter());
+        for result in certs {
+            if root_cert_store.add(result?.to_owned()).is_err() {
+                return Err(
+                    Error::new(IOErrorKind::Other, "Unable to parse TLS trust anchors").into(),
+                );
+            }
+        }
+
         Some(root_cert_store)
     } else {
         None
@@ -112,34 +113,30 @@ pub(crate) fn retrieve_tls_certificates(
     })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientTlsParams {
-    pub(crate) client_cert_chain: Vec<Certificate>,
-    pub(crate) client_key: PrivateKey,
+    pub(crate) client_cert_chain: Vec<CertificateDer<'static>>,
+    pub(crate) client_key: PrivateKeyDer<'static>,
+}
+
+/// [`PrivateKeyDer`] does not implement `Clone` so we need to implement it manually.
+impl Clone for ClientTlsParams {
+    fn clone(&self) -> Self {
+        use PrivateKeyDer::*;
+        Self {
+            client_cert_chain: self.client_cert_chain.clone(),
+            client_key: match &self.client_key {
+                Pkcs1(key) => Pkcs1(key.secret_pkcs1_der().to_vec().into()),
+                Pkcs8(key) => Pkcs8(key.secret_pkcs8_der().to_vec().into()),
+                Sec1(key) => Sec1(key.secret_sec1_der().to_vec().into()),
+                _ => unreachable!(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     pub(crate) root_cert_store: Option<RootCertStore>,
-}
-
-fn load_key(mut reader: &mut dyn BufRead) -> RedisResult<PrivateKey> {
-    loop {
-        match rustls_pemfile::read_one(&mut reader)? {
-            Some(rustls_pemfile::Item::ECKey(key))
-            | Some(rustls_pemfile::Item::RSAKey(key))
-            | Some(rustls_pemfile::Item::PKCS8Key(key)) => {
-                return Ok(PrivateKey(key));
-            }
-            None => {
-                break;
-            }
-            _ => {}
-        }
-    }
-    Err(RedisError::from(Error::new(
-        IOErrorKind::Other,
-        "Unable to extract private key from PEM file",
-    )))
 }
