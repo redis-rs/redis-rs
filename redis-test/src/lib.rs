@@ -27,7 +27,7 @@ use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};
 
-use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, Value};
+use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, PushKind, RedisError, RedisResult, Value};
 
 #[cfg(feature = "aio")]
 use futures::{future, FutureExt};
@@ -45,26 +45,26 @@ pub trait IntoRedisValue {
 
 impl IntoRedisValue for String {
     fn into_redis_value(self) -> Value {
-        Value::Data(self.as_bytes().to_vec())
+        Value::BulkString(self.as_bytes().to_vec())
     }
 }
 
 impl IntoRedisValue for &str {
     fn into_redis_value(self) -> Value {
-        Value::Data(self.as_bytes().to_vec())
+        Value::BulkString(self.as_bytes().to_vec())
     }
 }
 
 #[cfg(feature = "bytes")]
 impl IntoRedisValue for bytes::Bytes {
     fn into_redis_value(self) -> Value {
-        Value::Data(self.to_vec())
+        Value::BulkString(self.to_vec())
     }
 }
 
 impl IntoRedisValue for Vec<u8> {
     fn into_redis_value(self) -> Value {
-        Value::Data(self)
+        Value::BulkString(self)
     }
 }
 
@@ -257,6 +257,10 @@ impl ConnectionLike for MockRedisConnection {
     fn is_open(&self) -> bool {
         true
     }
+
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
+    }
 }
 
 #[cfg(feature = "aio")]
@@ -311,7 +315,7 @@ mod tests {
         cmd("SET").arg("bar").arg("foo").execute(&mut conn);
         assert_eq!(
             cmd("GET").arg("bar").query(&mut conn),
-            Ok(Value::Data(b"foo".as_ref().into()))
+            Ok(Value::BulkString(b"foo".as_ref().into()))
         );
     }
 
@@ -402,10 +406,10 @@ mod tests {
     fn pipeline_atomic_test() {
         let mut conn = MockRedisConnection::new(vec![MockCmd::with_values(
             pipe().atomic().cmd("GET").arg("foo").cmd("GET").arg("bar"),
-            Ok(vec![Value::Bulk(
+            Ok(vec![Value::Array(
                 vec!["hello", "world"]
                     .into_iter()
-                    .map(|x| Value::Data(x.as_bytes().into()))
+                    .map(|x| Value::BulkString(x.as_bytes().into()))
                     .collect(),
             )]),
         )]);

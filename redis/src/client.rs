@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[cfg(feature = "aio")]
 use std::net::IpAddr;
 #[cfg(feature = "aio")]
 use std::net::SocketAddr;
@@ -481,6 +482,7 @@ impl Client {
 
 #[cfg(feature = "aio")]
 use crate::aio::Runtime;
+use crate::types::PushKind;
 
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
@@ -515,6 +517,10 @@ impl ConnectionLike for Client {
         } else {
             false
         }
+    }
+
+    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
+        // TODO - implement handling RESP3 push messages
     }
 }
 

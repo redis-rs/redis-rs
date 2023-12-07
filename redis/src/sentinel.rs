@@ -58,6 +58,7 @@
 //!                 db: 1,
 //!                 username: Some(String::from("foo")),
 //!                 password: Some(String::from("bar")),
+//!                 use_resp3: false,
 //!             }),
 //!         }),
 //!     )
@@ -93,6 +94,7 @@
 //!             db: 0,
 //!             username: Some(String::from("user")),
 //!             password: Some(String::from("pass")),
+//!             use_resp3: false,
 //!         }),
 //!     }),
 //!     redis::sentinel::SentinelServerType::Master,

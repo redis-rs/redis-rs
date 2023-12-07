@@ -129,11 +129,11 @@ where
             match result {
                 Ok(item) => {
                     entry.buffer = Some(match entry.buffer.take() {
-                        Some(Value::Bulk(mut values)) => {
+                        Some(Value::Array(mut values)) => {
                             values.push(item);
-                            Value::Bulk(values)
+                            Value::Array(values)
                         }
-                        Some(value) => Value::Bulk(vec![value, item]),
+                        Some(value) => Value::Array(vec![value, item]),
                         None => item,
                     });
                 }
@@ -154,7 +154,7 @@ where
         let entry = self_.in_flight.pop_front().unwrap();
         let response = match entry.first_err {
             Some(err) => Err(err),
-            None => Ok(entry.buffer.unwrap_or(Value::Bulk(vec![]))),
+            None => Ok(entry.buffer.unwrap_or(Value::Array(vec![]))),
         };
 
         // `Err` means that the receiver was dropped in which case it does not
@@ -396,7 +396,7 @@ impl MultiplexedConnection {
             })?;
 
         match value {
-            Value::Bulk(mut values) => {
+            Value::Array(mut values) => {
                 values.drain(..offset);
                 Ok(values)
             }

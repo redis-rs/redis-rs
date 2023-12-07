@@ -29,6 +29,7 @@ use crate::streams;
 
 #[cfg(feature = "acl")]
 use crate::acl;
+use crate::RedisConnectionInfo;
 
 implement_commands! {
     'a
@@ -2154,4 +2155,21 @@ impl ToRedisArgs for SetOptions {
             }
         }
     }
+}
+
+/// Creates HELLO command for RESP3 with RedisConnectionInfo
+pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd{
+    let mut hello_cmd = cmd("HELLO");
+    hello_cmd.arg("3");
+    if connection_info.password.is_some() {
+        let username:&str = match connection_info.username.as_ref() {
+            None => "default",
+            Some(username) => username
+        };
+        hello_cmd
+            .arg("AUTH")
+            .arg(username)
+            .arg(connection_info.password.as_ref().unwrap());
+    }
+    hello_cmd
 }

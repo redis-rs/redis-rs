@@ -425,10 +425,10 @@ pub struct StreamId {
 }
 
 impl StreamId {
-    /// Converts a `Value::Bulk` into a `StreamId`.
-    fn from_bulk_value(v: &Value) -> RedisResult<Self> {
+    /// Converts a `Value::Array` into a `StreamId`.
+    fn from_array_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
-        if let Value::Bulk(ref values) = *v {
+        if let Value::Array(ref values) = *v {
             if let Some(v) = values.get(0) {
                 stream_id.id = from_redis_value(v)?;
             }
@@ -559,11 +559,11 @@ impl FromRedisValue for StreamPendingCountReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let mut reply = StreamPendingCountReply::default();
         match v {
-            Value::Bulk(outer_tuple) => {
+            Value::Array(outer_tuple) => {
                 for outer in outer_tuple {
                     match outer {
-                        Value::Bulk(inner_tuple) => match &inner_tuple[..] {
-                            [Value::Data(id_bytes), Value::Data(consumer_bytes), Value::Int(last_delivered_ms_u64), Value::Int(times_delivered_u64)] =>
+                        Value::Array(inner_tuple) => match &inner_tuple[..] {
+                            [Value::BulkString(id_bytes), Value::BulkString(consumer_bytes), Value::Int(last_delivered_ms_u64), Value::Int(times_delivered_u64)] =>
                             {
                                 let id = String::from_utf8(id_bytes.to_vec())?;
                                 let consumer = String::from_utf8(consumer_bytes.to_vec())?;
@@ -614,10 +614,10 @@ impl FromRedisValue for StreamInfoStreamReply {
             reply.length = from_redis_value(v)?;
         }
         if let Some(v) = &map.get("first-entry") {
-            reply.first_entry = StreamId::from_bulk_value(v)?;
+            reply.first_entry = StreamId::from_array_value(v)?;
         }
         if let Some(v) = &map.get("last-entry") {
-            reply.last_entry = StreamId::from_bulk_value(v)?;
+            reply.last_entry = StreamId::from_array_value(v)?;
         }
         Ok(reply)
     }

@@ -263,7 +263,7 @@ impl FromRedisValue for RadiusSearchResult {
         }
 
         // Try to parse the result from multitple values
-        if let Value::Bulk(ref items) = *v {
+        if let Value::Array(ref items) = *v {
             if let Some(result) = RadiusSearchResult::parse_multi_values(items) {
                 return Ok(result);
             }

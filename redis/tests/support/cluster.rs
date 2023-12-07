@@ -422,8 +422,9 @@ impl TestClusterContext {
                 .unwrap();
 
             // subsequent unauthenticated command should fail:
-            let mut con = client.get_connection().unwrap();
-            assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+            if let Ok(mut con) = client.get_connection() {
+                assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+            }
         }
     }
 
