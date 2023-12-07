@@ -145,11 +145,13 @@ impl SentinelNodeConnectionInfo {
                 host: ip,
                 port,
                 insecure: false,
+                tls_params: None,
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
                 port,
                 insecure: true,
+                tls_params: None,
             },
         };
 

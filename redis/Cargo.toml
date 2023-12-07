@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.23.3"
+version = "0.24.0"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -8,7 +8,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.65"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
@@ -79,13 +79,15 @@ webpki-roots = { version = "0.23.0", optional = true }
 rustls-native-certs = { version = "0.6.2", optional = true }
 tokio-rustls = { version = "0.24.0", optional = true }
 futures-rustls = { version = "0.24.0", optional = true }
+rustls-webpki = { version = "0.101", optional = true }
+rustls-pemfile = { version = "1.0", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.82", optional = true }
 serde_json = { version = "1.0.82", optional = true }
 
 # Optional aHash support
-ahash = { version = "0.7.6", optional = true }
+ahash = { version = "0.8.6", optional = true }
 
 tracing = "0.1"
 futures-time = { version = "3.0.0", optional = true }
@@ -100,7 +102,7 @@ json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand", "derivative"]
 script = ["sha1_smol"]
 tls-native-tls = ["native-tls"]
-tls-rustls = ["rustls", "rustls-native-certs"]
+tls-rustls = ["rustls", "rustls-native-certs", "rustls-webpki", "rustls-pemfile"]
 tls-rustls-insecure = ["tls-rustls", "rustls/dangerous_configuration"]
 tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std", "backoff-std-async"]

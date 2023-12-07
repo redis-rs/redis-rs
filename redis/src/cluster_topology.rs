@@ -268,7 +268,7 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls).to_string())
+                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
                     } else {
                         None
                     }

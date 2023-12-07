@@ -136,9 +136,9 @@ fn test_assorted_1() {
     let _: RedisResult<String> = con.xadd_map("k3", "3000-0", map);
 
     let reply: StreamRangeReply = con.xrange_all("k3").unwrap();
-    assert!(reply.ids[0].contains_key(&"ab"));
-    assert!(reply.ids[0].contains_key(&"ef"));
-    assert!(reply.ids[0].contains_key(&"ij"));
+    assert!(reply.ids[0].contains_key("ab"));
+    assert!(reply.ids[0].contains_key("ef"));
+    assert!(reply.ids[0].contains_key("ij"));
 
     // test xadd w/ maxlength below...
 

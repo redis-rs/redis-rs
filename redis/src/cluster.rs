@@ -45,7 +45,7 @@ use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, SingleNodeRoutingInfo, SlotAddr,
+    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
 use crate::cluster_topology::{parse_slots, SlotMap, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
@@ -58,11 +58,17 @@ use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Routable, Route, RoutingInfo},
+    cluster_routing::{Redirect, Route, RoutingInfo},
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+
+#[cfg(feature = "tls-rustls")]
+use crate::tls::TlsConnParams;
+
+#[cfg(not(feature = "tls-rustls"))]
+use crate::connection::TlsConnParams;
 
 #[derive(Clone)]
 enum Input<'a> {
@@ -73,8 +79,7 @@ enum Input<'a> {
     Cmd(&'a Cmd),
     Commands {
         cmd: &'a [u8],
-        routable: Value,
-
+        route: SingleNodeRoutingInfo,
         offset: usize,
         count: usize,
     },
@@ -89,7 +94,7 @@ impl<'a> Input<'a> {
             Input::Cmd(cmd) => connection.req_command(cmd).map(Output::Single),
             Input::Commands {
                 cmd,
-                routable: _,
+                route: _,
                 offset,
                 count,
             } => connection
@@ -104,12 +109,7 @@ impl<'a> Routable for Input<'a> {
         match self {
             Input::Slice { cmd: _, routable } => routable.arg_idx(idx),
             Input::Cmd(cmd) => cmd.arg_idx(idx),
-            Input::Commands {
-                cmd: _,
-                routable,
-                offset: _,
-                count: _,
-            } => routable.arg_idx(idx),
+            Input::Commands { .. } => None,
         }
     }
 
@@ -117,12 +117,7 @@ impl<'a> Routable for Input<'a> {
         match self {
             Input::Slice { cmd: _, routable } => routable.position(candidate),
             Input::Cmd(cmd) => cmd.position(candidate),
-            Input::Commands {
-                cmd: _,
-                routable,
-                offset: _,
-                count: _,
-            } => routable.position(candidate),
+            Input::Commands { .. } => None,
         }
     }
 }
@@ -515,13 +510,15 @@ where
                         Input::Slice { cmd, routable: _ } => connection.req_packed_command(cmd),
                         Input::Cmd(cmd) => connection.req_command(cmd),
                         Input::Commands {
-                            cmd,
-                            routable: _,
-                            offset,
-                            count,
-                        } => connection
-                            .req_packed_commands(cmd, offset, count)
-                            .map(Value::Bulk),
+                            cmd: _,
+                            route: _,
+                            offset: _,
+                            count: _,
+                        } => Err((
+                            ErrorKind::ClientError,
+                            "req_packed_commands isn't supported with multiple nodes",
+                        )
+                            .into()),
                     },
                 }
             } else {
@@ -607,7 +604,17 @@ where
 
     #[allow(clippy::unnecessary_unwrap)]
     fn request(&self, input: Input) -> RedisResult<Output> {
-        let route = match RoutingInfo::for_routable(&input) {
+        let route_option = match &input {
+            Input::Slice { cmd: _, routable } => RoutingInfo::for_routable(routable),
+            Input::Cmd(cmd) => RoutingInfo::for_routable(*cmd),
+            Input::Commands {
+                cmd: _,
+                route,
+                offset: _,
+                count: _,
+            } => Some(RoutingInfo::SingleNode(route.clone())),
+        };
+        let route = match route_option {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
@@ -766,6 +773,7 @@ where
     }
 }
 
+const MULTI: &[u8] = "*1\r\n$5\r\nMULTI\r\n".as_bytes();
 impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
     fn supports_pipelining(&self) -> bool {
         false
@@ -776,7 +784,12 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
     }
 
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        let value = parse_redis_value(cmd)?;
+        let actual_cmd = if cmd.starts_with(MULTI) {
+            &cmd[MULTI.len()..]
+        } else {
+            cmd
+        };
+        let value = parse_redis_value(actual_cmd)?;
         self.request(Input::Slice {
             cmd,
             routable: value,
@@ -790,12 +803,23 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let value = parse_redis_value(cmd)?;
+        let actual_cmd = if cmd.starts_with(MULTI) {
+            &cmd[MULTI.len()..]
+        } else {
+            cmd
+        };
+        let value = parse_redis_value(actual_cmd)?;
+        let route = match RoutingInfo::for_routable(&value) {
+            Some(RoutingInfo::MultiNode(_)) => None,
+            Some(RoutingInfo::SingleNode(route)) => Some(route),
+            None => None,
+        }
+        .unwrap_or(SingleNodeRoutingInfo::Random);
         self.request(Input::Commands {
             cmd,
             offset,
             count,
-            routable: value,
+            route,
         })
         .map(|res| res.into())
     }
@@ -876,7 +900,12 @@ pub(crate) fn get_connection_info(
         .ok_or_else(invalid_error)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host.to_string(), port, cluster_params.tls),
+        addr: get_connection_addr(
+            host.to_string(),
+            port,
+            cluster_params.tls,
+            cluster_params.tls_params,
+        ),
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
@@ -885,17 +914,24 @@ pub(crate) fn get_connection_info(
     })
 }
 
-pub(crate) fn get_connection_addr(host: String, port: u16, tls: Option<TlsMode>) -> ConnectionAddr {
+pub(crate) fn get_connection_addr(
+    host: String,
+    port: u16,
+    tls: Option<TlsMode>,
+    tls_params: Option<TlsConnParams>,
+) -> ConnectionAddr {
     match tls {
         Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: false,
+            tls_params,
         },
         Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
             host,
             port,
             insecure: true,
+            tls_params,
         },
         _ => ConnectionAddr::Tcp(host, port),
     }

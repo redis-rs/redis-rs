@@ -1,3 +1,47 @@
+### 0.24.0 (2023-12-05)
+
+#### Features
+* **Breaking change**: Support Mutual TLS ([#858](https://github.com/redis-rs/redis-rs/pull/858) @sp-angel)
+* Implement `FromRedisValue` for `Box<[T]>` and `Arc<[T]>` ([#799](https://github.com/redis-rs/redis-rs/pull/799) @JOT85)
+* Sync Cluster: support multi-slot operations. ([#967](https://github.com/redis-rs/redis-rs/pull/967))
+* Execute multi-node requests using try_request. ([#919](https://github.com/redis-rs/redis-rs/pull/919))
+* Sorted set blocking commands ([#962](https://github.com/redis-rs/redis-rs/pull/962) @gheorghitamutu)
+* Allow passing routing information to cluster. ([#899](https://github.com/redis-rs/redis-rs/pull/899))
+* Add `tcp_nodelay` feature ([#941](https://github.com/redis-rs/redis-rs/pull/941) @PureWhiteWu)
+* Add support for multi-shard commands. ([#900](https://github.com/redis-rs/redis-rs/pull/900))
+
+#### Changes
+* Order in usage of ClusterParams. ([#997](https://github.com/redis-rs/redis-rs/pull/997))
+* **Breaking change**: Fix StreamId::contains_key signature ([#783](https://github.com/redis-rs/redis-rs/pull/783) @Ayush1325)
+* **Breaking change**: Update Command expiration values to be an appropriate type ([#589](https://github.com/redis-rs/redis-rs/pull/589) @joshleeb)
+* **Breaking change**: Bump aHash to v0.8.6 ([#966](https://github.com/redis-rs/redis-rs/pull/966) @aumetra)
+* Fix features for `load_native_certs`. ([#996](https://github.com/redis-rs/redis-rs/pull/996))
+* Revert redis-test versioning changes ([#993](https://github.com/redis-rs/redis-rs/pull/993))
+* Tests: Add retries to test cluster creation ([#994](https://github.com/redis-rs/redis-rs/pull/994))
+* Fix sync cluster behavior with transactions. ([#983](https://github.com/redis-rs/redis-rs/pull/983))
+* Sync Pub/Sub - cache received pub/sub messages. ([#910](https://github.com/redis-rs/redis-rs/pull/910))
+* Prefer routing to primary in a transaction. ([#986](https://github.com/redis-rs/redis-rs/pull/986))
+* Accept iterator at `ClusterClient` initialization ([#987](https://github.com/redis-rs/redis-rs/pull/987) @ruanpetterson)
+* **Breaking change**: Change timeouts from usize and isize to f64 ([#988](https://github.com/redis-rs/redis-rs/pull/988) @eythorhel19)
+* Update minimal rust version to 1.6.5 ([#982](https://github.com/redis-rs/redis-rs/pull/982))
+* Disable JSON module tests for redis 6.2.4. ([#980](https://github.com/redis-rs/redis-rs/pull/980))
+* Add connection string examples ([#976](https://github.com/redis-rs/redis-rs/pull/976) @NuclearOreo)
+* Move response policy into multi-node routing. ([#952](https://github.com/redis-rs/redis-rs/pull/952))
+* Added functions that allow tests to check version. ([#963](https://github.com/redis-rs/redis-rs/pull/963))
+* Fix XREADGROUP command ordering as per Redis Docs, and compatibility with Upstash Redis ([#960](https://github.com/redis-rs/redis-rs/pull/960) @prabhpreet)
+* Optimize make_pipeline_results by pre-allocate memory ([#957](https://github.com/redis-rs/redis-rs/pull/957) @PureWhiteWu)
+* Run module tests sequentially.  ([#956](https://github.com/redis-rs/redis-rs/pull/956))
+* Log cluster creation output in tests. ([#955](https://github.com/redis-rs/redis-rs/pull/955))
+* CI: Update and use better maintained github actions. ([#954](https://github.com/redis-rs/redis-rs/pull/954))
+* Call CLIENT SETINFO on new connections. ([#945](https://github.com/redis-rs/redis-rs/pull/945))
+* Deprecate functions that erroneously use `tokio` in their name. ([#913](https://github.com/redis-rs/redis-rs/pull/913))
+* CI: Increase timeouts and use newer redis. ([#949](https://github.com/redis-rs/redis-rs/pull/949))
+* Remove redis version from redis-test. ([#943](https://github.com/redis-rs/redis-rs/pull/943))
+
+### 0.23.4 (2023-11-26)
+**Yanked** -- Inadvertently introduced breaking changes (sorry!). The changes in this tag
+have been pushed to 0.24.0.
+
 ### 0.23.3 (2023-09-01)
 
 Note that this release fixes a small regression in async Redis Cluster handling of the `PING` command.
@@ -7,6 +51,7 @@ will again return a single response instead of an array.
 #### Features
 * Add `key_type` command ([#933](https://github.com/redis-rs/redis-rs/pull/933) @bruaba)
 * Async cluster: Group responses by response_policy. ([#888](https://github.com/redis-rs/redis-rs/pull/888))
+
 
 #### Fixes
 * Remove unnecessary heap allocation ([#939](https://github.com/redis-rs/redis-rs/pull/939) @thechampagne)

@@ -70,8 +70,82 @@ fn test_vec() {
         Value::Data("2".into()),
         Value::Data("3".into()),
     ]));
-
     assert_eq!(v, Ok(vec![1i32, 2, 3]));
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(content_vec));
+
+    let content: &[u8] = b"1";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(vec![b'1']));
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(vec![1_u16]));
+}
+
+#[test]
+fn test_box_slice() {
+    use redis::{FromRedisValue, Value};
+
+    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Data("1".into()),
+        Value::Data("2".into()),
+        Value::Data("3".into()),
+    ]));
+    assert_eq!(v, Ok(vec![1i32, 2, 3].into_boxed_slice()));
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(content_vec.into_boxed_slice()));
+
+    let content: &[u8] = b"1";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(vec![b'1'].into_boxed_slice()));
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
+
+    assert_eq!(
+        Box::<[i32]>::from_redis_value(
+            &Value::Data("just a string".into())
+        ).unwrap_err().to_string(),
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+    );
+}
+
+#[test]
+fn test_arc_slice() {
+    use redis::{FromRedisValue, Value};
+    use std::sync::Arc;
+
+    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
+        Value::Data("1".into()),
+        Value::Data("2".into()),
+        Value::Data("3".into()),
+    ]));
+    assert_eq!(v, Ok(Arc::from(vec![1i32, 2, 3])));
+
+    let content: &[u8] = b"\x01\x02\x03\x04";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(Arc::from(content_vec)));
+
+    let content: &[u8] = b"1";
+    let content_vec: Vec<u8> = Vec::from(content);
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
+    assert_eq!(v, Ok(Arc::from(vec![b'1'])));
+    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
+    assert_eq!(v, Ok(Arc::from(vec![1_u16])));
+
+    assert_eq!(
+        Arc::<[i32]>::from_redis_value(
+            &Value::Data("just a string".into())
+        ).unwrap_err().to_string(),
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+    );
 }
 
 #[test]

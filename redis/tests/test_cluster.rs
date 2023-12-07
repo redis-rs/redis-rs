@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, Commands, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, RedisError, Value,
 };
 
 #[test]
@@ -32,11 +32,16 @@ fn test_cluster_basics() {
 
 #[test]
 fn test_cluster_with_username_and_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password(RedisCluster::password().to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        },
+        false,
+    );
     cluster.disable_default_user();
 
     let mut con = cluster.connection();
@@ -57,19 +62,27 @@ fn test_cluster_with_username_and_password() {
 
 #[test]
 fn test_cluster_with_bad_password() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(3, 0, |builder| {
-        builder
-            .username(RedisCluster::username().to_string())
-            .password("not the right password".to_string())
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password("not the right password".to_string())
+        },
+        false,
+    );
     assert!(cluster.client.get_connection().is_err());
 }
 
 #[test]
 fn test_cluster_read_from_replicas() {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(6, 1, |builder| {
-        builder.read_from_replicas()
-    });
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        6,
+        1,
+        |builder| builder.read_from_replicas(),
+        false,
+    );
     let mut con = cluster.connection();
 
     // Write commands would go to the primary nodes
@@ -746,4 +759,148 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
 
     let result = cmd.query::<Vec<String>>(&mut connection).unwrap();
     assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
+}
+
+#[test]
+fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests() {
+    let name = "test_cluster_route_correctly_on_packed_transaction_with_single_node_requests";
+    let mut pipeline = redis::pipe();
+    pipeline.atomic().set("foo", "bar").get("foo");
+    let packed_pipeline = pipeline.get_packed_pipeline();
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                let results = vec![
+                    Value::Data("OK".as_bytes().to_vec()),
+                    Value::Data("QUEUED".as_bytes().to_vec()),
+                    Value::Data("QUEUED".as_bytes().to_vec()),
+                    Value::Bulk(vec![
+                        Value::Data("OK".as_bytes().to_vec()),
+                        Value::Data("bar".as_bytes().to_vec()),
+                    ]),
+                ];
+                return Err(Ok(Value::Bulk(results)));
+            }
+            Err(Err(RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                format!("wrong port: {port}"),
+            ))))
+        },
+    );
+
+    let result = connection
+        .req_packed_commands(&packed_pipeline, 3, 1)
+        .unwrap();
+    assert_eq!(
+        result,
+        vec![
+            Value::Data("OK".as_bytes().to_vec()),
+            Value::Data("bar".as_bytes().to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2() {
+    let name = "test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2";
+    let mut pipeline = redis::pipe();
+    pipeline.atomic().set("foo", "bar").get("foo");
+    let packed_pipeline = pipeline.get_packed_pipeline();
+    let results = vec![
+        Value::Data("OK".as_bytes().to_vec()),
+        Value::Data("QUEUED".as_bytes().to_vec()),
+        Value::Data("QUEUED".as_bytes().to_vec()),
+        Value::Bulk(vec![
+            Value::Data("OK".as_bytes().to_vec()),
+            Value::Data("bar".as_bytes().to_vec()),
+        ]),
+    ];
+    let expected_result = Value::Bulk(results);
+    let cloned_result = expected_result.clone();
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            if port == 6381 {
+                return Err(Ok(cloned_result.clone()));
+            }
+            Err(Err(RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                format!("wrong port: {port}"),
+            ))))
+        },
+    );
+
+    let result = connection.req_packed_command(&packed_pipeline).unwrap();
+    assert_eq!(result, expected_result);
+}
+
+#[cfg(feature = "tls-rustls")]
+mod mtls_test {
+    use super::*;
+    use crate::support::mtls_test::create_cluster_client_from_cluster;
+    use redis::ConnectionInfo;
+
+    #[test]
+    fn test_cluster_basics_with_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+        let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+        let mut con = client.get_connection().unwrap();
+
+        redis::cmd("SET")
+            .arg("{x}key1")
+            .arg(b"foo")
+            .execute(&mut con);
+        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+
+        assert_eq!(
+            redis::cmd("MGET")
+                .arg(&["{x}key1", "{x}key2"])
+                .query(&mut con),
+            Ok(("foo".to_string(), b"bar".to_vec()))
+        );
+    }
+
+    #[test]
+    fn test_cluster_should_not_connect_without_mtls() {
+        let cluster = TestClusterContext::new_with_mtls(3, 0);
+
+        let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
+        let connection = client.get_connection();
+
+        match cluster.cluster.servers.get(0).unwrap().connection_info() {
+            ConnectionInfo {
+                addr: redis::ConnectionAddr::TcpTls { .. },
+                ..
+            } => {
+                if connection.is_ok() {
+                    panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                }
+            }
+            _ => {
+                if let Err(e) = connection {
+                    panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                }
+            }
+        }
+    }
 }

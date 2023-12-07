@@ -26,6 +26,12 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
+#[cfg(feature = "tokio-rustls-comp")]
+use crate::tls::TlsConnParams;
+
+#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tls-rustls")))]
+use crate::connection::TlsConnParams;
+
 #[cfg(unix)]
 use super::Path;
 
@@ -125,6 +131,7 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        _: &Option<TlsConnParams>,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -147,8 +154,9 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
+        tls_params: &Option<TlsConnParams>,
     ) -> RedisResult<Self> {
-        let config = create_rustls_config(insecure)?;
+        let config = create_rustls_config(insecure, tls_params.clone())?;
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector

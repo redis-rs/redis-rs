@@ -653,6 +653,64 @@ fn test_pubsub_unsubscribe() {
 }
 
 #[test]
+fn test_pubsub_subscribe_while_messages_are_sent() {
+    let ctx = TestContext::new();
+    let mut conn_external = ctx.connection();
+    let mut conn_internal = ctx.connection();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_clone = received.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // receive message from foo channel
+    let thread = std::thread::spawn(move || {
+        let mut pubsub = conn_internal.as_pubsub();
+        pubsub.subscribe("foo").unwrap();
+        sender.send(()).unwrap();
+        loop {
+            let msg = pubsub.get_message().unwrap();
+            let channel = msg.get_channel_name();
+            let content: i32 = msg.get_payload().unwrap();
+            received
+                .lock()
+                .unwrap()
+                .push(format!("{channel}:{content}"));
+            if content == -1 {
+                return;
+            }
+            if content == 5 {
+                // subscribe bar channel using the same pubsub
+                pubsub.subscribe("bar").unwrap();
+                sender.send(()).unwrap();
+            }
+        }
+    });
+    receiver.recv().unwrap();
+
+    // send message to foo channel after channel is ready.
+    for index in 0..10 {
+        println!("publishing on foo {index}");
+        redis::cmd("PUBLISH")
+            .arg("foo")
+            .arg(index)
+            .query::<i32>(&mut conn_external)
+            .unwrap();
+    }
+    receiver.recv().unwrap();
+    redis::cmd("PUBLISH")
+        .arg("bar")
+        .arg(-1)
+        .query::<i32>(&mut conn_external)
+        .unwrap();
+    thread.join().unwrap();
+    assert_eq!(
+        *received_clone.lock().unwrap(),
+        (0..10)
+            .map(|index| format!("foo:{}", index))
+            .chain(std::iter::once("bar:-1".to_string()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_pubsub_unsubscribe_no_subs() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -1302,8 +1360,8 @@ fn test_blocking_sorted_set_api() {
     assert_eq!(con.zadd("c", "7c", 7), Ok(()));
     assert_eq!(con.zadd("d", "8d", 8), Ok(()));
 
-    let min = con.bzpopmin::<&str, (String, String, String)>("b", 0);
-    let max = con.bzpopmax::<&str, (String, String, String)>("b", 0);
+    let min = con.bzpopmin::<&str, (String, String, String)>("b", 0.0);
+    let max = con.bzpopmax::<&str, (String, String, String)>("b", 0.0);
 
     assert_eq!(
         min.unwrap(),
@@ -1316,12 +1374,12 @@ fn test_blocking_sorted_set_api() {
 
     if redis_version.0 >= 7 {
         let min = con.bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(
-            0,
+            0.0,
             vec!["a", "b", "c", "d"].as_slice(),
             1,
         );
         let max = con.bzmpop_max::<&str, (String, Vec<Vec<(String, String)>>)>(
-            0,
+            0.0,
             vec!["a", "b", "c", "d"].as_slice(),
             1,
         );
