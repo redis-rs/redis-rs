@@ -304,8 +304,8 @@ impl ClusterClientBuilder {
     /// Enables timing out on slow responses.
     ///
     /// If enabled, the cluster will only wait the given time to each response from each node.
-    pub fn response_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
-        self.builder_params.response_timeout = Some(connection_timeout);
+    pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.response_timeout = Some(response_timeout);
         self
     }
 
