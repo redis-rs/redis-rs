@@ -133,7 +133,12 @@ where
                             values.push(item);
                             Value::Array(values)
                         }
-                        Some(value) => Value::Array(vec![value, item]),
+                        Some(value) => {
+                            let mut vec = Vec::with_capacity(entry.expected_response_count);
+                            vec.push(value);
+                            vec.push(item);
+                            Value::Array(vec)
+                        }
                         None => item,
                     });
                 }
