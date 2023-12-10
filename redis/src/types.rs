@@ -219,7 +219,13 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Bulk(items) => Some(MapIter(items.iter())),
+            Value::Bulk(items) => {
+                if items.len() % 2 == 0 {
+                    Some(MapIter(items.iter()))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
