@@ -56,6 +56,7 @@ mod cluster;
 mod mock_cluster;
 
 mod util;
+pub use self::util::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::cluster::*;
@@ -349,9 +350,36 @@ impl TestContext {
         Self::with_modules(&[], true)
     }
 
+    fn connect_with_retries(client: &redis::Client) {
+        let mut con;
+
+        let millisecond = Duration::from_millis(1);
+        let mut retries = 0;
+        loop {
+            match client.get_connection() {
+                Err(err) => {
+                    if err.is_connection_refusal() {
+                        sleep(millisecond);
+                        retries += 1;
+                        if retries > 100000 {
+                            panic!("Tried to connect too many times, last error: {err}");
+                        }
+                    } else {
+                        panic!("Could not connect: {err}");
+                    }
+                }
+                Ok(x) => {
+                    con = x;
+                    break;
+                }
+            }
+        }
+        redis::cmd("FLUSHDB").execute(&mut con);
+    }
+
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
+        let addr: ConnectionAddr = RedisServer::get_addr(redis_port);
 
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
@@ -371,30 +399,7 @@ impl TestContext {
         #[cfg(not(feature = "tls-rustls"))]
         let client = redis::Client::open(server.connection_info()).unwrap();
 
-        let mut con;
-
-        let millisecond = Duration::from_millis(1);
-        let mut retries = 0;
-        loop {
-            match client.get_connection() {
-                Err(err) => {
-                    if err.is_connection_refusal() {
-                        sleep(millisecond);
-                        retries += 1;
-                        if retries > 100000 {
-                            panic!("Tried to connect too many times, last error: {err}");
-                        }
-                    } else {
-                        panic!("Could not connect: {err}");
-                    }
-                }
-                Ok(x) => {
-                    con = x;
-                    break;
-                }
-            }
-        }
-        redis::cmd("FLUSHDB").execute(&mut con);
+        Self::connect_with_retries(&client);
 
         TestContext {
             server,
@@ -412,30 +417,34 @@ impl TestContext {
         #[cfg(not(feature = "tls-rustls"))]
         let client = redis::Client::open(server.connection_info()).unwrap();
 
-        let mut con;
+        Self::connect_with_retries(&client);
 
-        let millisecond = Duration::from_millis(1);
-        let mut retries = 0;
-        loop {
-            match client.get_connection() {
-                Err(err) => {
-                    if err.is_connection_refusal() {
-                        sleep(millisecond);
-                        retries += 1;
-                        if retries > 100000 {
-                            panic!("Tried to connect too many times, last error: {err}");
-                        }
-                    } else {
-                        panic!("Could not connect: {err}");
-                    }
-                }
-                Ok(x) => {
-                    con = x;
-                    break;
-                }
-            }
+        TestContext {
+            server,
+            client,
+            use_resp3: use_resp3(),
         }
-        redis::cmd("FLUSHDB").execute(&mut con);
+    }
+
+    pub fn with_client_name(clientname: &str) -> TestContext {
+        let server = RedisServer::with_modules(&[], false);
+        let con_info = redis::ConnectionInfo {
+            addr: server.client_addr().clone(),
+            redis: redis::RedisConnectionInfo {
+                db: Default::default(),
+                username: None,
+                password: None,
+                use_resp3: Default::default(),
+                client_name: Some(clientname.to_string()),
+            },
+        };
+
+        #[cfg(feature = "tls-rustls")]
+        let client = build_single_client(con_info, &server.tls_paths, false).unwrap();
+        #[cfg(not(feature = "tls-rustls"))]
+        let client = redis::Client::open(con_info).unwrap();
+
+        Self::connect_with_retries(&client);
 
         TestContext {
             server,

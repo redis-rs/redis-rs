@@ -887,6 +887,33 @@ fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2
     assert_eq!(result, expected_result);
 }
 
+#[test]
+fn test_cluster_with_client_name() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.client_name(RedisCluster::client_name().to_string()),
+        false,
+    );
+    let mut con = cluster.connection();
+    let client_info: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
+
+    let client_attrs = parse_client_info(&client_info);
+
+    assert!(
+        client_attrs.contains_key("name"),
+        "Could not detect the 'name' attribute in CLIENT INFO output"
+    );
+
+    assert_eq!(
+        client_attrs["name"],
+        RedisCluster::client_name(),
+        "Incorrect client name, expecting: {}, got {}",
+        RedisCluster::client_name(),
+        client_attrs["name"]
+    );
+}
+
 #[cfg(feature = "tls-rustls")]
 mod mtls_test {
     use super::*;
