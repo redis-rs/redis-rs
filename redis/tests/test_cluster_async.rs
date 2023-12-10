@@ -130,10 +130,15 @@ fn test_async_cluster_route_info_to_nodes() {
     let cluster = TestClusterContext::new(12, 1);
 
     let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
-        if let Value::Array(values) = res {
+        if let Value::Map(values) = res {
             let mut pairs: Vec<_> = values
                 .into_iter()
-                .map(|value| redis::from_redis_value::<(String, String)>(&value).unwrap())
+                .map(|(key, value)| {
+                    (
+                        redis::from_redis_value::<String>(&key).unwrap(),
+                        redis::from_redis_value::<String>(&value).unwrap(),
+                    )
+                })
                 .collect();
             pairs.sort_by(|(address1, _), (address2, _)| address1.cmp(address2));
             pairs.into_iter().unzip()
@@ -1472,18 +1477,17 @@ fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() 
         },
     );
 
-    // TODO once RESP3 is in, return this as a map
     let mut result = runtime
-        .block_on(cmd.query_async::<_, Vec<Vec<String>>>(&mut connection))
+        .block_on(cmd.query_async::<_, Vec<(String, String)>>(&mut connection))
         .unwrap();
     result.sort();
     assert_eq!(
         result,
         vec![
-            vec![format!("{name}:6379"), "latency: 6379".to_string()],
-            vec![format!("{name}:6380"), "latency: 6380".to_string()],
-            vec![format!("{name}:6381"), "latency: 6381".to_string()],
-            vec![format!("{name}:6382"), "latency: 6382".to_string()]
+            (format!("{name}:6379"), "latency: 6379".to_string()),
+            (format!("{name}:6380"), "latency: 6380".to_string()),
+            (format!("{name}:6381"), "latency: 6381".to_string()),
+            (format!("{name}:6382"), "latency: 6382".to_string())
         ],
         "{result:?}"
     );
