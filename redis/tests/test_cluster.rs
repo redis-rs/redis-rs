@@ -137,6 +137,38 @@ fn test_cluster_multi_shard_commands() {
 }
 
 #[test]
+fn test_cluster_resp3() {
+    if !use_resp3() {
+        return;
+    }
+    let cluster = TestClusterContext::new(3, 0);
+
+    let mut connection = cluster.connection();
+
+    let hello: std::collections::HashMap<String, Value> =
+        redis::cmd("HELLO").query(&mut connection).unwrap();
+    assert_eq!(hello.get("proto").unwrap(), &Value::Int(3));
+
+    let _: () = connection.hset("hash", "foo", "baz").unwrap();
+    let _: () = connection.hset("hash", "bar", "foobar").unwrap();
+    let result: Value = connection.hgetall("hash").unwrap();
+
+    assert_eq!(
+        result,
+        Value::Map(vec![
+            (
+                Value::BulkString("foo".as_bytes().to_vec()),
+                Value::BulkString("baz".as_bytes().to_vec())
+            ),
+            (
+                Value::BulkString("bar".as_bytes().to_vec()),
+                Value::BulkString("foobar".as_bytes().to_vec())
+            )
+        ])
+    );
+}
+
+#[test]
 #[cfg(feature = "script")]
 fn test_cluster_script() {
     let cluster = TestClusterContext::new(3, 0);

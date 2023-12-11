@@ -33,6 +33,7 @@ struct BuilderParams {
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     topology_checks_interval: Option<Duration>,
+    use_resp3: bool,
 }
 
 #[derive(Clone)]
@@ -86,6 +87,7 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
+    pub(crate) use_resp3: bool,
 }
 
 impl ClusterParams {
@@ -109,6 +111,7 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
             topology_checks_interval: value.topology_checks_interval,
             tls_params,
+            use_resp3: value.use_resp3,
         })
     }
 }
@@ -312,6 +315,15 @@ impl ClusterClientBuilder {
     /// topology, ensuring that the check remains quick and efficient.
     pub fn periodic_topology_checks(mut self, interval: Duration) -> ClusterClientBuilder {
         self.builder_params.topology_checks_interval = Some(interval);
+        self
+    }
+
+    /// Sets whether the new ClusterClient should connect to the servers using RESP3.
+    ///
+    /// If not set, the default is to use RESP3.
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
+        self.builder_params.use_resp3 = use_resp3;
         self
     }
 
