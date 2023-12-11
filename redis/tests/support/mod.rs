@@ -20,7 +20,7 @@ use redis::{ClientTlsConfig, TlsCertificates};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
-fn use_resp3() -> bool {
+pub fn use_resp3() -> bool {
     env::var("RESP3").unwrap_or_default() == "true"
 }
 

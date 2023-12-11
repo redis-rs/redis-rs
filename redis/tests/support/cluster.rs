@@ -16,6 +16,7 @@ use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
+use super::use_resp3;
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
 
@@ -343,6 +344,7 @@ impl TestClusterContext {
             .map(RedisServer::connection_info)
             .collect();
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
+        builder = builder.use_resp3(use_resp3());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {
