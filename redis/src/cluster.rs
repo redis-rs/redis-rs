@@ -41,8 +41,6 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use rand::{seq::IteratorRandom, thread_rng, Rng};
-
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
@@ -59,6 +57,7 @@ use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
 };
+use rand::{seq::IteratorRandom, thread_rng, Rng};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};

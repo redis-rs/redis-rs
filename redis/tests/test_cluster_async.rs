@@ -359,12 +359,17 @@ struct ErrorConnection {
 }
 
 impl Connect for ErrorConnection {
-    fn connect<'a, T>(info: T) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(
+        info: T,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
-        Box::pin(async {
-            let inner = MultiplexedConnection::connect(info).await?;
+        Box::pin(async move {
+            let inner =
+                MultiplexedConnection::connect(info, response_timeout, connection_timeout).await?;
             Ok(ErrorConnection { inner })
         })
     }
