@@ -80,6 +80,36 @@ fn test_async_cluster_basic_script() {
     .unwrap();
 }
 
+#[test]
+fn test_cluster_resp3() {
+    if !use_resp3() {
+        return;
+    }
+    block_on_all(async move {
+        let cluster = TestClusterContext::new(3, 0);
+
+        let mut connection = cluster.async_connection().await;
+
+        let _: () = connection.hset("hash", "foo", "baz").await.unwrap();
+        let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
+        let result: Value = connection.hgetall("hash").await.unwrap();
+
+        assert_eq!(
+            result,
+            Value::Map(vec![
+                (
+                    Value::Data("foo".as_bytes().to_vec()),
+                    Value::Data("baz".as_bytes().to_vec())
+                ),
+                (
+                    Value::Data("bar".as_bytes().to_vec()),
+                    Value::Data("foobar".as_bytes().to_vec())
+                )
+            ])
+        );
+    });
+}
+
 #[ignore] // TODO Handle pipe where the keys do not all go to the same node
 #[test]
 fn test_async_cluster_basic_pipe() {

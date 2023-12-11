@@ -818,6 +818,7 @@ pub(crate) fn get_connection_info(
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
+            use_resp3: cluster_params.use_resp3,
             ..Default::default()
         },
     })
