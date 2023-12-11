@@ -497,6 +497,11 @@ implement_commands! {
         cmd("SISMEMBER").arg(key).arg(member)
     }
 
+    /// Determine if given values are members of a set.
+    fn smismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) {
+        cmd("SMISMEMBER").arg(key).arg(members)
+    }
+
     /// Get all the members in a set.
     fn smembers<K: ToRedisArgs>(key: K) {
         cmd("SMEMBERS").arg(key)

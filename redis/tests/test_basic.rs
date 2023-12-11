@@ -1211,6 +1211,20 @@ fn test_zrandmember() {
     assert_eq!(results.len(), 10);
 }
 
+// Requires redis-server >= 6.2.0.
+// Not supported with the current appveyor/windows binary deployed.
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn test_smismember() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let setname = "myset";
+    assert_eq!(con.sadd(setname, &["a", "b", "c"]), Ok(3));
+    let results: Vec<bool> = con.smismember(setname, &["0", "a", "b", "c", "x"]).unwrap();
+    assert_eq!(results, vec![false, true, true, true, false]);
+}
+
 #[test]
 fn test_object_commands() {
     let ctx = TestContext::new();
