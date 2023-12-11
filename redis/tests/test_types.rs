@@ -113,7 +113,7 @@ fn test_box_slice() {
         Box::<[i32]>::from_redis_value(
             &Value::BulkString("just a string".into())
         ).unwrap_err().to_string(),
-        "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was bulk-string('\"just a string\"'))",
     );
 }
 
@@ -145,7 +145,7 @@ fn test_arc_slice() {
         Arc::<[i32]>::from_redis_value(
             &Value::BulkString("just a string".into())
         ).unwrap_err().to_string(),
-        "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was string-data('\"just a string\"'))",
+        "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was bulk-string('\"just a string\"'))",
     );
 }
 

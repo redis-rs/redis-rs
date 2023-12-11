@@ -357,13 +357,13 @@ impl fmt::Debug for Value {
             Value::Nil => write!(fmt, "nil"),
             Value::Int(val) => write!(fmt, "int({val:?})"),
             Value::BulkString(ref val) => match from_utf8(val) {
-                Ok(x) => write!(fmt, "string-data('{x:?}')"),
+                Ok(x) => write!(fmt, "bulk-string('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
-            Value::Array(ref values) => write!(fmt, "bulk({values:?})"),
+            Value::Array(ref values) => write!(fmt, "array({values:?})"),
             Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
-            Value::SimpleString(ref s) => write!(fmt, "status({s:?})"),
+            Value::SimpleString(ref s) => write!(fmt, "simple-string({s:?})"),
             Value::Map(ref values) => write!(fmt, "map({values:?})"),
             Value::Attribute {
                 ref data,
