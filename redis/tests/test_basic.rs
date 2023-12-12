@@ -1211,6 +1211,21 @@ fn test_zrandmember() {
     assert_eq!(results.len(), 10);
 }
 
+#[test]
+fn test_sismember() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let setname = "myset";
+    assert_eq!(con.sadd(setname, &["a"]), Ok(1));
+
+    let result: bool = con.sismember(setname, &["a"]).unwrap();
+    assert!(result);
+
+    let result: bool = con.sismember(setname, &["b"]).unwrap();
+    assert!(!result);
+}
+
 // Requires redis-server >= 6.2.0.
 // Not supported with the current appveyor/windows binary deployed.
 #[cfg(not(target_os = "windows"))]
