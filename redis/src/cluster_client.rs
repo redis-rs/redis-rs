@@ -321,7 +321,6 @@ impl ClusterClientBuilder {
     /// Sets whether the new ClusterClient should connect to the servers using RESP3.
     ///
     /// If not set, the default is to use RESP3.
-    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
     pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
         self.builder_params.use_resp3 = use_resp3;
         self
