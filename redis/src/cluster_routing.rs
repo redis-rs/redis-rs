@@ -663,11 +663,13 @@ impl Route {
         Self(slot, slot_addr)
     }
 
-    pub(crate) fn slot(&self) -> u16 {
+    /// Returns the slot number of the route.
+    pub fn slot(&self) -> u16 {
         self.0
     }
 
-    pub(crate) fn slot_addr(&self) -> SlotAddr {
+    /// Returns the slot address of the route.
+    pub fn slot_addr(&self) -> SlotAddr {
         self.1
     }
 }
