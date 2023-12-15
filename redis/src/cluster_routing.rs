@@ -442,12 +442,14 @@ pub trait Routable {
             }
         };
 
-        let secondary_command = self.arg_idx(1).map(|x| x.to_ascii_uppercase());
-        Some(match secondary_command {
-            Some(cmd) => {
-                primary_command.reserve(cmd.len() + 1);
+        Some(match self.arg_idx(1) {
+            Some(secondary_command) => {
+                let previous_len = primary_command.len();
+                primary_command.reserve(secondary_command.len() + 1);
                 primary_command.extend(b" ");
-                primary_command.extend(cmd);
+                primary_command.extend(secondary_command);
+                let current_len = primary_command.len();
+                primary_command[previous_len + 1..current_len].make_ascii_uppercase();
                 primary_command
             }
             None => primary_command,
