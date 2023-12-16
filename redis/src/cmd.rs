@@ -118,7 +118,9 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 return None
             );
             let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
-
+            if batch.is_empty() {
+                return None;
+            }
             self.cmd.cursor = Some(cur);
             self.batch = batch.into_iter();
         }
@@ -494,7 +496,7 @@ impl Cmd {
         } else {
             (0, from_redis_value(&rv)?)
         };
-        if cursor == 0 {
+        if cursor == 0 || batch.is_empty() {
             self.cursor = None;
         } else {
             self.cursor = Some(cursor);
