@@ -140,6 +140,21 @@ where
         }
     }
 
+    if let Some(client_name) = &connection_info.client_name {
+        match cmd("CLIENT")
+            .arg("SETNAME")
+            .arg(client_name)
+            .query_async(con)
+            .await
+        {
+            Ok(Value::Okay) => {}
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to set client name"
+            )),
+        }
+    }
+
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
     let _: RedisResult<()> = crate::connection::client_set_info_pipeline()

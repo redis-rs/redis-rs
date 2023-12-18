@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[macro_export]
 macro_rules! assert_args {
     ($value:expr, $($args:expr),+) => {
@@ -7,4 +9,15 @@ macro_rules! assert_args {
                                 .collect();
         assert_eq!(strings, vec![$($args),+]);
     }
+}
+
+pub fn parse_client_info(client_info: &str) -> HashMap<String, String> {
+    let mut res = HashMap::new();
+
+    for line in client_info.split(' ') {
+        let this_attr: Vec<&str> = line.split('=').collect();
+        res.insert(this_attr[0].to_string(), this_attr[1].to_string());
+    }
+
+    res
 }

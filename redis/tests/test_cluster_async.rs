@@ -1978,6 +1978,42 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
     .unwrap();
 }
 
+#[test]
+fn test_async_cluster_with_client_name() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.client_name(RedisCluster::client_name().to_string()),
+        false,
+    );
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let client_info: String = cmd("CLIENT")
+            .arg("INFO")
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+
+        let client_attrs = parse_client_info(&client_info);
+
+        assert!(
+            client_attrs.contains_key("name"),
+            "Could not detect the 'name' attribute in CLIENT INFO output"
+        );
+
+        assert_eq!(
+            client_attrs["name"],
+            RedisCluster::client_name(),
+            "Incorrect client name, expecting: {}, got {}",
+            RedisCluster::client_name(),
+            client_attrs["name"]
+        );
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
 #[cfg(feature = "tls-rustls")]
 mod mtls_test {
     use crate::support::mtls_test::create_cluster_client_from_cluster;

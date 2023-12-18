@@ -227,6 +227,8 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Use RESP 3 mode, Redis 6 or newer is required.
     pub use_resp3: bool,
+    /// Optionally a pass a client name that should be used for connection
+    pub client_name: Option<String>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -387,6 +389,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
+            client_name: None,
         },
     })
 }
@@ -413,6 +416,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 Some(v) => v == "true",
                 _ => false,
             },
+            client_name: None,
         },
     })
 }
@@ -975,6 +979,20 @@ fn setup_connection(
             _ => fail!((
                 ErrorKind::ResponseError,
                 "Redis server refused to switch database"
+            )),
+        }
+    }
+
+    if connection_info.client_name.is_some() {
+        match cmd("CLIENT")
+            .arg("SETNAME")
+            .arg(connection_info.client_name.as_ref().unwrap())
+            .query::<Value>(&mut rv)
+        {
+            Ok(Value::Okay) => {}
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Redis server refused to set client name"
             )),
         }
     }
@@ -1708,6 +1726,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
+                        client_name: None,
                     },
                 },
             ),
@@ -1775,6 +1794,7 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
+                        client_name: None,
                     },
                 },
             ),
@@ -1787,6 +1807,7 @@ mod tests {
                         username: None,
                         password: None,
                         use_resp3: false,
+                        client_name: None,
                     },
                 },
             ),
@@ -1802,6 +1823,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
                         use_resp3: false,
+                        client_name: None,
                     },
                 },
             ),
@@ -1817,6 +1839,7 @@ mod tests {
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
                         use_resp3: false,
+                        client_name: None,
                     },
                 },
             ),

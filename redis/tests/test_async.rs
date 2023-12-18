@@ -472,6 +472,7 @@ async fn invalid_password_issue_343() {
             username: None,
             password: Some("asdcasc".to_string()),
             use_resp3: false,
+            client_name: None,
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
@@ -780,4 +781,36 @@ mod mtls_test {
             }
         }
     }
+}
+
+#[test]
+fn test_set_client_name_by_config() {
+    const CLIENT_NAME: &str = "TEST_CLIENT_NAME";
+    use redis::RedisError;
+    let ctx = TestContext::with_client_name(CLIENT_NAME);
+
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await?;
+
+        let client_info: String = redis::cmd("CLIENT")
+            .arg("INFO")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+
+        let client_attrs = parse_client_info(&client_info);
+
+        assert!(
+            client_attrs.contains_key("name"),
+            "Could not detect the 'name' attribute in CLIENT INFO output"
+        );
+
+        assert_eq!(
+            client_attrs["name"], CLIENT_NAME,
+            "Incorrect client name, expecting: {}, got {}",
+            CLIENT_NAME, client_attrs["name"]
+        );
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
 }

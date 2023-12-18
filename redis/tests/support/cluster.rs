@@ -74,6 +74,10 @@ impl RedisCluster {
         "world"
     }
 
+    pub fn client_name() -> &'static str {
+        "test_cluster_client"
+    }
+
     pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
         RedisCluster::with_modules(nodes, replicas, &[], false)
     }

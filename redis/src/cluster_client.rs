@@ -33,6 +33,7 @@ struct BuilderParams {
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     topology_checks_interval: Option<Duration>,
+    client_name: Option<String>,
     use_resp3: bool,
 }
 
@@ -87,6 +88,7 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
+    pub(crate) client_name: Option<String>,
     pub(crate) use_resp3: bool,
 }
 
@@ -111,6 +113,7 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
             topology_checks_interval: value.topology_checks_interval,
             tls_params,
+            client_name: value.client_name,
             use_resp3: value.use_resp3,
         })
     }
@@ -212,6 +215,15 @@ impl ClusterClientBuilder {
                 )));
             }
 
+            if node.redis.client_name.is_some()
+                && node.redis.client_name != cluster_params.client_name
+            {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different client_name among initial nodes.",
+                )));
+            }
+
             nodes.push(node);
         }
 
@@ -219,6 +231,12 @@ impl ClusterClientBuilder {
             initial_nodes: nodes,
             cluster_params,
         })
+    }
+
+    /// Sets client name for the new ClusterClient.
+    pub fn client_name(mut self, client_name: String) -> ClusterClientBuilder {
+        self.builder_params.client_name = Some(client_name);
+        self
     }
 
     /// Sets password for the new ClusterClient.

@@ -1448,3 +1448,26 @@ fn test_blocking_sorted_set_api() {
         );
     }
 }
+
+#[test]
+fn test_set_client_name_by_config() {
+    const CLIENT_NAME: &str = "TEST_CLIENT_NAME";
+
+    let ctx = TestContext::with_client_name(CLIENT_NAME);
+    let mut con = ctx.connection();
+
+    let client_info: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
+
+    let client_attrs = parse_client_info(&client_info);
+
+    assert!(
+        client_attrs.contains_key("name"),
+        "Could not detect the 'name' attribute in CLIENT INFO output"
+    );
+
+    assert_eq!(
+        client_attrs["name"], CLIENT_NAME,
+        "Incorrect client name, expecting: {}, got {}",
+        CLIENT_NAME, client_attrs["name"]
+    );
+}
