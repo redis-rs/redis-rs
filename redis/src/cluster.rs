@@ -36,6 +36,7 @@
 //!     .query(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::iter::Iterator;
 use std::str::FromStr;
 use std::thread;
@@ -375,7 +376,10 @@ where
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
             if let Ok(slots_data) = parse_slots(value, self.cluster_params.tls) {
-                new_slots = Some(SlotMap::from_slots(slots_data, self.cluster_params.read_from_replicas));
+                new_slots = Some(SlotMap::from_slots(
+                    slots_data,
+                    self.cluster_params.read_from_replicas,
+                ));
                 break;
             }
         }
@@ -481,6 +485,80 @@ where
         Ok(result)
     }
 
+    fn exectue_on_all<'a>(
+        &'a self,
+        input: Input,
+        addresses: HashSet<&'a str>,
+        connections: &'a mut HashMap<String, C>,
+    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        addresses
+            .into_iter()
+            .map(|addr| {
+                let connection = self.get_connection_by_addr(connections, addr)?;
+                match input {
+                    Input::Slice { cmd, routable: _ } => connection.req_packed_command(cmd),
+                    Input::Cmd(cmd) => connection.req_command(cmd),
+                    Input::Commands {
+                        cmd: _,
+                        route: _,
+                        offset: _,
+                        count: _,
+                    } => Err((
+                        ErrorKind::ClientError,
+                        "req_packed_commands isn't supported with multiple nodes",
+                    )
+                        .into()),
+                }
+                .map(|res| (addr, res))
+            })
+            .collect()
+    }
+
+    fn exectue_on_all_nodes<'a>(
+        &'a self,
+        input: Input,
+        slots: &'a mut SlotMap,
+        connections: &'a mut HashMap<String, C>,
+    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        self.exectue_on_all(input, slots.addresses_for_all_nodes(), connections)
+    }
+
+    fn exectue_on_all_primaries<'a>(
+        &'a self,
+        input: Input,
+        slots: &'a mut SlotMap,
+        connections: &'a mut HashMap<String, C>,
+    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        self.exectue_on_all(input, slots.addresses_for_all_primaries(), connections)
+    }
+
+    fn exectue_multi_slot<'a, 'b>(
+        &'a self,
+        input: Input,
+        slots: &'a mut SlotMap,
+        connections: &'a mut HashMap<String, C>,
+        routes: &'b [(Route, Vec<usize>)],
+    ) -> Vec<RedisResult<(&'a str, Value)>>
+    where
+        'b: 'a,
+    {
+        slots
+            .addresses_for_multi_slot(routes)
+            .enumerate()
+            .map(|(index, addr)| {
+                let addr = addr.ok_or(RedisError::from((
+                    ErrorKind::IoError,
+                    "Couldn't find connection",
+                )))?;
+                let connection = self.get_connection_by_addr(connections, addr)?;
+                let (_, indices) = routes.get(index).unwrap();
+                let cmd =
+                    crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
+                connection.req_command(&cmd).map(|res| (addr, res))
+            })
+            .collect()
+    }
+
     fn execute_on_multiple_nodes(
         &self,
         input: Input,
@@ -488,45 +566,20 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
         let mut connections = self.connections.borrow_mut();
-        let slots = self.slots.borrow_mut();
-        let addresses = slots.addresses_for_multi_routing(&routing);
+        let mut slots = self.slots.borrow_mut();
 
-        // TODO: reconnect and shit
-        let results = addresses.iter().enumerate().map(|(index, addr)| {
-            if let Some(connection) = connections.get_mut(*addr) {
-                match &routing {
-                    MultipleNodeRoutingInfo::MultiSlot(vec) => {
-                        let (_, indices) = vec.get(index).unwrap();
-                        let cmd = crate::cluster_routing::command_for_multi_slot_indices(
-                            &input,
-                            indices.iter(),
-                        );
-                        connection.req_command(&cmd)
-                    }
-                    _ => match input {
-                        Input::Slice { cmd, routable: _ } => connection.req_packed_command(cmd),
-                        Input::Cmd(cmd) => connection.req_command(cmd),
-                        Input::Commands {
-                            cmd: _,
-                            route: _,
-                            offset: _,
-                            count: _,
-                        } => Err((
-                            ErrorKind::ClientError,
-                            "req_packed_commands isn't supported with multiple nodes",
-                        )
-                            .into()),
-                    },
-                }
-            } else {
-                Err((
-                    ErrorKind::IoError,
-                    "connection error",
-                    format!("Disconnected from {addr}"),
-                )
-                    .into())
+        let results = match &routing {
+            MultipleNodeRoutingInfo::MultiSlot(routes) => {
+                self.exectue_multi_slot(input, &mut slots, &mut connections, routes)
             }
-        });
+            MultipleNodeRoutingInfo::AllMasters => {
+                self.exectue_on_all_primaries(input, &mut slots, &mut connections)
+            }
+            MultipleNodeRoutingInfo::AllNodes => {
+                self.exectue_on_all_nodes(input, &mut slots, &mut connections)
+            }
+        };
+
         match response_policy {
             Some(ResponsePolicy::AllSucceeded) => {
                 for result in results {
@@ -540,7 +593,7 @@ where
 
                 for result in results {
                     match result {
-                        Ok(val) => return Ok(val),
+                        Ok((_, val)) => return Ok(val),
                         Err(err) => last_failure = Some(err),
                     }
                 }
@@ -552,7 +605,7 @@ where
                 let mut last_failure = None;
 
                 for result in results {
-                    match result {
+                    match result.map(|(_, res)| res) {
                         Ok(Value::Nil) => continue,
                         Ok(val) => return Ok(val),
                         Err(err) => last_failure = Some(err),
@@ -562,15 +615,24 @@ where
                     .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
             }
             Some(ResponsePolicy::Aggregate(op)) => {
-                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                let results = results
+                    .into_iter()
+                    .map(|res| res.map(|(_, val)| val))
+                    .collect::<RedisResult<Vec<_>>>()?;
                 crate::cluster_routing::aggregate(results, op)
             }
             Some(ResponsePolicy::AggregateLogical(op)) => {
-                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                let results = results
+                    .into_iter()
+                    .map(|res| res.map(|(_, val)| val))
+                    .collect::<RedisResult<Vec<_>>>()?;
                 crate::cluster_routing::logical_aggregate(results, op)
             }
             Some(ResponsePolicy::CombineArrays) => {
-                let results = results.collect::<RedisResult<Vec<_>>>()?;
+                let results = results
+                    .into_iter()
+                    .map(|res| res.map(|(_, val)| val))
+                    .collect::<RedisResult<Vec<_>>>()?;
                 match routing {
                     MultipleNodeRoutingInfo::MultiSlot(vec) => {
                         crate::cluster_routing::combine_and_sort_array_results(
@@ -586,10 +648,9 @@ where
                 // TODO - once RESP3 is merged, return a map value here.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 let results = results
-                    .enumerate()
-                    .map(|(index, result)| {
-                        let addr = addresses[index];
-                        result.map(|val| {
+                    .into_iter()
+                    .map(|result| {
+                        result.map(|(addr, val)| {
                             Value::Bulk(vec![Value::Data(addr.as_bytes().to_vec()), val])
                         })
                     })

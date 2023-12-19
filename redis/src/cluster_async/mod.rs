@@ -680,23 +680,9 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
-        let (receivers, requests): (Vec<_>, Vec<_>) = read_guard
-            .1
-            .addresses_for_multi_routing(routing)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, addr)| {
+        let (receivers, requests): (Vec<_>, Vec<_>) = {
+            let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
                 read_guard.0.get(addr).cloned().map(|conn| {
-                    let cmd = match routing {
-                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
-                            let (_, indices) = vec.get(index).unwrap();
-                            Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
-                                cmd.as_ref(),
-                                indices.iter(),
-                            ))
-                        }
-                        _ => cmd.clone(),
-                    };
                     let (sender, receiver) = oneshot::channel();
                     let addr = addr.to_string();
                     (
@@ -714,8 +700,39 @@ where
                         },
                     )
                 })
-            })
-            .unzip();
+            };
+            let slot_map = &read_guard.1;
+
+            // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
+            // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
+            match routing {
+                MultipleNodeRoutingInfo::AllNodes => slot_map
+                    .addresses_for_all_nodes()
+                    .into_iter()
+                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .unzip(),
+                MultipleNodeRoutingInfo::AllMasters => slot_map
+                    .addresses_for_all_primaries()
+                    .into_iter()
+                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .unzip(),
+                MultipleNodeRoutingInfo::MultiSlot(routes) => slot_map
+                    .addresses_for_multi_slot(routes)
+                    .enumerate()
+                    .filter_map(|(index, addr_opt)| {
+                        addr_opt.and_then(|addr| {
+                            let (_, indices) = routes.get(index).unwrap();
+                            let cmd =
+                                Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
+                                    cmd.as_ref(),
+                                    indices.iter(),
+                                ));
+                            to_request((addr, cmd))
+                        })
+                    })
+                    .unzip(),
+            }
+        };
         drop(read_guard);
         core.pending_requests.lock().unwrap().extend(requests);
 
