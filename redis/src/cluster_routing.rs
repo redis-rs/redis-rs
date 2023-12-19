@@ -589,8 +589,23 @@ impl<'a> IntoIterator for &'a SlotAddrs {
     }
 }
 
+#[derive(Debug)]
+struct SlotMapValue {
+    start: u16,
+    addrs: SlotAddrs,
+}
+
+impl SlotMapValue {
+    fn from_slot(slot: &Slot, read_from_replicas: bool) -> Self {
+        Self {
+            start: slot.start(),
+            addrs: SlotAddrs::from_slot(slot, read_from_replicas),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-pub(crate) struct SlotMap(BTreeMap<u16, SlotAddrs>);
+pub(crate) struct SlotMap(BTreeMap<u16, SlotMapValue>);
 
 impl SlotMap {
     pub fn new() -> Self {
@@ -601,31 +616,42 @@ impl SlotMap {
         Self(
             slots
                 .iter()
-                .map(|slot| (slot.end(), SlotAddrs::from_slot(slot, read_from_replicas)))
+                .map(|slot| {
+                    (
+                        slot.end(),
+                        SlotMapValue::from_slot(slot, read_from_replicas),
+                    )
+                })
                 .collect(),
         )
     }
 
     pub fn fill_slots(&mut self, slots: &[Slot], read_from_replicas: bool) {
         for slot in slots {
-            self.0
-                .insert(slot.end(), SlotAddrs::from_slot(slot, read_from_replicas));
+            self.0.insert(
+                slot.end(),
+                SlotMapValue::from_slot(slot, read_from_replicas),
+            );
         }
     }
 
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
-        self.0
-            .range(route.slot()..)
-            .next()
-            .map(|(_, slot_addrs)| slot_addrs.slot_addr(route.slot_addr()))
+        let slot = route.slot();
+        self.0.range(slot..).next().and_then(|(end, slot_value)| {
+            if slot <= *end && slot_value.start <= slot {
+                Some(slot_value.addrs.slot_addr(route.slot_addr()))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn clear(&mut self) {
         self.0.clear();
     }
 
-    pub fn values(&self) -> std::collections::btree_map::Values<u16, SlotAddrs> {
-        self.0.values()
+    pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
+        self.0.values().map(|slot_value| &slot_value.addrs)
     }
 
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {

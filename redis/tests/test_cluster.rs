@@ -853,6 +853,41 @@ fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2
     assert_eq!(result, expected_result);
 }
 
+#[test]
+fn test_cluster_can_be_created_with_partial_slot_coverage() {
+    let name = "test_cluster_can_be_created_with_partial_slot_coverage";
+    let slots_config = Some(vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..8000),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8201..16380),
+        },
+    ]);
+
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            Err(Ok(Value::Status("PONG".into())))
+        },
+    );
+
+    let res = connection.req_command(&redis::cmd("PING"));
+    assert!(res.is_ok());
+}
+
 #[cfg(feature = "tls-rustls")]
 mod mtls_test {
     use super::*;

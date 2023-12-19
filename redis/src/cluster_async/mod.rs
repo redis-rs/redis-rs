@@ -57,8 +57,6 @@ use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-const SLOT_SIZE: usize = 16384;
-
 /// This represents an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
@@ -547,7 +545,7 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, inner.cluster_params.tls).and_then(|v| {
+                match parse_slots(value, inner.cluster_params.tls).and_then(|v: Vec<Slot>| {
                     Self::build_slot_map(slots, v, inner.cluster_params.read_from_replicas)
                 }) {
                     Ok(_) => {
@@ -587,33 +585,9 @@ where
 
     fn build_slot_map(
         slot_map: &mut SlotMap,
-        mut slots_data: Vec<Slot>,
+        slots_data: Vec<Slot>,
         read_from_replicas: bool,
     ) -> RedisResult<()> {
-        slots_data.sort_by_key(|slot_data| slot_data.start());
-        let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
-            if prev_end != slot_data.start() {
-                return Err(RedisError::from((
-                    ErrorKind::ResponseError,
-                    "Slot refresh error.",
-                    format!(
-                        "Received overlapping slots {} and {}..{}",
-                        prev_end,
-                        slot_data.start(),
-                        slot_data.end()
-                    ),
-                )));
-            }
-            Ok(slot_data.end() + 1)
-        })?;
-
-        if usize::from(last_slot) != SLOT_SIZE {
-            return Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                format!("Lacks the slots >= {last_slot}"),
-            )));
-        }
         slot_map.clear();
         slot_map.fill_slots(&slots_data, read_from_replicas);
         trace!("{:?}", slot_map);
