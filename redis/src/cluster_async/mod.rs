@@ -173,7 +173,7 @@ where
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
                     offset,
                     count,
-                    route,
+                    route: InternalRouting::RoutingInfo(route),
                 },
                 sender,
             })
@@ -232,6 +232,13 @@ enum CommandRouting<C> {
         identifier: ConnectionIdentifier,
         conn: ConnectionFuture<C>,
     },
+    Redirect(Redirect),
+}
+
+#[derive(Clone)]
+enum InternalRouting {
+    RoutingInfo(SingleNodeRoutingInfo),
+    Redirect(Redirect),
 }
 
 #[derive(Clone)]
@@ -244,7 +251,7 @@ enum CmdArg<C> {
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        route: SingleNodeRoutingInfo,
+        route: InternalRouting,
     },
 }
 
@@ -326,7 +333,21 @@ impl fmt::Debug for ConnectionState {
 #[derive(Clone)]
 struct RequestInfo<C> {
     cmd: CmdArg<C>,
-    redirect: Option<Redirect>,
+}
+
+impl<C> RequestInfo<C> {
+    fn set_redirect(&mut self, redirect: Option<Redirect>) {
+        if let Some(redirect) = redirect {
+            match &mut self.cmd {
+                CmdArg::Cmd { routing, .. } => {
+                    *routing = CommandRouting::Redirect(redirect);
+                }
+                CmdArg::Pipeline { route, .. } => {
+                    *route = InternalRouting::Redirect(redirect);
+                }
+            }
+        }
+    }
 }
 
 pin_project! {
@@ -424,16 +445,18 @@ where
                 match err.kind() {
                     ErrorKind::Ask => {
                         let mut request = this.request.take().unwrap();
-                        request.info.redirect = err
-                            .redirect_node()
-                            .map(|(node, _slot)| Redirect::Ask(node.to_string()));
+                        request.info.set_redirect(
+                            err.redirect_node()
+                                .map(|(node, _slot)| Redirect::Ask(node.to_string())),
+                        );
                         Next::Retry { request }.into()
                     }
                     ErrorKind::Moved => {
                         let mut request = this.request.take().unwrap();
-                        request.info.redirect = err
-                            .redirect_node()
-                            .map(|(node, _slot)| Redirect::Moved(node.to_string()));
+                        request.info.set_redirect(
+                            err.redirect_node()
+                                .map(|(node, _slot)| Redirect::Moved(node.to_string())),
+                        );
                         Next::RefreshSlots { request }.into()
                     }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
@@ -963,7 +986,6 @@ where
                                                     conn,
                                                 },
                                             },
-                                            redirect: None,
                                         },
                                     },
                                 )
@@ -1014,48 +1036,40 @@ where
 
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
-        redirect: Option<Redirect>,
         routing: CommandRouting<C>,
         core: Core<C>,
-        asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route_option = if redirect.is_some() {
-            // if we have a redirect, we don't take info from `routing`.
-            // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
-            SingleNodeRoutingInfo::Random
-        } else {
-            match routing {
-                // commands that are sent to multiple nodes are handled here.
-                CommandRouting::Route(RoutingInfo::MultiNode((
-                    multi_node_routing,
+        let routing = match routing {
+            // commands that are sent to multiple nodes are handled here.
+            CommandRouting::Route(RoutingInfo::MultiNode((
+                multi_node_routing,
+                response_policy,
+            ))) => {
+                return Self::execute_on_multiple_nodes(
+                    &cmd,
+                    &multi_node_routing,
+                    core,
                     response_policy,
-                ))) => {
-                    assert!(!asking);
-                    assert!(redirect.is_none());
-                    return Self::execute_on_multiple_nodes(
-                        &cmd,
-                        &multi_node_routing,
-                        core,
-                        response_policy,
-                    )
-                    .await;
-                }
-
-                // commands that have concrete connections, and don't require redirection, are handled here.
-                CommandRouting::Connection { identifier, conn } => {
-                    let mut conn = conn.await;
-                    let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-                    return (identifier.into(), result);
-                }
-                CommandRouting::Route(RoutingInfo::SingleNode(routing_info)) => routing_info,
+                )
+                .await;
             }
+
+            // commands that have concrete connections, and don't require redirection, are handled here.
+            CommandRouting::Connection { identifier, conn } => {
+                let mut conn = conn.await;
+                let result = conn.req_packed_command(&cmd).await.map(Response::Single);
+                return (identifier.into(), result);
+            }
+            CommandRouting::Route(RoutingInfo::SingleNode(routing_info)) => {
+                InternalRouting::RoutingInfo(routing_info)
+            }
+            CommandRouting::Redirect(redirect) => InternalRouting::Redirect(redirect),
         };
         trace!("route request to single node");
 
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
-        let (identifier, mut conn) =
-            Self::get_connection(redirect, route_option, core, asking).await;
+        let (identifier, mut conn) = Self::get_connection(routing, core).await;
         let result = conn.req_packed_command(&cmd).await.map(Response::Single);
         (identifier.into(), result)
     }
@@ -1079,12 +1093,8 @@ where
         info: RequestInfo<C>,
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
-
         match info.cmd {
-            CmdArg::Cmd { cmd, routing } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, core, asking).await
-            }
+            CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
             CmdArg::Pipeline {
                 pipeline,
                 offset,
@@ -1095,35 +1105,31 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(info.redirect, route, core, asking),
+                    Self::get_connection(route, core),
                 )
                 .await
             }
         }
     }
 
-    async fn get_connection(
-        mut redirect: Option<Redirect>,
-        route: SingleNodeRoutingInfo,
-        core: Core<C>,
-        asking: bool,
-    ) -> (ConnectionIdentifier, C) {
+    async fn get_connection(routing: InternalRouting, core: Core<C>) -> (ConnectionIdentifier, C) {
         let read_guard = core.conn_lock.read().await;
+        let asking = matches!(routing, InternalRouting::Redirect(Redirect::Ask(_)));
 
-        let conn_check = match redirect.take() {
-            Some(Redirect::Moved(moved_addr)) => read_guard
+        let conn_check = match routing {
+            InternalRouting::Redirect(Redirect::Moved(moved_addr)) => read_guard
                 .connection_for_address(moved_addr.as_str())
                 .map_or(
                     ConnectionCheck::OnlyAddress(moved_addr),
                     ConnectionCheck::Found,
                 ),
-            Some(Redirect::Ask(ask_addr)) => {
+            InternalRouting::Redirect(Redirect::Ask(ask_addr)) => {
                 read_guard.connection_for_address(ask_addr.as_str()).map_or(
                     ConnectionCheck::OnlyAddress(ask_addr),
                     ConnectionCheck::Found,
                 )
             }
-            None => match route {
+            InternalRouting::RoutingInfo(route) => match route {
                 SingleNodeRoutingInfo::SpecificNode(route) => read_guard
                     .connection_for_route(&route)
                     .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
@@ -1404,8 +1410,7 @@ where
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
         let Message { cmd, sender } = msg;
 
-        let redirect = None;
-        let info = RequestInfo { cmd, redirect };
+        let info = RequestInfo { cmd };
 
         self.inner
             .pending_requests
