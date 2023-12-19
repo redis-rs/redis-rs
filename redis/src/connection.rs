@@ -936,13 +936,13 @@ pub(crate) fn client_set_info_pipeline() -> Pipeline {
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-NAME")
-        .arg(std::env!("BABUSHKA_NAME"))
+        .arg(std::env!("GLIDE_NAME"))
         .ignore();
     pipeline
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-VER")
-        .arg(std::env!("BABUSHKA_VERSION"))
+        .arg(std::env!("GLIDE_VERSION"))
         .ignore();
     pipeline
 }
