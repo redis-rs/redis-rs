@@ -1,7 +1,7 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
 use crate::cluster::get_connection_addr;
-use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, Slot, SlotAddr, SlotAddrs};
+use crate::cluster_routing::{Route, Slot, SlotAddr, SlotAddrs};
 use crate::{cluster::TlsMode, ErrorKind, RedisError, RedisResult, Value};
 use derivative::Derivative;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
@@ -153,19 +153,24 @@ impl SlotMap {
         addresses
     }
 
-    pub fn addresses_for_multi_routing(&self, routing: &MultipleNodeRoutingInfo) -> Vec<&str> {
-        match routing {
-            MultipleNodeRoutingInfo::AllNodes => {
-                self.all_unique_addresses(false).into_iter().collect()
-            }
-            MultipleNodeRoutingInfo::AllMasters => {
-                self.all_unique_addresses(true).into_iter().collect()
-            }
-            MultipleNodeRoutingInfo::MultiSlot(routes) => routes
-                .iter()
-                .flat_map(|(route, _)| self.slot_addr_for_route(route))
-                .collect(),
-        }
+    pub fn addresses_for_all_primaries(&self) -> HashSet<&str> {
+        self.all_unique_addresses(true)
+    }
+
+    pub fn addresses_for_all_nodes(&self) -> HashSet<&str> {
+        self.all_unique_addresses(false)
+    }
+
+    pub fn addresses_for_multi_slot<'a, 'b>(
+        &'a self,
+        routes: &'b [(Route, Vec<usize>)],
+    ) -> impl Iterator<Item = Option<&'a str>> + 'a
+    where
+        'b: 'a,
+    {
+        routes
+            .iter()
+            .map(|(route, _)| self.slot_addr_for_route(route))
     }
 }
 
@@ -725,21 +730,20 @@ mod tests {
     #[test]
     fn test_slot_map_get_all_primaries() {
         let slot_map = get_slot_map(ReadFromReplicaStrategy::AlwaysFromPrimary);
-        let mut addresses =
-            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllMasters);
-        addresses.sort();
-        assert_eq!(addresses, vec!["node1:6379", "node2:6379", "node3:6379"]);
+        let addresses = slot_map.addresses_for_all_primaries();
+        assert_eq!(
+            addresses,
+            HashSet::from_iter(["node1:6379", "node2:6379", "node3:6379"])
+        );
     }
 
     #[test]
     fn test_slot_map_get_all_nodes() {
         let slot_map = get_slot_map(ReadFromReplicaStrategy::AlwaysFromPrimary);
-        let mut addresses =
-            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllNodes);
-        addresses.sort();
+        let addresses = slot_map.addresses_for_all_nodes();
         assert_eq!(
             addresses,
-            vec![
+            HashSet::from_iter([
                 "node1:6379",
                 "node2:6379",
                 "node3:6379",
@@ -749,24 +753,72 @@ mod tests {
                 "replica4:6379",
                 "replica5:6379",
                 "replica6:6379"
-            ]
+            ])
         );
     }
 
     #[test]
     fn test_slot_map_get_multi_node() {
         let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
-        let mut addresses =
-            slot_map.addresses_for_multi_routing(&MultipleNodeRoutingInfo::MultiSlot(vec![
-                (Route::new(1, SlotAddr::Master), vec![]),
-                (Route::new(2001, SlotAddr::ReplicaOptional), vec![]),
-            ]));
-        addresses.sort();
-        assert!(addresses.contains(&"node1:6379"));
+        let routes = vec![
+            (Route::new(1, SlotAddr::Master), vec![]),
+            (Route::new(2001, SlotAddr::ReplicaOptional), vec![]),
+        ];
+        let addresses = slot_map
+            .addresses_for_multi_slot(&routes)
+            .collect::<Vec<_>>();
+        assert!(addresses.contains(&Some("node1:6379")));
         assert!(
-            addresses.contains(&"replica4:6379")
-                || addresses.contains(&"replica5:6379")
-                || addresses.contains(&"replica6:6379")
+            addresses.contains(&Some("replica4:6379"))
+                || addresses.contains(&Some("replica5:6379"))
+                || addresses.contains(&Some("replica6:6379"))
+        );
+    }
+
+    /// This test is needed in order to verify that if the MultiSlot route finds the same node for more than a single route,
+    /// that node's address will appear multiple times, in the same order.
+    #[test]
+    fn test_slot_map_get_repeating_addresses_when_the_same_node_is_found_in_multi_slot() {
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
+        let routes = vec![
+            (Route::new(1, SlotAddr::ReplicaOptional), vec![]),
+            (Route::new(2001, SlotAddr::Master), vec![]),
+            (Route::new(2, SlotAddr::ReplicaOptional), vec![]),
+            (Route::new(2002, SlotAddr::Master), vec![]),
+            (Route::new(3, SlotAddr::ReplicaOptional), vec![]),
+            (Route::new(2003, SlotAddr::Master), vec![]),
+        ];
+        let addresses = slot_map
+            .addresses_for_multi_slot(&routes)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            addresses,
+            vec![
+                Some("replica1:6379"),
+                Some("node3:6379"),
+                Some("replica1:6379"),
+                Some("node3:6379"),
+                Some("replica1:6379"),
+                Some("node3:6379")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_slot_map_get_none_when_slot_is_missing_from_multi_slot() {
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::RoundRobin);
+        let routes = vec![
+            (Route::new(1, SlotAddr::ReplicaOptional), vec![]),
+            (Route::new(5000, SlotAddr::Master), vec![]),
+            (Route::new(6000, SlotAddr::ReplicaOptional), vec![]),
+            (Route::new(2002, SlotAddr::Master), vec![]),
+        ];
+        let addresses = slot_map
+            .addresses_for_multi_slot(&routes)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            addresses,
+            vec![Some("replica1:6379"), None, None, Some("node3:6379")]
         );
     }
 

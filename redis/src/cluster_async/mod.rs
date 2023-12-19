@@ -986,6 +986,7 @@ where
                 &connections_container,
             ),
             MultipleNodeRoutingInfo::MultiSlot(slots) => into_channels(
+                // TODO - this filter_map means that missing addresses are silently ignored.
                 slots.iter().filter_map(|(route, indices)| {
                     connections_container
                         .connection_for_route(route)
