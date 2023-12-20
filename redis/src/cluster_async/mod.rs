@@ -44,8 +44,8 @@ use crate::{
     cluster_async::connections_container::ClusterNode,
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
-        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo, SlotAddr,
+        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, SingleNodeRoutingInfo,
+        SlotAddr,
     },
     cluster_topology::{
         calculate_topology, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
@@ -126,14 +126,18 @@ where
     }
 
     /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
-    pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
+    pub async fn route_command(
+        &mut self,
+        cmd: &Cmd,
+        routing: cluster_routing::RoutingInfo,
+    ) -> RedisResult<Value> {
         trace!("route_command");
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    routing: CommandRouting::Route(routing),
+                    routing: routing.into(),
                 },
                 sender,
             })
@@ -173,7 +177,7 @@ where
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
                     offset,
                     count,
-                    route: InternalRouting::RoutingInfo(route),
+                    route: route.into(),
                 },
                 sender,
             })
@@ -226,8 +230,34 @@ impl<C> Dispose for ClusterConnInner<C> {
 }
 
 #[derive(Clone)]
-enum CommandRouting<C> {
-    Route(RoutingInfo),
+enum InternalRoutingInfo<C> {
+    SingleNode(InternalSingleNodeRouting<C>),
+    MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
+}
+
+impl<C> From<cluster_routing::RoutingInfo> for InternalRoutingInfo<C> {
+    fn from(value: cluster_routing::RoutingInfo) -> Self {
+        match value {
+            cluster_routing::RoutingInfo::SingleNode(route) => {
+                InternalRoutingInfo::SingleNode(route.into())
+            }
+            cluster_routing::RoutingInfo::MultiNode(routes) => {
+                InternalRoutingInfo::MultiNode(routes)
+            }
+        }
+    }
+}
+
+impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
+    fn from(value: InternalSingleNodeRouting<C>) -> Self {
+        InternalRoutingInfo::SingleNode(value)
+    }
+}
+
+#[derive(Clone)]
+enum InternalSingleNodeRouting<C> {
+    Random,
+    SpecificNode(Route),
     Connection {
         identifier: ConnectionIdentifier,
         conn: ConnectionFuture<C>,
@@ -235,34 +265,39 @@ enum CommandRouting<C> {
     Redirect(Redirect),
 }
 
-#[derive(Clone)]
-enum InternalRouting {
-    RoutingInfo(SingleNodeRoutingInfo),
-    Redirect(Redirect),
+impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
+    fn from(value: SingleNodeRoutingInfo) -> Self {
+        match value {
+            SingleNodeRoutingInfo::Random => InternalSingleNodeRouting::Random,
+            SingleNodeRoutingInfo::SpecificNode(route) => {
+                InternalSingleNodeRouting::SpecificNode(route)
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
-        routing: CommandRouting<C>,
+        routing: InternalRoutingInfo<C>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        route: InternalRouting,
+        route: InternalSingleNodeRouting<C>,
     },
 }
 
 fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
-        match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
-                Some(route)
-            }
-            Some(RoutingInfo::MultiNode(_)) => None,
+        match cluster_routing::RoutingInfo::for_routable(cmd) {
+            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(cluster_routing::RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(route),
+            )) => Some(route),
+            Some(cluster_routing::RoutingInfo::MultiNode(_)) => None,
             None => None,
         }
     }
@@ -338,12 +373,13 @@ struct RequestInfo<C> {
 impl<C> RequestInfo<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
+            let redirect = InternalSingleNodeRouting::Redirect(redirect);
             match &mut self.cmd {
                 CmdArg::Cmd { routing, .. } => {
-                    *routing = CommandRouting::Redirect(redirect);
+                    *routing = redirect.into();
                 }
                 CmdArg::Pipeline { route, .. } => {
-                    *route = InternalRouting::Redirect(redirect);
+                    *route = redirect;
                 }
             }
         }
@@ -981,10 +1017,10 @@ where
                                         info: RequestInfo {
                                             cmd: CmdArg::Cmd {
                                                 cmd,
-                                                routing: CommandRouting::Connection {
+                                                routing: InternalSingleNodeRouting::Connection {
                                                     identifier,
                                                     conn,
-                                                },
+                                                }.into(),
                                             },
                                         },
                                     },
@@ -1036,15 +1072,12 @@ where
 
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
-        routing: CommandRouting<C>,
+        routing: InternalRoutingInfo<C>,
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let routing = match routing {
             // commands that are sent to multiple nodes are handled here.
-            CommandRouting::Route(RoutingInfo::MultiNode((
-                multi_node_routing,
-                response_policy,
-            ))) => {
+            InternalRoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
                 return Self::execute_on_multiple_nodes(
                     &cmd,
                     &multi_node_routing,
@@ -1054,16 +1087,7 @@ where
                 .await;
             }
 
-            // commands that have concrete connections, and don't require redirection, are handled here.
-            CommandRouting::Connection { identifier, conn } => {
-                let mut conn = conn.await;
-                let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-                return (identifier.into(), result);
-            }
-            CommandRouting::Route(RoutingInfo::SingleNode(routing_info)) => {
-                InternalRouting::RoutingInfo(routing_info)
-            }
-            CommandRouting::Redirect(redirect) => InternalRouting::Redirect(redirect),
+            InternalRoutingInfo::SingleNode(routing) => routing,
         };
         trace!("route request to single node");
 
@@ -1112,29 +1136,34 @@ where
         }
     }
 
-    async fn get_connection(routing: InternalRouting, core: Core<C>) -> (ConnectionIdentifier, C) {
+    async fn get_connection(
+        routing: InternalSingleNodeRouting<C>,
+        core: Core<C>,
+    ) -> (ConnectionIdentifier, C) {
         let read_guard = core.conn_lock.read().await;
-        let asking = matches!(routing, InternalRouting::Redirect(Redirect::Ask(_)));
+        let mut asking = false;
 
         let conn_check = match routing {
-            InternalRouting::Redirect(Redirect::Moved(moved_addr)) => read_guard
+            InternalSingleNodeRouting::Redirect(Redirect::Moved(moved_addr)) => read_guard
                 .connection_for_address(moved_addr.as_str())
                 .map_or(
                     ConnectionCheck::OnlyAddress(moved_addr),
                     ConnectionCheck::Found,
                 ),
-            InternalRouting::Redirect(Redirect::Ask(ask_addr)) => {
+            InternalSingleNodeRouting::Redirect(Redirect::Ask(ask_addr)) => {
+                asking = true;
                 read_guard.connection_for_address(ask_addr.as_str()).map_or(
                     ConnectionCheck::OnlyAddress(ask_addr),
                     ConnectionCheck::Found,
                 )
             }
-            InternalRouting::RoutingInfo(route) => match route {
-                SingleNodeRoutingInfo::SpecificNode(route) => read_guard
-                    .connection_for_route(&route)
-                    .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
-                SingleNodeRoutingInfo::Random => ConnectionCheck::Nothing,
-            },
+            InternalSingleNodeRouting::SpecificNode(route) => read_guard
+                .connection_for_route(&route)
+                .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
+            InternalSingleNodeRouting::Random => ConnectionCheck::Nothing,
+            InternalSingleNodeRouting::Connection { identifier, conn } => {
+                return (identifier, conn.await);
+            }
         };
         drop(read_guard);
 
@@ -1495,8 +1524,9 @@ where
     C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        let routing = RoutingInfo::for_routable(cmd)
-            .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+        let routing = cluster_routing::RoutingInfo::for_routable(cmd).unwrap_or(
+            cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
+        );
         self.route_command(cmd, routing).boxed()
     }
 
