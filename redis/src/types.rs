@@ -189,19 +189,7 @@ impl Value {
                 if items.len() != 2 {
                     return false;
                 }
-                match items[0] {
-                    Value::Data(_) => {}
-                    _ => {
-                        return false;
-                    }
-                };
-                match items[1] {
-                    Value::Bulk(_) => {}
-                    _ => {
-                        return false;
-                    }
-                }
-                true
+                matches!(items[0], Value::Data(_)) && matches!(items[1], Value::Bulk(_))
             }
             _ => false,
         }
@@ -718,8 +706,10 @@ impl InfoDict {
                 continue;
             }
             let mut p = line.splitn(2, ':');
-            let k = unwrap_or!(p.next(), continue).to_string();
-            let v = unwrap_or!(p.next(), continue).to_string();
+            let (k, v) = match (p.next(), p.next()) {
+                (Some(k), Some(v)) => (k.to_string(), v.to_string()),
+                _ => continue,
+            };
             map.insert(k, Value::Status(v));
         }
         InfoDict { map }

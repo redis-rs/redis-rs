@@ -351,10 +351,9 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         redis: RedisConnectionInfo {
             db: match url.path().trim_matches('/') {
                 "" => 0,
-                path => unwrap_or!(
-                    path.parse::<i64>().ok(),
-                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-                ),
+                path => path.parse::<i64>().map_err(|_| -> RedisError {
+                    (ErrorKind::InvalidClientConfig, "Invalid database number").into()
+                })?,
             },
             username: if url.username().is_empty() {
                 None
@@ -385,16 +384,15 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let query: HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
-        addr: ConnectionAddr::Unix(unwrap_or!(
-            url.to_file_path().ok(),
-            fail!((ErrorKind::InvalidClientConfig, "Missing path"))
-        )),
+        addr: ConnectionAddr::Unix(url.to_file_path().map_err(|_| -> RedisError {
+            (ErrorKind::InvalidClientConfig, "Missing path").into()
+        })?),
         redis: RedisConnectionInfo {
             db: match query.get("db") {
-                Some(db) => unwrap_or!(
-                    db.parse::<i64>().ok(),
-                    fail!((ErrorKind::InvalidClientConfig, "Invalid database number"))
-                ),
+                Some(db) => db.parse::<i64>().map_err(|_| -> RedisError {
+                    (ErrorKind::InvalidClientConfig, "Invalid database number").into()
+                })?,
+
                 None => 0,
             },
             username: query.get("user").map(|username| username.to_string()),
