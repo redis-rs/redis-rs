@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use arcstr::ArcStr;
 use rand::seq::IteratorRandom;
 
-use crate::cluster_routing::{MultipleNodeRoutingInfo, Route, SlotAddr};
+use crate::cluster_routing::{Route, SlotAddr};
 use crate::cluster_topology::{ReadFromReplicaStrategy, SlotMap, SlotMapValue, TopologyHash};
 
 type IdentifierType = ArcStr;
@@ -160,7 +160,7 @@ where
         &self,
     ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
         self.slot_map
-            .addresses_for_multi_routing(&MultipleNodeRoutingInfo::AllMasters) // TODO - this involves allocating a hash set and a vec. can this be avoided?
+            .addresses_for_all_primaries()
             .into_iter()
             .flat_map(|addr| self.connection_for_address(addr))
     }

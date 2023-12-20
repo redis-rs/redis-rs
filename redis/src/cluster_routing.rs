@@ -88,10 +88,13 @@ pub enum MultipleNodeRoutingInfo {
 
 /// Takes a routable and an iterator of indices, which is assued to be created from`MultipleNodeRoutingInfo::MultiSlot`,
 /// and returns a command with the arguments matching the indices.
-pub fn command_for_multi_slot_indices<'a>(
+pub fn command_for_multi_slot_indices<'a, 'b>(
     original_cmd: &'a impl Routable,
-    indices: impl Iterator<Item = &'a usize> + 'a,
-) -> Cmd {
+    indices: impl Iterator<Item = &'b usize> + 'a,
+) -> Cmd
+where
+    'b: 'a,
+{
     let mut new_cmd = Cmd::new();
     let command_length = 1; // TODO - the +1 should change if we have multi-slot commands with 2 command words.
     new_cmd.arg(original_cmd.arg_idx(0));
