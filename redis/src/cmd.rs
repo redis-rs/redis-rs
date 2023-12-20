@@ -57,12 +57,9 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
                 return None;
             }
 
-            let pcmd = unwrap_or!(
-                self.cmd.get_packed_command_with_cursor(self.cursor),
-                return None
-            );
-            let rv = unwrap_or!(self.con.req_packed_command(&pcmd).ok(), return None);
-            let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
+            let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
+            let rv = self.con.req_packed_command(&pcmd).ok()?;
+            let (cur, batch): (u64, Vec<T>) = from_redis_value(&rv).ok()?;
 
             self.cursor = cur;
             self.batch = batch.into_iter();
@@ -115,11 +112,8 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 return None;
             }
 
-            let rv = unwrap_or!(
-                self.con.req_packed_command(&self.cmd).await.ok(),
-                return None
-            );
-            let (cur, batch): (u64, Vec<T>) = unwrap_or!(from_redis_value(&rv).ok(), return None);
+            let rv = self.con.req_packed_command(&self.cmd).await.ok()?;
+            let (cur, batch): (u64, Vec<T>) = from_redis_value(&rv).ok()?;
 
             self.cmd.cursor = Some(cur);
             self.batch = batch.into_iter();
