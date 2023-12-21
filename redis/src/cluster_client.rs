@@ -17,6 +17,7 @@ struct BuilderParams {
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     retries: Option<u32>,
+    use_resp3: bool,
 }
 
 /// Redis cluster specific parameters.
@@ -30,6 +31,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retries: u32,
+    pub(crate) use_resp3: bool,
 }
 
 impl From<BuilderParams> for ClusterParams {
@@ -40,6 +42,7 @@ impl From<BuilderParams> for ClusterParams {
             read_from_replicas: value.read_from_replicas,
             tls: value.tls,
             retries: value.retries.unwrap_or(DEFAULT_RETRIES),
+            use_resp3: value.use_resp3,
         }
     }
 }
@@ -176,6 +179,14 @@ impl ClusterClientBuilder {
     /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = true;
+        self
+    }
+
+    /// Sets whether the new ClusterClient should connect to the servers using RESP3.
+    ///
+    /// If not set, the default is to use RESP2.
+    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
+        self.builder_params.use_resp3 = use_resp3;
         self
     }
 
