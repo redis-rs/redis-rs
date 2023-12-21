@@ -10,7 +10,7 @@ use crate::connection::{
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
-use crate::{from_redis_value, ToRedisArgs};
+use crate::{from_redis_value, ProtocolVersion, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -39,8 +39,8 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     // exit the pubsub state before executing the new request.
     pubsub: bool,
 
-    // Flag indicating whether resp3 mode is enabled.
-    resp3: bool,
+    // Field indicating which protocol to use for server communications.
+    protocol: ProtocolVersion,
 }
 
 fn assert_sync<T: Sync>() {}
@@ -58,7 +58,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
-            resp3,
+            protocol,
         } = self;
         Connection {
             con: f(con),
@@ -66,7 +66,7 @@ impl<C> Connection<C> {
             decoder,
             db,
             pubsub,
-            resp3,
+            protocol,
         }
     }
 }
@@ -84,7 +84,7 @@ where
             decoder: combine::stream::Decoder::new(),
             db: connection_info.db,
             pubsub: false,
-            resp3: connection_info.use_resp3,
+            protocol: connection_info.protocol,
         };
         authenticate(connection_info, &mut rv).await?;
         Ok(rv)
@@ -151,7 +151,7 @@ where
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        if self.resp3 {
+        if self.protocol == ProtocolVersion::RESP3 {
             while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
                 if data.len() >= 2 {
                     if let Value::Int(num) = data[1] {
@@ -314,7 +314,7 @@ where
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
-        if self.0.resp3 {
+        if self.0.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -324,7 +324,7 @@ where
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.0.resp3 {
+        if self.0.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -334,7 +334,7 @@ where
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel);
-        if self.0.resp3 {
+        if self.0.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -344,7 +344,7 @@ where
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.0.resp3 {
+        if self.0.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await

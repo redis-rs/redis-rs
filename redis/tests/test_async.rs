@@ -468,10 +468,8 @@ async fn invalid_password_issue_343() {
     let coninfo = redis::ConnectionInfo {
         addr: ctx.server.client_addr().clone(),
         redis: redis::RedisConnectionInfo {
-            db: 0,
-            username: None,
             password: Some("asdcasc".to_string()),
-            use_resp3: false,
+            ..Default::default()
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
@@ -527,6 +525,8 @@ async fn test_issue_async_commands_scan_broken() {
 mod pub_sub {
     use std::collections::HashMap;
     use std::time::Duration;
+
+    use redis::ProtocolVersion;
 
     use super::*;
 
@@ -668,7 +668,7 @@ mod pub_sub {
         use redis::RedisError;
 
         let ctx = TestContext::new();
-        if !ctx.use_resp3 {
+        if ctx.protocol == ProtocolVersion::RESP2 {
             return;
         }
         block_on_all(async move {
@@ -719,7 +719,7 @@ mod pub_sub {
         use redis::RedisError;
 
         let ctx = TestContext::new();
-        if !ctx.use_resp3 {
+        if ctx.protocol == ProtocolVersion::RESP2 {
             return;
         }
         block_on_all(async move {
@@ -768,6 +768,8 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 #[test]
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
+    use redis::ProtocolVersion;
+
     let ctx = TestContext::new();
 
     block_on_all(async move {
@@ -781,7 +783,7 @@ fn test_connection_manager_reconnect_after_delay() {
         drop(server);
 
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
-        if ctx.use_resp3 {
+        if ctx.protocol != ProtocolVersion::RESP2 {
             assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -797,8 +799,10 @@ fn test_connection_manager_reconnect_after_delay() {
 #[test]
 #[cfg(feature = "connection-manager")]
 fn test_push_manager_cm() {
+    use redis::ProtocolVersion;
+
     let ctx = TestContext::new();
-    if !ctx.use_resp3 {
+    if ctx.protocol == ProtocolVersion::RESP2 {
         return;
     }
 

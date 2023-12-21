@@ -1,6 +1,6 @@
 #![allow(clippy::let_unit_value)]
 
-use redis::{cmd, PushInfo};
+use redis::{cmd, ProtocolVersion, PushInfo};
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, Expiry, PubSubCommands,
     PushKind, RedisResult, Value,
@@ -1112,6 +1112,8 @@ fn test_zrembylex() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn test_zrandmember() {
+    use redis::ProtocolVersion;
+
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
@@ -1143,7 +1145,7 @@ fn test_zrandmember() {
     let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
     assert_eq!(results.len(), 5);
 
-    if !ctx.use_resp3 {
+    if ctx.protocol == ProtocolVersion::RESP2 {
         let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
         assert_eq!(results.len(), 10);
 
@@ -1239,7 +1241,7 @@ fn test_multi_generics() {
 #[test]
 fn test_push_manager() {
     let ctx = TestContext::new();
-    if !ctx.use_resp3 {
+    if ctx.protocol == ProtocolVersion::RESP2 {
         return;
     }
     let mut con = ctx.connection();
@@ -1290,7 +1292,7 @@ fn test_push_manager() {
 #[test]
 fn test_push_manager_disconnection() {
     let ctx = TestContext::new();
-    if !ctx.use_resp3 {
+    if ctx.protocol == ProtocolVersion::RESP2 {
         return;
     }
     let mut con = ctx.connection();

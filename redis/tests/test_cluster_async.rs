@@ -14,7 +14,7 @@ use redis::{
     cluster::ClusterClient,
     cluster_async::Connect,
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    RedisError, RedisFuture, RedisResult, Script, Value,
+    ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -82,7 +82,7 @@ fn test_async_cluster_basic_script() {
 
 #[test]
 fn test_cluster_resp3() {
-    if !use_resp3() {
+    if use_protocol() == ProtocolVersion::RESP2 {
         return;
     }
     block_on_all(async move {

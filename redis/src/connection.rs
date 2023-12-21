@@ -5,6 +5,7 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
     Value,
 };
+use crate::ProtocolVersion;
 use std::fmt;
 use std::io::{self, Write};
 use std::net::{self, TcpStream, ToSocketAddrs};
@@ -132,8 +133,8 @@ pub struct RedisConnectionInfo {
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub password: Option<String>,
-    /// Use RESP 3 mode, Redis 6 or newer is required.
-    pub use_resp3: bool,
+    /// Version of the protocol to use.
+    pub protocol: ProtocolVersion,
 }
 
 impl FromStr for ConnectionInfo {
@@ -272,9 +273,15 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 },
                 None => None,
             },
-            use_resp3: match query.get("resp3") {
-                Some(v) => v == "true",
-                _ => false,
+            protocol: match query.get("resp3") {
+                Some(v) => {
+                    if v == "true" {
+                        ProtocolVersion::RESP3
+                    } else {
+                        ProtocolVersion::RESP2
+                    }
+                }
+                _ => ProtocolVersion::RESP2,
             },
         },
     })
@@ -298,9 +305,15 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
-            use_resp3: match query.get("resp3") {
-                Some(v) => v == "true",
-                _ => false,
+            protocol: match query.get("resp3") {
+                Some(v) => {
+                    if v == "true" {
+                        ProtocolVersion::RESP3
+                    } else {
+                        ProtocolVersion::RESP2
+                    }
+                }
+                _ => ProtocolVersion::RESP2,
             },
         },
     })
@@ -390,8 +403,8 @@ pub struct Connection {
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
 
-    // Flag indicating whether resp3 mode is enabled.
-    resp3: bool,
+    // Field indicating which protocol to use for server communications.
+    protocol: ProtocolVersion,
 
     /// `PushManager` instance for the connection.
     /// This is used to manage Push messages in RESP3 mode.
@@ -792,11 +805,11 @@ fn setup_connection(
         parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
-        resp3: connection_info.use_resp3,
+        protocol: connection_info.protocol,
         push_manager: PushManager::new(),
     };
 
-    if connection_info.use_resp3 {
+    if connection_info.protocol != ProtocolVersion::RESP2 {
         let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query(&mut rv);
         if let Err(err) = val {
@@ -965,7 +978,7 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        if self.resp3 {
+        if self.protocol == ProtocolVersion::RESP3 {
             while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
                 if data.len() >= 2 {
                     if let Value::Int(num) = data[1] {
@@ -1073,7 +1086,7 @@ impl Connection {
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let result = self.con.send_bytes(bytes);
-        if self.resp3 {
+        if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
@@ -1255,7 +1268,7 @@ impl<'a> PubSub<'a> {
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
-        if self.con.resp3 {
+        if self.con.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query(self.con)
@@ -1265,7 +1278,7 @@ impl<'a> PubSub<'a> {
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.con.resp3 {
+        if self.con.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query(self.con)
@@ -1275,7 +1288,7 @@ impl<'a> PubSub<'a> {
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel);
-        if self.con.resp3 {
+        if self.con.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query(self.con)
@@ -1285,7 +1298,7 @@ impl<'a> PubSub<'a> {
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.con.resp3 {
+        if self.con.protocol == ProtocolVersion::RESP3 {
             cmd.set_no_response(true);
         }
         cmd.query(self.con)
@@ -1597,7 +1610,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
-                        use_resp3: false,
+                        ..Default::default()
                     },
                 },
             ),
@@ -1664,7 +1677,7 @@ mod tests {
                         db: 0,
                         username: None,
                         password: None,
-                        use_resp3: false,
+                        protocol: ProtocolVersion::RESP2,
                     },
                 },
             ),
@@ -1674,9 +1687,7 @@ mod tests {
                     addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 1,
-                        username: None,
-                        password: None,
-                        use_resp3: false,
+                        ..Default::default()
                     },
                 },
             ),
@@ -1691,7 +1702,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
-                        use_resp3: false,
+                        ..Default::default()
                     },
                 },
             ),
@@ -1706,7 +1717,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
-                        use_resp3: false,
+                        ..Default::default()
                     },
                 },
             ),

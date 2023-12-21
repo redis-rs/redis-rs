@@ -1,7 +1,7 @@
 //! Adds async IO support to redis.
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{get_resp3_hello_command_error, RedisConnectionInfo};
-use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
+use crate::types::{ErrorKind, ProtocolVersion, RedisFuture, RedisResult, Value};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite};
@@ -78,7 +78,7 @@ async fn authenticate<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> 
 where
     C: ConnectionLike,
 {
-    if connection_info.use_resp3 {
+    if connection_info.protocol != ProtocolVersion::RESP2 {
         let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query_async(con).await;
         if let Err(err) = val {
