@@ -468,11 +468,8 @@ async fn invalid_password_issue_343() {
     let coninfo = redis::ConnectionInfo {
         addr: ctx.server.client_addr().clone(),
         redis: redis::RedisConnectionInfo {
-            db: 0,
-            username: None,
             password: Some("asdcasc".to_string()),
-            use_resp3: false,
-            client_name: None,
+            ..Default::default()
         },
     };
     let client = redis::Client::open(coninfo).unwrap();

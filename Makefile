@@ -16,7 +16,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP3"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test -p redis --all-features -- --nocapture --test-threads=1  --skip test_module
+	@REDISRS_SERVER_TYPE=tcp PROTOCOL=RESP3 cargo test -p redis --all-features -- --nocapture --test-threads=1  --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
