@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use redis::cluster_routing::Route;
 use redis::cluster_routing::SingleNodeRoutingInfo;
 use redis::cluster_routing::SlotAddr;
+use redis::ProtocolVersion;
 
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
@@ -205,7 +206,7 @@ fn test_async_cluster_route_info_to_nodes() {
 
 #[test]
 fn test_cluster_resp3() {
-    if !use_resp3() {
+    if use_protocol() != ProtocolVersion::RESP3 {
         return;
     }
     block_on_all(async move {

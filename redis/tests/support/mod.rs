@@ -12,7 +12,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::{ConnectionAddr, InfoDict, RedisConnectionInfo, Value};
+use redis::{ConnectionAddr, InfoDict, ProtocolVersion, RedisConnectionInfo, Value};
 
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
@@ -20,8 +20,12 @@ use redis::{ClientTlsConfig, TlsCertificates};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
-pub fn use_resp3() -> bool {
-    env::var("RESP3").unwrap_or_default() == "true"
+pub fn use_protocol() -> ProtocolVersion {
+    if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
+        ProtocolVersion::RESP3
+    } else {
+        ProtocolVersion::RESP2
+    }
 }
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
@@ -290,7 +294,7 @@ impl RedisServer {
         redis::ConnectionInfo {
             addr: self.client_addr().clone(),
             redis: RedisConnectionInfo {
-                use_resp3: use_resp3(),
+                protocol: use_protocol(),
                 ..Default::default()
             },
         }
@@ -333,7 +337,7 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
-    pub use_resp3: bool,
+    pub protocol: ProtocolVersion,
 }
 
 pub(crate) fn is_tls_enabled() -> bool {
@@ -404,7 +408,7 @@ impl TestContext {
         TestContext {
             server,
             client,
-            use_resp3: use_resp3(),
+            protocol: use_protocol(),
         }
     }
 
@@ -422,7 +426,7 @@ impl TestContext {
         TestContext {
             server,
             client,
-            use_resp3: use_resp3(),
+            protocol: use_protocol(),
         }
     }
 
@@ -431,11 +435,8 @@ impl TestContext {
         let con_info = redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: redis::RedisConnectionInfo {
-                db: Default::default(),
-                username: None,
-                password: None,
-                use_resp3: Default::default(),
                 client_name: Some(clientname.to_string()),
+                ..Default::default()
             },
         };
 
@@ -449,7 +450,7 @@ impl TestContext {
         TestContext {
             server,
             client,
-            use_resp3: use_resp3(),
+            protocol: use_protocol(),
         }
     }
 

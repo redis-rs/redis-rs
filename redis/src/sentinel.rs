@@ -58,8 +58,7 @@
 //!                 db: 1,
 //!                 username: Some(String::from("foo")),
 //!                 password: Some(String::from("bar")),
-//!                 use_resp3: false,
-//!                 client_name: None
+//!                 ..Default::default()
 //!             }),
 //!         }),
 //!     )
@@ -92,11 +91,9 @@
 //!     Some(SentinelNodeConnectionInfo {
 //!         tls_mode: Some(redis::TlsMode::Insecure),
 //!         redis_connection_info: Some(RedisConnectionInfo {
-//!             db: 0,
 //!             username: Some(String::from("user")),
 //!             password: Some(String::from("pass")),
-//!             use_resp3: false,
-//!             client_name: None
+//!             ..Default::default()
 //!         }),
 //!     }),
 //!     redis::sentinel::SentinelServerType::Master,
