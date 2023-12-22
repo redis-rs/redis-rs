@@ -16,6 +16,7 @@ use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
 
+use super::use_resp3;
 use super::Module;
 use super::RedisServer;
 
@@ -268,8 +269,8 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder =
-            redis::cluster::ClusterClientBuilder::new(initial_nodes).use_resp3(use_resp3);
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
+        builder = builder.use_resp3(use_resp3());
         builder = initializer(builder);
 
         let client = builder.build().unwrap();

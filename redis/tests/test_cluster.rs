@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, Commands, ErrorKind, RedisError, Value,
 };
 
 #[test]
@@ -107,6 +107,34 @@ fn test_cluster_eval() {
         .query(&mut con);
 
     assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
+}
+
+#[test]
+fn test_cluster_resp3() {
+    if !use_resp3() {
+        return;
+    }
+    let cluster = TestClusterContext::new(3, 0);
+
+    let mut connection = cluster.connection();
+
+    let _: () = connection.hset("hash", "foo", "baz").unwrap();
+    let _: () = connection.hset("hash", "bar", "foobar").unwrap();
+    let result: Value = connection.hgetall("hash").unwrap();
+
+    assert_eq!(
+        result,
+        Value::Map(vec![
+            (
+                Value::Data("foo".as_bytes().to_vec()),
+                Value::Data("baz".as_bytes().to_vec())
+            ),
+            (
+                Value::Data("bar".as_bytes().to_vec()),
+                Value::Data("foobar".as_bytes().to_vec())
+            )
+        ])
+    );
 }
 
 #[test]

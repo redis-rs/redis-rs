@@ -10,6 +10,10 @@ use redis::{Pipeline, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
+pub fn use_resp3() -> bool {
+    env::var("RESP3").unwrap_or_default() == "true"
+}
+
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
 
@@ -257,7 +261,7 @@ impl TestContext {
 
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
-        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
+        let use_resp3 = use_resp3();
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {

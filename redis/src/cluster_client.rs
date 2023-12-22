@@ -182,6 +182,14 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets whether the new ClusterClient should connect to the servers using RESP3.
+    ///
+    /// If not set, the default is to use RESP2.
+    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
+        self.builder_params.use_resp3 = use_resp3;
+        self
+    }
+
     /// Use `build()`.
     #[deprecated(since = "0.22.0", note = "Use build()")]
     pub fn open(self) -> RedisResult<ClusterClient> {
