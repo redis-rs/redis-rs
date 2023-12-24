@@ -93,6 +93,8 @@ impl RedisCluster {
             is_tls = true;
         }
 
+        let max_attempts = 5;
+
         for node in 0..nodes {
             let port = start_port + node;
 
@@ -131,7 +133,30 @@ impl RedisCluster {
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
                     addrs.push(format!("127.0.0.1:{port}"));
-                    cmd.spawn().unwrap()
+
+                    let mut cur_attempts = 0;
+                    loop {
+                        let mut process = cmd.spawn().unwrap();
+                        sleep(Duration::from_millis(100));
+
+                        match process.try_wait() {
+                            Ok(Some(status)) => {
+                                let err =
+                                    format!("redis server creation failed with status {status:?}");
+                                if cur_attempts == max_attempts {
+                                    panic!("{err}");
+                                }
+                                eprintln!("Retrying: {err}");
+                                cur_attempts += 1;
+                            }
+                            Ok(None) => {
+                                return process;
+                            }
+                            Err(e) => {
+                                panic!("Unexpected error in redis server creation {e}");
+                            }
+                        }
+                    }
                 },
             ));
         }
@@ -150,8 +175,22 @@ impl RedisCluster {
         if is_tls {
             cmd.arg("--tls").arg("--insecure");
         }
-        let status = cmd.status().unwrap();
-        assert!(status.success());
+
+        let mut cur_attempts = 0;
+        loop {
+            let output = cmd.output().unwrap();
+            if output.status.success() {
+                break;
+            } else {
+                let err = format!("Cluster creation failed: {output:?}");
+                if cur_attempts == max_attempts {
+                    panic!("{err}");
+                }
+                eprintln!("Retrying: {err}");
+                sleep(Duration::from_millis(50));
+                cur_attempts += 1;
+            }
+        }
 
         let cluster = RedisCluster { servers, folders };
         if replicas > 0 {
@@ -208,6 +247,7 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
+    pub use_resp3: bool,
 }
 
 impl TestClusterContext {
@@ -233,8 +273,11 @@ impl TestClusterContext {
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
-
-        TestClusterContext { cluster, client }
+        TestClusterContext {
+            cluster,
+            client,
+            use_resp3: use_resp3(),
+        }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {

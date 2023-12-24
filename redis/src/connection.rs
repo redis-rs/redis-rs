@@ -1,11 +1,3 @@
-use std::fmt;
-use std::io::{self, Write};
-use std::net::{self, TcpStream, ToSocketAddrs};
-use std::ops::DerefMut;
-use std::path::PathBuf;
-use std::str::{from_utf8, FromStr};
-use std::time::Duration;
-
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
@@ -13,6 +5,14 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
     Value,
 };
+use std::fmt;
+use std::io::{self, Write};
+use std::net::{self, TcpStream, ToSocketAddrs};
+use std::ops::DerefMut;
+use std::path::PathBuf;
+use std::str::{from_utf8, FromStr};
+use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(unix)]
 use crate::types::HashMap;
@@ -27,13 +27,15 @@ use native_tls::{TlsConnector, TlsStream};
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
-use std::{convert::TryInto, sync::Arc};
+use std::convert::TryInto;
 
 #[cfg(feature = "tls-rustls-webpki-roots")]
 use rustls::OwnedTrustAnchor;
 #[cfg(feature = "tls-rustls-webpki-roots")]
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use crate::push_manager::PushManager;
+use crate::PushInfo;
 #[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-webpki-roots")))]
 use rustls_native_certs::load_native_certs;
 
@@ -390,6 +392,10 @@ pub struct Connection {
 
     // Flag indicating whether resp3 mode is enabled.
     resp3: bool,
+
+    /// `PushManager` instance for the connection.
+    /// This is used to manage Push messages in RESP3 mode.
+    push_manager: PushManager,
 }
 
 /// Represents a pubsub connection.
@@ -691,7 +697,7 @@ impl ActualConnection {
 pub(crate) fn create_rustls_config(insecure: bool) -> RedisResult<rustls::ClientConfig> {
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
-    root_store.add_server_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
+    root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
             ta.subject,
             ta.spki,
@@ -787,6 +793,7 @@ fn setup_connection(
         db: connection_info.db,
         pubsub: false,
         resp3: connection_info.use_resp3,
+        push_manager: PushManager::new(),
     };
 
     if connection_info.use_resp3 {
@@ -839,7 +846,7 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisResult<Vec<Value>>;
 
-    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let pcmd = cmd.get_packed_command();
         self.req_packed_command(&pcmd)
@@ -868,9 +875,6 @@ pub trait ConnectionLike {
     /// sockets the connection is open until writing a command failed with a
     /// `BrokenPipe` error.
     fn is_open(&self) -> bool;
-
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, kind: PushKind, data: Vec<Value>);
 }
 
 /// A connection is an object that represents a single redis connection.  It
@@ -886,7 +890,7 @@ impl Connection {
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
     pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         Ok(())
     }
 
@@ -949,13 +953,9 @@ impl Connection {
             let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
             let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
 
-            // Grab a reference to the underlying connection so that we may send
-            // the commands without immediately blocking for a response.
-            let con = &mut self.con;
-
             // Execute commands
-            con.send_bytes(&unsubscribe)?;
-            con.send_bytes(&punsubscribe)?;
+            self.send_bytes(&unsubscribe)?;
+            self.send_bytes(&punsubscribe)?;
         }
 
         // Receive responses
@@ -1003,21 +1003,29 @@ impl Connection {
     fn read_response(&mut self) -> RedisResult<Value> {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
-                self.parser.parse_value(sock)
+                let result = self.parser.parse_value(sock);
+                self.push_manager.try_send(&result);
+                result
             }
         };
         // shutdown connection on protocol error
@@ -1027,6 +1035,11 @@ impl Connection {
                 None => false,
             };
             if shutdown {
+                // Notify the PushManager that the connection was lost
+                self.push_manager.try_send_raw(&Value::Push {
+                    kind: PushKind::Disconnection,
+                    data: vec![],
+                });
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
@@ -1052,23 +1065,47 @@ impl Connection {
         }
         result
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+        let result = self.con.send_bytes(bytes);
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        result
+    }
 }
 
 impl ConnectionLike for Connection {
-    /// Sends a [Cmd](Cmd) into the TCP socket and reads a single response from it.
+    /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let pcmd = cmd.get_packed_command();
         if self.pubsub {
             self.exit_pubsub()?;
         }
 
-        self.con.send_bytes(&pcmd)?;
+        self.send_bytes(&pcmd)?;
         if cmd.is_no_response() {
             return Ok(Value::Nil);
         }
         loop {
             match self.read_response()? {
-                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
                 val => return Ok(val),
             }
         }
@@ -1078,10 +1115,13 @@ impl ConnectionLike for Connection {
             self.exit_pubsub()?;
         }
 
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         loop {
             match self.read_response()? {
-                Value::Push { kind, data } => self.execute_push_message(kind, data),
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
                 val => return Ok(val),
             }
         }
@@ -1096,7 +1136,7 @@ impl ConnectionLike for Connection {
         if self.pubsub {
             self.exit_pubsub()?;
         }
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
         let mut count = count;
@@ -1110,10 +1150,13 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
-                    if let Value::Push { kind, data } = item {
+                    if let Value::Push {
+                        kind: _kind,
+                        data: _data,
+                    } = item
+                    {
                         // if that is the case we have to extend the loop and handle push data
                         count += 1;
-                        self.execute_push_message(kind, data);
                     } else if idx >= offset {
                         rv.push(item);
                     }
@@ -1140,11 +1183,6 @@ impl ConnectionLike for Connection {
 
     fn is_open(&self) -> bool {
         self.con.is_open()
-    }
-
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push message
     }
 }
 
@@ -1184,11 +1222,6 @@ where
 
     fn is_open(&self) -> bool {
         self.deref().is_open()
-    }
-
-    /// Executes received push message from server.
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
     }
 }
 
@@ -1302,7 +1335,7 @@ impl Msg {
 
         if let Value::Push { kind, data } = value {
             let mut iter: IntoIter<Value> = data.to_vec().into_iter();
-            if kind == &PushKind::Message {
+            if kind == &PushKind::Message || kind == &PushKind::SMessage {
                 channel = iter.next()?;
                 payload = iter.next()?;
             } else if kind == &PushKind::PMessage {
@@ -1327,6 +1360,31 @@ impl Msg {
                 return None;
             }
         };
+        Some(Msg {
+            payload,
+            channel,
+            pattern,
+        })
+    }
+
+    /// Tries to convert provided [`PushInfo`] into [`Msg`].
+    pub fn from_push_info(push_info: &PushInfo) -> Option<Self> {
+        let mut pattern = None;
+        let payload;
+        let channel;
+
+        let mut iter = push_info.data.iter().cloned();
+        if push_info.kind == PushKind::Message || push_info.kind == PushKind::SMessage {
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else if push_info.kind == PushKind::PMessage {
+            pattern = Some(iter.next()?);
+            channel = iter.next()?;
+            payload = iter.next()?;
+        } else {
+            return None;
+        }
+
         Some(Msg {
             payload,
             channel,

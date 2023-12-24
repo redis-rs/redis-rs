@@ -51,11 +51,11 @@ use crate::connection::{
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
+use crate::IntoConnectionInfo;
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Route, SlotAddr, SlotMap},
 };
-use crate::{IntoConnectionInfo, PushKind};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -133,6 +133,7 @@ pub struct ClusterConnection<C = Connection> {
     write_timeout: RefCell<Option<Duration>>,
     tls: Option<TlsMode>,
     retries: u32,
+    use_resp3: bool,
 }
 
 impl<C> ClusterConnection<C>
@@ -155,6 +156,7 @@ where
             tls: cluster_params.tls,
             initial_nodes: initial_nodes.to_vec(),
             retries: cluster_params.retries,
+            use_resp3: cluster_params.use_resp3,
         };
         connection.create_initial_connections()?;
 
@@ -344,6 +346,7 @@ where
         let params = ClusterParams {
             password: self.password.clone(),
             username: self.username.clone(),
+            use_resp3: self.use_resp3,
             tls: self.tls,
             ..Default::default()
         };
@@ -655,10 +658,6 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             }
         }
         true
-    }
-
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
     }
 }
 

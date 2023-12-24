@@ -224,9 +224,7 @@ where
             }
             loop {
                 match self.read_response().await? {
-                    Value::Push { .. } => {
-                        //self.execute_push_message(kind, data) //TODO
-                    }
+                    Value::Push { .. } => continue,
                     val => return Ok(val),
                 }
             }
@@ -271,7 +269,6 @@ where
                         if let Value::Push { .. } = item {
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
-                            // self.execute_push_message(kind, data); //TODO
                         } else {
                             rv.push(item);
                         }

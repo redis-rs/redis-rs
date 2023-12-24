@@ -16,7 +16,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP3"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test -p redis --all-features -- --nocapture --test-threads=1
+	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
@@ -56,9 +56,13 @@ test:
 
 test-module:
 	@echo "===================================================================="
-	@echo "Testing with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP2 with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp cargo test --all-features test_module
+	@REDISRS_SERVER_TYPE=tcp cargo test --all-features test_module -- --test-threads=1
+	@echo "===================================================================="
+	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
+	@echo "===================================================================="
+	@REDISRS_SERVER_TYPE=tcp RESP3=true cargo test --all-features test_module  -- --test-threads=1
 
 test-single: test
 

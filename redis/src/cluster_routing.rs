@@ -410,14 +410,14 @@ mod tests {
             assert_eq!(RoutingInfo::for_routable(&cmd), None,);
         }
 
-        for cmd in vec![
+        for cmd in [
             cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
             assert_eq!(RoutingInfo::for_routable(cmd), Some(RoutingInfo::Random));
         }
 
-        for (cmd, expected) in vec![
+        for (cmd, expected) in [
             (
                 cmd("EVAL")
                     .arg(r#"redis.call("GET, KEYS[1]");"#)

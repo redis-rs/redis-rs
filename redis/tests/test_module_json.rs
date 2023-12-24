@@ -30,14 +30,14 @@ fn test_module_json_serialize_error() {
         // so numbers and strings, anything else will cause the serialization to fail
         // this is basically the only way to make a serialization fail at runtime
         // since rust doesnt provide the necessary ability to enforce this
-        pub invalid_json: HashMap<bool, i64>,
+        pub invalid_json: HashMap<Option<bool>, i64>,
     }
 
     let mut test_invalid_value: InvalidSerializedStruct = InvalidSerializedStruct {
         invalid_json: HashMap::new(),
     };
 
-    test_invalid_value.invalid_json.insert(true, 2i64);
+    test_invalid_value.invalid_json.insert(None, 2i64);
 
     let set_invalid: RedisResult<bool> = con.json_set(TEST_KEY, "$", &test_invalid_value);
 
@@ -345,15 +345,26 @@ fn test_module_json_num_incr_by() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    if ctx.use_resp3 && redis_ver.starts_with("7.") {
+        // cannot increment a string
+        let json_numincrby_a: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+        assert_eq!(json_numincrby_a, Ok(vec![Nil]));
 
-    // cannot increment a string
-    assert_eq!(json_numincrby_a, Ok("[null]".into()));
+        let json_numincrby_b: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
 
-    let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
+        // however numbers can be incremented
+        assert_eq!(json_numincrby_b, Ok(vec![Nil, Int(4), Int(7), Nil]));
+    } else {
+        // cannot increment a string
+        let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+        assert_eq!(json_numincrby_a, Ok("[null]".into()));
 
-    // however numbers can be incremented
-    assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+        let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
+
+        // however numbers can be incremented
+        assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+    }
 }
 
 #[test]
@@ -484,23 +495,38 @@ fn test_module_json_type() {
     assert_eq!(set_initial, Ok(true));
 
     let json_type_a: RedisResult<Value> = con.json_type(TEST_KEY, "$..foo");
-
-    assert_eq!(
-        json_type_a,
-        Ok(Bulk(vec![Data(Vec::from("string".as_bytes()))]))
-    );
-
     let json_type_b: RedisResult<Value> = con.json_type(TEST_KEY, "$..a");
-
-    assert_eq!(
-        json_type_b,
-        Ok(Bulk(vec![
-            Data(Vec::from("integer".as_bytes())),
-            Data(Vec::from("boolean".as_bytes()))
-        ]))
-    );
-
     let json_type_c: RedisResult<Value> = con.json_type(TEST_KEY, "$..dummy");
 
-    assert_eq!(json_type_c, Ok(Bulk(vec![])));
+    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    if ctx.use_resp3 && redis_ver.starts_with("7.") {
+        // In RESP3 current RedisJSON always gives response in an array.
+        assert_eq!(
+            json_type_a,
+            Ok(Bulk(vec![Bulk(vec![Data(Vec::from("string".as_bytes()))])]))
+        );
+
+        assert_eq!(
+            json_type_b,
+            Ok(Bulk(vec![Bulk(vec![
+                Data(Vec::from("integer".as_bytes())),
+                Data(Vec::from("boolean".as_bytes()))
+            ])]))
+        );
+        assert_eq!(json_type_c, Ok(Bulk(vec![Bulk(vec![])])));
+    } else {
+        assert_eq!(
+            json_type_a,
+            Ok(Bulk(vec![Data(Vec::from("string".as_bytes()))]))
+        );
+
+        assert_eq!(
+            json_type_b,
+            Ok(Bulk(vec![
+                Data(Vec::from("integer".as_bytes())),
+                Data(Vec::from("boolean".as_bytes()))
+            ]))
+        );
+        assert_eq!(json_type_c, Ok(Bulk(vec![])));
+    }
 }

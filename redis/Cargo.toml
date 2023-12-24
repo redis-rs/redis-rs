@@ -33,15 +33,16 @@ sha1_smol = { version = "1.0", optional = true }
 
 combine = { version = "4.6", default-features = false, features = ["std"] }
 
+arc-swap = { version = "1.1.0" }
+
 # Only needed for AIO
 bytes = { version = "1", optional = true }
 futures-util = { version = "0.3.15", default-features = false, optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
-tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "time", "sync"]}
 
 # Only needed for the connection manager
-arc-swap = { version = "1.1.0", optional = true }
 futures = { version = "0.3.3", optional = true }
 tokio-retry = { version = "0.3.0", optional = true }
 
@@ -92,10 +93,10 @@ tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std"]
 async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
 async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
-tokio-comp = ["aio", "tokio", "tokio/net"]
+tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
-connection-manager = ["arc-swap", "futures", "aio", "tokio-retry"]
+connection-manager = ["futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
 

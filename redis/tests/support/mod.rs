@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::Future;
-use redis::{RedisConnectionInfo, Value};
+use redis::{Pipeline, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -527,4 +527,16 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         redis_key,
         ca_crt,
     }
+}
+
+pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
+    let mut pipe = redis::pipe();
+    pipe.cmd("GET")
+        .arg("key_1")
+        .ignore()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore();
+    pipe
 }

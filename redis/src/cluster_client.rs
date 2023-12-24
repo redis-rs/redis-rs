@@ -117,7 +117,7 @@ impl ClusterClientBuilder {
         }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
-        for node in initial_nodes {
+        for mut node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
@@ -136,7 +136,7 @@ impl ClusterClientBuilder {
                     "Cannot use different username among initial nodes.",
                 )));
             }
-
+            node.redis.use_resp3 = cluster_params.use_resp3;
             nodes.push(node);
         }
 

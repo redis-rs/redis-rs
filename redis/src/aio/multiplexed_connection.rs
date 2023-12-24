@@ -1,16 +1,18 @@
 use super::ConnectionLike;
 use crate::aio::authenticate;
 use crate::cmd::Cmd;
-use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
+use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
+use crate::{cmd, ConnectionInfo, PushKind};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+use arc_swap::ArcSwap;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -23,6 +25,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
@@ -30,16 +33,16 @@ use tokio_util::codec::Decoder;
 // Senders which the result of a single request are sent through
 type PipelineOutput<O, E> = oneshot::Sender<Result<Vec<O>, E>>;
 
-struct InFlight<O, E> {
-    output: PipelineOutput<O, E>,
+struct InFlight<E> {
+    output: PipelineOutput<Value, E>,
     expected_response_count: usize,
     current_response_count: usize,
-    buffer: Vec<O>,
+    buffer: Vec<Value>,
     first_err: Option<E>,
 }
 
-impl<O, E> InFlight<O, E> {
-    fn new(output: PipelineOutput<O, E>, expected_response_count: usize) -> Self {
+impl<E> InFlight<E> {
+    fn new(output: PipelineOutput<Value, E>, expected_response_count: usize) -> Self {
         Self {
             output,
             expected_response_count,
@@ -51,9 +54,9 @@ impl<O, E> InFlight<O, E> {
 }
 
 // A single message sent through the pipeline
-struct PipelineMessage<S, I, E> {
+struct PipelineMessage<S, E> {
     input: S,
-    output: PipelineOutput<I, E>,
+    output: PipelineOutput<Value, E>,
     response_count: usize,
 }
 
@@ -61,56 +64,60 @@ struct PipelineMessage<S, I, E> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<SinkItem, I, E>(mpsc::Sender<PipelineMessage<SinkItem, I, E>>);
+struct Pipeline<SinkItem, E> {
+    sender: mpsc::Sender<PipelineMessage<SinkItem, E>>,
 
-impl<SinkItem, I, E> Clone for Pipeline<SinkItem, I, E> {
+    push_manager: Arc<ArcSwap<PushManager>>,
+}
+
+impl<SinkItem, E> Clone for Pipeline<SinkItem, E> {
     fn clone(&self) -> Self {
-        Pipeline(self.0.clone())
+        Pipeline {
+            sender: self.sender.clone(),
+            push_manager: self.push_manager.clone(),
+        }
     }
 }
 
-impl<SinkItem, I, E> Debug for Pipeline<SinkItem, I, E>
+impl<SinkItem, E> Debug for Pipeline<SinkItem, E>
 where
     SinkItem: Debug,
-    I: Debug,
     E: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Pipeline").field(&self.0).finish()
+        f.debug_tuple("Pipeline").field(&self.sender).finish()
     }
 }
 
 pin_project! {
-    struct PipelineSink<T, I, E> {
+    struct PipelineSink<T, E> {
         #[pin]
         sink_stream: T,
-        in_flight: VecDeque<InFlight<I, E>>,
+        in_flight: VecDeque<InFlight<E>>,
         error: Option<E>,
+        push_manager: Arc<ArcSwap<PushManager>>,
     }
 }
 
-impl<T, I, E> PipelineSink<T, I, E>
+impl<T, E> PipelineSink<T, E>
 where
-    T: Stream<Item = Result<I, E>> + 'static,
+    T: Stream<Item = Result<Value, E>> + 'static,
 {
-    fn new<SinkItem>(sink_stream: T) -> Self
+    fn new<SinkItem>(sink_stream: T, push_manager: Arc<ArcSwap<PushManager>>) -> Self
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
     {
         PipelineSink {
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
+            push_manager,
         }
     }
 
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
-            // No need to try reading a message if there is no message in flight
-            if self.in_flight.is_empty() {
-                return Poll::Ready(Ok(()));
-            }
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
                 // The redis response stream is not going to produce any more items so we `Err`
@@ -121,18 +128,28 @@ where
         }
     }
 
-    fn send_result(self: Pin<&mut Self>, result: Result<I, E>) {
+    fn send_result(self: Pin<&mut Self>, result: Result<Value, E>) {
         let self_ = self.project();
-
+        let mut skip_value = false;
+        if let Ok(res) = &result {
+            if let Value::Push { kind, data: _data } = res {
+                self_.push_manager.load().try_send_raw(res);
+                if !kind.has_reply() {
+                    // If it's not true then push kind is converted to reply of a command
+                    skip_value = true;
+                }
+            }
+        }
         {
             let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
-
             match result {
                 Ok(item) => {
-                    entry.buffer.push(item);
+                    if !skip_value {
+                        entry.buffer.push(item);
+                    }
                 }
                 Err(err) => {
                     if entry.first_err.is_none() {
@@ -141,7 +158,9 @@ where
                 }
             }
 
-            entry.current_response_count += 1;
+            if !skip_value {
+                entry.current_response_count += 1;
+            }
             if entry.current_response_count < entry.expected_response_count {
                 // Need to gather more response values
                 return;
@@ -161,9 +180,9 @@ where
     }
 }
 
-impl<SinkItem, T, I, E> Sink<PipelineMessage<SinkItem, I, E>> for PipelineSink<T, I, E>
+impl<SinkItem, T, E> Sink<PipelineMessage<SinkItem, E>> for PipelineSink<T, E>
 where
-    T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+    T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
 {
     type Error = ();
 
@@ -187,7 +206,7 @@ where
             input,
             output,
             response_count,
-        }: PipelineMessage<SinkItem, I, E>,
+        }: PipelineMessage<SinkItem, E>,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
@@ -248,15 +267,14 @@ where
     }
 }
 
-impl<SinkItem, I, E> Pipeline<SinkItem, I, E>
+impl<SinkItem, E> Pipeline<SinkItem, E>
 where
     SinkItem: Send + 'static,
-    I: Send + 'static,
     E: Send + 'static,
 {
     fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<SinkItem, Error = E> + Stream<Item = Result<I, E>> + 'static,
+        T: Sink<SinkItem, Error = E> + Stream<Item = Result<Value, E>> + 'static,
         T: Send + 'static,
         T::Item: Send,
         T::Error: Send,
@@ -264,29 +282,30 @@ where
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let push_manager: Arc<ArcSwap<PushManager>> =
+            Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
+        let sink = PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
-            .forward(PipelineSink::new::<SinkItem>(sink_stream))
+            .forward(sink)
             .map(|_| ());
-        (Pipeline(sender), f)
-    }
-
-    // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send(&mut self, item: SinkItem) -> Result<I, Option<E>> {
-        self.send_recv_multiple(item, 1)
-            .await
-            // We can unwrap since we do a request for `1` item
-            .map(|mut item| item.pop().unwrap())
+        (
+            Pipeline {
+                sender,
+                push_manager,
+            },
+            f,
+        )
     }
 
     async fn send_recv_multiple(
         &mut self,
         input: SinkItem,
         count: usize,
-    ) -> Result<Vec<I>, Option<E>> {
+    ) -> Result<Vec<Value>, Option<E>> {
         let (sender, receiver) = oneshot::channel();
 
-        self.0
+        self.sender
             .send(PipelineMessage {
                 input,
                 response_count: count,
@@ -303,14 +322,21 @@ where
             }
         }
     }
+
+    /// Sets `PushManager` of Pipeline
+    async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager.store(Arc::new(push_manager));
+    }
 }
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>, Value, RedisError>,
+    pipeline: Pipeline<Vec<u8>, RedisError>,
     db: i64,
+    push_manager: PushManager,
+    resp3: bool,
 }
 
 impl Debug for MultiplexedConnection {
@@ -326,7 +352,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &RedisConnectionInfo,
+        connection_info: &ConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -341,17 +367,22 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
+        let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default()
             .framed(stream)
             .and_then(|msg| async move { msg });
-        let (pipeline, driver) = Pipeline::new(codec);
+        let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
+        let pm = PushManager::default();
+        pipeline.set_push_manager(pm.clone()).await;
         let mut con = MultiplexedConnection {
             pipeline,
-            db: connection_info.db,
+            db: redis_connection_info.db,
+            push_manager: pm,
+            resp3: redis_connection_info.use_resp3,
         };
         let driver = {
-            let auth = authenticate(connection_info, &mut con);
+            let auth = authenticate(redis_connection_info, &mut con);
             futures_util::pin_mut!(auth);
 
             match futures_util::future::select(auth, driver).await {
@@ -370,14 +401,26 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let value = self
+        let result = self
             .pipeline
-            .send(cmd.get_packed_command())
+            .send_recv_multiple(cmd.get_packed_command(), 1)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
-        Ok(value)
+            });
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        let mut value = result?;
+        Ok(value.pop().unwrap())
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -389,16 +432,33 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let mut value = self
+        let result = self
             .pipeline
             .send_recv_multiple(cmd.get_packed_pipeline(), offset + count)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
-
+            });
+        if self.resp3 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        let mut value = result?;
         value.drain(..offset);
         Ok(value)
+    }
+
+    /// Sets `PushManager` of connection
+    pub async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager = push_manager.clone();
+        self.pipeline.set_push_manager(push_manager).await;
     }
 }
 
@@ -418,5 +478,67 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+}
+impl MultiplexedConnection {
+    /// Subscribes to a new channel.
+    pub async fn subscribe(&mut self, channel_name: String) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name.clone());
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel.
+    pub async fn unsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Subscribes to a new channel with pattern.
+    pub async fn psubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern.clone());
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel pattern.
+    pub async fn punsubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+        if !self.resp3 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }
