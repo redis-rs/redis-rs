@@ -263,7 +263,6 @@ impl TestClusterContext {
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
-        let use_resp3 = env::var("RESP3").unwrap_or_default() == "true";
         let cluster = RedisCluster::new(nodes, replicas);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
@@ -277,7 +276,7 @@ impl TestClusterContext {
         TestClusterContext {
             cluster,
             client,
-            use_resp3,
+            use_resp3: use_resp3(),
         }
     }
 

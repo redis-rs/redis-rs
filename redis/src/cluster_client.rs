@@ -202,12 +202,6 @@ impl ClusterClientBuilder {
         self.builder_params.read_from_replicas = read_from_replicas;
         self
     }
-
-    /// Sets whether to use RESP3 for ClusterClient.
-    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
-        self.builder_params.use_resp3 = use_resp3;
-        self
-    }
 }
 
 /// This is a Redis Cluster client.
