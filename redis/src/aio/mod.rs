@@ -2,6 +2,7 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{get_resp3_hello_command_error, RedisConnectionInfo};
 use crate::types::{ErrorKind, RedisFuture, RedisResult, Value};
+use crate::ProtocolVersion;
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
 use futures_util::Future;
@@ -84,7 +85,7 @@ async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C)
 where
     C: ConnectionLike,
 {
-    if connection_info.use_resp3 {
+    if connection_info.protocol == ProtocolVersion::RESP3 {
         let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query_async(con).await;
         if let Err(err) = val {

@@ -5,7 +5,7 @@ use rand::Rng;
 use crate::cluster_topology::ReadFromReplicaStrategy;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
-use crate::{cluster, TlsMode};
+use crate::{cluster, ProtocolVersion, TlsMode};
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
@@ -34,7 +34,7 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     topology_checks_interval: Option<Duration>,
     client_name: Option<String>,
-    use_resp3: bool,
+    protocol: ProtocolVersion,
 }
 
 #[derive(Clone)]
@@ -89,7 +89,7 @@ pub(crate) struct ClusterParams {
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) client_name: Option<String>,
-    pub(crate) use_resp3: bool,
+    pub(crate) protocol: ProtocolVersion,
 }
 
 impl ClusterParams {
@@ -114,7 +114,7 @@ impl ClusterParams {
             topology_checks_interval: value.topology_checks_interval,
             tls_params,
             client_name: value.client_name,
-            use_resp3: value.use_resp3,
+            protocol: value.protocol,
         })
     }
 }
@@ -336,11 +336,9 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Sets whether the new ClusterClient should connect to the servers using RESP3.
-    ///
-    /// If not set, the default is to use RESP3.
-    pub fn use_resp3(mut self, use_resp3: bool) -> ClusterClientBuilder {
-        self.builder_params.use_resp3 = use_resp3;
+    /// Sets the protocol with which the client should communicate with the server.
+    pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
+        self.builder_params.protocol = protocol;
         self
     }
 
