@@ -203,7 +203,7 @@ type ConnectionsContainer<C> =
 struct InnerCore<C> {
     conn_lock: RwLock<ConnectionsContainer<C>>,
     cluster_params: ClusterParams,
-    pending_requests: Mutex<Vec<PendingRequest<Response, C>>>,
+    pending_requests: Mutex<Vec<PendingRequest<C>>>,
     slot_refresh_in_progress: AtomicBool,
 }
 
@@ -213,11 +213,7 @@ struct ClusterConnInner<C> {
     inner: Core<C>,
     state: ConnectionState,
     #[allow(clippy::complexity)]
-    in_flight_requests: stream::FuturesUnordered<
-        Pin<
-            Box<Request<BoxFuture<'static, (OperationTarget, RedisResult<Response>)>, Response, C>>,
-        >,
-    >,
+    in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
     refresh_error: Option<RedisError>,
     // A flag indicating the connection's closure and the requirement to shut down all related tasks.
     shutdown_flag: Arc<AtomicBool>,
@@ -401,41 +397,38 @@ pin_project! {
     }
 }
 
-struct PendingRequest<I, C> {
+struct PendingRequest<C> {
     retry: u32,
-    sender: oneshot::Sender<RedisResult<I>>,
+    sender: oneshot::Sender<RedisResult<Response>>,
     info: RequestInfo<C>,
 }
 
 pin_project! {
-    struct Request<F, I, C> {
+    struct Request<C> {
         retry_params: RetryParams,
-        request: Option<PendingRequest<I, C>>,
+        request: Option<PendingRequest<C>>,
         #[pin]
-        future: RequestState<F>,
+        future: RequestState<BoxFuture<'static, (OperationTarget, RedisResult<Response>)>>,
     }
 }
 
 #[must_use]
-enum Next<I, C> {
+enum Next<C> {
     Retry {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
     },
     Reconnect {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
         target: ConnectionIdentifier,
     },
     RefreshSlots {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
     },
     Done,
 }
 
-impl<F, I, C> Future for Request<F, I, C>
-where
-    F: Future<Output = (OperationTarget, RedisResult<I>)>,
-{
-    type Output = Next<I, C>;
+impl<C> Future for Request<C> {
+    type Output = Next<C>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
@@ -532,11 +525,8 @@ where
     }
 }
 
-impl<F, I, C> Request<F, I, C>
-where
-    F: Future<Output = (OperationTarget, RedisResult<I>)>,
-{
-    fn respond(self: Pin<&mut Self>, msg: RedisResult<I>) {
+impl<C> Request<C> {
+    fn respond(self: Pin<&mut Self>, msg: RedisResult<Response>) {
         // If `send` errors the receiver has dropped and thus does not care about the message
         let _ = self
             .project()
@@ -1001,7 +991,7 @@ where
             connections_container: &ConnectionsContainer<C>,
         ) -> (
             Vec<(ArcStr, Receiver<Result<Response, RedisError>>)>,
-            Vec<PendingRequest<Response, C>>,
+            Vec<PendingRequest<C>>,
         ) {
             iterator
                 .filter_map(|(cmd, (identifier, conn))| {
