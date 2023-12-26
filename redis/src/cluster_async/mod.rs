@@ -326,6 +326,7 @@ enum OperationTarget {
     Node { identifier: ConnectionIdentifier },
     FanOut,
 }
+type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
 impl From<ConnectionIdentifier> for OperationTarget {
     fn from(identifier: ConnectionIdentifier) -> Self {
@@ -408,7 +409,7 @@ pin_project! {
         retry_params: RetryParams,
         request: Option<PendingRequest<C>>,
         #[pin]
-        future: RequestState<BoxFuture<'static, (OperationTarget, RedisResult<Response>)>>,
+        future: RequestState<BoxFuture<'static, OperationResult>>,
     }
 }
 
@@ -447,11 +448,11 @@ impl<C> Future for Request<C> {
             _ => panic!("Request future must be Some"),
         };
         match ready!(future.poll(cx)) {
-            (_, Ok(item)) => {
+            Ok(item) => {
                 self.respond(Ok(item));
                 Next::Done.into()
             }
-            (target, Err(err)) => {
+            Err((target, err)) => {
                 let identifier = match target {
                     OperationTarget::Node { identifier } => identifier,
                     OperationTarget::FanOut => {
@@ -978,7 +979,7 @@ where
         routing: &'a MultipleNodeRoutingInfo,
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         trace!("execute_on_multiple_nodes");
         let connections_container = core.conn_lock.read().await;
 
@@ -1053,18 +1054,17 @@ where
         drop(connections_container);
         core.pending_requests.lock().unwrap().extend(requests);
 
-        let result = Self::aggregate_results(receivers, routing, response_policy)
+        Self::aggregate_results(receivers, routing, response_policy)
             .await
-            .map(Response::Single);
-
-        (OperationTarget::FanOut, result)
+            .map(Response::Single)
+            .map_err(|err| (OperationTarget::FanOut, err))
     }
 
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
         core: Core<C>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         let routing = match routing {
             // commands that are sent to multiple nodes are handled here.
             InternalRoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
@@ -1084,8 +1084,10 @@ where
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
         let (identifier, mut conn) = Self::get_connection(routing, core).await;
-        let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-        (identifier.into(), result)
+        conn.req_packed_command(&cmd)
+            .await
+            .map(Response::Single)
+            .map_err(|err| (identifier.into(), err))
     }
 
     async fn try_pipeline_request(
@@ -1093,20 +1095,16 @@ where
         offset: usize,
         count: usize,
         conn: impl Future<Output = (ConnectionIdentifier, C)>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         trace!("try_pipeline_request");
         let (identifier, mut conn) = conn.await;
-        let result = conn
-            .req_packed_commands(&pipeline, offset, count)
+        conn.req_packed_commands(&pipeline, offset, count)
             .await
-            .map(Response::Multiple);
-        (OperationTarget::Node { identifier }, result)
+            .map(Response::Multiple)
+            .map_err(|err| (OperationTarget::Node { identifier }, err))
     }
 
-    async fn try_request(
-        info: RequestInfo<C>,
-        core: Core<C>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    async fn try_request(info: RequestInfo<C>, core: Core<C>) -> OperationResult {
         match info.cmd {
             CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
             CmdArg::Pipeline {
