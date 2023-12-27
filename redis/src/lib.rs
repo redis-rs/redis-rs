@@ -468,6 +468,9 @@ mod tls;
 #[cfg(feature = "tls-rustls")]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
+#[cfg(feature = "bignum")]
+mod bignum;
+
 mod client;
 mod cmd;
 mod commands;

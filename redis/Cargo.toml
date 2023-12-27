@@ -77,6 +77,11 @@ rustls-pemfile = { version = "1.0", optional = true }
 serde = { version = "1.0.82", optional = true }
 serde_json = { version = "1.0.82", optional = true }
 
+# Only needed for bignum Support
+rust_decimal = { version = "1.33.1", optional = true }
+bigdecimal = { version = "0.4.2", optional = true }
+num-bigint = { version = "0.4.4", optional = true }
+
 # Optional aHash support
 ahash = { version = "0.8.6", optional = true }
 
@@ -107,6 +112,7 @@ cluster-async = ["cluster", "futures", "futures-util", "log"]
 keep-alive = ["socket2"]
 sentinel = ["rand"]
 tcp_nodelay = []
+bignum = ["rust_decimal", "bigdecimal", "num-bigint"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -148,6 +154,10 @@ required-features = ["json", "serde/derive"]
 [[test]]
 name = "test_cluster_async"
 required-features = ["cluster-async"]
+
+[[test]]
+name = "test_bignum"
+required-features = ["bignum"]
 
 [[bench]]
 name = "bench_basic"
