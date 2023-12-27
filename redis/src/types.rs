@@ -948,6 +948,30 @@ non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::Num
 ryu_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 ryu_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 
+#[cfg(feature = "bignum")]
+macro_rules! bignum_to_redis_impl {
+    ($t:ty) => {
+        impl ToRedisArgs for $t {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                out.write_arg(&self.to_string().into_bytes())
+            }
+        }
+    };
+}
+
+#[cfg(feature = "bignum")]
+bignum_to_redis_impl!(rust_decimal::Decimal);
+#[cfg(feature = "bignum")]
+bignum_to_redis_impl!(bigdecimal::BigDecimal);
+#[cfg(feature = "bignum")]
+bignum_to_redis_impl!(num_bigint::BigInt);
+#[cfg(feature = "bignum")]
+bignum_to_redis_impl!(num_bigint::BigUint);
+
+
 impl ToRedisArgs for bool {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -1273,6 +1297,47 @@ from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
 from_redis_value_for_num!(isize);
 from_redis_value_for_num!(usize);
+
+#[cfg(feature = "bignum")]
+macro_rules! from_redis_value_for_bignum_internal {
+    ($t:ty, $v:expr) => {{
+        let v = $v;
+        match *v {
+            Value::Int(val) => <$t>::try_from(val)
+                .map_err(|_| invalid_type_error_inner!(v, "Could not convert from integer.")),
+            Value::Status(ref s) => match s.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+            },
+            Value::Data(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+            },
+            _ => invalid_type_error!(v, "Response type not convertible to numeric."),
+        }
+    }};
+}
+
+#[cfg(feature = "bignum")]
+macro_rules! from_redis_value_for_bignum {
+    ($t:ty) => {
+        impl FromRedisValue for $t {
+            fn from_redis_value(v: &Value) -> RedisResult<$t> {
+                from_redis_value_for_bignum_internal!($t, v)
+            }
+        }
+    };
+}
+
+#[cfg(feature = "bignum")]
+from_redis_value_for_bignum!(rust_decimal::Decimal);
+#[cfg(feature = "bignum")]
+from_redis_value_for_bignum!(bigdecimal::BigDecimal);
+#[cfg(feature = "bignum")]
+from_redis_value_for_bignum!(num_bigint::BigInt);
+#[cfg(feature = "bignum")]
+from_redis_value_for_bignum!(num_bigint::BigUint);
+
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
