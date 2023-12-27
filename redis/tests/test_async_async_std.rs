@@ -301,7 +301,9 @@ fn test_script_load() {
 
         let hash = script.prepare_invoke().load_async(&mut con).await.unwrap();
         assert_eq!(hash, script.get_hash().to_string());
-    });
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

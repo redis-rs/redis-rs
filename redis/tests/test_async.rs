@@ -69,8 +69,10 @@ fn dont_panic_on_closed_multiplexed_connection() {
                     result.as_ref().unwrap_err()
                 );
             })
-            .await
-    });
+            .await;
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -328,7 +330,9 @@ fn test_response_timeout_multiplexed_connection() {
         let result = connection.req_packed_command(&cmd).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().is_timeout());
-    });
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -380,7 +384,9 @@ fn test_script_load() {
 
         let hash = script.prepare_invoke().load_async(&mut con).await.unwrap();
         assert_eq!(hash, script.get_hash().to_string());
-    });
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -709,7 +715,9 @@ fn test_connection_manager_reconnect_after_delay() {
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
         assert_eq!(result, redis::Value::Okay);
-    });
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[cfg(feature = "tls-rustls")]

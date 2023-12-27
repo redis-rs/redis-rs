@@ -31,12 +31,64 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     builder.build().unwrap()
 }
 
-pub fn block_on_all<F>(f: F) -> F::Output
+#[cfg(feature = "aio")]
+pub fn block_on_all<F, V>(f: F) -> F::Output
 where
-    F: Future,
+    F: Future<Output = redis::RedisResult<V>>,
 {
-    current_thread_runtime().block_on(f)
+    use std::panic;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static CHECK: AtomicBool = AtomicBool::new(false);
+
+    // TODO - this solution is purely single threaded, and won't work on multiple threads at the same time.
+    // This is needed because Tokio's Runtime silently ignores panics - https://users.rust-lang.org/t/tokio-runtime-what-happens-when-a-thread-panics/95819
+    // Once Tokio stabilizes the `unhandled_panic` field on the runtime builder, it should be used instead.
+    panic::set_hook(Box::new(|panic| {
+        println!("Panic: {panic}");
+        CHECK.store(true, Ordering::Relaxed);
+    }));
+
+    // This continuously query the flag, in order to abort ASAP after a panic.
+    let check_future = futures_util::FutureExt::fuse(async {
+        loop {
+            if CHECK.load(Ordering::Relaxed) {
+                return Err((redis::ErrorKind::IoError, "panic was caught").into());
+            }
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
+        }
+    });
+    let f = futures_util::FutureExt::fuse(f);
+    futures::pin_mut!(f, check_future);
+
+    let res = current_thread_runtime().block_on(async {
+        futures::select! {res = f => res, err = check_future => err}
+    });
+
+    let _ = panic::take_hook();
+    if CHECK.swap(false, Ordering::Relaxed) {
+        panic!("Internal thread panicked");
+    }
+
+    res
 }
+
+#[cfg(feature = "aio")]
+#[test]
+fn test_block_on_all_panics_from_spawns() {
+    let result = std::panic::catch_unwind(|| {
+        block_on_all(async {
+            tokio::task::spawn(async {
+                futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
+                panic!("As it should");
+            });
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
+            Ok(())
+        })
+    });
+    assert!(result.is_err());
+}
+
 #[cfg(feature = "async-std-comp")]
 pub fn block_on_all_using_async_std<F>(f: F) -> F::Output
 where
