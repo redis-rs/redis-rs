@@ -1,12 +1,15 @@
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue,
+    ErrorKind, FromRedisValue, RedisError,
 };
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    sync::{Arc, RwLock},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, RwLock,
+    },
     time::Duration,
 };
 
@@ -27,10 +30,41 @@ use tokio::runtime::Runtime;
 
 type Handler = Arc<dyn Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync>;
 
-static HANDLERS: Lazy<RwLock<HashMap<String, Handler>>> = Lazy::new(Default::default);
+#[derive(Default)]
+pub struct MockConnectionUtils {
+    pub handler: Option<Handler>,
+    pub connection_id_provider: AtomicUsize,
+    pub returned_ip_type: ConnectionIPReturnType,
+    pub return_connection_err: ShouldReturnConnectionError,
+}
+pub static MOCK_CONN_UTILS: Lazy<RwLock<HashMap<String, MockConnectionUtils>>> =
+    Lazy::new(Default::default);
+
+#[derive(Default)]
+pub enum ConnectionIPReturnType {
+    /// New connections' IP will be returned as None
+    #[default]
+    None,
+    /// Creates connections with the specified IP
+    Specified(IpAddr),
+    /// Each new connection will be created with a different IP based on the passed atomic integer
+    Different(AtomicUsize),
+}
+
+#[derive(Default)]
+pub enum ShouldReturnConnectionError {
+    /// Don't return a connection error
+    #[default]
+    No,
+    /// Always return a connection error
+    Yes,
+    /// Return connection error when the internal index is an odd number
+    OnOddIdx(AtomicUsize),
+}
 
 #[derive(Clone)]
 pub struct MockConnection {
+    pub id: usize,
     pub handler: Handler,
     pub port: u16,
 }
@@ -50,17 +84,47 @@ impl cluster_async::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
+        let binding = MOCK_CONN_UTILS.read().unwrap();
+        let conn_utils = binding
+            .get(name)
+            .unwrap_or_else(|| panic!("MockConnectionUtils for `{name}` were not installed"));
+        let conn_err = Box::pin(future::err(RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "mock-io-error",
+        ))));
+        match &conn_utils.return_connection_err {
+            ShouldReturnConnectionError::No => {}
+            ShouldReturnConnectionError::Yes => return conn_err,
+            ShouldReturnConnectionError::OnOddIdx(curr_idx) => {
+                if curr_idx.fetch_add(1, Ordering::SeqCst) % 2 != 0 {
+                    // raise an error on each odd number
+                    return conn_err;
+                }
+            }
+        }
+
+        let ip = match &conn_utils.returned_ip_type {
+            ConnectionIPReturnType::Specified(ip) => Some(*ip),
+            ConnectionIPReturnType::Different(ip_getter) => {
+                let first_ip_num = ip_getter.fetch_add(1, Ordering::SeqCst) as u8;
+                Some(IpAddr::V4(Ipv4Addr::new(first_ip_num, 0, 0, 0)))
+            }
+            ConnectionIPReturnType::None => None,
+        };
+
         Box::pin(future::ok((
             MockConnection {
-                handler: HANDLERS
-                    .read()
-                    .unwrap()
-                    .get(name)
-                    .unwrap_or_else(|| panic!("Handler `{name}` were not installed"))
+                id: conn_utils
+                    .connection_id_provider
+                    .fetch_add(1, Ordering::SeqCst),
+                handler: conn_utils
+                    .handler
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("Handler for `{name}` were not installed"))
                     .clone(),
                 port,
             },
-            None,
+            ip,
         )))
     }
 }
@@ -76,12 +140,18 @@ impl cluster::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
+        let binding = MOCK_CONN_UTILS.read().unwrap();
+        let conn_utils = binding
+            .get(name)
+            .unwrap_or_else(|| panic!("MockConnectionUtils for `{name}` were not installed"));
         Ok(MockConnection {
-            handler: HANDLERS
-                .read()
-                .unwrap()
-                .get(name)
-                .unwrap_or_else(|| panic!("Handler `{name}` were not installed"))
+            id: conn_utils
+                .connection_id_provider
+                .fetch_add(1, Ordering::SeqCst),
+            handler: conn_utils
+                .handler
+                .as_ref()
+                .unwrap_or_else(|| panic!("Handler for `{name}` were not installed"))
                 .clone(),
             port,
         })
@@ -303,7 +373,7 @@ pub struct RemoveHandler(Vec<String>);
 impl Drop for RemoveHandler {
     fn drop(&mut self) {
         for id in &self.0 {
-            HANDLERS.write().unwrap().remove(id);
+            MOCK_CONN_UTILS.write().unwrap().remove(id);
         }
     }
 }
@@ -333,11 +403,13 @@ impl MockEnv {
             .unwrap();
 
         let id = id.to_string();
-        HANDLERS
-            .write()
-            .unwrap()
-            .insert(id.clone(), Arc::new(move |cmd, port| handler(cmd, port)));
-
+        MOCK_CONN_UTILS.write().unwrap().insert(
+            id.clone(),
+            MockConnectionUtils {
+                handler: Some(Arc::new(move |cmd, port| handler(cmd, port))),
+                ..Default::default()
+            },
+        );
         let client = client_builder.build().unwrap();
         let connection = client.get_generic_connection().unwrap();
         #[cfg(feature = "cluster-async")]
