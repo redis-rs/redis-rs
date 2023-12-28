@@ -136,7 +136,7 @@ where
         self.0
             .send(Message {
                 cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
+                    cmd: Arc::new(cmd.clone()),
                     routing: routing.into(),
                 },
                 sender,
@@ -174,7 +174,7 @@ where
         self.0
             .send(Message {
                 cmd: CmdArg::Pipeline {
-                    pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
+                    pipeline: Arc::new(pipeline.clone()),
                     offset,
                     count,
                     route: route.into(),
