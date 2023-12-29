@@ -1655,6 +1655,73 @@ fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
 }
 
 #[test]
+fn test_cluster_pass_errors_from_split_multi_shard_command() {
+    let name = "test_cluster_pass_errors_from_split_multi_shard_command";
+    let mut cmd = cmd("MGET");
+    cmd.arg("foo").arg("bar").arg("baz");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(name, received_cmd, None)?;
+            let cmd_str = std::str::from_utf8(received_cmd).unwrap();
+            if cmd_str.contains("foo") || cmd_str.contains("baz") {
+                Err(Err((ErrorKind::IoError, "error").into()))
+            } else {
+                Err(Ok(Value::Array(vec![Value::BulkString(
+                    format!("{port}").into_bytes(),
+                )])))
+            }
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::IoError);
+}
+
+#[test]
+fn test_async_cluster_handle_missing_slots_in_split_multi_shard_command() {
+    let name = "test_cluster_handle_missing_slots_in_split_multi_shard_command";
+    let mut cmd = cmd("MGET");
+    cmd.arg("foo").arg("bar").arg("baz");
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                received_cmd,
+                Some(vec![MockSlotRange {
+                    primary_port: 6381,
+                    replica_ports: vec![6382],
+                    slot_range: (8192..16383),
+                }]),
+            )?;
+            Err(Ok(Value::Array(vec![Value::BulkString(
+                format!("{port}").into_bytes(),
+            )])))
+        },
+    );
+
+    let result = runtime
+        .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+        .unwrap_err();
+    assert_eq!(result.kind(), ErrorKind::ConnectionNotFound);
+}
+
+#[test]
 fn test_async_cluster_with_username_and_password() {
     let cluster = TestClusterContext::new_with_cluster_client_builder(
         3,
