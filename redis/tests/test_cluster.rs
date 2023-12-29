@@ -949,7 +949,7 @@ mod mtls_test {
         let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
         let connection = client.get_connection();
 
-        match cluster.cluster.servers.get(0).unwrap().connection_info() {
+        match cluster.cluster.servers.first().unwrap().connection_info() {
             ConnectionInfo {
                 addr: redis::ConnectionAddr::TcpTls { .. },
                 ..

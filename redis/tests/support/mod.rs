@@ -797,7 +797,7 @@ pub(crate) mod mtls_test {
         let server = cluster
             .cluster
             .servers
-            .get(0)
+            .first()
             .expect("Expected at least 1 server");
         let tls_paths = server.tls_paths.as_ref();
         let nodes = clean_node_info(&cluster.nodes);
