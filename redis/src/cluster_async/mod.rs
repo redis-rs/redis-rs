@@ -717,7 +717,7 @@ where
     }
 
     async fn aggregate_results(
-        receivers: Vec<(ArcStr, oneshot::Receiver<RedisResult<Response>>)>,
+        receivers: Vec<(Option<ArcStr>, oneshot::Receiver<RedisResult<Response>>)>,
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
@@ -790,7 +790,8 @@ where
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok((Value::BulkString(addr.as_bytes().to_vec()), result))
+                    // The unwrap here is possible, because if `addr` is None, an error should have been sent on the receiver.
+                    Ok((Value::BulkString(addr.unwrap().as_bytes().to_vec()), result))
                 }))
                 .await
                 .map(Value::Map)
@@ -990,35 +991,50 @@ where
         // for all of the individual requests to complete.
         #[allow(clippy::type_complexity)] // The return value is complex, but indentation and linebreaks make it human readable.
         fn into_channels<C>(
-            iterator: impl Iterator<Item = (Arc<Cmd>, ConnectionAndIdentifier<ConnectionFuture<C>>)>,
+            iterator: impl Iterator<
+                Item = Option<(Arc<Cmd>, ConnectionAndIdentifier<ConnectionFuture<C>>)>,
+            >,
             connections_container: &ConnectionsContainer<C>,
         ) -> (
-            Vec<(ArcStr, Receiver<Result<Response, RedisError>>)>,
-            Vec<PendingRequest<C>>,
+            Vec<(Option<ArcStr>, Receiver<Result<Response, RedisError>>)>,
+            Vec<Option<PendingRequest<C>>>,
         ) {
             iterator
-                .filter_map(|(cmd, (identifier, conn))| {
+                .map(|tuple_opt| {
                     let (sender, receiver) = oneshot::channel();
-                    connections_container
-                            .address_for_identifier(&identifier) // TODO - this lookup can be avoided, since address is only needed on Special aggregates.
-                            .map(|address| {
-                                (
-                                    (address, receiver),
-                                    PendingRequest {
-                                        retry: 0,
-                                        sender,
-                                        info: RequestInfo {
-                                            cmd: CmdArg::Cmd {
-                                                cmd,
-                                                routing: InternalSingleNodeRouting::Connection {
-                                                    identifier,
-                                                    conn,
-                                                }.into(),
-                                            },
-                                        },
+                    if let Some((cmd, identifier, conn, address)) =
+                        tuple_opt.and_then(|(cmd, (identifier, conn))| {
+                            // TODO - this lookup can be avoided, since address is only needed on Special aggregates.
+                            connections_container
+                                .address_for_identifier(&identifier)
+                                .map(|address| (cmd, identifier, conn, address))
+                        })
+                    {
+                        (
+                            (Some(address), receiver),
+                            Some(PendingRequest {
+                                retry: 0,
+                                sender,
+                                info: RequestInfo {
+                                    cmd: CmdArg::Cmd {
+                                        cmd,
+                                        routing: InternalSingleNodeRouting::Connection {
+                                            identifier,
+                                            conn,
+                                        }
+                                        .into(),
                                     },
-                                )
-                            })
+                                },
+                            }),
+                        )
+                    } else {
+                        let _ = sender.send(Err((
+                            ErrorKind::ConnectionNotFound,
+                            "Connection not found",
+                        )
+                            .into()));
+                        ((None, receiver), None)
+                    }
                 })
                 .unzip()
         }
@@ -1027,18 +1043,17 @@ where
             MultipleNodeRoutingInfo::AllNodes => into_channels(
                 connections_container
                     .all_node_connections()
-                    .map(|tuple| (cmd.clone(), tuple)),
+                    .map(|tuple| Some((cmd.clone(), tuple))),
                 &connections_container,
             ),
             MultipleNodeRoutingInfo::AllMasters => into_channels(
                 connections_container
                     .all_primary_connections()
-                    .map(|tuple| (cmd.clone(), tuple)),
+                    .map(|tuple| Some((cmd.clone(), tuple))),
                 &connections_container,
             ),
             MultipleNodeRoutingInfo::MultiSlot(slots) => into_channels(
-                // TODO - this filter_map means that missing addresses are silently ignored.
-                slots.iter().filter_map(|(route, indices)| {
+                slots.iter().map(|(route, indices)| {
                     connections_container
                         .connection_for_route(route)
                         .map(|tuple| {
@@ -1054,7 +1069,10 @@ where
         };
 
         drop(connections_container);
-        core.pending_requests.lock().unwrap().extend(requests);
+        core.pending_requests
+            .lock()
+            .unwrap()
+            .extend(requests.into_iter().flatten());
 
         Self::aggregate_results(receivers, routing, response_policy)
             .await

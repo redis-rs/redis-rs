@@ -131,6 +131,8 @@ pub enum ErrorKind {
     EmptySentinelList,
     /// Attempted to kill a script/function while they werent' executing
     NotBusy,
+    /// The required connection was not found in the cluster.
+    ConnectionNotFound,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -630,6 +632,7 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
+            ErrorKind::ConnectionNotFound => "required connection not found",
         }
     }
 
@@ -782,6 +785,7 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => false,
             ErrorKind::RESP3NotSupported => false,
+            ErrorKind::ConnectionNotFound => false,
         }
     }
 }
