@@ -60,18 +60,21 @@ mod cluster;
 mod mock_cluster;
 
 mod util;
+#[allow(unused_imports)]
 pub use self::util::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::mock_cluster::*;
 
 #[cfg(feature = "sentinel")]
 mod sentinel;
 
 #[cfg(feature = "sentinel")]
+#[allow(unused_imports)]
 pub use self::sentinel::*;
 
 #[derive(PartialEq)]
