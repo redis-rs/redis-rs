@@ -57,12 +57,14 @@ mod util;
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::mock_cluster::*;
 
 #[cfg(feature = "sentinel")]
 mod sentinel;
 
 #[cfg(feature = "sentinel")]
+#[allow(unused_imports)]
 pub use self::sentinel::*;
 
 #[derive(PartialEq)]
@@ -722,7 +724,7 @@ pub(crate) mod mtls_test {
         let server = cluster
             .cluster
             .servers
-            .get(0)
+            .first()
             .expect("Expected at least 1 server");
         let tls_paths = server.tls_paths.as_ref();
         let nodes = clean_node_info(&cluster.nodes);

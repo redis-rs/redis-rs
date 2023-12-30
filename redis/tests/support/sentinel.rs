@@ -138,7 +138,7 @@ fn wait_for_master_server(
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
-                    let role = String::from_redis_value(r.get(0).unwrap()).unwrap();
+                    let role = String::from_redis_value(r.first().unwrap()).unwrap();
                     if role.starts_with("master") {
                         return Ok(());
                     } else {
@@ -168,7 +168,7 @@ fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> R
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
-                    let role = String::from_redis_value(r.get(0).unwrap()).unwrap();
+                    let role = String::from_redis_value(r.first().unwrap()).unwrap();
                     let state = String::from_redis_value(r.get(3).unwrap()).unwrap();
                     if role.starts_with("slave") && state == "connected" {
                         return Ok(());
@@ -198,7 +198,7 @@ fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
 
     for cluster_index in 0..clusters {
         let master_addr = servers[cluster_index * cluster_size].connection_info();
-        let tls_paths = &servers.get(0).unwrap().tls_paths;
+        let tls_paths = &servers.first().unwrap().tls_paths;
         let r = wait_for_master_server(|| {
             Ok(build_single_client(master_addr.clone(), tls_paths, MTLS_NOT_ENABLED).unwrap())
         });
