@@ -432,7 +432,7 @@ impl StreamId {
     fn from_bulk_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
         if let Value::Bulk(ref values) = *v {
-            if let Some(v) = values.get(0) {
+            if let Some(v) = values.first() {
                 stream_id.id = from_redis_value(v)?;
             }
             if let Some(v) = values.get(1) {

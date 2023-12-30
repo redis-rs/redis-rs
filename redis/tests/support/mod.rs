@@ -6,7 +6,8 @@ use std::{
 };
 
 use futures::Future;
-use redis::{Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
+
+use redis::{InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
@@ -50,9 +51,11 @@ mod cluster;
 mod mock_cluster;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::mock_cluster::*;
 
 #[derive(PartialEq)]
@@ -543,4 +546,26 @@ pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
         .arg(42)
         .ignore();
     pipe
+}
+
+pub type Version = (u16, u16, u16);
+
+fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
+    let info: InfoDict = redis::Cmd::new().arg("INFO").query(conn).unwrap();
+    let version: String = info.get("redis_version").unwrap();
+    let versions: Vec<u16> = version
+        .split('.')
+        .map(|version| version.parse::<u16>().unwrap())
+        .collect();
+    assert_eq!(versions.len(), 3);
+    (versions[0], versions[1], versions[2])
+}
+
+pub fn is_major_version(expected_version: u16, version: Version) -> bool {
+    expected_version <= version.0
+}
+
+pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
+    expected_major_minor.0 < version.0
+        || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
 }
