@@ -65,12 +65,12 @@ use arcstr::ArcStr;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use backoff_std_async::future::retry;
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use backoff_std_async::{Error, ExponentialBackoff};
+use backoff_std_async::{Error as BackoffError, ExponentialBackoff};
 
 #[cfg(feature = "tokio-comp")]
 use backoff_tokio::future::retry;
 #[cfg(feature = "tokio-comp")]
-use backoff_tokio::{Error, ExponentialBackoff};
+use backoff_tokio::{Error as BackoffError, ExponentialBackoff};
 
 use dispose::{Disposable, Dispose};
 use futures::{
@@ -325,6 +325,7 @@ enum Response {
 enum OperationTarget {
     Node { identifier: ConnectionIdentifier },
     FanOut,
+    NoTargetFound,
 }
 type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
@@ -453,6 +454,14 @@ impl<C> Future for Request<C> {
                 Next::Done.into()
             }
             Err((target, err)) => {
+                let request = this.request.as_mut().unwrap();
+
+                if request.retry >= this.retry_params.number_of_retries {
+                    self.respond(Err(err));
+                    return Next::Done.into();
+                }
+                request.retry = request.retry.saturating_add(1);
+
                 let identifier = match target {
                     OperationTarget::Node { identifier } => identifier,
                     OperationTarget::FanOut => {
@@ -461,16 +470,15 @@ impl<C> Future for Request<C> {
                         self.respond(Err(err));
                         return Next::Done.into();
                     }
+                    OperationTarget::NoTargetFound => {
+                        warn!("No connection found: `{err}`");
+                        return Next::RefreshSlots {
+                            request: this.request.take().unwrap(),
+                        }
+                        .into();
+                    }
                 };
-
-                let request = this.request.as_mut().unwrap();
                 trace!("Request error `{}` on node `{:?}", err, identifier);
-
-                if request.retry >= this.retry_params.number_of_retries {
-                    self.respond(Err(err));
-                    return Next::Done.into();
-                }
-                request.retry = request.retry.saturating_add(1);
 
                 match err.kind() {
                     ErrorKind::Ask => {
@@ -542,7 +550,7 @@ impl<C> Request<C> {
 enum ConnectionCheck<C> {
     Found((ConnectionIdentifier, ConnectionFuture<C>)),
     OnlyAddress(String),
-    Nothing,
+    RandomConnection,
 }
 
 impl<C> ClusterConnInner<C>
@@ -884,6 +892,21 @@ where
         Ok(change_found)
     }
 
+    async fn refresh_slots(
+        inner: Arc<InnerCore<C>>,
+        curr_retry: usize,
+    ) -> Result<(), BackoffError<RedisError>> {
+        Self::refresh_slots_inner(inner, curr_retry)
+            .await
+            .map_err(|err| {
+                if curr_retry > DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES {
+                    BackoffError::Permanent(err)
+                } else {
+                    BackoffError::from(err)
+                }
+            })
+    }
+
     // Query a node to discover slot-> master mappings
     async fn refresh_slots(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
         info!("refresh_slots started");
@@ -1103,7 +1126,9 @@ where
 
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
-        let (identifier, mut conn) = Self::get_connection(routing, core).await;
+        let (identifier, mut conn) = Self::get_connection(routing, core)
+            .await
+            .map_err(|err| (OperationTarget::NoTargetFound, err))?;
         conn.req_packed_command(&cmd)
             .await
             .map(Response::Single)
@@ -1114,10 +1139,12 @@ where
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = (ConnectionIdentifier, C)>,
+        conn: impl Future<Output = RedisResult<(ConnectionIdentifier, C)>>,
     ) -> OperationResult {
         trace!("try_pipeline_request");
-        let (identifier, mut conn) = conn.await;
+        let (identifier, mut conn) = conn
+            .await
+            .map_err(|err| (OperationTarget::NoTargetFound, err))?;
         conn.req_packed_commands(&pipeline, offset, count)
             .await
             .map(Response::Multiple)
@@ -1147,7 +1174,7 @@ where
     async fn get_connection(
         routing: InternalSingleNodeRouting<C>,
         core: Core<C>,
-    ) -> (ConnectionIdentifier, C) {
+    ) -> RedisResult<(ConnectionIdentifier, C)> {
         let read_guard = core.conn_lock.read().await;
         let mut asking = false;
 
@@ -1165,20 +1192,25 @@ where
                     ConnectionCheck::Found,
                 )
             }
-            InternalSingleNodeRouting::SpecificNode(route) => read_guard
-                .connection_for_route(&route)
-                .map_or(ConnectionCheck::Nothing, ConnectionCheck::Found),
-            InternalSingleNodeRouting::Random => ConnectionCheck::Nothing,
+            // This means that a request routed to a route without a matching connection will be sent to a random node, hopefully to be redirected afterwards.
+            InternalSingleNodeRouting::SpecificNode(route) => {
+                read_guard.connection_for_route(&route).map_or_else(
+                    || {
+                        warn!("No connection found for route `{route:?}");
+                        ConnectionCheck::RandomConnection
+                    },
+                    ConnectionCheck::Found,
+                )
+            }
+            InternalSingleNodeRouting::Random => ConnectionCheck::RandomConnection,
             InternalSingleNodeRouting::Connection { identifier, conn } => {
-                return (identifier, conn.await);
+                return Ok((identifier, conn.await));
             }
         };
         drop(read_guard);
 
-        let addr_conn_option = match conn_check {
-            ConnectionCheck::Found((identifier, connection)) => {
-                Some((identifier, connection.await))
-            }
+        let (identifier, mut conn) = match conn_check {
+            ConnectionCheck::Found((identifier, connection)) => (identifier, connection.await),
             ConnectionCheck::OnlyAddress(addr) => {
                 match connect_and_check::<C>(&addr, core.cluster_params.clone(), None).await {
                     Ok((connection, ip)) => {
@@ -1193,30 +1225,30 @@ where
                             ),
                         );
                         drop(connections);
-                        Some((identifier, connection))
+                        (identifier, connection)
                     }
-                    Err(_) => None, // TODO - this should probably be handled in another way, not sent to a random connection.
+                    Err(err) => {
+                        return Err(err);
+                    }
                 }
             }
-            ConnectionCheck::Nothing => None,
-        };
-
-        let (identifier, mut conn) = match addr_conn_option {
-            Some(tuple) => tuple,
-            None => {
+            ConnectionCheck::RandomConnection => {
                 let read_guard = core.conn_lock.read().await;
                 let (random_identifier, random_conn_future) = read_guard
                     .random_connections(1, ConnectionType::User)
                     .next()
-                    .unwrap(); // TODO - this can panic. handle None.
-                drop(read_guard);
-                (random_identifier, random_conn_future.await)
+                    .ok_or(RedisError::from((
+                        ErrorKind::ConnectionNotFound,
+                        "No random connection found",
+                    )))?;
+                return Ok((random_identifier, random_conn_future.await));
             }
         };
+
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
         }
-        (identifier, conn)
+        Ok((identifier, conn))
     }
 
     fn poll_recover(
