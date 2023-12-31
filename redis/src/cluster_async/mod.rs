@@ -811,12 +811,13 @@ where
         let retry_strategy = ExponentialBackoff {
             initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
             max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
+            max_elapsed_time: None,
             ..Default::default()
         };
         let retries_counter = AtomicUsize::new(0);
         let res = retry(retry_strategy, || {
             let curr_retry = retries_counter.fetch_add(1, atomic::Ordering::Relaxed);
-            Self::refresh_slots(inner.clone(), curr_retry).map_err(Error::from)
+            Self::refresh_slots(inner.clone(), curr_retry)
         })
         .await;
         inner
@@ -842,7 +843,7 @@ where
                 ..Default::default()
             };
             let topology_check_res = retry(retry_strategy, || {
-                Self::check_for_topology_diff(inner.clone()).map_err(Error::from)
+                Self::check_for_topology_diff(inner.clone()).map_err(BackoffError::from)
             })
             .await;
             if let Ok(true) = topology_check_res {
@@ -884,9 +885,26 @@ where
         Ok(change_found)
     }
 
+    async fn refresh_slots(
+        inner: Arc<InnerCore<C>>,
+        curr_retry: usize,
+    ) -> Result<(), BackoffError<RedisError>> {
+        Self::refresh_slots_inner(inner, curr_retry)
+            .await
+            .map_err(|err| {
+                if curr_retry > DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES {
+                    BackoffError::Permanent(err)
+                } else {
+                    BackoffError::Transient {
+                        err,
+                        retry_after: None,
+                    }
+                }
+            })
+    }
+
     // Query a node to discover slot-> master mappings
-    async fn refresh_slots(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
-        info!("refresh_slots started");
+    async fn refresh_slots_inner(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes = read_guard.len();
         const MAX_REQUESTED_NODES: usize = 50;
