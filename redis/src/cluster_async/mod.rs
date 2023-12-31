@@ -38,7 +38,7 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
-        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
     },
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
@@ -99,7 +99,7 @@ where
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    routing: CommandRouting::Route(routing),
+                    routing: routing.into(),
                 },
                 sender,
             })
@@ -139,7 +139,7 @@ where
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
                     offset,
                     count,
-                    route,
+                    route: route.into(),
                 },
                 sender,
             })
@@ -180,25 +180,72 @@ struct ClusterConnInner<C> {
 }
 
 #[derive(Clone)]
-enum CommandRouting<C> {
-    Route(RoutingInfo),
+enum InternalRoutingInfo<C> {
+    SingleNode(InternalSingleNodeRouting<C>),
+    MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
+}
+
+impl<C> From<cluster_routing::RoutingInfo> for InternalRoutingInfo<C> {
+    fn from(value: cluster_routing::RoutingInfo) -> Self {
+        match value {
+            cluster_routing::RoutingInfo::SingleNode(route) => {
+                InternalRoutingInfo::SingleNode(route.into())
+            }
+            cluster_routing::RoutingInfo::MultiNode(routes) => {
+                InternalRoutingInfo::MultiNode(routes)
+            }
+        }
+    }
+}
+
+impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
+    fn from(value: InternalSingleNodeRouting<C>) -> Self {
+        InternalRoutingInfo::SingleNode(value)
+    }
+}
+
+#[derive(Clone)]
+enum InternalSingleNodeRouting<C> {
+    Random,
+    SpecificNode(Route),
     Connection {
-        addr: String,
+        identifier: String,
         conn: ConnectionFuture<C>,
     },
+    Redirect {
+        redirect: Redirect,
+        previous_routing: Box<InternalSingleNodeRouting<C>>,
+    },
+}
+
+impl<C> Default for InternalSingleNodeRouting<C> {
+    fn default() -> Self {
+        Self::Random
+    }
+}
+
+impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
+    fn from(value: SingleNodeRoutingInfo) -> Self {
+        match value {
+            SingleNodeRoutingInfo::Random => InternalSingleNodeRouting::Random,
+            SingleNodeRoutingInfo::SpecificNode(route) => {
+                InternalSingleNodeRouting::SpecificNode(route)
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
-        routing: CommandRouting<C>,
+        routing: InternalRoutingInfo<C>,
     },
     Pipeline {
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        route: SingleNodeRoutingInfo,
+        route: InternalSingleNodeRouting<C>,
     },
 }
 
@@ -290,7 +337,59 @@ impl fmt::Debug for ConnectionState {
 #[derive(Clone)]
 struct RequestInfo<C> {
     cmd: CmdArg<C>,
-    redirect: Option<Redirect>,
+}
+
+impl<C> RequestInfo<C> {
+    fn set_redirect(&mut self, redirect: Option<Redirect>) {
+        if let Some(redirect) = redirect {
+            match &mut self.cmd {
+                CmdArg::Cmd { routing, .. } => match routing {
+                    InternalRoutingInfo::SingleNode(route) => {
+                        let redirect = InternalSingleNodeRouting::Redirect {
+                            redirect,
+                            previous_routing: Box::new(std::mem::take(route)),
+                        }
+                        .into();
+                        *routing = redirect;
+                    }
+                    InternalRoutingInfo::MultiNode(_) => {
+                        panic!("Cannot redirect multinode requests")
+                    }
+                },
+                CmdArg::Pipeline { route, .. } => {
+                    let redirect = InternalSingleNodeRouting::Redirect {
+                        redirect,
+                        previous_routing: Box::new(std::mem::take(route)),
+                    };
+                    *route = redirect;
+                }
+            }
+        }
+    }
+
+    fn reset_redirect(&mut self) {
+        match &mut self.cmd {
+            CmdArg::Cmd { routing, .. } => {
+                if let InternalRoutingInfo::SingleNode(InternalSingleNodeRouting::Redirect {
+                    previous_routing,
+                    ..
+                }) = routing
+                {
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *routing = previous_routing.into();
+                }
+            }
+            CmdArg::Pipeline { route, .. } => {
+                if let InternalSingleNodeRouting::Redirect {
+                    previous_routing, ..
+                } = route
+                {
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *route = previous_routing;
+                }
+            }
+        }
+    }
 }
 
 pin_project! {
@@ -387,7 +486,8 @@ where
                     }
                     OperationTarget::NotFound => {
                         // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
-                        let request = this.request.take().unwrap();
+                        let mut request = this.request.take().unwrap();
+                        request.info.reset_redirect();
                         return Next::RefreshSlots {
                             request,
                             sleep_duration: Some(sleep_duration),
@@ -399,16 +499,18 @@ where
                 match err.kind() {
                     ErrorKind::Ask => {
                         let mut request = this.request.take().unwrap();
-                        request.info.redirect = err
-                            .redirect_node()
-                            .map(|(node, _slot)| Redirect::Ask(node.to_string()));
+                        request.info.set_redirect(
+                            err.redirect_node()
+                                .map(|(node, _slot)| Redirect::Ask(node.to_string())),
+                        );
                         Next::Retry { request }.into()
                     }
                     ErrorKind::Moved => {
                         let mut request = this.request.take().unwrap();
-                        request.info.redirect = err
-                            .redirect_node()
-                            .map(|(node, _slot)| Redirect::Moved(node.to_string()));
+                        request.info.set_redirect(
+                            err.redirect_node()
+                                .map(|(node, _slot)| Redirect::Moved(node.to_string())),
+                        );
                         Next::RefreshSlots {
                             request,
                             sleep_duration: None,
@@ -422,9 +524,14 @@ where
                         });
                         self.poll(cx)
                     }
-                    ErrorKind::IoError => Next::Reconnect {
-                        request: this.request.take().unwrap(),
-                        target: address,
+                    ErrorKind::IoError => {
+                        let mut request = this.request.take().unwrap();
+                        // TODO should we reset the redirect here?
+                        request.info.reset_redirect();
+                        Next::Reconnect {
+                            request,
+                            target: address,
+                        }
                     }
                     .into(),
                     _ => {
@@ -712,9 +819,12 @@ where
                             info: RequestInfo {
                                 cmd: CmdArg::Cmd {
                                     cmd,
-                                    routing: CommandRouting::Connection { addr, conn },
+                                    routing: InternalSingleNodeRouting::Connection {
+                                        identifier: addr,
+                                        conn,
+                                    }
+                                    .into(),
                                 },
-                                redirect: None,
                             },
                         },
                     )
@@ -764,44 +874,23 @@ where
 
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
-        redirect: Option<Redirect>,
-        routing: CommandRouting<C>,
+        routing: InternalRoutingInfo<C>,
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let route = if redirect.is_some() {
-            // if we have a redirect, we don't take info from `routing`.
-            // TODO - combine the info in `routing` and `redirect` and `asking` into a single structure, so there won't be this question of which field takes precedence.
-            SingleNodeRoutingInfo::Random
-        } else {
-            match routing {
-                // commands that are sent to multiple nodes are handled here.
-                CommandRouting::Route(RoutingInfo::MultiNode((
-                    multi_node_routing,
+        let route = match routing {
+            InternalRoutingInfo::SingleNode(single_node_routing) => single_node_routing,
+            InternalRoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
+                return Self::execute_on_multiple_nodes(
+                    &cmd,
+                    &multi_node_routing,
+                    core,
                     response_policy,
-                ))) => {
-                    assert!(redirect.is_none());
-                    return Self::execute_on_multiple_nodes(
-                        &cmd,
-                        &multi_node_routing,
-                        core,
-                        response_policy,
-                    )
-                    .await;
-                }
-                CommandRouting::Route(RoutingInfo::SingleNode(single_node_routing)) => {
-                    single_node_routing
-                }
-
-                // commands that have concrete connections, and don't require redirection, are handled here.
-                CommandRouting::Connection { addr, conn } => {
-                    let mut conn = conn.await;
-                    let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-                    return (addr.into(), result);
-                }
+                )
+                .await;
             }
         };
 
-        match Self::get_connection(redirect, route, core).await {
+        match Self::get_connection(route, core).await {
             Ok((addr, mut conn)) => {
                 let result = conn.req_packed_command(&cmd).await.map(Response::Single);
                 (addr.into(), result)
@@ -833,9 +922,7 @@ where
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
         match info.cmd {
-            CmdArg::Cmd { cmd, routing } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, core).await
-            }
+            CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
             CmdArg::Pipeline {
                 pipeline,
                 offset,
@@ -846,7 +933,7 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(info.redirect, route, core),
+                    Self::get_connection(route, core),
                 )
                 .await
             }
@@ -854,23 +941,25 @@ where
     }
 
     async fn get_connection(
-        redirect: Option<Redirect>,
-        route: SingleNodeRoutingInfo,
+        route: InternalSingleNodeRouting<C>,
         core: Core<C>,
     ) -> RedisResult<(String, C)> {
-        if let Some(redirect) = redirect {
-            // redirected requests shouldn't use a random connection, so they have a separate codepath.
-            return Self::get_redirected_connection(redirect, core).await;
-        }
-
         let read_guard = core.conn_lock.read().await;
 
         let conn = match route {
-            SingleNodeRoutingInfo::Random => None,
-            SingleNodeRoutingInfo::SpecificNode(route) => read_guard
+            InternalSingleNodeRouting::Random => None,
+            InternalSingleNodeRouting::SpecificNode(route) => read_guard
                 .1
                 .slot_addr_for_route(&route)
                 .map(|addr| addr.to_string()),
+            InternalSingleNodeRouting::Connection { identifier, conn } => {
+                return Ok((identifier, conn.await));
+            }
+            InternalSingleNodeRouting::Redirect { redirect, .. } => {
+                drop(read_guard);
+                // redirected requests shouldn't use a random connection, so they have a separate codepath.
+                return Self::get_redirected_connection(redirect, core).await;
+            }
         }
         .map(|addr| {
             let conn = read_guard.0.get(&addr).cloned();
@@ -1157,8 +1246,7 @@ where
         trace!("start_send");
         let Message { cmd, sender } = msg;
 
-        let redirect = None;
-        let info = RequestInfo { cmd, redirect };
+        let info = RequestInfo { cmd };
 
         self.inner
             .pending_requests
