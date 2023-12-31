@@ -1,14 +1,17 @@
 use redis::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
 use std::str::FromStr;
 
-fn test<T>(content :&str )
+fn test<T>(content: &str)
 where
-    T: FromRedisValue + ToRedisArgs + std::str::FromStr
-        + std::convert::From<u32> + std::cmp::PartialEq + std::fmt::Debug,
+    T: FromRedisValue
+        + ToRedisArgs
+        + std::str::FromStr
+        + std::convert::From<u32>
+        + std::cmp::PartialEq
+        + std::fmt::Debug,
     <T as FromStr>::Err: std::fmt::Debug,
-  {
-    let v: RedisResult<T> =
-        FromRedisValue::from_redis_value(&Value::Data(Vec::from(content)));
+{
+    let v: RedisResult<T> = FromRedisValue::from_redis_value(&Value::Data(Vec::from(content)));
     assert_eq!(v, Ok(T::from_str(content).unwrap()));
 
     let arg = ToRedisArgs::to_redis_args(&v.unwrap());

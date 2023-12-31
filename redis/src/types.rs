@@ -971,7 +971,6 @@ bignum_to_redis_impl!(num_bigint::BigInt);
 #[cfg(feature = "bignum")]
 bignum_to_redis_impl!(num_bigint::BigUint);
 
-
 impl ToRedisArgs for bool {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -1337,7 +1336,6 @@ from_redis_value_for_bignum!(bigdecimal::BigDecimal);
 from_redis_value_for_bignum!(num_bigint::BigInt);
 #[cfg(feature = "bignum")]
 from_redis_value_for_bignum!(num_bigint::BigUint);
-
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
