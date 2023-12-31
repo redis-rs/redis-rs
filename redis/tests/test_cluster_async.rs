@@ -237,7 +237,9 @@ fn test_cluster_resp3() {
                 )
             ])
         );
-    });
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[ignore] // TODO Handle pipe where the keys do not all go to the same node
