@@ -402,7 +402,8 @@ pub use crate::types::{
     // low level values
     Value,
     PushKind,
-    VerbatimFormat
+    VerbatimFormat,
+    ProtocolVersion
 };
 
 #[cfg(feature = "aio")]

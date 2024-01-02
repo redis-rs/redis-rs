@@ -12,11 +12,12 @@ use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
+use redis::ProtocolVersion;
 use tempfile::TempDir;
 
 use crate::support::build_keys_and_certs_for_tls;
 
-use super::use_resp3;
+use super::use_protocol;
 use super::Module;
 use super::RedisServer;
 
@@ -247,7 +248,7 @@ impl Drop for RedisCluster {
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
     pub client: redis::cluster::ClusterClient,
-    pub use_resp3: bool,
+    pub protocol: ProtocolVersion,
 }
 
 impl TestClusterContext {
@@ -269,14 +270,14 @@ impl TestClusterContext {
             .map(RedisServer::connection_info)
             .collect();
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes);
-        builder = builder.use_resp3(use_resp3());
+        builder = builder.use_protocol(use_protocol());
         builder = initializer(builder);
 
         let client = builder.build().unwrap();
         TestClusterContext {
             cluster,
             client,
-            use_resp3: use_resp3(),
+            protocol: use_protocol(),
         }
     }
 

@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, PushKind};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::{
@@ -336,7 +336,7 @@ pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>, RedisError>,
     db: i64,
     push_manager: PushManager,
-    resp3: bool,
+    protocol: ProtocolVersion,
 }
 
 impl Debug for MultiplexedConnection {
@@ -379,7 +379,7 @@ impl MultiplexedConnection {
             pipeline,
             db: redis_connection_info.db,
             push_manager: pm,
-            resp3: redis_connection_info.use_resp3,
+            protocol: redis_connection_info.protocol,
         };
         let driver = {
             let auth = authenticate(redis_connection_info, &mut con);
@@ -408,7 +408,7 @@ impl MultiplexedConnection {
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             });
-        if self.resp3 {
+        if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
@@ -439,7 +439,7 @@ impl MultiplexedConnection {
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             });
-        if self.resp3 {
+        if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
@@ -483,7 +483,7 @@ impl ConnectionLike for MultiplexedConnection {
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
     pub async fn subscribe(&mut self, channel_name: String) -> RedisResult<()> {
-        if !self.resp3 {
+        if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
@@ -497,7 +497,7 @@ impl MultiplexedConnection {
 
     /// Unsubscribes from channel.
     pub async fn unsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
-        if !self.resp3 {
+        if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
@@ -511,7 +511,7 @@ impl MultiplexedConnection {
 
     /// Subscribes to a new channel with pattern.
     pub async fn psubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
-        if !self.resp3 {
+        if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
@@ -525,7 +525,7 @@ impl MultiplexedConnection {
 
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
-        if !self.resp3 {
+        if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",

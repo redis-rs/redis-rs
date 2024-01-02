@@ -6,12 +6,16 @@ use std::{
 };
 
 use futures::Future;
-use redis::{Pipeline, RedisConnectionInfo, Value};
+use redis::{Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
-pub fn use_resp3() -> bool {
-    env::var("RESP3").unwrap_or_default() == "true"
+pub fn use_protocol() -> ProtocolVersion {
+    if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
+        ProtocolVersion::RESP3
+    } else {
+        ProtocolVersion::RESP2
+    }
 }
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
@@ -251,7 +255,7 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
-    pub use_resp3: bool,
+    pub protocol: ProtocolVersion,
 }
 
 impl TestContext {
@@ -261,11 +265,11 @@ impl TestContext {
 
     pub fn with_modules(modules: &[Module]) -> TestContext {
         let server = RedisServer::with_modules(modules);
-        let use_resp3 = use_resp3();
+        let protocol = use_protocol();
         let client = redis::Client::open(redis::ConnectionInfo {
             addr: server.client_addr().clone(),
             redis: RedisConnectionInfo {
-                use_resp3,
+                protocol,
                 ..Default::default()
             },
         })
@@ -298,7 +302,7 @@ impl TestContext {
         TestContext {
             server,
             client,
-            use_resp3,
+            protocol: use_protocol(),
         }
     }
 

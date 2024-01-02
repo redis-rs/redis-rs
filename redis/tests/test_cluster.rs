@@ -8,7 +8,7 @@ use std::sync::{
 use crate::support::*;
 use redis::{
     cluster::{cluster_pipe, ClusterClient},
-    cmd, parse_redis_value, Commands, ErrorKind, RedisError, Value,
+    cmd, parse_redis_value, Commands, ErrorKind, ProtocolVersion, RedisError, Value,
 };
 
 #[test]
@@ -111,7 +111,7 @@ fn test_cluster_eval() {
 
 #[test]
 fn test_cluster_resp3() {
-    if !use_resp3() {
+    if use_protocol() == ProtocolVersion::RESP2 {
         return;
     }
     let cluster = TestClusterContext::new(3, 0);
