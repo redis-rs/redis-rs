@@ -36,7 +36,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --all-features -- --test-threads=1 --skip test_cluster --skip test_async_cluster --skip test_module 
+	@REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --all-features -- --test-threads=1 --skip test_cluster --skip test_async_cluster --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing async-std with Rustls"

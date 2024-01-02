@@ -414,13 +414,21 @@ struct ErrorConnection {
 impl Connect for ErrorConnection {
     fn connect<'a, T>(
         info: T,
-        _socket_addr: Option<SocketAddr>,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+        socket_addr: Option<SocketAddr>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
-        Box::pin(async {
-            let inner = MultiplexedConnection::connect(info, None).await?.0;
+        Box::pin(async move {
+            let (inner, _ip) = MultiplexedConnection::connect(
+                info,
+                response_timeout,
+                connection_timeout,
+                socket_addr,
+            )
+            .await?;
             Ok((ErrorConnection { inner }, None))
         })
     }

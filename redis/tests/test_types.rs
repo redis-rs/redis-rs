@@ -201,7 +201,7 @@ fn test_tuple() {
 #[test]
 fn test_hashmap() {
     use fnv::FnvHasher;
-    use redis::{FromRedisValue, Value};
+    use redis::{ErrorKind, FromRedisValue, Value};
     use std::collections::HashMap;
     use std::hash::BuildHasherDefault;
 
@@ -238,6 +238,10 @@ fn test_hashmap() {
     e.insert("b".into(), 2);
     e.insert("c".into(), 3);
     assert_eq!(v, Ok(e));
+
+    let v: Result<Hm, _> =
+        FromRedisValue::from_redis_value(&Value::Array(vec![Value::BulkString("a".into())]));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
 #[test]

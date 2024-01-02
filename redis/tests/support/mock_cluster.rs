@@ -73,6 +73,8 @@ pub struct MockConnection {
 impl cluster_async::Connect for MockConnection {
     fn connect<'a, T>(
         info: T,
+        _response_timeout: Duration,
+        _connection_timeout: Duration,
         _socket_addr: Option<SocketAddr>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
