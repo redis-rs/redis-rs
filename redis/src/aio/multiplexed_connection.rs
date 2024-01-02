@@ -278,14 +278,19 @@ where
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send_single(&mut self, item: SinkItem) -> Result<Value, Option<RedisError>> {
-        self.send_recv(item, 1).await
+    async fn send_single(
+        &mut self,
+        item: SinkItem,
+        timeout: futures_time::time::Duration,
+    ) -> Result<Value, Option<RedisError>> {
+        self.send_recv(item, 1, timeout).await
     }
 
     async fn send_recv(
         &mut self,
         input: SinkItem,
         count: usize,
+        timeout: futures_time::time::Duration,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
@@ -297,13 +302,14 @@ where
             })
             .await
             .map_err(|_| None)?;
-        match receiver.await {
-            Ok(result) => result.map_err(Some),
-            Err(_) => {
+        match futures_time::future::FutureExt::timeout(receiver, timeout).await {
+            Ok(Ok(result)) => result.map_err(Some),
+            Ok(Err(_)) => {
                 // The `sender` was dropped which likely means that the stream part
                 // failed for one reason or another
                 Err(None)
             }
+            Err(elapsed) => Err(Some(RedisError::from(elapsed))),
         }
     }
 }
@@ -314,6 +320,7 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>>,
     db: i64,
+    response_timeout: futures_time::time::Duration,
 }
 
 impl Debug for MultiplexedConnection {
@@ -335,6 +342,19 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
+        Self::new_with_response_timeout(connection_info, stream, std::time::Duration::MAX).await
+    }
+
+    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
+    /// and a `ConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
+    pub async fn new_with_response_timeout<C>(
+        connection_info: &RedisConnectionInfo,
+        stream: C,
+        response_timeout: std::time::Duration,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)>
+    where
+        C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
+    {
         fn boxed(
             f: impl Future<Output = ()> + Send + 'static,
         ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -352,6 +372,7 @@ impl MultiplexedConnection {
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
+            response_timeout: response_timeout.into(),
         };
         let driver = {
             let auth = setup_connection(connection_info, &mut con);
@@ -370,17 +391,20 @@ impl MultiplexedConnection {
         Ok((con, driver))
     }
 
+    /// Sets the time that the multiplexer will wait for responses on operations before failing.
+    pub fn set_response_timeout(&mut self, timeout: std::time::Duration) {
+        self.response_timeout = timeout.into();
+    }
+
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let value = self
-            .pipeline
-            .send_single(cmd.get_packed_command())
+        self.pipeline
+            .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
-        Ok(value)
+            })
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -394,7 +418,11 @@ impl MultiplexedConnection {
     ) -> RedisResult<Vec<Value>> {
         let value = self
             .pipeline
-            .send_recv(cmd.get_packed_pipeline(), offset + count)
+            .send_recv(
+                cmd.get_packed_pipeline(),
+                offset + count,
+                self.response_timeout,
+            )
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))

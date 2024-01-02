@@ -55,6 +55,8 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
     number_of_retries: usize,
+    response_timeout: std::time::Duration,
+    connection_timeout: futures_time::time::Duration,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -120,12 +122,48 @@ impl ConnectionManager {
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<Self> {
+        Self::new_with_backoff_and_timeouts(
+            client,
+            exponent_base,
+            factor,
+            number_of_retries,
+            std::time::Duration::MAX,
+            std::time::Duration::MAX,
+        )
+        .await
+    }
+
+    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    ///
+    /// In case of reconnection issues, the manager will retry reconnection
+    /// number_of_retries times, with an exponentially increasing delay, calculated as
+    /// rand(0 .. factor * (exponent_base ^ current-try)).
+    ///
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub async fn new_with_backoff_and_timeouts(
+        client: Client,
+        exponent_base: u64,
+        factor: u64,
+        number_of_retries: usize,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
 
         let runtime = Runtime::locate();
         let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
-        let connection =
-            Self::new_connection(client.clone(), retry_strategy.clone(), number_of_retries).await?;
+        let connection = Self::new_connection(
+            client.clone(),
+            retry_strategy.clone(),
+            number_of_retries,
+            response_timeout,
+            connection_timeout.into(),
+        )
+        .await?;
 
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
         Ok(Self {
@@ -136,6 +174,8 @@ impl ConnectionManager {
             runtime,
             number_of_retries,
             retry_strategy,
+            response_timeout,
+            connection_timeout: connection_timeout.into(),
         })
     }
 
@@ -143,9 +183,17 @@ impl ConnectionManager {
         client: Client,
         exponential_backoff: ExponentialBackoff,
         number_of_retries: usize,
+        response_timeout: std::time::Duration,
+        connection_timeout: futures_time::time::Duration,
     ) -> RedisResult<MultiplexedConnection> {
         let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
-        Retry::spawn(retry_strategy, || client.get_multiplexed_async_connection()).await
+        Retry::spawn(retry_strategy, || {
+            client.get_multiplexed_async_connection_with_timeouts(
+                response_timeout,
+                connection_timeout.into(),
+            )
+        })
+        .await
     }
 
     /// Reconnect and overwrite the old connection.
@@ -156,8 +204,17 @@ impl ConnectionManager {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
         let number_of_retries = self.number_of_retries;
+        let response_timeout = self.response_timeout;
+        let connection_timeout = self.connection_timeout;
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            Ok(Self::new_connection(client, retry_strategy, number_of_retries).await?)
+            Ok(Self::new_connection(
+                client,
+                retry_strategy,
+                number_of_retries,
+                response_timeout,
+                connection_timeout,
+            )
+            .await?)
         }
         .boxed()
         .shared();

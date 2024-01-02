@@ -29,12 +29,7 @@ use native_tls::{TlsConnector, TlsStream};
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
-use std::{convert::TryInto, sync::Arc};
-
-#[cfg(feature = "tls-rustls-webpki-roots")]
-use rustls::OwnedTrustAnchor;
-#[cfg(feature = "tls-rustls-webpki-roots")]
-use webpki_roots::TLS_SERVER_ROOTS;
+use std::sync::Arc;
 
 #[cfg(all(
     feature = "tls-rustls",
@@ -487,20 +482,50 @@ enum ActualConnection {
 }
 
 #[cfg(feature = "tls-rustls-insecure")]
-struct NoCertificateVerification;
+struct NoCertificateVerification {
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
 
 #[cfg(feature = "tls-rustls-insecure")]
-impl rustls::client::ServerCertVerifier for NoCertificateVerification {
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+#[cfg(feature = "tls-rustls-insecure")]
+impl fmt::Debug for NoCertificateVerification {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoCertificateVerification").finish()
     }
 }
 
@@ -643,7 +668,10 @@ impl ActualConnection {
             } => {
                 let host: &str = host;
                 let config = create_rustls_config(insecure, tls_params.clone())?;
-                let conn = rustls::ClientConnection::new(Arc::new(config), host.try_into()?)?;
+                let conn = rustls::ClientConnection::new(
+                    Arc::new(config),
+                    rustls_pki_types::ServerName::try_from(host)?.to_owned(),
+                )?;
                 let reader = match timeout {
                     None => {
                         let tcp = connect_tcp((host, port))?;
@@ -828,27 +856,17 @@ pub(crate) fn create_rustls_config(
     #[allow(unused_mut)]
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
-    root_store.add_trust_anchors(TLS_SERVER_ROOTS.0.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     #[cfg(all(
         feature = "tls-rustls",
         not(feature = "tls-native-tls"),
         not(feature = "tls-rustls-webpki-roots")
     ))]
     for cert in load_native_certs()? {
-        root_store.add(&rustls::Certificate(cert.0))?;
+        root_store.add(cert)?;
     }
 
-    let config = rustls::ClientConfig::builder()
-        .with_safe_default_cipher_suites()
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(rustls::ALL_VERSIONS)?;
-
+    let config = rustls::ClientConfig::builder();
     let config = if let Some(tls_params) = tls_params {
         let config_builder =
             config.with_root_certificates(tls_params.root_cert_store.unwrap_or(root_store));
@@ -883,7 +901,10 @@ pub(crate) fn create_rustls_config(
             config.enable_sni = false;
             config
                 .dangerous()
-                .set_certificate_verifier(Arc::new(NoCertificateVerification));
+                .set_certificate_verifier(Arc::new(NoCertificateVerification {
+                    supported: rustls::crypto::ring::default_provider()
+                        .signature_verification_algorithms,
+                }));
 
             Ok(config)
         }
@@ -1445,6 +1466,11 @@ impl<'a> PubSub<'a> {
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel))
+    }
+
+    /// Unsubscribes from a channel.
+    pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel))
     }
 
     /// Unsubscribes from a channel with a pattern.

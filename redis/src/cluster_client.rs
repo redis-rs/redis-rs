@@ -5,7 +5,7 @@ use rand::Rng;
 use crate::cluster_topology::ReadFromReplicaStrategy;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
-use crate::{cluster, ProtocolVersion, TlsMode};
+use crate::{cluster, cluster::TlsMode, ProtocolVersion};
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
@@ -35,6 +35,7 @@ struct BuilderParams {
     topology_checks_interval: Option<Duration>,
     client_name: Option<String>,
     protocol: ProtocolVersion,
+    response_timeout: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -85,11 +86,12 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
-    pub(crate) connection_timeout: Duration,
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) client_name: Option<String>,
     pub(crate) protocol: ProtocolVersion,
+    pub(crate) connection_timeout: Duration,
+    pub(crate) response_timeout: Duration,
 }
 
 impl ClusterParams {
@@ -115,6 +117,7 @@ impl ClusterParams {
             tls_params,
             client_name: value.client_name,
             protocol: value.protocol,
+            response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
         })
     }
 }
@@ -317,14 +320,6 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Enables timing out on slow connection time.
-    ///
-    /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
-    pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
-        self.builder_params.connection_timeout = Some(connection_timeout);
-        self
-    }
-
     /// Enables periodic topology checks for this client.
     ///
     /// If enabled, periodic topology checks will be executed at the configured intervals to examine whether there
@@ -339,6 +334,22 @@ impl ClusterClientBuilder {
     /// Sets the protocol with which the client should communicate with the server.
     pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
         self.builder_params.protocol = protocol;
+        self
+    }
+
+    /// Enables timing out on slow connection time.
+    ///
+    /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
+    pub fn connection_timeout(mut self, connection_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Enables timing out on slow responses.
+    ///
+    /// If enabled, the cluster will only wait the given time to each response from each node.
+    pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
+        self.builder_params.response_timeout = Some(response_timeout);
         self
     }
 
