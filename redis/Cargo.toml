@@ -112,7 +112,9 @@ cluster-async = ["cluster", "futures", "futures-util", "log"]
 keep-alive = ["socket2"]
 sentinel = ["rand"]
 tcp_nodelay = []
-bignum = ["rust_decimal", "bigdecimal", "num-bigint"]
+rust_decimal = ["dep:rust_decimal"]
+bigdecimal = ["dep:bigdecimal"]
+num-bigint = ["dep:num-bigint"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -157,7 +159,6 @@ required-features = ["cluster-async"]
 
 [[test]]
 name = "test_bignum"
-required-features = ["bignum"]
 
 [[bench]]
 name = "bench_basic"

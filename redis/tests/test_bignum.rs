@@ -31,21 +31,25 @@ where
 }
 
 #[test]
+#[cfg(feature = "rust_decimal")]
 fn test_rust_decimal() {
     test::<rust_decimal::Decimal>("-79228162514264.337593543950335");
 }
 
 #[test]
+#[cfg(feature = "bigdecimal")]
 fn test_bigdecimal() {
     test::<bigdecimal::BigDecimal>("-14272476927059598810582859.69449495136382746623");
 }
 
 #[test]
+#[cfg(feature = "num-bigint")]
 fn test_bigint() {
     test::<num_bigint::BigInt>("-1427247692705959881058285969449495136382746623");
 }
 
 #[test]
+#[cfg(feature = "num-bigint")]
 fn test_biguint() {
     test::<num_bigint::BigUint>("1427247692705959881058285969449495136382746623");
 }
