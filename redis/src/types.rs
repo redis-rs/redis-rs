@@ -328,10 +328,16 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Array(items) => Some(MapIter {
-                bulk: Some(items.iter()),
-                map: None,
-            }),
+            Value::Array(items) => {
+                if items.len() % 2 == 0 {
+                    Some(MapIter {
+                        bulk: Some(items.iter()),
+                        map: None,
+                    })
+                } else {
+                    None
+                }
+            }
             Value::Map(items) => Some(MapIter {
                 bulk: None,
                 map: Some(items.iter()),
@@ -470,8 +476,8 @@ impl From<rustls::Error> for RedisError {
 }
 
 #[cfg(feature = "tls-rustls")]
-impl From<rustls::client::InvalidDnsNameError> for RedisError {
-    fn from(err: rustls::client::InvalidDnsNameError) -> RedisError {
+impl From<rustls_pki_types::InvalidDnsNameError> for RedisError {
+    fn from(err: rustls_pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
@@ -1529,7 +1535,7 @@ macro_rules! from_vec_from_redis_value {
                 }
             }
         }
-    }
+    };
 }
 
 from_vec_from_redis_value!(<T> Vec<T>);

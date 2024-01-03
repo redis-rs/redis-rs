@@ -59,8 +59,8 @@ pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo},
+    IntoConnectionInfo, PushKind,
 };
-use crate::{IntoConnectionInfo, PushKind};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};

@@ -1,5 +1,8 @@
 use futures::{future, prelude::*, StreamExt};
-use redis::{aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, RedisResult};
+use redis::{
+    aio::{ConnectionLike, MultiplexedConnection},
+    cmd, AsyncCommands, ErrorKind, RedisResult,
+};
 
 use crate::support::*;
 
@@ -340,6 +343,22 @@ fn test_async_scanning_big_batch() {
 #[test]
 fn test_async_scanning_small_batch() {
     test_async_scanning(2)
+}
+
+#[test]
+fn test_response_timeout_multiplexed_connection() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut connection = ctx.multiplexed_async_connection().await.unwrap();
+        connection.set_response_timeout(std::time::Duration::from_millis(1));
+        let mut cmd = redis::Cmd::new();
+        cmd.arg("BLPOP").arg("foo").arg(0); // 0 timeout blocks indefinitely
+        let result = connection.req_packed_command(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_timeout());
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

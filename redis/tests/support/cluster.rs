@@ -59,6 +59,18 @@ impl ClusterType {
     }
 }
 
+fn port_in_use(addr: &str) -> bool {
+    let socket_addr: std::net::SocketAddr = addr.parse().expect("Invalid address");
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(socket_addr),
+        socket2::Type::STREAM,
+        None,
+    )
+    .expect("Failed to create socket");
+
+    socket.connect(&socket_addr.into()).is_ok()
+}
+
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
@@ -152,9 +164,10 @@ impl RedisCluster {
                             cmd.arg("--tls-replication").arg("yes");
                         }
                     }
+                    let addr = format!("127.0.0.1:{port}");
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    addrs.push(format!("127.0.0.1:{port}"));
+                    addrs.push(addr.clone());
 
                     let mut cur_attempts = 0;
                     loop {
@@ -172,7 +185,19 @@ impl RedisCluster {
                                 cur_attempts += 1;
                             }
                             Ok(None) => {
-                                return process;
+                                let max_attempts = 20;
+                                let mut cur_attempts = 0;
+                                loop {
+                                    if cur_attempts == max_attempts {
+                                        panic!("redis server creation failed: Port {port} closed")
+                                    }
+                                    if port_in_use(&addr) {
+                                        return process;
+                                    }
+                                    eprintln!("Waiting for redis process to initialize");
+                                    sleep(Duration::from_millis(50));
+                                    cur_attempts += 1;
+                                }
                             }
                             Err(e) => {
                                 panic!("Unexpected error in redis server creation {e}");
@@ -182,8 +207,6 @@ impl RedisCluster {
                 },
             ));
         }
-
-        sleep(Duration::from_millis(100));
 
         let mut cmd = process::Command::new("redis-cli");
         cmd.stdout(process::Stdio::null())

@@ -1599,6 +1599,8 @@ pub trait Connect: Sized {
     /// For UNIX connections, returning a tuple of handle for command execution and None.
     fn connect<'a, T>(
         info: T,
+        response_timeout: Duration,
+        connection_timeout: Duration,
         socket_addr: Option<SocketAddr>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
@@ -1608,6 +1610,8 @@ pub trait Connect: Sized {
 impl Connect for MultiplexedConnection {
     fn connect<'a, T>(
         info: T,
+        response_timeout: Duration,
+        connection_timeout: Duration,
         socket_addr: Option<SocketAddr>,
     ) -> RedisFuture<'a, (MultiplexedConnection, Option<IpAddr>)>
     where
@@ -1616,18 +1620,25 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
+            let connection_timeout: futures_time::time::Duration = connection_timeout.into();
 
             #[cfg(feature = "tokio-comp")]
             return client
-                .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(socket_addr)
-                .await;
+                .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                    response_timeout,
+                    socket_addr,
+                )
+                .timeout(connection_timeout)
+                .await?;
 
             #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
             return client
                 .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                    response_timeout,
                     socket_addr,
                 )
-                .await;
+                .timeout(connection_timeout)
+                .await?;
         }
         .boxed()
     }
@@ -1643,12 +1654,12 @@ where
 {
     let read_from_replicas = params.read_from_replicas
         != crate::cluster_topology::ReadFromReplicaStrategy::AlwaysFromPrimary;
-    let connection_timeout = params.connection_timeout.into();
+    let connection_timeout = params.connection_timeout;
+    let response_timeout = params.response_timeout;
     let info = get_connection_info(node, params)?;
-    let (mut conn, ip) = C::connect(info, socket_addr)
-        .timeout(connection_timeout)
-        .await??;
-    check_connection(&mut conn, connection_timeout).await?;
+    let (mut conn, ip) =
+        C::connect(info, response_timeout, connection_timeout, socket_addr).await?;
+    check_connection(&mut conn, connection_timeout.into()).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
         crate::cmd("READONLY").query_async(&mut conn).await?;

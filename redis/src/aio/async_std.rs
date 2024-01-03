@@ -235,7 +235,10 @@ impl RedisRuntime for AsyncStd {
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector
-            .connect(hostname.try_into()?, tcp_stream)
+            .connect(
+                rustls_pki_types::ServerName::try_from(hostname)?.to_owned(),
+                tcp_stream,
+            )
             .await
             .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }

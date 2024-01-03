@@ -293,9 +293,8 @@ impl ResponsePolicy {
         match cmd {
             b"SCRIPT EXISTS" => Some(ResponsePolicy::AggregateLogical(LogicalAggregateOp::And)),
 
-            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK" => {
-                Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
-            }
+            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK"
+            | b"LATENCY RESET" => Some(ResponsePolicy::Aggregate(AggregateOp::Sum)),
 
             b"WAIT" => Some(ResponsePolicy::Aggregate(AggregateOp::Min)),
 
