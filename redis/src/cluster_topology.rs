@@ -69,6 +69,8 @@ pub fn get_slot(key: &[u8]) -> u16 {
 pub(crate) fn parse_and_count_slots(
     raw_slot_resp: &Value,
     tls: Option<TlsMode>,
+    // The DNS address of the node from which `raw_slot_resp` was received.
+    addr_of_answering_node: &str,
 ) -> RedisResult<(u16, Vec<Slot>)> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);
@@ -102,12 +104,17 @@ pub(crate) fn parse_and_count_slots(
                             return None;
                         }
 
-                        let ip = if let Value::BulkString(ref ip) = node[0] {
-                            String::from_utf8_lossy(ip)
+                        let hostname = if let Value::BulkString(ref ip) = node[0] {
+                            let hostname = String::from_utf8_lossy(ip);
+                            if hostname.is_empty() {
+                                addr_of_answering_node.into()
+                            } else {
+                                hostname
+                            }
                         } else {
                             return None;
                         };
-                        if ip.is_empty() {
+                        if hostname.is_empty() {
                             return None;
                         }
 
@@ -116,7 +123,9 @@ pub(crate) fn parse_and_count_slots(
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
+                        Some(
+                            get_connection_addr(hostname.into_owned(), port, tls, None).to_string(),
+                        )
                     } else {
                         None
                     }
@@ -148,22 +157,16 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     s.finish()
 }
 
-pub(crate) fn calculate_topology(
-    topology_views: Vec<Value>,
+pub(crate) fn calculate_topology<'a>(
+    topology_views: impl Iterator<Item = (&'a str, &'a Value)>,
     curr_retry: usize,
     tls_mode: Option<TlsMode>,
     num_of_queried_nodes: usize,
     read_from_replica: ReadFromReplicaStrategy,
-) -> Result<(SlotMap, TopologyHash), RedisError> {
-    if topology_views.is_empty() {
-        return Err(RedisError::from((
-            ErrorKind::ResponseError,
-            "Slot refresh error: All CLUSTER SLOTS results are errors",
-        )));
-    }
+) -> RedisResult<(SlotMap, TopologyHash)> {
     let mut hash_view_map = HashMap::new();
-    for view in topology_views {
-        if let Ok(slots_and_count) = parse_and_count_slots(&view, tls_mode) {
+    for (host, view) in topology_views {
+        if let Ok(slots_and_count) = parse_and_count_slots(view, tls_mode, host) {
             let hash_value = calculate_hash(&slots_and_count);
             let topology_entry = hash_view_map.entry(hash_value).or_insert(TopologyView {
                 hash_value,
@@ -279,8 +282,8 @@ mod tests {
             slot_value(4001, 8000, "node1", 6380),
         ]);
 
-        let res1 = parse_and_count_slots(&view1, None).unwrap();
-        let res2 = parse_and_count_slots(&view2, None).unwrap();
+        let res1 = parse_and_count_slots(&view1, None, "foo").unwrap();
+        let res2 = parse_and_count_slots(&view2, None, "foo").unwrap();
         assert_eq!(res1.0, res2.0);
         assert_eq!(res1.1.len(), res2.1.len());
         let check =
@@ -290,28 +293,72 @@ mod tests {
         assert!(check);
     }
 
+    #[test]
+    fn parse_slots_returns_slots_with_host_name_if_missing() {
+        let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
+
+        let (slot_count, slots) = parse_and_count_slots(&view, None, "node").unwrap();
+        assert_eq!(slot_count, 4000);
+        assert_eq!(slots[0].master(), "node:6379");
+    }
+
+    #[test]
+    fn should_parse_and_hash_regardless_of_missing_host_name_and_order() {
+        let view1 = Value::Array(vec![
+            slot_value(0, 4000, "", 6379),
+            slot_value(4001, 8000, "node2", 6380),
+            slot_value(8001, 16383, "node3", 6379),
+        ]);
+
+        let view2 = Value::Array(vec![
+            slot_value(8001, 16383, "", 6379),
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node2", 6380),
+        ]);
+
+        let res1 = parse_and_count_slots(&view1, None, "node1").unwrap();
+        let res2 = parse_and_count_slots(&view2, None, "node3").unwrap();
+
+        assert_eq!(calculate_hash(&res1), calculate_hash(&res2));
+        assert_eq!(res1.0, res2.0);
+        assert_eq!(res1.1.len(), res2.1.len());
+        let equality_check =
+            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
+                first.start() == second.start() && first.end() == second.end()
+            });
+        assert!(equality_check);
+    }
+
     enum ViewType {
         SingleNodeViewFullCoverage,
         SingleNodeViewMissingSlots,
         TwoNodesViewFullCoverage,
         TwoNodesViewMissingSlots,
     }
-    fn get_view(view_type: &ViewType) -> Value {
+    fn get_view(view_type: &ViewType) -> (&str, Value) {
         match view_type {
-            ViewType::SingleNodeViewFullCoverage => {
-                Value::Array(vec![slot_value(0, 16383, "node1", 6379)])
-            }
-            ViewType::SingleNodeViewMissingSlots => {
-                Value::Array(vec![slot_value(0, 4000, "node1", 6379)])
-            }
-            ViewType::TwoNodesViewFullCoverage => Value::Array(vec![
-                slot_value(0, 4000, "node1", 6379),
-                slot_value(4001, 16383, "node2", 6380),
-            ]),
-            ViewType::TwoNodesViewMissingSlots => Value::Array(vec![
-                slot_value(0, 3000, "node3", 6381),
-                slot_value(4001, 16383, "node4", 6382),
-            ]),
+            ViewType::SingleNodeViewFullCoverage => (
+                "first",
+                Value::Array(vec![slot_value(0, 16383, "node1", 6379)]),
+            ),
+            ViewType::SingleNodeViewMissingSlots => (
+                "second",
+                Value::Array(vec![slot_value(0, 4000, "node1", 6379)]),
+            ),
+            ViewType::TwoNodesViewFullCoverage => (
+                "third",
+                Value::Array(vec![
+                    slot_value(0, 4000, "node1", 6379),
+                    slot_value(4001, 16383, "node2", 6380),
+                ]),
+            ),
+            ViewType::TwoNodesViewMissingSlots => (
+                "fourth",
+                Value::Array(vec![
+                    slot_value(0, 3000, "node3", 6381),
+                    slot_value(4001, 16383, "node4", 6382),
+                ]),
+            ),
         }
     }
 
@@ -328,8 +375,9 @@ mod tests {
             get_view(&ViewType::SingleNodeViewFullCoverage),
             get_view(&ViewType::TwoNodesViewFullCoverage),
         ];
+
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -352,7 +400,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let topology_view = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -371,7 +419,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             3,
             None,
             queried_nodes,
@@ -394,7 +442,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -418,7 +466,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -442,7 +490,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,

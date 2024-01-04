@@ -637,6 +637,11 @@ impl Slot {
     pub fn end(&self) -> u16 {
         self.end
     }
+
+    #[allow(dead_code)] // used in tests
+    pub(crate) fn master(&self) -> &str {
+        self.master.as_str()
+    }
 }
 
 /// What type of node should a request be routed to, assuming read from replica is enabled.

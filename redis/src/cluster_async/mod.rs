@@ -870,25 +870,13 @@ where
         // When we no longer need to support Rust versions < 1.67, remove fast_math and transition to the ilog2 function.
         let num_of_nodes_to_query =
             std::cmp::max(fast_math::log2_raw(num_of_nodes as f32) as usize, 1);
-        let requested_nodes =
-            read_guard.random_connections(num_of_nodes_to_query, ConnectionType::User);
-        let topology_join_results =
-            futures::future::join_all(requested_nodes.map(|conn| async move {
-                let mut conn: C = conn.1.await;
-                conn.req_packed_command(&slot_cmd()).await
-            }))
-            .await;
-        let topology_values: Vec<_> = topology_join_results
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .collect();
-        let (_, found_topology_hash) = calculate_topology(
-            topology_values,
-            DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
-            inner.cluster_params.tls,
+        let (_, found_topology_hash) = calculate_topology_from_random_nodes(
+            &inner,
             num_of_nodes_to_query,
-            inner.cluster_params.read_from_replicas,
-        )?;
+            &read_guard,
+            DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
+        )
+        .await?;
         let change_found = read_guard.get_current_topology_hash() != found_topology_hash;
         Ok(change_found)
     }
@@ -914,25 +902,13 @@ where
         let num_of_nodes = read_guard.len();
         const MAX_REQUESTED_NODES: usize = 50;
         let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
-        let requested_nodes =
-            read_guard.random_connections(num_of_nodes_to_query, ConnectionType::User);
-        let topology_join_results =
-            futures::future::join_all(requested_nodes.map(|conn| async move {
-                let mut conn: C = conn.1.await;
-                conn.req_packed_command(&slot_cmd()).await
-            }))
-            .await;
-        let topology_values: Vec<_> = topology_join_results
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .collect();
-        let (new_slots, topology_hash) = calculate_topology(
-            topology_values,
-            curr_retry,
-            inner.cluster_params.tls,
+        let (new_slots, topology_hash) = calculate_topology_from_random_nodes(
+            &inner,
             num_of_nodes_to_query,
-            inner.cluster_params.read_from_replicas,
-        )?;
+            &read_guard,
+            curr_retry,
+        )
+        .await?;
         info!("Found slot map: {new_slots}");
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
@@ -1560,6 +1536,47 @@ where
 
         self.poll_flush(cx)
     }
+}
+
+async fn calculate_topology_from_random_nodes<'a, C>(
+    inner: &Core<C>,
+    num_of_nodes_to_query: usize,
+    read_guard: &tokio::sync::RwLockReadGuard<'a, ConnectionsContainer<C>>,
+    curr_retry: usize,
+) -> RedisResult<(
+    crate::cluster_slotmap::SlotMap,
+    crate::cluster_topology::TopologyHash,
+)>
+where
+    C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
+{
+    let requested_nodes = read_guard
+        .random_connections(num_of_nodes_to_query, ConnectionType::User)
+        .filter_map(|(identifier, conn)| {
+            read_guard
+                .address_for_identifier(&identifier)
+                .map(|addr| (addr, conn))
+        });
+    let topology_join_results =
+        futures::future::join_all(requested_nodes.map(|(host, conn)| async move {
+            let mut conn: C = conn.await;
+            conn.req_packed_command(&slot_cmd())
+                .await
+                .map(|res| (host, res))
+        }))
+        .await;
+    let topology_values = topology_join_results.iter().filter_map(|r| {
+        r.as_ref().ok().and_then(|(addr, value)| {
+            get_host_and_port_from_addr(addr).map(|(host, _)| (host, value))
+        })
+    });
+    calculate_topology(
+        topology_values,
+        curr_retry,
+        inner.cluster_params.tls,
+        num_of_nodes_to_query,
+        inner.cluster_params.read_from_replicas,
+    )
 }
 
 impl<C> ConnectionLike for ClusterConnection<C>

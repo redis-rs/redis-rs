@@ -373,15 +373,19 @@ where
         let mut connections = self.connections.borrow_mut();
         let mut rng = thread_rng();
         let len = connections.len();
-        let mut samples = connections.values_mut().choose_multiple(&mut rng, len);
+        let samples = connections.iter_mut().choose_multiple(&mut rng, len);
         let mut result = Err(RedisError::from((
             ErrorKind::ResponseError,
             "Slot refresh error.",
             "didn't get any slots from server".to_string(),
         )));
-        for conn in samples.iter_mut() {
+        for (addr, conn) in samples {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_and_count_slots(&value, self.cluster_params.tls).map(|slots_data| {
+            let addr = addr.split(':').next().ok_or(RedisError::from((
+                ErrorKind::ClientError,
+                "can't parse node address",
+            )))?;
+            match parse_and_count_slots(&value, self.cluster_params.tls, addr).map(|slots_data| {
                 SlotMap::new(slots_data.1, self.cluster_params.read_from_replicas)
             }) {
                 Ok(new_slots) => {
