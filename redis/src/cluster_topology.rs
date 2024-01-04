@@ -149,6 +149,12 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
             result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
     }
+    // we sort the slots, because different nodes in a cluster might return the same slot view
+    // in different orders, which might cause the views to be considered evaluated as not equal.
+    result.sort_unstable_by(|first, second| match first.start().cmp(&second.start()) {
+        core::cmp::Ordering::Equal => first.end().cmp(&second.end()),
+        ord => ord,
+    });
 
     Ok(result)
 }
@@ -279,6 +285,41 @@ mod tests {
         assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
         assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
+    }
+
+    fn slot_value(start: u16, end: u16, node: &str, port: u16) -> Value {
+        Value::Array(vec![
+            Value::Int(start as i64),
+            Value::Int(end as i64),
+            Value::Array(vec![
+                Value::BulkString(node.as_bytes().to_vec()),
+                Value::Int(port as i64),
+            ]),
+        ])
+    }
+
+    #[test]
+    fn parse_slots_returns_slots_in_same_order() {
+        let view1 = Value::Array(vec![
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node1", 6380),
+            slot_value(8001, 16383, "node1", 6379),
+        ]);
+
+        let view2 = Value::Array(vec![
+            slot_value(8001, 16383, "node1", 6379),
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node1", 6380),
+        ]);
+
+        let res1 = parse_slots(&view1, None).unwrap();
+        let res2 = parse_slots(&view2, None).unwrap();
+        assert_eq!(res1.len(), res2.len());
+        let check = res1
+            .iter()
+            .zip(res2.iter())
+            .all(|(first, second)| first.start() == second.start() && first.end() == second.end());
+        assert!(check);
     }
 
     enum ViewType {
