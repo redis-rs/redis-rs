@@ -263,9 +263,9 @@ impl RedisCluster {
         cluster
     }
 
-    // parameter `mtls_enabled` can only be used if `feature = tls-rustls` is active
+    // parameter `_mtls_enabled` can only be used if `feature = tls-rustls` is active
     #[allow(dead_code)]
-    fn wait_for_replicas(&self, replicas: u16, mtls_enabled: bool) {
+    fn wait_for_replicas(&self, replicas: u16, _mtls_enabled: bool) {
         'server: for server in &self.servers {
             let conn_info = server.connection_info();
             eprintln!(
@@ -275,7 +275,7 @@ impl RedisCluster {
 
             #[cfg(feature = "tls-rustls")]
             let client =
-                build_single_client(server.connection_info(), &self.tls_paths, mtls_enabled)
+                build_single_client(server.connection_info(), &self.tls_paths, _mtls_enabled)
                     .unwrap();
             #[cfg(not(feature = "tls-rustls"))]
             let client = redis::Client::open(server.connection_info()).unwrap();

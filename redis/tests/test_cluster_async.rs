@@ -241,9 +241,9 @@ async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<()
     Ok(())
 }
 
-// parameter `mtls_enabled` can only be used if `feature = tls-rustls` is active
+// parameter `_mtls_enabled` can only be used if `feature = tls-rustls` is active
 #[allow(dead_code)]
-async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls_enabled: bool) {
+async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, _mtls_enabled: bool) {
     let completed = Arc::new(AtomicI32::new(0));
 
     let connection = env.async_connection().await;
@@ -257,7 +257,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls
 
                 #[cfg(feature = "tls-rustls")]
                 let client =
-                    build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled)
+                    build_single_client(server.connection_info(), &server.tls_paths, _mtls_enabled)
                         .unwrap_or_else(|e| panic!("Failed to connect to '{addr}': {e}"));
 
                 #[cfg(not(feature = "tls-rustls"))]
