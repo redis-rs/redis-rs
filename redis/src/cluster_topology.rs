@@ -330,57 +330,19 @@ mod tests {
     }
     fn get_view(view_type: &ViewType) -> Value {
         match view_type {
-            ViewType::SingleNodeViewFullCoverage => Value::Array(vec![Value::Array(vec![
-                Value::Int(0_i64),
-                Value::Int(16383_i64),
-                Value::Array(vec![
-                    Value::BulkString("node1".as_bytes().to_vec()),
-                    Value::Int(6379_i64),
-                ]),
-            ])]),
-            ViewType::SingleNodeViewMissingSlots => Value::Array(vec![Value::Array(vec![
-                Value::Int(0_i64),
-                Value::Int(4000_i64),
-                Value::Array(vec![
-                    Value::BulkString("node1".as_bytes().to_vec()),
-                    Value::Int(6379_i64),
-                ]),
-            ])]),
+            ViewType::SingleNodeViewFullCoverage => {
+                Value::Array(vec![slot_value(0, 16383, "node1", 6379)])
+            }
+            ViewType::SingleNodeViewMissingSlots => {
+                Value::Array(vec![slot_value(0, 4000, "node1", 6379)])
+            }
             ViewType::TwoNodesViewFullCoverage => Value::Array(vec![
-                Value::Array(vec![
-                    Value::Int(0_i64),
-                    Value::Int(4000_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node1".as_bytes().to_vec()),
-                        Value::Int(6379_i64),
-                    ]),
-                ]),
-                Value::Array(vec![
-                    Value::Int(4001_i64),
-                    Value::Int(16383_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node2".as_bytes().to_vec()),
-                        Value::Int(6380_i64),
-                    ]),
-                ]),
+                slot_value(0, 4000, "node1", 6379),
+                slot_value(4001, 16383, "node2", 6380),
             ]),
             ViewType::TwoNodesViewMissingSlots => Value::Array(vec![
-                Value::Array(vec![
-                    Value::Int(0_i64),
-                    Value::Int(3000_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node3".as_bytes().to_vec()),
-                        Value::Int(6381_i64),
-                    ]),
-                ]),
-                Value::Array(vec![
-                    Value::Int(4001_i64),
-                    Value::Int(16383_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node4".as_bytes().to_vec()),
-                        Value::Int(6382_i64),
-                    ]),
-                ]),
+                slot_value(0, 3000, "node3", 6381),
+                slot_value(4001, 16383, "node4", 6382),
             ]),
         }
     }
