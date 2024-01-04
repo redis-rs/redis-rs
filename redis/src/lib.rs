@@ -442,6 +442,10 @@ pub mod geo;
 pub mod cluster;
 
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
+mod cluster_slotmap;
+
+#[cfg(feature = "cluster")]
 mod cluster_client;
 
 #[cfg(feature = "cluster")]

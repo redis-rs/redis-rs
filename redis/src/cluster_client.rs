@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use crate::cluster_topology::ReadFromReplicaStrategy;
+use crate::cluster_slotmap::ReadFromReplicaStrategy;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode, ProtocolVersion};

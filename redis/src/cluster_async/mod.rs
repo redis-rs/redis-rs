@@ -1653,7 +1653,7 @@ where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let read_from_replicas = params.read_from_replicas
-        != crate::cluster_topology::ReadFromReplicaStrategy::AlwaysFromPrimary;
+        != crate::cluster_slotmap::ReadFromReplicaStrategy::AlwaysFromPrimary;
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
     let info = get_connection_info(node, params)?;
