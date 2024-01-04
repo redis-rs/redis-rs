@@ -612,7 +612,7 @@ impl Routable for Value {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub(crate) struct Slot {
     start: u16,
     end: u16,

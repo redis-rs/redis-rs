@@ -25,31 +25,9 @@ pub(crate) type TopologyHash = u64;
 pub(crate) struct TopologyView {
     pub(crate) hash_value: TopologyHash,
     #[derivative(PartialEq = "ignore")]
-    pub(crate) topology_value: Value,
-    #[derivative(PartialEq = "ignore")]
     pub(crate) nodes_count: u16,
     #[derivative(PartialEq = "ignore")]
-    slots_and_count: Option<(u16, Vec<Slot>)>,
-}
-
-impl TopologyView {
-    // Tries to parse the `topology_value` field, and sets the parsed value, and the number of covered slots, in `slots_and_count`.
-    // If `slots_and_count` is already not `None`, the function will return early. This means that resetting
-    // `topology_value` after calling this brings the object into an inconsistent state.
-    fn parse_and_count_slots(&mut self, tls_mode: Option<TlsMode>) {
-        if self.slots_and_count.is_some() {
-            return;
-        }
-        self.slots_and_count =
-            parse_slots(&self.topology_value, tls_mode)
-                .ok()
-                .map(|parsed_slots| {
-                    let slot_count = parsed_slots
-                        .iter()
-                        .fold(0, |acc, slot| acc + slot.end() - slot.start());
-                    (slot_count, parsed_slots)
-                })
-    }
+    slots_and_count: (u16, Vec<Slot>),
 }
 
 pub(crate) fn slot(key: &[u8]) -> u16 {
@@ -88,9 +66,13 @@ pub fn get_slot(key: &[u8]) -> u16 {
 }
 
 // Parse slot data from raw redis value.
-pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
+pub(crate) fn parse_and_count_slots(
+    raw_slot_resp: &Value,
+    tls: Option<TlsMode>,
+) -> RedisResult<(u16, Vec<Slot>)> {
     // Parse response.
-    let mut result = Vec::with_capacity(2);
+    let mut slots = Vec::with_capacity(2);
+    let mut count = 0;
 
     if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.iter();
@@ -144,19 +126,20 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
             if nodes.is_empty() {
                 continue;
             }
+            count += end - start;
 
             let replicas = nodes.split_off(1);
-            result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
+            slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
     }
     // we sort the slots, because different nodes in a cluster might return the same slot view
     // in different orders, which might cause the views to be considered evaluated as not equal.
-    result.sort_unstable_by(|first, second| match first.start().cmp(&second.start()) {
+    slots.sort_unstable_by(|first, second| match first.start().cmp(&second.start()) {
         core::cmp::Ordering::Equal => first.end().cmp(&second.end()),
         ord => ord,
     });
 
-    Ok(result)
+    Ok((count, slots))
 }
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
@@ -180,14 +163,15 @@ pub(crate) fn calculate_topology(
     }
     let mut hash_view_map = HashMap::new();
     for view in topology_views {
-        let hash_value = calculate_hash(&view);
-        let topology_entry = hash_view_map.entry(hash_value).or_insert(TopologyView {
-            hash_value,
-            topology_value: view,
-            nodes_count: 0,
-            slots_and_count: None,
-        });
-        topology_entry.nodes_count += 1;
+        if let Ok(slots_and_count) = parse_and_count_slots(&view, tls_mode) {
+            let hash_value = calculate_hash(&slots_and_count);
+            let topology_entry = hash_view_map.entry(hash_value).or_insert(TopologyView {
+                hash_value,
+                nodes_count: 0,
+                slots_and_count,
+            });
+            topology_entry.nodes_count += 1;
+        }
     }
     let mut non_unique_max_node_count = false;
     let mut vec_iter = hash_view_map.into_values();
@@ -201,7 +185,7 @@ pub(crate) fn calculate_topology(
         }
     };
     // Find the most frequent topology view
-    for mut curr_view in vec_iter {
+    for curr_view in vec_iter {
         match most_frequent_topology
             .nodes_count
             .cmp(&curr_view.nodes_count)
@@ -213,36 +197,19 @@ pub(crate) fn calculate_topology(
             std::cmp::Ordering::Greater => continue,
             std::cmp::Ordering::Equal => {
                 non_unique_max_node_count = true;
+                let seen_slot_count = most_frequent_topology.slots_and_count.0;
 
                 // We choose as the greater view the one with higher slot coverage.
-                most_frequent_topology.parse_and_count_slots(tls_mode);
-                if let Some((slot_count, _)) = most_frequent_topology.slots_and_count {
-                    curr_view.parse_and_count_slots(tls_mode);
-                    let curr_slot_count = curr_view
-                        .slots_and_count
-                        .as_ref()
-                        .map(|(slot_count, _)| *slot_count)
-                        .unwrap_or(0);
-
-                    if let std::cmp::Ordering::Less = slot_count.cmp(&curr_slot_count) {
-                        most_frequent_topology = curr_view;
-                    }
-                } else {
+                if let std::cmp::Ordering::Less = seen_slot_count.cmp(&curr_view.slots_and_count.0)
+                {
                     most_frequent_topology = curr_view;
                 }
             }
         }
     }
 
-    let parse_and_built_result = |mut most_frequent_topology: TopologyView| {
-        most_frequent_topology.parse_and_count_slots(tls_mode);
-        let slots_data = most_frequent_topology
-            .slots_and_count
-            .map(|(_, slots)| slots)
-            .ok_or(RedisError::from((
-                ErrorKind::ResponseError,
-                "Failed to parse the slots on the majority view",
-            )))?;
+    let parse_and_built_result = |most_frequent_topology: TopologyView| {
+        let slots_data = most_frequent_topology.slots_and_count.1;
 
         Ok((
             SlotMap::new(slots_data, read_from_replica),
@@ -312,13 +279,14 @@ mod tests {
             slot_value(4001, 8000, "node1", 6380),
         ]);
 
-        let res1 = parse_slots(&view1, None).unwrap();
-        let res2 = parse_slots(&view2, None).unwrap();
-        assert_eq!(res1.len(), res2.len());
-        let check = res1
-            .iter()
-            .zip(res2.iter())
-            .all(|(first, second)| first.start() == second.start() && first.end() == second.end());
+        let res1 = parse_and_count_slots(&view1, None).unwrap();
+        let res2 = parse_and_count_slots(&view2, None).unwrap();
+        assert_eq!(res1.0, res2.0);
+        assert_eq!(res1.1.len(), res2.1.len());
+        let check =
+            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
+                first.start() == second.start() && first.end() == second.end()
+            });
         assert!(check);
     }
 

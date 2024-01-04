@@ -49,7 +49,7 @@ use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
 use crate::cluster_slotmap::SlotMap;
-use crate::cluster_topology::{parse_slots, SLOT_SIZE};
+use crate::cluster_topology::{parse_and_count_slots, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -381,9 +381,9 @@ where
         )));
         for conn in samples.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            match parse_slots(&value, self.cluster_params.tls)
-                .map(|slots_data| SlotMap::new(slots_data, self.cluster_params.read_from_replicas))
-            {
+            match parse_and_count_slots(&value, self.cluster_params.tls).map(|slots_data| {
+                SlotMap::new(slots_data.1, self.cluster_params.read_from_replicas)
+            }) {
                 Ok(new_slots) => {
                     result = Ok(new_slots);
                     break;

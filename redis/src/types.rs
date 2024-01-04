@@ -144,7 +144,7 @@ pub enum ErrorKind {
 }
 
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
