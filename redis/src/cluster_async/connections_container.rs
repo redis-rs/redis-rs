@@ -5,7 +5,8 @@ use arcstr::ArcStr;
 use rand::seq::IteratorRandom;
 
 use crate::cluster_routing::{Route, SlotAddr};
-use crate::cluster_topology::{ReadFromReplicaStrategy, SlotMap, SlotMapValue, TopologyHash};
+use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
+use crate::cluster_topology::TopologyHash;
 
 type IdentifierType = ArcStr;
 

@@ -48,7 +48,8 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
-use crate::cluster_topology::{parse_slots, SlotMap, SLOT_SIZE};
+use crate::cluster_slotmap::SlotMap;
+use crate::cluster_topology::{parse_slots, SLOT_SIZE};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -398,7 +399,7 @@ where
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
         if self.cluster_params.read_from_replicas
-            != crate::cluster_topology::ReadFromReplicaStrategy::AlwaysFromPrimary
+            != crate::cluster_slotmap::ReadFromReplicaStrategy::AlwaysFromPrimary
         {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").query(&mut conn)?;
