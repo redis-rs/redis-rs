@@ -116,6 +116,7 @@ mod util;
 pub use self::util::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]

@@ -205,7 +205,7 @@ impl RedisRuntime for AsyncStd {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        tls_params: &Option<TlsConnParams>,
+        _tls_params: &Option<TlsConnParams>,
     ) -> RedisResult<Self> {
         let tcp_stream = connect_tcp(&socket_addr).await?;
         let tls_connector = if insecure {
