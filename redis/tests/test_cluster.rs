@@ -332,11 +332,7 @@ fn test_cluster_retries() {
     let name = "tryagain";
 
     let requests = atomic::AtomicUsize::new(0);
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
+    let MockEnv { mut connection, .. } = MockEnv::with_client_builder(
         ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
         name,
         move |cmd: &[u8], _| {
@@ -360,11 +356,7 @@ fn test_cluster_exhaust_retries() {
 
     let requests = Arc::new(atomic::AtomicUsize::new(0));
 
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
+    let MockEnv { mut connection, .. } = MockEnv::with_client_builder(
         ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
         name,
         {
@@ -450,40 +442,30 @@ fn test_cluster_move_error_when_new_node_is_added() {
 fn test_cluster_ask_redirect() {
     let name = "node";
     let completed = Arc::new(AtomicI32::new(0));
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]),
-        name,
-        {
-            move |cmd: &[u8], port| {
-                respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
-                let count = completed.fetch_add(1, Ordering::SeqCst);
-                match port {
-                    6379 => match count {
-                        0 => Err(parse_redis_value(b"-ASK 14000 node:6380\r\n")),
-                        _ => panic!("Node should not be called now"),
-                    },
-                    6380 => match count {
-                        1 => {
-                            assert!(contains_slice(cmd, b"ASKING"));
-                            Err(Ok(Value::Okay))
-                        }
-                        2 => {
-                            assert!(contains_slice(cmd, b"GET"));
-                            Err(Ok(Value::BulkString(b"123".to_vec())))
-                        }
-                        _ => panic!("Node should not be called now"),
-                    },
-                    _ => panic!("Wrong node"),
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], port| {
+        respond_startup_two_nodes(name, cmd)?;
+        // Error twice with io-error, ensure connection is reestablished w/out calling
+        // other node (i.e., not doing a full slot rebuild)
+        let count = completed.fetch_add(1, Ordering::SeqCst);
+        match port {
+            6379 => match count {
+                0 => Err(parse_redis_value(b"-ASK 14000 node:6380\r\n")),
+                _ => panic!("Node should not be called now"),
+            },
+            6380 => match count {
+                1 => {
+                    assert!(contains_slice(cmd, b"ASKING"));
+                    Err(Ok(Value::Okay))
                 }
-            }
-        },
-    );
+                2 => {
+                    assert!(contains_slice(cmd, b"GET"));
+                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                }
+                _ => panic!("Node should not be called now"),
+            },
+            _ => panic!("Wrong node"),
+        }
+    });
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
@@ -544,46 +526,31 @@ fn test_cluster_replica_read() {
     let name = "node";
 
     // requests should route to replica
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
+    let MockEnv { mut connection, .. } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
         name,
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
 
-            match port {
-                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
-                _ => panic!("Wrong node"),
+            let cmd = std::str::from_utf8(cmd).unwrap();
+            if cmd.contains("GET") {
+                match port {
+                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    _ => panic!("Wrong node"),
+                }
+            } else if cmd.contains("SET") {
+                match port {
+                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                    _ => panic!("Wrong node"),
+                }
+            } else {
+                Err(Err((ErrorKind::ResponseError, "wrong request").into()))
             }
         },
     );
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
     assert_eq!(value, Ok(Some(123)));
-
-    // requests should route to primary
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
-        name,
-        move |cmd: &[u8], port| {
-            respond_startup_with_replica(name, cmd)?;
-            match port {
-                6379 => Err(Ok(Value::SimpleString("OK".into()))),
-                _ => panic!("Wrong node"),
-            }
-        },
-    );
 
     let value = cmd("SET")
         .arg("test")
@@ -600,25 +567,21 @@ fn test_cluster_io_error() {
         mut connection,
         handler: _handler,
         ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
-        name,
-        move |cmd: &[u8], port| {
-            respond_startup_two_nodes(name, cmd)?;
-            // Error twice with io-error, ensure connection is reestablished w/out calling
-            // other node (i.e., not doing a full slot rebuild)
-            match port {
-                6380 => panic!("Node should not be called"),
-                _ => match completed.fetch_add(1, Ordering::SeqCst) {
-                    0..=1 => Err(Err(RedisError::from(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionReset,
-                        "mock-io-error",
-                    )))),
-                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
-                },
-            }
-        },
-    );
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        respond_startup_two_nodes(name, cmd)?;
+        // Error twice with io-error, ensure connection is reestablished w/out calling
+        // other node (i.e., not doing a full slot rebuild)
+        match port {
+            6380 => panic!("Node should not be called"),
+            _ => match completed.fetch_add(1, Ordering::SeqCst) {
+                0..=1 => Err(Err(RedisError::from(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "mock-io-error",
+                )))),
+                _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+            },
+        }
+    });
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
@@ -629,24 +592,16 @@ fn test_cluster_io_error() {
 fn test_cluster_non_retryable_error_should_not_retry() {
     let name = "node";
     let completed = Arc::new(AtomicI32::new(0));
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]),
-        name,
-        {
-            let completed = completed.clone();
-            move |cmd: &[u8], _| {
-                respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
-                completed.fetch_add(1, Ordering::SeqCst);
-                Err(parse_redis_value(b"-ERR mock\r\n"))
-            }
-        },
-    );
+    let MockEnv { mut connection, .. } = MockEnv::new(name, {
+        let completed = completed.clone();
+        move |cmd: &[u8], _| {
+            respond_startup_two_nodes(name, cmd)?;
+            // Error twice with io-error, ensure connection is reestablished w/out calling
+            // other node (i.e., not doing a full slot rebuild)
+            completed.fetch_add(1, Ordering::SeqCst);
+            Err(parse_redis_value(b"-ERR mock\r\n"))
+        }
+    });
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
@@ -674,24 +629,14 @@ fn test_cluster_fan_out(
     }
     let packed_cmd = cmd.get_packed_command();
     // requests should route to replica
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
-        name,
-        move |received_cmd: &[u8], port| {
-            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
-            if received_cmd == packed_cmd {
-                ports_clone.lock().unwrap().push(port);
-                return Err(Ok(Value::SimpleString("OK".into())));
-            }
-            Ok(())
-        },
-    );
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |received_cmd: &[u8], port| {
+        respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+        if received_cmd == packed_cmd {
+            ports_clone.lock().unwrap().push(port);
+            return Err(Ok(Value::SimpleString("OK".into())));
+        }
+        Ok(())
+    });
 
     let _ = cmd.query::<Option<()>>(&mut connection);
     found_ports.lock().unwrap().sort();
@@ -764,14 +709,8 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
     let name = "test_cluster_split_multi_shard_command_and_combine_arrays_of_values";
     let mut cmd = cmd("MGET");
     cmd.arg("foo").arg("bar").arg("baz");
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
+    let MockEnv { mut connection, .. } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
         name,
         move |received_cmd: &[u8], port| {
             respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -803,35 +742,25 @@ fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests(
     pipeline.atomic().set("foo", "bar").get("foo");
     let packed_pipeline = pipeline.get_packed_pipeline();
 
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
-        name,
-        move |received_cmd: &[u8], port| {
-            respond_startup_with_replica_using_config(name, received_cmd, None)?;
-            if port == 6381 {
-                let results = vec![
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |received_cmd: &[u8], port| {
+        respond_startup_with_replica_using_config(name, received_cmd, None)?;
+        if port == 6381 {
+            let results = vec![
+                Value::BulkString("OK".as_bytes().to_vec()),
+                Value::BulkString("QUEUED".as_bytes().to_vec()),
+                Value::BulkString("QUEUED".as_bytes().to_vec()),
+                Value::Array(vec![
                     Value::BulkString("OK".as_bytes().to_vec()),
-                    Value::BulkString("QUEUED".as_bytes().to_vec()),
-                    Value::BulkString("QUEUED".as_bytes().to_vec()),
-                    Value::Array(vec![
-                        Value::BulkString("OK".as_bytes().to_vec()),
-                        Value::BulkString("bar".as_bytes().to_vec()),
-                    ]),
-                ];
-                return Err(Ok(Value::Array(results)));
-            }
-            Err(Err(RedisError::from(std::io::Error::new(
-                std::io::ErrorKind::ConnectionReset,
-                format!("wrong port: {port}"),
-            ))))
-        },
-    );
+                    Value::BulkString("bar".as_bytes().to_vec()),
+                ]),
+            ];
+            return Err(Ok(Value::Array(results)));
+        }
+        Err(Err(RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            format!("wrong port: {port}"),
+        ))))
+    });
 
     let result = connection
         .req_packed_commands(&packed_pipeline, 3, 1)
@@ -863,26 +792,16 @@ fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests2
     let expected_result = Value::Array(results);
     let cloned_result = expected_result.clone();
 
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")])
-            .retries(0)
-            .read_from_replicas(),
-        name,
-        move |received_cmd: &[u8], port| {
-            respond_startup_with_replica_using_config(name, received_cmd, None)?;
-            if port == 6381 {
-                return Err(Ok(cloned_result.clone()));
-            }
-            Err(Err(RedisError::from(std::io::Error::new(
-                std::io::ErrorKind::ConnectionReset,
-                format!("wrong port: {port}"),
-            ))))
-        },
-    );
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |received_cmd: &[u8], port| {
+        respond_startup_with_replica_using_config(name, received_cmd, None)?;
+        if port == 6381 {
+            return Err(Ok(cloned_result.clone()));
+        }
+        Err(Err(RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            format!("wrong port: {port}"),
+        ))))
+    });
 
     let result = connection.req_packed_command(&packed_pipeline).unwrap();
     assert_eq!(result, expected_result);
