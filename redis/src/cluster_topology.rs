@@ -25,31 +25,9 @@ pub(crate) type TopologyHash = u64;
 pub(crate) struct TopologyView {
     pub(crate) hash_value: TopologyHash,
     #[derivative(PartialEq = "ignore")]
-    pub(crate) topology_value: Value,
-    #[derivative(PartialEq = "ignore")]
     pub(crate) nodes_count: u16,
     #[derivative(PartialEq = "ignore")]
-    slots_and_count: Option<(u16, Vec<Slot>)>,
-}
-
-impl TopologyView {
-    // Tries to parse the `topology_value` field, and sets the parsed value, and the number of covered slots, in `slots_and_count`.
-    // If `slots_and_count` is already not `None`, the function will return early. This means that resetting
-    // `topology_value` after calling this brings the object into an inconsistent state.
-    fn parse_and_count_slots(&mut self, tls_mode: Option<TlsMode>) {
-        if self.slots_and_count.is_some() {
-            return;
-        }
-        self.slots_and_count =
-            parse_slots(&self.topology_value, tls_mode)
-                .ok()
-                .map(|parsed_slots| {
-                    let slot_count = parsed_slots
-                        .iter()
-                        .fold(0, |acc, slot| acc + slot.end() - slot.start());
-                    (slot_count, parsed_slots)
-                })
-    }
+    slots_and_count: (u16, Vec<Slot>),
 }
 
 pub(crate) fn slot(key: &[u8]) -> u16 {
@@ -88,9 +66,15 @@ pub fn get_slot(key: &[u8]) -> u16 {
 }
 
 // Parse slot data from raw redis value.
-pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
+pub(crate) fn parse_and_count_slots(
+    raw_slot_resp: &Value,
+    tls: Option<TlsMode>,
+    // The DNS address of the node from which `raw_slot_resp` was received.
+    addr_of_answering_node: &str,
+) -> RedisResult<(u16, Vec<Slot>)> {
     // Parse response.
-    let mut result = Vec::with_capacity(2);
+    let mut slots = Vec::with_capacity(2);
+    let mut count = 0;
 
     if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.iter();
@@ -120,12 +104,17 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
                             return None;
                         }
 
-                        let ip = if let Value::BulkString(ref ip) = node[0] {
-                            String::from_utf8_lossy(ip)
+                        let hostname = if let Value::BulkString(ref ip) = node[0] {
+                            let hostname = String::from_utf8_lossy(ip);
+                            if hostname.is_empty() {
+                                addr_of_answering_node.into()
+                            } else {
+                                hostname
+                            }
                         } else {
                             return None;
                         };
-                        if ip.is_empty() {
+                        if hostname.is_empty() {
                             return None;
                         }
 
@@ -134,7 +123,9 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
                         } else {
                             return None;
                         };
-                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
+                        Some(
+                            get_connection_addr(hostname.into_owned(), port, tls, None).to_string(),
+                        )
                     } else {
                         None
                     }
@@ -144,13 +135,20 @@ pub(crate) fn parse_slots(raw_slot_resp: &Value, tls: Option<TlsMode>) -> RedisR
             if nodes.is_empty() {
                 continue;
             }
+            count += end - start;
 
             let replicas = nodes.split_off(1);
-            result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
+            slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
     }
+    // we sort the slots, because different nodes in a cluster might return the same slot view
+    // in different orders, which might cause the views to be considered evaluated as not equal.
+    slots.sort_unstable_by(|first, second| match first.start().cmp(&second.start()) {
+        core::cmp::Ordering::Equal => first.end().cmp(&second.end()),
+        ord => ord,
+    });
 
-    Ok(result)
+    Ok((count, slots))
 }
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
@@ -159,29 +157,24 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     s.finish()
 }
 
-pub(crate) fn calculate_topology(
-    topology_views: Vec<Value>,
+pub(crate) fn calculate_topology<'a>(
+    topology_views: impl Iterator<Item = (&'a str, &'a Value)>,
     curr_retry: usize,
     tls_mode: Option<TlsMode>,
     num_of_queried_nodes: usize,
     read_from_replica: ReadFromReplicaStrategy,
-) -> Result<(SlotMap, TopologyHash), RedisError> {
-    if topology_views.is_empty() {
-        return Err(RedisError::from((
-            ErrorKind::ResponseError,
-            "Slot refresh error: All CLUSTER SLOTS results are errors",
-        )));
-    }
+) -> RedisResult<(SlotMap, TopologyHash)> {
     let mut hash_view_map = HashMap::new();
-    for view in topology_views {
-        let hash_value = calculate_hash(&view);
-        let topology_entry = hash_view_map.entry(hash_value).or_insert(TopologyView {
-            hash_value,
-            topology_value: view,
-            nodes_count: 0,
-            slots_and_count: None,
-        });
-        topology_entry.nodes_count += 1;
+    for (host, view) in topology_views {
+        if let Ok(slots_and_count) = parse_and_count_slots(view, tls_mode, host) {
+            let hash_value = calculate_hash(&slots_and_count);
+            let topology_entry = hash_view_map.entry(hash_value).or_insert(TopologyView {
+                hash_value,
+                nodes_count: 0,
+                slots_and_count,
+            });
+            topology_entry.nodes_count += 1;
+        }
     }
     let mut non_unique_max_node_count = false;
     let mut vec_iter = hash_view_map.into_values();
@@ -195,7 +188,7 @@ pub(crate) fn calculate_topology(
         }
     };
     // Find the most frequent topology view
-    for mut curr_view in vec_iter {
+    for curr_view in vec_iter {
         match most_frequent_topology
             .nodes_count
             .cmp(&curr_view.nodes_count)
@@ -207,36 +200,19 @@ pub(crate) fn calculate_topology(
             std::cmp::Ordering::Greater => continue,
             std::cmp::Ordering::Equal => {
                 non_unique_max_node_count = true;
+                let seen_slot_count = most_frequent_topology.slots_and_count.0;
 
                 // We choose as the greater view the one with higher slot coverage.
-                most_frequent_topology.parse_and_count_slots(tls_mode);
-                if let Some((slot_count, _)) = most_frequent_topology.slots_and_count {
-                    curr_view.parse_and_count_slots(tls_mode);
-                    let curr_slot_count = curr_view
-                        .slots_and_count
-                        .as_ref()
-                        .map(|(slot_count, _)| *slot_count)
-                        .unwrap_or(0);
-
-                    if let std::cmp::Ordering::Less = slot_count.cmp(&curr_slot_count) {
-                        most_frequent_topology = curr_view;
-                    }
-                } else {
+                if let std::cmp::Ordering::Less = seen_slot_count.cmp(&curr_view.slots_and_count.0)
+                {
                     most_frequent_topology = curr_view;
                 }
             }
         }
     }
 
-    let parse_and_built_result = |mut most_frequent_topology: TopologyView| {
-        most_frequent_topology.parse_and_count_slots(tls_mode);
-        let slots_data = most_frequent_topology
-            .slots_and_count
-            .map(|(_, slots)| slots)
-            .ok_or(RedisError::from((
-                ErrorKind::ResponseError,
-                "Failed to parse the slots on the majority view",
-            )))?;
+    let parse_and_built_result = |most_frequent_topology: TopologyView| {
+        let slots_data = most_frequent_topology.slots_and_count.1;
 
         Ok((
             SlotMap::new(slots_data, read_from_replica),
@@ -281,66 +257,108 @@ mod tests {
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 
+    fn slot_value(start: u16, end: u16, node: &str, port: u16) -> Value {
+        Value::Array(vec![
+            Value::Int(start as i64),
+            Value::Int(end as i64),
+            Value::Array(vec![
+                Value::BulkString(node.as_bytes().to_vec()),
+                Value::Int(port as i64),
+            ]),
+        ])
+    }
+
+    #[test]
+    fn parse_slots_returns_slots_in_same_order() {
+        let view1 = Value::Array(vec![
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node1", 6380),
+            slot_value(8001, 16383, "node1", 6379),
+        ]);
+
+        let view2 = Value::Array(vec![
+            slot_value(8001, 16383, "node1", 6379),
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node1", 6380),
+        ]);
+
+        let res1 = parse_and_count_slots(&view1, None, "foo").unwrap();
+        let res2 = parse_and_count_slots(&view2, None, "foo").unwrap();
+        assert_eq!(res1.0, res2.0);
+        assert_eq!(res1.1.len(), res2.1.len());
+        let check =
+            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
+                first.start() == second.start() && first.end() == second.end()
+            });
+        assert!(check);
+    }
+
+    #[test]
+    fn parse_slots_returns_slots_with_host_name_if_missing() {
+        let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
+
+        let (slot_count, slots) = parse_and_count_slots(&view, None, "node").unwrap();
+        assert_eq!(slot_count, 4000);
+        assert_eq!(slots[0].master(), "node:6379");
+    }
+
+    #[test]
+    fn should_parse_and_hash_regardless_of_missing_host_name_and_order() {
+        let view1 = Value::Array(vec![
+            slot_value(0, 4000, "", 6379),
+            slot_value(4001, 8000, "node2", 6380),
+            slot_value(8001, 16383, "node3", 6379),
+        ]);
+
+        let view2 = Value::Array(vec![
+            slot_value(8001, 16383, "", 6379),
+            slot_value(0, 4000, "node1", 6379),
+            slot_value(4001, 8000, "node2", 6380),
+        ]);
+
+        let res1 = parse_and_count_slots(&view1, None, "node1").unwrap();
+        let res2 = parse_and_count_slots(&view2, None, "node3").unwrap();
+
+        assert_eq!(calculate_hash(&res1), calculate_hash(&res2));
+        assert_eq!(res1.0, res2.0);
+        assert_eq!(res1.1.len(), res2.1.len());
+        let equality_check =
+            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
+                first.start() == second.start() && first.end() == second.end()
+            });
+        assert!(equality_check);
+    }
+
     enum ViewType {
         SingleNodeViewFullCoverage,
         SingleNodeViewMissingSlots,
         TwoNodesViewFullCoverage,
         TwoNodesViewMissingSlots,
     }
-    fn get_view(view_type: &ViewType) -> Value {
+    fn get_view(view_type: &ViewType) -> (&str, Value) {
         match view_type {
-            ViewType::SingleNodeViewFullCoverage => Value::Array(vec![Value::Array(vec![
-                Value::Int(0_i64),
-                Value::Int(16383_i64),
+            ViewType::SingleNodeViewFullCoverage => (
+                "first",
+                Value::Array(vec![slot_value(0, 16383, "node1", 6379)]),
+            ),
+            ViewType::SingleNodeViewMissingSlots => (
+                "second",
+                Value::Array(vec![slot_value(0, 4000, "node1", 6379)]),
+            ),
+            ViewType::TwoNodesViewFullCoverage => (
+                "third",
                 Value::Array(vec![
-                    Value::BulkString("node1".as_bytes().to_vec()),
-                    Value::Int(6379_i64),
+                    slot_value(0, 4000, "node1", 6379),
+                    slot_value(4001, 16383, "node2", 6380),
                 ]),
-            ])]),
-            ViewType::SingleNodeViewMissingSlots => Value::Array(vec![Value::Array(vec![
-                Value::Int(0_i64),
-                Value::Int(4000_i64),
+            ),
+            ViewType::TwoNodesViewMissingSlots => (
+                "fourth",
                 Value::Array(vec![
-                    Value::BulkString("node1".as_bytes().to_vec()),
-                    Value::Int(6379_i64),
+                    slot_value(0, 3000, "node3", 6381),
+                    slot_value(4001, 16383, "node4", 6382),
                 ]),
-            ])]),
-            ViewType::TwoNodesViewFullCoverage => Value::Array(vec![
-                Value::Array(vec![
-                    Value::Int(0_i64),
-                    Value::Int(4000_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node1".as_bytes().to_vec()),
-                        Value::Int(6379_i64),
-                    ]),
-                ]),
-                Value::Array(vec![
-                    Value::Int(4001_i64),
-                    Value::Int(16383_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node2".as_bytes().to_vec()),
-                        Value::Int(6380_i64),
-                    ]),
-                ]),
-            ]),
-            ViewType::TwoNodesViewMissingSlots => Value::Array(vec![
-                Value::Array(vec![
-                    Value::Int(0_i64),
-                    Value::Int(3000_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node3".as_bytes().to_vec()),
-                        Value::Int(6381_i64),
-                    ]),
-                ]),
-                Value::Array(vec![
-                    Value::Int(4001_i64),
-                    Value::Int(16383_i64),
-                    Value::Array(vec![
-                        Value::BulkString("node4".as_bytes().to_vec()),
-                        Value::Int(6382_i64),
-                    ]),
-                ]),
-            ]),
+            ),
         }
     }
 
@@ -357,8 +375,9 @@ mod tests {
             get_view(&ViewType::SingleNodeViewFullCoverage),
             get_view(&ViewType::TwoNodesViewFullCoverage),
         ];
+
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -381,7 +400,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let topology_view = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -400,7 +419,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             3,
             None,
             queried_nodes,
@@ -423,7 +442,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -447,7 +466,7 @@ mod tests {
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,
@@ -471,7 +490,7 @@ mod tests {
             get_view(&ViewType::SingleNodeViewMissingSlots),
         ];
         let (topology_view, _) = calculate_topology(
-            topology_results,
+            topology_results.iter().map(|(addr, value)| (*addr, value)),
             1,
             None,
             queried_nodes,

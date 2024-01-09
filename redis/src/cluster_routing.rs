@@ -612,7 +612,7 @@ impl Routable for Value {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub(crate) struct Slot {
     start: u16,
     end: u16,
@@ -636,6 +636,11 @@ impl Slot {
 
     pub fn end(&self) -> u16 {
         self.end
+    }
+
+    #[allow(dead_code)] // used in tests
+    pub(crate) fn master(&self) -> &str {
+        self.master.as_str()
     }
 }
 
