@@ -6,54 +6,54 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --no-default-features -- --nocapture --test-threads=1
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --no-default-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and native-TLS support"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test -p redis --features=json,tokio-native-tls-comp,connection-manager,cluster-async -- --nocapture --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test -p redis --features=json,tokio-native-tls-comp,connection-manager,cluster-async -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --test parser --test test_basic --test test_types --all-features -- --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --test parser --test test_basic --test test_types --all-features -- --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --all-features -- --test-threads=1 --skip test_cluster --skip test_async_cluster --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test -p redis --all-features -- --test-threads=1 --skip test_cluster --skip test_async_cluster --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing async-std with Rustls"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing async-std with native-TLS"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"
 	@echo "===================================================================="
-	@RUST_BACKTRACE=1 cargo test -p redis-test 
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo test -p redis-test 
 
 
 test-module:
 	@echo "===================================================================="
 	@echo "Testing with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
-	@REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --all-features test_module -- --test-threads=1
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --all-features test_module -- --test-threads=1
 
 test-single: test
 
@@ -61,7 +61,7 @@ bench:
 	cargo bench --all-features
 
 docs:
-	@RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
+	@RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
 
 upload-docs: docs
 	@./upload-docs.sh
