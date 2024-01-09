@@ -1,3 +1,8 @@
+#![cfg(any(
+    feature = "rust_decimal",
+    feature = "bigdecimal",
+    feature = "num-bigint"
+))]
 use redis::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
 use std::str::FromStr;
 

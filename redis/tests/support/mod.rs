@@ -11,6 +11,7 @@ use std::{
     io::{BufReader, Read},
 };
 
+#[cfg(feature = "aio")]
 use futures::Future;
 use redis::{ConnectionAddr, InfoDict, Value};
 
