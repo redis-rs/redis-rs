@@ -75,6 +75,10 @@ impl Client {
 impl Client {
     /// Returns an async connection from the client.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[deprecated(
+        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
+    )]
+    #[allow(deprecated)]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
         let con = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
@@ -95,6 +99,10 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
+    #[deprecated(
+        note = "aio::Connection is deprecated. Use client::get_multiplexed_tokio_connection instead."
+    )]
+    #[allow(deprecated)]
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
@@ -107,6 +115,10 @@ impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
+    #[deprecated(
+        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_std_connection instead."
+    )]
+    #[allow(deprecated)]
     pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
         use crate::aio::RedisRuntime;
         Ok(
@@ -596,6 +608,26 @@ impl Client {
         let connection_info = conn_info.into_connection_info()?;
 
         inner_build_with_tls(connection_info, tls_certs)
+    }
+
+    /// Returns an async receiver for pub-sub messages.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
+    pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
+        #[allow(deprecated)]
+        self.get_async_connection()
+            .await
+            .map(|connection| connection.into_pubsub())
+    }
+
+    /// Returns an async receiver for monitor messages.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?
+    pub async fn get_async_monitor(&self) -> RedisResult<crate::aio::Monitor> {
+        #[allow(deprecated)]
+        self.get_async_connection()
+            .await
+            .map(|connection| connection.into_monitor())
     }
 }
 

@@ -16,8 +16,8 @@ use redis::RedisResult;
 use tokio::time::interval;
 
 enum Mode {
+    Deprecated,
     Default,
-    Multiplexed,
     Reconnect,
 }
 
@@ -63,13 +63,13 @@ async fn main() -> RedisResult<()> {
             println!("Using default connection mode\n");
             Mode::Default
         }
-        Some("multiplexed") => {
-            println!("Using multiplexed connection mode\n");
-            Mode::Multiplexed
-        }
         Some("reconnect") => {
             println!("Using reconnect manager mode\n");
             Mode::Reconnect
+        }
+        Some("deprecated") => {
+            println!("Using deprecated connection mode\n");
+            Mode::Deprecated
         }
         Some(_) | None => {
             println!("Usage: reconnect-manager (default|multiplexed|reconnect)");
@@ -79,16 +79,10 @@ async fn main() -> RedisResult<()> {
 
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     match mode {
-        Mode::Default => run_single(client.get_async_connection().await?).await?,
-        Mode::Multiplexed => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
-        Mode::Reconnect => {
-            run_multi(
-                client
-                    .get_connection_manager_with_backoff(2, 100, 6)
-                    .await?,
-            )
-            .await?
-        }
+        Mode::Default => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
+        Mode::Reconnect => run_multi(client.get_connection_manager().await?).await?,
+        #[allow(deprecated)]
+        Mode::Deprecated => run_single(client.get_async_connection().await?).await?,
     };
     Ok(())
 }

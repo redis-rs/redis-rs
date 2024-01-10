@@ -489,11 +489,13 @@ impl TestContext {
     }
 
     #[cfg(feature = "aio")]
+    #[allow(deprecated)]
     pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::Connection> {
         self.client.get_async_connection().await
     }
 
     #[cfg(feature = "async-std-comp")]
+    #[allow(deprecated)]
     pub async fn async_connection_async_std(&self) -> redis::RedisResult<redis::aio::Connection> {
         self.client.get_async_std_connection().await
     }

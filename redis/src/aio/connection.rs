@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 #[cfg(feature = "async-std-comp")]
 use super::async_std;
 use super::ConnectionLike;
@@ -25,6 +27,7 @@ use std::pin::Pin;
 use tokio_util::codec::Decoder;
 
 /// Represents a stateful redis TCP connection.
+#[deprecated(note = "aio::Connection is deprecated. Use aio::MultiplexedConnection instead.")]
 pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     con: C,
     buf: Vec<u8>,
@@ -322,6 +325,7 @@ where
     }
 
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
+    #[deprecated(note = "aio::Connection is deprecated")]
     pub async fn into_connection(mut self) -> Connection<C> {
         self.0.exit_pubsub().await.ok();
 
