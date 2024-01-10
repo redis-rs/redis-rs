@@ -11,6 +11,7 @@ use std::{
     io::{BufReader, Read},
 };
 
+#[cfg(feature = "aio")]
 use futures::Future;
 use redis::{ConnectionAddr, InfoDict, Value};
 
@@ -106,6 +107,7 @@ mod mock_cluster;
 mod util;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused_imports)]
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
