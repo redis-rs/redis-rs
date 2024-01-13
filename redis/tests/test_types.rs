@@ -20,101 +20,135 @@ fn test_is_single_arg() {
     assert!(!twobytesvec.is_single_arg());
 }
 
+/// The `FromRedisValue` trait provides two methods for parsing:
+/// - `fn from_redis_value(&Value) -> Result<T, RedisError>`
+/// - `fn from_owned_redis_value(Value) -> Result<T, RedisError>`
+/// The `RedisParseMode` below allows choosing between the two
+/// so that test logic does not need to be duplicated for each.
+enum RedisParseMode {
+    Owned,
+    Ref,
+}
+
+impl RedisParseMode {
+    /// Calls either `FromRedisValue::from_owned_redis_value` or
+    /// `FromRedisValue::from_redis_value`.
+    fn parse_redis_value<T: redis::FromRedisValue>(
+        &self,
+        value: &redis::Value,
+    ) -> Result<T, redis::RedisError> {
+        match self {
+            Self::Owned => redis::FromRedisValue::from_owned_redis_value(value.clone()),
+            Self::Ref => redis::FromRedisValue::from_redis_value(value),
+        }
+    }
+}
+
 #[test]
 fn test_info_dict() {
-    use redis::{FromRedisValue, InfoDict, Value};
+    use redis::{InfoDict, Value};
 
-    let d: InfoDict = FromRedisValue::from_redis_value(&Value::Status(
-        "# this is a comment\nkey1:foo\nkey2:42\n".into(),
-    ))
-    .unwrap();
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let d: InfoDict = parse_mode
+            .parse_redis_value(&Value::Status(
+                "# this is a comment\nkey1:foo\nkey2:42\n".into(),
+            ))
+            .unwrap();
 
-    assert_eq!(d.get("key1"), Some("foo".to_string()));
-    assert_eq!(d.get("key2"), Some(42i64));
-    assert_eq!(d.get::<String>("key3"), None);
+        assert_eq!(d.get("key1"), Some("foo".to_string()));
+        assert_eq!(d.get("key2"), Some(42i64));
+        assert_eq!(d.get::<String>("key3"), None);
+    }
 }
 
 #[test]
 fn test_i32() {
-    use redis::{ErrorKind, FromRedisValue, Value};
+    use redis::{ErrorKind, Value};
 
-    let i = FromRedisValue::from_redis_value(&Value::Status("42".into()));
-    assert_eq!(i, Ok(42i32));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let i = parse_mode.parse_redis_value(&Value::Status("42".into()));
+        assert_eq!(i, Ok(42i32));
 
-    let i = FromRedisValue::from_redis_value(&Value::Int(42));
-    assert_eq!(i, Ok(42i32));
+        let i = parse_mode.parse_redis_value(&Value::Int(42));
+        assert_eq!(i, Ok(42i32));
 
-    let i = FromRedisValue::from_redis_value(&Value::Data("42".into()));
-    assert_eq!(i, Ok(42i32));
+        let i = parse_mode.parse_redis_value(&Value::Data("42".into()));
+        assert_eq!(i, Ok(42i32));
 
-    let bad_i: Result<i32, _> = FromRedisValue::from_redis_value(&Value::Status("42x".into()));
-    assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+        let bad_i: Result<i32, _> = parse_mode.parse_redis_value(&Value::Status("42x".into()));
+        assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+    }
 }
 
 #[test]
 fn test_u32() {
-    use redis::{ErrorKind, FromRedisValue, Value};
+    use redis::{ErrorKind, Value};
 
-    let i = FromRedisValue::from_redis_value(&Value::Status("42".into()));
-    assert_eq!(i, Ok(42u32));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let i = parse_mode.parse_redis_value(&Value::Status("42".into()));
+        assert_eq!(i, Ok(42u32));
 
-    let bad_i: Result<u32, _> = FromRedisValue::from_redis_value(&Value::Status("-1".into()));
-    assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+        let bad_i: Result<u32, _> = parse_mode.parse_redis_value(&Value::Status("-1".into()));
+        assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+    }
 }
 
 #[test]
 fn test_vec() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
-    ]));
-    assert_eq!(v, Ok(vec![1i32, 2, 3]));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("3".into()),
+        ]));
+        assert_eq!(v, Ok(vec![1i32, 2, 3]));
 
-    let content: &[u8] = b"\x01\x02\x03\x04";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(content_vec));
+        let content: &[u8] = b"\x01\x02\x03\x04";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(content_vec));
 
-    let content: &[u8] = b"1";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(vec![b'1']));
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
-    assert_eq!(v, Ok(vec![1_u16]));
+        let content: &[u8] = b"1";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(vec![b'1']));
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec));
+        assert_eq!(v, Ok(vec![1_u16]));
+    }
 }
 
 #[test]
 fn test_box_slice() {
     use redis::{FromRedisValue, Value};
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("3".into()),
+        ]));
+        assert_eq!(v, Ok(vec![1i32, 2, 3].into_boxed_slice()));
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
-    ]));
-    assert_eq!(v, Ok(vec![1i32, 2, 3].into_boxed_slice()));
+        let content: &[u8] = b"\x01\x02\x03\x04";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(content_vec.into_boxed_slice()));
 
-    let content: &[u8] = b"\x01\x02\x03\x04";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(content_vec.into_boxed_slice()));
+        let content: &[u8] = b"1";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(vec![b'1'].into_boxed_slice()));
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec));
+        assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
 
-    let content: &[u8] = b"1";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(vec![b'1'].into_boxed_slice()));
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
-    assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
-
-    assert_eq!(
+        assert_eq!(
         Box::<[i32]>::from_redis_value(
             &Value::Data("just a string".into())
         ).unwrap_err().to_string(),
         "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was string-data('\"just a string\"'))",
     );
+    }
 }
 
 #[test]
@@ -122,190 +156,208 @@ fn test_arc_slice() {
     use redis::{FromRedisValue, Value};
     use std::sync::Arc;
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
-    ]));
-    assert_eq!(v, Ok(Arc::from(vec![1i32, 2, 3])));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("3".into()),
+        ]));
+        assert_eq!(v, Ok(Arc::from(vec![1i32, 2, 3])));
 
-    let content: &[u8] = b"\x01\x02\x03\x04";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(Arc::from(content_vec)));
+        let content: &[u8] = b"\x01\x02\x03\x04";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(Arc::from(content_vec)));
 
-    let content: &[u8] = b"1";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec.clone()));
-    assert_eq!(v, Ok(Arc::from(vec![b'1'])));
-    let v = FromRedisValue::from_redis_value(&Value::Data(content_vec));
-    assert_eq!(v, Ok(Arc::from(vec![1_u16])));
+        let content: &[u8] = b"1";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec.clone()));
+        assert_eq!(v, Ok(Arc::from(vec![b'1'])));
+        let v = parse_mode.parse_redis_value(&Value::Data(content_vec));
+        assert_eq!(v, Ok(Arc::from(vec![1_u16])));
 
-    assert_eq!(
+        assert_eq!(
         Arc::<[i32]>::from_redis_value(
             &Value::Data("just a string".into())
         ).unwrap_err().to_string(),
         "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was string-data('\"just a string\"'))",
     );
+    }
 }
 
 #[test]
 fn test_single_bool_vec() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Data("1".into()));
 
-    assert_eq!(v, Ok(vec![true]));
+        assert_eq!(v, Ok(vec![true]));
+    }
 }
 
 #[test]
 fn test_single_i32_vec() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Data("1".into()));
 
-    assert_eq!(v, Ok(vec![1i32]));
+        assert_eq!(v, Ok(vec![1i32]));
+    }
 }
 
 #[test]
 fn test_single_u32_vec() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("42".into()));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Data("42".into()));
 
-    assert_eq!(v, Ok(vec![42u32]));
+        assert_eq!(v, Ok(vec![42u32]));
+    }
 }
 
 #[test]
 fn test_single_string_vec() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Data("1".into()));
 
-    assert_eq!(v, Ok(vec!["1".to_string()]));
+        assert_eq!(v, Ok(vec!["1".to_string()]));
+    }
 }
 
 #[test]
 fn test_tuple() {
-    use redis::{FromRedisValue, Value};
+    use redis::Value;
 
-    let v = FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Bulk(vec![
-        Value::Data("1".into()),
-        Value::Data("2".into()),
-        Value::Data("3".into()),
-    ])]));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Bulk(vec![Value::Bulk(vec![
+            Value::Data("1".into()),
+            Value::Data("2".into()),
+            Value::Data("3".into()),
+        ])]));
 
-    assert_eq!(v, Ok(((1i32, 2, 3,),)));
+        assert_eq!(v, Ok(((1i32, 2, 3,),)));
+    }
 }
 
 #[test]
 fn test_hashmap() {
     use fnv::FnvHasher;
-    use redis::{ErrorKind, FromRedisValue, Value};
+    use redis::{ErrorKind, Value};
     use std::collections::HashMap;
     use std::hash::BuildHasherDefault;
 
     type Hm = HashMap<String, i32>;
 
-    let v: Result<Hm, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("a".into()),
-        Value::Data("1".into()),
-        Value::Data("b".into()),
-        Value::Data("2".into()),
-        Value::Data("c".into()),
-        Value::Data("3".into()),
-    ]));
-    let mut e: Hm = HashMap::new();
-    e.insert("a".into(), 1);
-    e.insert("b".into(), 2);
-    e.insert("c".into(), 3);
-    assert_eq!(v, Ok(e));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v: Result<Hm, _> = parse_mode.parse_redis_value(&Value::Bulk(vec![
+            Value::Data("a".into()),
+            Value::Data("1".into()),
+            Value::Data("b".into()),
+            Value::Data("2".into()),
+            Value::Data("c".into()),
+            Value::Data("3".into()),
+        ]));
+        let mut e: Hm = HashMap::new();
+        e.insert("a".into(), 1);
+        e.insert("b".into(), 2);
+        e.insert("c".into(), 3);
+        assert_eq!(v, Ok(e));
 
-    type Hasher = BuildHasherDefault<FnvHasher>;
-    type HmHasher = HashMap<String, i32, Hasher>;
-    let v: Result<HmHasher, _> = FromRedisValue::from_redis_value(&Value::Bulk(vec![
-        Value::Data("a".into()),
-        Value::Data("1".into()),
-        Value::Data("b".into()),
-        Value::Data("2".into()),
-        Value::Data("c".into()),
-        Value::Data("3".into()),
-    ]));
+        type Hasher = BuildHasherDefault<FnvHasher>;
+        type HmHasher = HashMap<String, i32, Hasher>;
+        let v: Result<HmHasher, _> = parse_mode.parse_redis_value(&Value::Bulk(vec![
+            Value::Data("a".into()),
+            Value::Data("1".into()),
+            Value::Data("b".into()),
+            Value::Data("2".into()),
+            Value::Data("c".into()),
+            Value::Data("3".into()),
+        ]));
 
-    let fnv = Hasher::default();
-    let mut e: HmHasher = HashMap::with_hasher(fnv);
-    e.insert("a".into(), 1);
-    e.insert("b".into(), 2);
-    e.insert("c".into(), 3);
-    assert_eq!(v, Ok(e));
+        let fnv = Hasher::default();
+        let mut e: HmHasher = HashMap::with_hasher(fnv);
+        e.insert("a".into(), 1);
+        e.insert("b".into(), 2);
+        e.insert("c".into(), 3);
+        assert_eq!(v, Ok(e));
 
-    let v: Result<Hm, _> =
-        FromRedisValue::from_redis_value(&Value::Bulk(vec![Value::Data("a".into())]));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<Hm, _> =
+            parse_mode.parse_redis_value(&Value::Bulk(vec![Value::Data("a".into())]));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+    }
 }
 
 #[test]
 fn test_bool() {
-    use redis::{ErrorKind, FromRedisValue, Value};
+    use redis::{ErrorKind, Value};
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("1".into()));
-    assert_eq!(v, Ok(true));
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let v = parse_mode.parse_redis_value(&Value::Data("1".into()));
+        assert_eq!(v, Ok(true));
 
-    let v = FromRedisValue::from_redis_value(&Value::Data("0".into()));
-    assert_eq!(v, Ok(false));
+        let v = parse_mode.parse_redis_value(&Value::Data("0".into()));
+        assert_eq!(v, Ok(false));
 
-    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Data("garbage".into()));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<bool, _> = parse_mode.parse_redis_value(&Value::Data("garbage".into()));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v = FromRedisValue::from_redis_value(&Value::Status("1".into()));
-    assert_eq!(v, Ok(true));
+        let v = parse_mode.parse_redis_value(&Value::Status("1".into()));
+        assert_eq!(v, Ok(true));
 
-    let v = FromRedisValue::from_redis_value(&Value::Status("0".into()));
-    assert_eq!(v, Ok(false));
+        let v = parse_mode.parse_redis_value(&Value::Status("0".into()));
+        assert_eq!(v, Ok(false));
 
-    let v: Result<bool, _> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<bool, _> = parse_mode.parse_redis_value(&Value::Status("garbage".into()));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v = FromRedisValue::from_redis_value(&Value::Okay);
-    assert_eq!(v, Ok(true));
+        let v = parse_mode.parse_redis_value(&Value::Okay);
+        assert_eq!(v, Ok(true));
 
-    let v = FromRedisValue::from_redis_value(&Value::Nil);
-    assert_eq!(v, Ok(false));
+        let v = parse_mode.parse_redis_value(&Value::Nil);
+        assert_eq!(v, Ok(false));
 
-    let v = FromRedisValue::from_redis_value(&Value::Int(0));
-    assert_eq!(v, Ok(false));
+        let v = parse_mode.parse_redis_value(&Value::Int(0));
+        assert_eq!(v, Ok(false));
 
-    let v = FromRedisValue::from_redis_value(&Value::Int(42));
-    assert_eq!(v, Ok(true));
+        let v = parse_mode.parse_redis_value(&Value::Int(42));
+        assert_eq!(v, Ok(true));
+    }
 }
 
 #[cfg(feature = "bytes")]
 #[test]
 fn test_bytes() {
     use bytes::Bytes;
-    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+    use redis::{ErrorKind, RedisResult, Value};
 
-    let content: &[u8] = b"\x01\x02\x03\x04";
-    let content_vec: Vec<u8> = Vec::from(content);
-    let content_bytes = Bytes::from_static(content);
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let content: &[u8] = b"\x01\x02\x03\x04";
+        let content_vec: Vec<u8> = Vec::from(content);
+        let content_bytes = Bytes::from_static(content);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
-    assert_eq!(v, Ok(content_bytes));
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Data(content_vec));
+        assert_eq!(v, Ok(content_bytes));
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Status("garbage".into()));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Okay);
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Okay);
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Nil);
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Nil);
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(0));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Int(0));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<Bytes> = FromRedisValue::from_redis_value(&Value::Int(42));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<Bytes> = parse_mode.parse_redis_value(&Value::Int(42));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+    }
 }
 
 #[cfg(feature = "uuid")]
@@ -340,34 +392,36 @@ fn test_uuid() {
 
 #[test]
 fn test_cstring() {
-    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+    use redis::{ErrorKind, RedisResult, Value};
     use std::ffi::CString;
 
-    let content: &[u8] = b"\x01\x02\x03\x04";
-    let content_vec: Vec<u8> = Vec::from(content);
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let content: &[u8] = b"\x01\x02\x03\x04";
+        let content_vec: Vec<u8> = Vec::from(content);
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Data(content_vec));
-    assert_eq!(v, Ok(CString::new(content).unwrap()));
+        let v: RedisResult<CString> = parse_mode.parse_redis_value(&Value::Data(content_vec));
+        assert_eq!(v, Ok(CString::new(content).unwrap()));
 
-    let v: RedisResult<CString> =
-        FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
-    assert_eq!(v, Ok(CString::new("garbage").unwrap()));
+        let v: RedisResult<CString> =
+            parse_mode.parse_redis_value(&Value::Status("garbage".into()));
+        assert_eq!(v, Ok(CString::new("garbage").unwrap()));
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Okay);
-    assert_eq!(v, Ok(CString::new("OK").unwrap()));
+        let v: RedisResult<CString> = parse_mode.parse_redis_value(&Value::Okay);
+        assert_eq!(v, Ok(CString::new("OK").unwrap()));
 
-    let v: RedisResult<CString> =
-        FromRedisValue::from_redis_value(&Value::Status("gar\0bage".into()));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<CString> =
+            parse_mode.parse_redis_value(&Value::Status("gar\0bage".into()));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Nil);
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<CString> = parse_mode.parse_redis_value(&Value::Nil);
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Int(0));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<CString> = parse_mode.parse_redis_value(&Value::Int(0));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 
-    let v: RedisResult<CString> = FromRedisValue::from_redis_value(&Value::Int(42));
-    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: RedisResult<CString> = parse_mode.parse_redis_value(&Value::Int(42));
+        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+    }
 }
 
 #[test]

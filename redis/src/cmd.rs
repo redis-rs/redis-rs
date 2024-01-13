@@ -10,7 +10,7 @@ use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
-use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -57,7 +57,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
 
             let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
             let rv = self.con.req_packed_command(&pcmd).ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_redis_value(&rv).ok()?;
+            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
 
             self.cursor = cur;
             self.batch = batch.into_iter();
@@ -111,7 +111,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
             }
 
             let rv = self.con.req_packed_command(&self.cmd).await.ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_redis_value(&rv).ok()?;
+            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
 
             self.cmd.cursor = Some(cur);
             self.batch = batch.into_iter();
@@ -412,7 +412,7 @@ impl Cmd {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         match con.req_command(self) {
-            Ok(val) => from_redis_value(&val),
+            Ok(val) => from_owned_redis_value(val),
             Err(e) => Err(e),
         }
     }
@@ -425,7 +425,7 @@ impl Cmd {
         C: crate::aio::ConnectionLike,
     {
         let val = con.req_packed_command(self).await?;
-        from_redis_value(&val)
+        from_owned_redis_value(val)
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
@@ -447,9 +447,9 @@ impl Cmd {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_redis_value::<(u64, Vec<T>)>(&rv)?
+            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
         } else {
-            (0, from_redis_value(&rv)?)
+            (0, from_owned_redis_value(rv)?)
         };
 
         Ok(Iter {
@@ -484,9 +484,9 @@ impl Cmd {
         let rv = con.req_packed_command(&self).await?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_redis_value::<(u64, Vec<T>)>(&rv)?
+            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
         } else {
-            (0, from_redis_value(&rv)?)
+            (0, from_owned_redis_value(rv)?)
         };
         if cursor == 0 {
             self.cursor = None;

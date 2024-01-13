@@ -257,7 +257,7 @@ impl redis::ConnectionLike for MockConnection {
                     Err((
                         ErrorKind::ResponseError,
                         "non-array response",
-                        String::from_redis_value(&res).unwrap(),
+                        String::from_owned_redis_value(res).unwrap(),
                     )
                         .into())
                 }

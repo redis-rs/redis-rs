@@ -383,6 +383,7 @@ pub use crate::script::{Script, ScriptInvocation};
 pub use crate::types::{
     // utility functions
     from_redis_value,
+    from_owned_redis_value,
 
     // error kinds
     ErrorKind,
