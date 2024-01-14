@@ -1645,7 +1645,9 @@ fn test_async_cluster_handle_missing_slots_in_split_multi_shard_command() {
     let result = runtime
         .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
         .unwrap_err();
-    assert_eq!(result.kind(), ErrorKind::ConnectionNotFound);
+    assert!(
+        matches!(result.kind(), ErrorKind::ConnectionNotFound) || result.is_connection_dropped()
+    );
 }
 
 #[test]
@@ -1917,6 +1919,47 @@ fn test_async_cluster_handle_complete_server_disconnect_without_panicking() {
             let result = connection.req_packed_command(&cmd).await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
             assert!(result.is_err());
+        }
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_async_cluster_reconnect_after_complete_server_disconnect() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.retries(2),
+        false,
+    );
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
+        for _ in 0..5 {
+            let cmd = cmd("PING");
+
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            let _cluster = TestClusterContext::new_with_cluster_client_builder(
+                3,
+                0,
+                |builder| builder.retries(2),
+                false,
+            );
+
+            let result = connection.req_packed_command(&cmd).await.unwrap();
+            assert_eq!(result, Value::SimpleString("PONG".to_string()));
         }
         Ok::<_, RedisError>(())
     })

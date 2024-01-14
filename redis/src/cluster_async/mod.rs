@@ -202,6 +202,7 @@ struct InnerCore<C> {
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     slot_refresh_in_progress: AtomicBool,
+    initial_nodes: Vec<ConnectionInfo>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -423,6 +424,9 @@ enum Next<C> {
     RefreshSlots {
         request: PendingRequest<C>,
     },
+    ReconnectToInitialNodes {
+        request: PendingRequest<C>,
+    },
     Done,
 }
 
@@ -459,10 +463,18 @@ impl<C> Future for Request<C> {
                 }
                 request.retry = request.retry.saturating_add(1);
 
+                if err.kind() == ErrorKind::ConnectionNotFound {
+                    return Next::ReconnectToInitialNodes {
+                        request: this.request.take().unwrap(),
+                    }
+                    .into();
+                }
+
                 let identifier = match target {
                     OperationTarget::Node { identifier } => identifier,
                     OperationTarget::FanOut => {
                         trace!("Request error `{}` multi-node request", err);
+
                         // Fanout operation are retried per internal request, and don't need additional retries.
                         self.respond(Err(err));
                         return Next::Done.into();
@@ -570,6 +582,7 @@ where
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             slot_refresh_in_progress: AtomicBool::new(false),
+            initial_nodes: initial_nodes.to_vec(),
         });
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let connection = ClusterConnInner {
@@ -686,6 +699,33 @@ where
         }
         info!("Connected to initial nodes:\n{}", connections.0);
         Ok(connections.0)
+    }
+
+    fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
+        let inner = self.inner.clone();
+        async move {
+            let connection_map =
+                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
+                    .await
+                {
+                    Ok(map) => map,
+                    Err(err) => {
+                        warn!("Can't reconnect to initial nodes: `{err}`");
+                        return;
+                    }
+                };
+            let mut write_lock = inner.conn_lock.write().await;
+            *write_lock = ConnectionsContainer::new(
+                Default::default(),
+                connection_map,
+                inner.cluster_params.read_from_replicas,
+                0,
+            );
+            drop(write_lock);
+            if let Err(err) = Self::refresh_slots_with_retries(inner.clone()).await {
+                warn!("Can't refresh slots with initial nodes: `{err}`");
+            };
+        }
     }
 
     fn refresh_connections(
@@ -981,6 +1021,16 @@ where
     ) -> OperationResult {
         trace!("execute_on_multiple_nodes");
         let connections_container = core.conn_lock.read().await;
+        if connections_container.is_empty() {
+            return OperationResult::Err((
+                OperationTarget::FanOut,
+                (
+                    ErrorKind::ConnectionNotFound,
+                    "No connections found for multi-node operation",
+                )
+                    .into(),
+            ));
+        }
 
         // This function maps the connections to senders & receivers of one-shot channels, and the receivers are mapped to `PendingRequest`s.
         // This allows us to pass the new `PendingRequest`s to `try_request`, while letting `execute_on_multiple_nodes` wait on the receivers
@@ -1324,19 +1374,22 @@ where
                         poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
                     self.inner.pending_requests.lock().unwrap().push(request);
                 }
+                Next::ReconnectToInitialNodes { request } => {
+                    poll_flush_action = poll_flush_action
+                        .change_state(PollFlushAction::ReconnectFromInitialConnections);
+                    self.inner.pending_requests.lock().unwrap().push(request);
+                }
             }
         }
 
-        match poll_flush_action {
-            PollFlushAction::None => {
-                if self.in_flight_requests.is_empty() {
-                    Poll::Ready(poll_flush_action)
-                } else {
-                    Poll::Pending
-                }
+        if matches!(poll_flush_action, PollFlushAction::None) {
+            if self.in_flight_requests.is_empty() {
+                Poll::Ready(poll_flush_action)
+            } else {
+                Poll::Pending
             }
-            rebuild @ PollFlushAction::RebuildSlots => Poll::Ready(rebuild),
-            reestablish @ PollFlushAction::Reconnect(_) => Poll::Ready(reestablish),
+        } else {
+            Poll::Ready(poll_flush_action)
         }
     }
 
@@ -1399,21 +1452,27 @@ enum PollFlushAction {
     None,
     RebuildSlots,
     Reconnect(Vec<ConnectionIdentifier>),
+    ReconnectFromInitialConnections,
 }
 
 impl PollFlushAction {
     fn change_state(self, next_state: PollFlushAction) -> PollFlushAction {
-        match self {
-            Self::None => next_state,
-            rebuild @ Self::RebuildSlots => rebuild,
-            Self::Reconnect(mut addrs) => match next_state {
-                rebuild @ Self::RebuildSlots => rebuild,
-                Self::Reconnect(new_addrs) => {
-                    addrs.extend(new_addrs);
-                    Self::Reconnect(addrs)
-                }
-                Self::None => Self::Reconnect(addrs),
-            },
+        match (self, next_state) {
+            (PollFlushAction::None, next_state) => next_state,
+            (next_state, PollFlushAction::None) => next_state,
+            (PollFlushAction::ReconnectFromInitialConnections, _)
+            | (_, PollFlushAction::ReconnectFromInitialConnections) => {
+                PollFlushAction::ReconnectFromInitialConnections
+            }
+
+            (PollFlushAction::RebuildSlots, _) | (_, PollFlushAction::RebuildSlots) => {
+                PollFlushAction::RebuildSlots
+            }
+
+            (PollFlushAction::Reconnect(mut addrs), PollFlushAction::Reconnect(new_addrs)) => {
+                addrs.extend(new_addrs);
+                Self::Reconnect(addrs)
+            }
         }
     }
 }
@@ -1506,6 +1565,11 @@ where
                     PollFlushAction::Reconnect(identifiers) => {
                         self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
                             self.refresh_connections(identifiers),
+                        )));
+                    }
+                    PollFlushAction::ReconnectFromInitialConnections => {
+                        self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+                            self.reconnect_to_initial_nodes(),
                         )));
                     }
                 },
