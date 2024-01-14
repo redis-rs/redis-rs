@@ -278,6 +278,11 @@ where
     pub(crate) fn get_current_topology_hash(&self) -> TopologyHash {
         self.topology_hash
     }
+
+    /// Returns true if the connections container contains no connections.
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.connection_map.values().any(|node| node.is_some())
+    }
 }
 
 #[cfg(test)]
@@ -820,5 +825,24 @@ mod tests {
 
         let address = container.address_for_identifier(&Identifier("foobar".into()));
         assert_eq!(address, None);
+    }
+
+    #[test]
+    fn test_is_empty() {
+        let mut container = create_container();
+
+        assert!(!container.is_empty());
+        container.remove_node(&Identifier("primary1".into()));
+        assert!(!container.is_empty());
+        container.remove_node(&Identifier("primary2".into()));
+        container.remove_node(&Identifier("primary3".into()));
+        assert!(!container.is_empty());
+
+        container.remove_node(&Identifier("replica2-1".into()));
+        container.remove_node(&Identifier("replica3-1".into()));
+        assert!(!container.is_empty());
+
+        container.remove_node(&Identifier("replica3-2".into()));
+        assert!(container.is_empty());
     }
 }
