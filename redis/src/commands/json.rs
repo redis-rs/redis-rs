@@ -290,7 +290,7 @@ implement_json_commands! {
 
     /// Gets JSON Value(s) at `path`.
     ///
-    /// Runs `JSON.GET` is key is singular, `JSON.MGET` if there are multiple keys.
+    /// Runs `JSON.GET` if key is singular, `JSON.MGET` if there are multiple keys.
     ///         
     /// With RedisJSON commands, you have to note that all results will be wrapped
     /// in square brackets (or empty brackets if not found). If you want to deserialize it
