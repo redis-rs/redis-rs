@@ -804,7 +804,7 @@ fn test_async_cluster_replica_read() {
     assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
 }
 
-fn test_cluster_fan_out(
+fn test_async_cluster_fan_out(
     command: &'static str,
     expected_ports: Vec<u16>,
     slots_config: Option<Vec<MockSlotRange>>,
@@ -845,18 +845,18 @@ fn test_cluster_fan_out(
 }
 
 #[test]
-fn test_cluster_fan_out_to_all_primaries() {
-    test_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
+fn test_async_cluster_fan_out_to_all_primaries() {
+    test_async_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
 }
 
 #[test]
-fn test_cluster_fan_out_to_all_nodes() {
-    test_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
+fn test_async_cluster_fan_out_to_all_nodes() {
+    test_async_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
 }
 
 #[test]
-fn test_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
-    test_cluster_fan_out(
+fn test_async_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
+    test_async_cluster_fan_out(
         "CONFIG SET",
         vec![6379, 6381],
         Some(vec![
@@ -875,8 +875,8 @@ fn test_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
 }
 
 #[test]
-fn test_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
-    test_cluster_fan_out(
+fn test_async_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
+    test_async_cluster_fan_out(
         "CONFIG SET",
         vec![6379, 6380, 6381, 6382],
         Some(vec![
@@ -955,8 +955,8 @@ fn test_async_cluster_route_according_to_passed_argument() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_aggregate_numeric_response_with_min() {
-    let name = "test_cluster_fan_out_and_aggregate_numeric_response";
+fn test_async_cluster_fan_out_and_aggregate_numeric_response_with_min() {
+    let name = "test_async_cluster_fan_out_and_aggregate_numeric_response";
     let mut cmd = Cmd::new();
     cmd.arg("SLOWLOG").arg("LEN");
 
@@ -985,8 +985,8 @@ fn test_cluster_fan_out_and_aggregate_numeric_response_with_min() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_aggregate_logical_array_response() {
-    let name = "test_cluster_fan_out_and_aggregate_logical_array_response";
+fn test_async_cluster_fan_out_and_aggregate_logical_array_response() {
+    let name = "test_async_cluster_fan_out_and_aggregate_logical_array_response";
     let mut cmd = Cmd::new();
     cmd.arg("SCRIPT")
         .arg("EXISTS")
@@ -1035,8 +1035,8 @@ fn test_cluster_fan_out_and_aggregate_logical_array_response() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_return_one_succeeded_response() {
-    let name = "test_cluster_fan_out_and_return_one_succeeded_response";
+fn test_async_cluster_fan_out_and_return_one_succeeded_response() {
+    let name = "test_async_cluster_fan_out_and_return_one_succeeded_response";
     let mut cmd = Cmd::new();
     cmd.arg("SCRIPT").arg("KILL");
     let MockEnv {
@@ -1072,8 +1072,8 @@ fn test_cluster_fan_out_and_return_one_succeeded_response() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes() {
-    let name = "test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes";
+fn test_async_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes() {
+    let name = "test_async_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes";
     let mut cmd = Cmd::new();
     cmd.arg("SCRIPT").arg("KILL");
     let MockEnv {
@@ -1104,8 +1104,8 @@ fn test_cluster_fan_out_and_fail_one_succeeded_if_there_are_no_successes() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_return_all_succeeded_response() {
-    let name = "test_cluster_fan_out_and_return_all_succeeded_response";
+fn test_async_cluster_fan_out_and_return_all_succeeded_response() {
+    let name = "test_async_cluster_fan_out_and_return_all_succeeded_response";
     let cmd = cmd("FLUSHALL");
     let MockEnv {
         runtime,
@@ -1130,8 +1130,8 @@ fn test_cluster_fan_out_and_return_all_succeeded_response() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure() {
-    let name = "test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure";
+fn test_async_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure() {
+    let name = "test_async_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure";
     let cmd = cmd("FLUSHALL");
     let MockEnv {
         runtime,
@@ -1163,8 +1163,8 @@ fn test_cluster_fan_out_and_fail_all_succeeded_if_there_is_a_single_failure() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
-    let name = "test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values";
+fn test_async_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
+    let name = "test_async_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values";
     let cmd = cmd("RANDOMKEY");
     let MockEnv {
         runtime,
@@ -1192,7 +1192,7 @@ fn test_cluster_fan_out_and_return_one_succeeded_ignoring_empty_values() {
 }
 
 #[test]
-fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() {
+fn test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy() {
     let name = "foo";
     let mut cmd = Cmd::new();
     cmd.arg("LATENCY").arg("LATEST");
@@ -1230,7 +1230,7 @@ fn test_cluster_fan_out_and_return_map_of_results_for_special_response_policy() 
 }
 
 #[test]
-fn test_cluster_fan_out_and_combine_arrays_of_values() {
+fn test_async_cluster_fan_out_and_combine_arrays_of_values() {
     let name = "foo";
     let cmd = cmd("KEYS");
     let MockEnv {
@@ -1263,8 +1263,8 @@ fn test_cluster_fan_out_and_combine_arrays_of_values() {
 }
 
 #[test]
-fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
-    let name = "test_cluster_split_multi_shard_command_and_combine_arrays_of_values";
+fn test_async_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
+    let name = "test_async_cluster_split_multi_shard_command_and_combine_arrays_of_values";
     let mut cmd = cmd("MGET");
     cmd.arg("foo").arg("bar").arg("baz");
     let MockEnv {
@@ -1301,8 +1301,8 @@ fn test_cluster_split_multi_shard_command_and_combine_arrays_of_values() {
 }
 
 #[test]
-fn test_cluster_handle_asking_error_in_split_multi_shard_command() {
-    let name = "test_cluster_handle_asking_error_in_split_multi_shard_command";
+fn test_async_cluster_handle_asking_error_in_split_multi_shard_command() {
+    let name = "test_async_cluster_handle_asking_error_in_split_multi_shard_command";
     let mut cmd = cmd("MGET");
     cmd.arg("foo").arg("bar").arg("baz");
     let asking_called = Arc::new(AtomicU16::new(0));
