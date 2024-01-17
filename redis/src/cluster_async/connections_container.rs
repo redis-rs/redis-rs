@@ -71,7 +71,7 @@ impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
 }
 
 pub(crate) struct ConnectionsContainer<Connection> {
-    connection_map: HashMap<Identifier, Option<ClusterNode<Connection>>>,
+    connection_map: HashMap<Identifier, ClusterNode<Connection>>,
     slot_map: SlotMap,
     read_from_replica_strategy: ReadFromReplicaStrategy,
     topology_hash: TopologyHash,
@@ -104,7 +104,7 @@ where
             connection_map: connection_map
                 .0
                 .into_iter()
-                .map(|(address, node)| (Identifier(address), Some(node)))
+                .map(|(address, node)| (Identifier(address), node))
                 .collect(),
             slot_map,
             read_from_replica_strategy,
@@ -180,10 +180,7 @@ where
     ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
         self.connection_map
             .iter()
-            .filter_map(move |(identifier, node)| {
-                node.as_ref()
-                    .map(|node| (identifier.clone(), node.user_connection.clone()))
-            })
+            .map(move |(identifier, node)| (identifier.clone(), node.user_connection.clone()))
     }
 
     pub(crate) fn all_primary_connections(
@@ -196,7 +193,7 @@ where
     }
 
     fn node_for_identifier(&self, identifier: &Identifier) -> Option<ClusterNode<Connection>> {
-        let node = self.connection_map.get(identifier)?.as_ref()?;
+        let node = self.connection_map.get(identifier)?;
         Some(node.clone())
     }
 
@@ -207,7 +204,7 @@ where
     }
 
     pub(crate) fn connection_for_identifier(&self, identifier: &Identifier) -> Option<Connection> {
-        let node = self.connection_map.get(identifier)?.as_ref()?;
+        let node = self.connection_map.get(identifier)?;
         Some(node.user_connection.clone())
     }
 
@@ -224,11 +221,7 @@ where
         &'a self,
         identifier: &'a Identifier,
     ) -> Option<ArcStr> {
-        if self.connection_map.contains_key(identifier) {
-            Some(identifier.0.clone())
-        } else {
-            None
-        }
+        Some(identifier.0.clone())
     }
 
     pub(crate) fn random_connections(
@@ -238,11 +231,6 @@ where
     ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
         self.connection_map
             .iter()
-            .filter_map(|(identifier, connection)| {
-                connection
-                    .as_ref()
-                    .map(|connection| (identifier, connection))
-            })
             .choose_multiple(&mut rand::thread_rng(), amount)
             .into_iter()
             .map(move |(identifier, node)| {
@@ -257,7 +245,7 @@ where
         node: ClusterNode<Connection>,
     ) -> Identifier {
         let identifier = Identifier(address.into());
-        self.connection_map.insert(identifier.clone(), Some(node));
+        self.connection_map.insert(identifier.clone(), node);
         identifier
     }
 
@@ -265,14 +253,11 @@ where
         &mut self,
         identifier: &Identifier,
     ) -> Option<ClusterNode<Connection>> {
-        self.connection_map.get_mut(identifier)?.take()
+        self.connection_map.remove(identifier)
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.connection_map
-            .iter()
-            .filter(|(_, node)| node.is_some())
-            .count()
+        self.connection_map.len()
     }
 
     pub(crate) fn get_current_topology_hash(&self) -> TopologyHash {
@@ -281,7 +266,7 @@ where
 
     /// Returns true if the connections container contains no connections.
     pub(crate) fn is_empty(&self) -> bool {
-        !self.connection_map.values().any(|node| node.is_some())
+        self.connection_map.is_empty()
     }
 }
 
@@ -334,8 +319,8 @@ mod tests {
     fn create_cluster_node(
         connection: usize,
         use_management_connections: bool,
-    ) -> Option<ClusterNode<usize>> {
-        Some(ClusterNode::new(
+    ) -> ClusterNode<usize> {
+        ClusterNode::new(
             connection,
             if use_management_connections {
                 Some(connection * 10)
@@ -343,7 +328,7 @@ mod tests {
                 None
             },
             None,
-        ))
+        )
     }
 
     fn create_container_with_strategy(
@@ -817,14 +802,6 @@ mod tests {
 
         let address = container.address_for_identifier(&Identifier("primary1".into()));
         assert_eq!(address, Some("primary1".into()));
-    }
-
-    #[test]
-    fn address_for_identifier_returns_none_for_unknown_identifier() {
-        let container = create_container();
-
-        let address = container.address_for_identifier(&Identifier("foobar".into()));
-        assert_eq!(address, None);
     }
 
     #[test]
