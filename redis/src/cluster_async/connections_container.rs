@@ -112,6 +112,16 @@ where
         }
     }
 
+    /// Returns true if the identifier represents a known primary node.
+    #[allow(dead_code)]
+    pub(crate) fn is_primary(&self, identifier: &Identifier) -> bool {
+        self.connection_for_identifier(identifier).is_some()
+            && self
+                .slot_map
+                .values()
+                .any(|slot_addrs| slot_addrs.primary == identifier.0)
+    }
+
     fn round_robin_read_from_replica(
         &self,
         slot_map_value: &SlotMapValue,
@@ -844,5 +854,28 @@ mod tests {
 
         container.remove_node(&Identifier("replica3-2".into()));
         assert!(container.is_empty());
+    }
+
+    #[test]
+    fn is_primary_returns_true_for_known_primary() {
+        let container = create_container();
+
+        assert!(container.is_primary(&Identifier("primary1".into())));
+    }
+
+    #[test]
+    fn is_primary_returns_false_for_known_replica() {
+        let container = create_container();
+
+        assert!(!container.is_primary(&Identifier("replica2-1".into())));
+    }
+
+    #[test]
+    fn is_primary_returns_false_for_removed_node() {
+        let mut container = create_container();
+        let identifier = Identifier("primary1".into());
+        container.remove_node(&identifier);
+
+        assert!(!container.is_primary(&identifier));
     }
 }
