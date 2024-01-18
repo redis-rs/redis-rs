@@ -355,6 +355,19 @@ impl From<rustls_pki_types::InvalidDnsNameError> for RedisError {
     }
 }
 
+#[cfg(feature = "uuid")]
+impl From<uuid::Error> for RedisError {
+    fn from(err: uuid::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::TypeError,
+                "Value is not a valid UUID",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
 impl From<FromUtf8Error> for RedisError {
     fn from(_: FromUtf8Error) -> RedisError {
         RedisError {
@@ -1613,6 +1626,26 @@ impl FromRedisValue for bytes::Bytes {
             Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
             _ => invalid_type_error!(v, "Not binary data"),
         }
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl FromRedisValue for uuid::Uuid {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match *v {
+            Value::Data(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
+            _ => invalid_type_error!(v, "Response type not uuid compatible."),
+        }
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl ToRedisArgs for uuid::Uuid {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        out.write_arg(self.as_bytes());
     }
 }
 

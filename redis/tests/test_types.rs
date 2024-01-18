@@ -307,6 +307,36 @@ fn test_bytes() {
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
+#[cfg(feature = "uuid")]
+#[test]
+fn test_uuid() {
+    use std::str::FromStr;
+
+    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
+    use uuid::Uuid;
+
+    let uuid = Uuid::from_str("abab64b7-e265-4052-a41b-23e1e28674bf").unwrap();
+    let bytes = uuid.as_bytes().to_vec();
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Data(bytes));
+    assert_eq!(v, Ok(uuid));
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Status("garbage".into()));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Okay);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Nil);
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Int(0));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+    let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Int(42));
+    assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+}
+
 #[test]
 fn test_cstring() {
     use redis::{ErrorKind, FromRedisValue, RedisResult, Value};

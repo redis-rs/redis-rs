@@ -88,6 +88,9 @@ ahash = { version = "0.8.6", optional = true }
 log = { version = "0.4", optional = true }
 futures-time = { version = "3.0.0", optional = true }
 
+# Optional uuid support
+uuid = { version = "1.6.1", optional = true }
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
@@ -115,6 +118,7 @@ tcp_nodelay = []
 rust_decimal = ["dep:rust_decimal"]
 bigdecimal = ["dep:bigdecimal"]
 num-bigint = ["dep:num-bigint"]
+uuid = ["dep:uuid"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
