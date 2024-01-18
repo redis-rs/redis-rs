@@ -1342,6 +1342,11 @@ pub trait FromRedisValue: Sized {
             .map(|rv| vec![rv])
             .ok()
     }
+
+    /// Convert bytes to a single element vector.
+    fn from_owned_byte_vec(_vec: Vec<u8>) -> RedisResult<Vec<Self>> {
+        Self::from_owned_redis_value(Value::Data(_vec)).map(|rv| vec![rv])
+    }
 }
 
 macro_rules! from_redis_value_for_num_internal {
@@ -1380,6 +1385,9 @@ impl FromRedisValue for u8 {
     // this hack allows us to specialize Vec<u8> to work with binary data.
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
+    }
+    fn from_owned_byte_vec(vec: Vec<u8>) -> RedisResult<Vec<u8>> {
+        Ok(vec)
     }
 }
 
@@ -1483,6 +1491,14 @@ impl FromRedisValue for CString {
             _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
+    fn from_owned_redis_value(v: Value) -> RedisResult<CString> {
+        match v {
+            Value::Data(bytes) => Ok(CString::new(bytes)?),
+            Value::Okay => Ok(CString::new("OK")?),
+            Value::Status(val) => Ok(CString::new(val)?),
+            _ => invalid_type_error!(v, "Response type not CString compatible."),
+        }
+    }
 }
 
 impl FromRedisValue for String {
@@ -1533,15 +1549,10 @@ macro_rules! from_vec_from_redis_value {
             }
             fn from_owned_redis_value(v: Value) -> RedisResult<$Type> {
                 match v {
-                    // All binary data except u8 will try to parse into a single element vector.
-                    // u8 has its own implementation of from_byte_vec.
-                    Value::Data(bytes) => match FromRedisValue::from_byte_vec(&bytes) {
-                        Some(x) => Ok($convert(x)),
-                        None => invalid_type_error!(
-                            Value::Data(bytes),
-                            format!("Conversion to {} failed.", std::any::type_name::<$Type>())
-                        ),
-                    },
+                    // Binary data is parsed into a single-element vector, except
+                    // for the element type `u8`, which directly consumes the entire
+                    // array of bytes.
+                    Value::Data(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
                     Value::Bulk(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
                     Value::Nil => Ok($convert(Vec::new())),
                     _ => invalid_type_error!(v, "Response type not vector compatible."),
@@ -1679,7 +1690,10 @@ where
         let items = v
             .into_sequence()
             .map_err(|v| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
+        items
+            .into_iter()
+            .map(|item| from_owned_redis_value(item))
+            .collect()
     }
 }
 
