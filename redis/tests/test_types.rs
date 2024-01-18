@@ -337,7 +337,6 @@ fn test_uuid() {
     assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
 }
 
-
 #[test]
 fn test_cstring() {
     use redis::{ErrorKind, FromRedisValue, RedisResult, Value};

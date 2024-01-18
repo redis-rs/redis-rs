@@ -366,7 +366,6 @@ impl From<uuid::Error> for RedisError {
             ),
         }
     }
-
 }
 
 impl From<FromUtf8Error> for RedisError {
@@ -1644,7 +1643,7 @@ impl FromRedisValue for uuid::Uuid {
 impl ToRedisArgs for uuid::Uuid {
     fn write_redis_args<W>(&self, out: &mut W)
     where
-        W: ?Sized + RedisWrite 
+        W: ?Sized + RedisWrite,
     {
         out.write_arg(self.as_bytes());
     }
