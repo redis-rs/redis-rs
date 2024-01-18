@@ -989,7 +989,7 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn.await)),
-            Some((addr, None)) => connect_and_check(&addr, core.cluster_params.clone())
+            Some((addr, None)) => connect_check_and_add(core.clone(), addr.clone())
                 .await
                 .ok()
                 .map(|conn| (addr, conn)),
@@ -1030,7 +1030,7 @@ where
         drop(read_guard);
         let mut conn = match conn {
             Some(conn) => conn.await,
-            None => connect_and_check(&addr, core.cluster_params.clone()).await?,
+            None => connect_check_and_add(core.clone(), addr.clone()).await?,
         };
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
@@ -1412,6 +1412,24 @@ impl Connect for MultiplexedConnection {
                 .await
         }
         .boxed()
+    }
+}
+
+async fn connect_check_and_add<C>(core: Core<C>, addr: String) -> RedisResult<C>
+where
+    C: ConnectionLike + Connect + Send + Clone + 'static,
+{
+    match connect_and_check::<C>(&addr, core.cluster_params.clone()).await {
+        Ok(conn) => {
+            let conn_clone = conn.clone();
+            core.conn_lock
+                .write()
+                .await
+                .0
+                .insert(addr, async { conn_clone }.boxed().shared());
+            Ok(conn)
+        }
+        Err(err) => Err(err),
     }
 }
 
