@@ -244,33 +244,29 @@ impl fmt::Display for PushKind {
     }
 }
 
-pub struct MapIter<'a> {
-    bulk: Option<std::slice::Iter<'a, Value>>,
-    map: Option<std::slice::Iter<'a, (Value, Value)>>,
+pub enum MapIter<'a> {
+    Bulk(std::slice::Iter<'a, Value>),
+    Map(std::slice::Iter<'a, (Value, Value)>),
 }
 
 impl<'a> Iterator for MapIter<'a> {
     type Item = (&'a Value, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(m) = &mut self.map {
-            let (k, v) = m.next()?;
-            return Some((k, v));
-        } else if let Some(bulk) = &mut self.bulk {
-            return Some((bulk.next()?, bulk.next()?));
+        match self {
+            MapIter::Bulk(iter) => Some((iter.next()?, iter.next()?)),
+            MapIter::Map(iter) => {
+                let (k, v) = iter.next()?;
+                Some((k, v))
+            }
         }
-        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if let Some(ref m) = self.map {
-            return m.size_hint();
+        match self {
+            MapIter::Bulk(iter) => iter.size_hint(),
+            MapIter::Map(iter) => iter.size_hint(),
         }
-        if let Some(ref bulk) = self.bulk {
-            let (low, high) = bulk.size_hint();
-            return (low / 2, high.map(|h| h / 2));
-        }
-        (0, None)
     }
 }
 
@@ -323,14 +319,8 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Bulk(items) => Some(MapIter {
-                bulk: Some(items.iter()),
-                map: None,
-            }),
-            Value::Map(items) => Some(MapIter {
-                bulk: None,
-                map: Some(items.iter()),
-            }),
+            Value::Bulk(items) => Some(MapIter::Bulk(items.iter())),
+            Value::Map(items) => Some(MapIter::Map(items.iter())),
             _ => None,
         }
     }
