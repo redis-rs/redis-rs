@@ -405,11 +405,20 @@ where
                         });
                         self.poll(cx)
                     }
-                    ErrorKind::IoError => Next::Reconnect {
-                        request: this.request.take().unwrap(),
-                        target: address,
+                    ErrorKind::IoError => {
+                        if err.is_timeout() {
+                            Next::Retry {
+                                request: this.request.take().unwrap(),
+                            }
+                            .into()
+                        } else {
+                            Next::Reconnect {
+                                request: this.request.take().unwrap(),
+                                target: address,
+                            }
+                            .into()
+                        }
                     }
-                    .into(),
                     _ => {
                         if err.is_retryable() {
                             Next::Retry {
