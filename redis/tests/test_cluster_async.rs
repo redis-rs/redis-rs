@@ -2,6 +2,7 @@
 mod support;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::AtomicU32;
 use std::sync::{
     atomic::{self, AtomicI32, AtomicU16},
     atomic::{AtomicBool, Ordering},
@@ -2175,6 +2176,115 @@ fn test_async_cluster_with_client_name() {
         Ok::<_, RedisError>(())
     })
     .unwrap();
+}
+
+#[test]
+fn test_async_cluster_reroute_from_replica_if_in_loading_state() {
+    /* Test replica in loading state. The expected behaviour is that the request will be directed to a different replica or the primary.
+    depends on the read from replica policy. */
+    let name = "test_async_cluster_reroute_from_replica_if_in_loading_state";
+
+    let load_errors: Arc<_> = Arc::new(std::sync::Mutex::new(vec![]));
+    let load_errors_clone = load_errors.clone();
+
+    // requests should route to replica
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                cmd,
+                Some(vec![MockSlotRange {
+                    primary_port: 6379,
+                    replica_ports: vec![6380, 6381],
+                    slot_range: (0..16383),
+                }]),
+            )?;
+            match port {
+                6380 | 6381 => {
+                    load_errors_clone.lock().unwrap().push(port);
+                    Err(parse_redis_value(b"-LOADING\r\n"))
+                }
+                6379 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                _ => panic!("Wrong node"),
+            }
+        },
+    );
+    for _n in 0..3 {
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<_, Option<i32>>(&mut connection),
+        );
+        assert_eq!(value, Ok(Some(123)));
+    }
+
+    let mut load_errors_guard = load_errors.lock().unwrap();
+    load_errors_guard.sort();
+
+    // We expected to get only 2 loading error since the 2 replicas are in loading state.
+    // The third iteration will be directed to the primary since the connections of the replicas were removed.
+    assert_eq!(*load_errors_guard, vec![6380, 6381]);
+}
+
+#[test]
+fn test_async_cluster_replica_read_primary_loading() {
+    // Test primary in loading state. The expected behaviour is that the request will be retried until the primary is no loner in loading state.
+    let name = "test_async_cluster_replica_read_primary_loading";
+
+    const RETRIES: u32 = 3;
+    const ITERATIONS: u32 = 2;
+    let load_errors = Arc::new(AtomicU32::new(0));
+    let load_errors_clone = load_errors.clone();
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica_using_config(
+                name,
+                cmd,
+                Some(vec![MockSlotRange {
+                    primary_port: 6379,
+                    replica_ports: vec![6380, 6381],
+                    slot_range: (0..16383),
+                }]),
+            )?;
+            match port {
+                6379 => {
+                    let attempts = load_errors_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                    if attempts % RETRIES == 0 {
+                        Err(Ok(Value::BulkString(b"123".to_vec())))
+                    } else {
+                        Err(parse_redis_value(b"-LOADING\r\n"))
+                    }
+                }
+                _ => panic!("Wrong node"),
+            }
+        },
+    );
+    for _n in 0..ITERATIONS {
+        runtime
+            .block_on(
+                cmd("GET")
+                    .arg("test")
+                    .query_async::<_, Value>(&mut connection),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(load_errors.load(Ordering::Relaxed), ITERATIONS * RETRIES);
 }
 
 #[cfg(feature = "tls-rustls")]
