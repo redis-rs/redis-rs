@@ -30,14 +30,50 @@ use tokio::runtime::Runtime;
 
 type Handler = Arc<dyn Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync>;
 
-#[derive(Default)]
-pub struct MockConnectionUtils {
-    pub handler: Option<Handler>,
+pub struct MockConnectionBehavior {
+    pub id: String,
+    pub handler: Handler,
     pub connection_id_provider: AtomicUsize,
     pub returned_ip_type: ConnectionIPReturnType,
     pub return_connection_err: ShouldReturnConnectionError,
 }
-pub static MOCK_CONN_UTILS: Lazy<RwLock<HashMap<String, MockConnectionUtils>>> =
+
+impl MockConnectionBehavior {
+    pub fn new(id: &str, handler: Handler) -> Self {
+        Self {
+            id: id.to_string(),
+            handler,
+            connection_id_provider: AtomicUsize::new(0),
+            returned_ip_type: ConnectionIPReturnType::default(),
+            return_connection_err: ShouldReturnConnectionError::default(),
+        }
+    }
+
+    fn get_handler(&self) -> Handler {
+        self.handler.clone()
+    }
+}
+
+pub fn modify_mock_connection_behavior(name: &str, func: impl FnOnce(&mut MockConnectionBehavior)) {
+    func(
+        MOCK_CONN_BEHAVIORS
+            .write()
+            .unwrap()
+            .get_mut(name)
+            .expect("Handler `{name}` was not installed"),
+    );
+}
+
+pub fn get_mock_connection_handler(name: &str) -> Handler {
+    MOCK_CONN_BEHAVIORS
+        .read()
+        .unwrap()
+        .get(name)
+        .expect("Handler `{name}` was not installed")
+        .get_handler()
+}
+
+static MOCK_CONN_BEHAVIORS: Lazy<RwLock<HashMap<String, MockConnectionBehavior>>> =
     Lazy::new(Default::default);
 
 #[derive(Default)]
@@ -86,7 +122,7 @@ impl cluster_async::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
-        let binding = MOCK_CONN_UTILS.read().unwrap();
+        let binding = MOCK_CONN_BEHAVIORS.read().unwrap();
         let conn_utils = binding
             .get(name)
             .unwrap_or_else(|| panic!("MockConnectionUtils for `{name}` were not installed"));
@@ -119,11 +155,7 @@ impl cluster_async::Connect for MockConnection {
                 id: conn_utils
                     .connection_id_provider
                     .fetch_add(1, Ordering::SeqCst),
-                handler: conn_utils
-                    .handler
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("Handler for `{name}` were not installed"))
-                    .clone(),
+                handler: conn_utils.get_handler(),
                 port,
             },
             ip,
@@ -142,7 +174,7 @@ impl cluster::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
-        let binding = MOCK_CONN_UTILS.read().unwrap();
+        let binding = MOCK_CONN_BEHAVIORS.read().unwrap();
         let conn_utils = binding
             .get(name)
             .unwrap_or_else(|| panic!("MockConnectionUtils for `{name}` were not installed"));
@@ -150,11 +182,7 @@ impl cluster::Connect for MockConnection {
             id: conn_utils
                 .connection_id_provider
                 .fetch_add(1, Ordering::SeqCst),
-            handler: conn_utils
-                .handler
-                .as_ref()
-                .unwrap_or_else(|| panic!("Handler for `{name}` were not installed"))
-                .clone(),
+            handler: conn_utils.get_handler(),
             port,
         })
     }
@@ -186,7 +214,7 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
 }
 
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    if contains_slice(cmd, b"PING") {
+    if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Array(vec![Value::Array(vec![
@@ -275,7 +303,7 @@ pub fn respond_startup_with_replica_using_config(
             slot_range: (8192..16383),
         },
     ]);
-    if contains_slice(cmd, b"PING") {
+    if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         let slots = create_topology_from_config(name, slots_config);
@@ -375,7 +403,7 @@ pub struct RemoveHandler(Vec<String>);
 impl Drop for RemoveHandler {
     fn drop(&mut self) {
         for id in &self.0 {
-            MOCK_CONN_UTILS.write().unwrap().remove(id);
+            MOCK_CONN_BEHAVIORS.write().unwrap().remove(id);
         }
     }
 }
@@ -405,12 +433,9 @@ impl MockEnv {
             .unwrap();
 
         let id = id.to_string();
-        MOCK_CONN_UTILS.write().unwrap().insert(
+        MOCK_CONN_BEHAVIORS.write().unwrap().insert(
             id.clone(),
-            MockConnectionUtils {
-                handler: Some(Arc::new(move |cmd, port| handler(cmd, port))),
-                ..Default::default()
-            },
+            MockConnectionBehavior::new(&id, Arc::new(move |cmd, port| handler(cmd, port))),
         );
         let client = client_builder.build().unwrap();
         let connection = client.get_generic_connection().unwrap();

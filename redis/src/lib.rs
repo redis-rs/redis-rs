@@ -448,6 +448,10 @@ mod cluster_slotmap;
 #[cfg(feature = "cluster")]
 mod cluster_client;
 
+// for testing purposes
+#[cfg(feature = "cluster")]
+pub use crate::cluster_client::ClusterParams;
+
 #[cfg(feature = "cluster")]
 mod cluster_pipeline;
 
