@@ -119,6 +119,7 @@ rust_decimal = ["dep:rust_decimal"]
 bigdecimal = ["dep:bigdecimal"]
 num-bigint = ["dep:num-bigint"]
 uuid = ["dep:uuid"]
+disable-client-setinfo = []
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead

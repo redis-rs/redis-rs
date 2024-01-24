@@ -930,6 +930,7 @@ pub fn connect(
     setup_connection(con, &connection_info.redis)
 }
 
+#[cfg(not(feature = "disable-client-setinfo"))]
 pub(crate) fn client_set_info_pipeline() -> Pipeline {
     let mut pipeline = crate::pipe();
     pipeline
@@ -977,6 +978,7 @@ fn setup_connection(
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
+    #[cfg(not(feature = "disable-client-setinfo"))]
     let _: RedisResult<()> = client_set_info_pipeline().query(&mut rv);
 
     Ok(rv)
