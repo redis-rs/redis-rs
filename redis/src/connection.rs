@@ -930,6 +930,7 @@ pub fn connect(
     setup_connection(con, &connection_info.redis)
 }
 
+#[cfg(not(feature = "disable-client-setinfo"))]
 pub(crate) fn client_set_info_pipeline() -> Pipeline {
     let mut pipeline = crate::pipe();
     pipeline
