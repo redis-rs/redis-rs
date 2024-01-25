@@ -3,7 +3,7 @@
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+    from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
 
 /// Represents a redis command pipeline.
@@ -129,15 +129,13 @@ impl Pipeline {
                 "This connection does not support pipelining."
             ));
         }
-        from_redis_value(
-            &(if self.commands.is_empty() {
-                Value::Bulk(vec![])
-            } else if self.transaction_mode {
-                self.execute_transaction(con)?
-            } else {
-                self.execute_pipelined(con)?
-            }),
-        )
+        from_owned_redis_value(if self.commands.is_empty() {
+            Value::Bulk(vec![])
+        } else if self.transaction_mode {
+            self.execute_transaction(con)?
+        } else {
+            self.execute_pipelined(con)?
+        })
     }
 
     #[cfg(feature = "aio")]
@@ -178,13 +176,13 @@ impl Pipeline {
         C: crate::aio::ConnectionLike,
     {
         let v = if self.commands.is_empty() {
-            return from_redis_value(&Value::Bulk(vec![]));
+            return from_owned_redis_value(Value::Bulk(vec![]));
         } else if self.transaction_mode {
             self.execute_transaction_async(con).await?
         } else {
             self.execute_pipelined_async(con).await?
         };
-        from_redis_value(&v)
+        from_owned_redis_value(v)
     }
 
     /// This is a shortcut to `query()` that does not return a value and

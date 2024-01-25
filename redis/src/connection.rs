@@ -11,7 +11,8 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value,
+    from_owned_redis_value, from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult,
+    ToRedisArgs, Value,
 };
 
 #[cfg(unix)]
@@ -1138,7 +1139,7 @@ impl Connection {
         let mut received_unsub = false;
         let mut received_punsub = false;
         loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
+            let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
 
             match res.0.first() {
                 Some(&b'u') => received_unsub = true,
@@ -1411,7 +1412,7 @@ impl Msg {
     pub fn from_value(value: &Value) -> Option<Self> {
         let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
         let mut iter = raw_msg.into_iter();
-        let msg_type: String = from_redis_value(&iter.next()?).ok()?;
+        let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
         let mut pattern = None;
         let payload;
         let channel;

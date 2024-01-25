@@ -9,7 +9,7 @@ use crate::connection::{ConnectionAddr, ConnectionInfo, Msg, RedisConnectionInfo
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
-use crate::{from_redis_value, ToRedisArgs};
+use crate::{from_owned_redis_value, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -147,7 +147,7 @@ where
         let mut received_unsub = false;
         let mut received_punsub = false;
         loop {
-            let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
+            let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.read_response().await?)?;
 
             match res.0.first() {
                 Some(&b'u') => received_unsub = true,
@@ -352,7 +352,7 @@ where
         ValueCodec::default()
             .framed(&mut self.0.con)
             .filter_map(|value| {
-                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+                Box::pin(async move { T::from_owned_redis_value(value.ok()?.ok()?).ok() })
             })
     }
 
@@ -361,7 +361,7 @@ where
         ValueCodec::default()
             .framed(self.0.con)
             .filter_map(|value| {
-                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+                Box::pin(async move { T::from_owned_redis_value(value.ok()?.ok()?).ok() })
             })
     }
 }
