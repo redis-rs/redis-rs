@@ -103,14 +103,20 @@ pub(crate) fn parse_and_count_slots(
                         if node.len() < 2 {
                             return None;
                         }
-
+                        // According to the CLUSTER SLOTS documentation:
+                        // If the received hostname is an empty string or NULL, clients should utilize the hostname of the responding node.
+                        // However, if the received hostname is "?", it should be regarded as an indication of an unknown node.
                         let hostname = if let Value::BulkString(ref ip) = node[0] {
                             let hostname = String::from_utf8_lossy(ip);
                             if hostname.is_empty() {
                                 addr_of_answering_node.into()
+                            } else if hostname == "?" {
+                                return None;
                             } else {
                                 hostname
                             }
+                        } else if let Value::Nil = node[0] {
+                            addr_of_answering_node.into()
                         } else {
                             return None;
                         };
@@ -140,6 +146,13 @@ pub(crate) fn parse_and_count_slots(
             let replicas = nodes.split_off(1);
             slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
+    }
+    if slots.is_empty() {
+        return Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Error parsing slots: No healthy node found",
+            format!("Raw slot map response: {:?}", raw_slot_resp),
+        )));
     }
     // we sort the slots, because different nodes in a cluster might return the same slot view
     // in different orders, which might cause the views to be considered evaluated as not equal.

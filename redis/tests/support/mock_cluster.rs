@@ -54,6 +54,13 @@ impl MockConnectionBehavior {
     }
 }
 
+pub fn add_new_mock_connection_behavior(name: &str, handler: Handler) {
+    MOCK_CONN_BEHAVIORS
+        .write()
+        .unwrap()
+        .insert(name.to_string(), MockConnectionBehavior::new(name, handler));
+}
+
 pub fn modify_mock_connection_behavior(name: &str, func: impl FnOnce(&mut MockConnectionBehavior)) {
     func(
         MOCK_CONN_BEHAVIORS
@@ -433,10 +440,7 @@ impl MockEnv {
             .unwrap();
 
         let id = id.to_string();
-        MOCK_CONN_BEHAVIORS.write().unwrap().insert(
-            id.clone(),
-            MockConnectionBehavior::new(&id, Arc::new(move |cmd, port| handler(cmd, port))),
-        );
+        add_new_mock_connection_behavior(&id, Arc::new(move |cmd, port| handler(cmd, port)));
         let client = client_builder.build().unwrap();
         let connection = client.get_generic_connection().unwrap();
         #[cfg(feature = "cluster-async")]

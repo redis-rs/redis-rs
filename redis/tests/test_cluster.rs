@@ -295,6 +295,65 @@ fn test_cluster_can_connect_to_server_that_sends_cluster_slots_without_host_name
 }
 
 #[test]
+fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name() {
+    let name = "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
+
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
+        if contains_slice(cmd, b"PING") {
+            Err(Ok(Value::SimpleString("OK".into())))
+        } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+            Err(Ok(Value::Array(vec![Value::Array(vec![
+                Value::Int(0),
+                Value::Int(16383),
+                Value::Array(vec![Value::Nil, Value::Int(6379)]),
+            ])])))
+        } else {
+            Err(Ok(Value::Nil))
+        }
+    });
+
+    let value = cmd("GET").arg("test").query::<Value>(&mut connection);
+
+    assert_eq!(value, Ok(Value::Nil));
+}
+
+#[test]
+fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
+) {
+    let name = "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
+
+    let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
+        if contains_slice(cmd, b"PING") {
+            Err(Ok(Value::SimpleString("OK".into())))
+        } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+            Err(Ok(Value::Array(vec![
+                Value::Array(vec![
+                    Value::Int(0),
+                    Value::Int(7000),
+                    Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
+                        Value::Int(6379),
+                    ]),
+                ]),
+                Value::Array(vec![
+                    Value::Int(7001),
+                    Value::Int(16383),
+                    Value::Array(vec![
+                        Value::BulkString("?".as_bytes().to_vec()),
+                        Value::Int(6380),
+                    ]),
+                ]),
+            ])))
+        } else {
+            Err(Ok(Value::Nil))
+        }
+    });
+
+    let value = cmd("GET").arg("test").query::<Value>(&mut connection);
+    assert_eq!(value, Ok(Value::Nil));
+}
+
+#[test]
 fn test_cluster_pipeline_command_ordering() {
     let cluster = TestClusterContext::new(3, 0);
     cluster.wait_for_cluster_up();
