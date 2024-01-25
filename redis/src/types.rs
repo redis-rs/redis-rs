@@ -219,7 +219,7 @@ impl Value {
         }
     }
 
-    /// Returns an `Vec<Value>` if `self` is compatible with a sequence type,
+    /// Returns a `Vec<Value>` if `self` is compatible with a sequence type,
     /// otherwise returns `Err(self)`.
     pub fn into_sequence(self) -> Result<Vec<Value>, Value> {
         match self {
