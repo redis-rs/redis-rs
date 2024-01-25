@@ -11,8 +11,8 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
-    Value,
+    from_owned_redis_value, from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError,
+    RedisResult, ToRedisArgs, Value,
 };
 use crate::ProtocolVersion;
 
@@ -964,6 +964,7 @@ pub fn connect(
     setup_connection(con, &connection_info.redis)
 }
 
+#[cfg(not(feature = "disable-client-setinfo"))]
 pub(crate) fn client_set_info_pipeline() -> Pipeline {
     let mut pipeline = crate::pipe();
     pipeline
@@ -1031,6 +1032,7 @@ fn setup_connection(
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
+    #[cfg(not(feature = "disable-client-setinfo"))]
     let _: RedisResult<()> = client_set_info_pipeline().query(&mut rv);
 
     Ok(rv)
@@ -1054,6 +1056,11 @@ pub trait ConnectionLike {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
+    /// Important - this function is meant for internal usage, since it's
+    /// easy to pass incorrect `offset` & `count` parameters, which might
+    /// cause the connection to enter an erroneous state. Users shouldn't
+    /// call it, instead using the Pipeline::query function.
+    #[doc(hidden)]
     fn req_packed_commands(
         &mut self,
         cmd: &[u8],
@@ -1188,7 +1195,7 @@ impl Connection {
         let mut received_unsub = false;
         let mut received_punsub = false;
         if self.protocol == ProtocolVersion::RESP3 {
-            while let Value::Push { kind, data } = from_redis_value(&self.recv_response()?)? {
+            while let Value::Push { kind, data } = from_owned_redis_value(self.recv_response()?)? {
                 if data.len() >= 2 {
                     if let Value::Int(num) = data[1] {
                         if resp3_is_pub_sub_state_cleared(
@@ -1204,7 +1211,7 @@ impl Connection {
             }
         } else {
             loop {
-                let res: (Vec<u8>, (), isize) = from_redis_value(&self.recv_response()?)?;
+                let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
                 if resp2_is_pub_sub_state_cleared(
                     &mut received_unsub,
                     &mut received_punsub,

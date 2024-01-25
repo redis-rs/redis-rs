@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 #[cfg(feature = "async-std-comp")]
 use super::async_std;
 use super::ConnectionLike;
@@ -10,7 +12,7 @@ use crate::connection::{
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
-use crate::{from_redis_value, ProtocolVersion, ToRedisArgs};
+use crate::{from_owned_redis_value, ProtocolVersion, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -28,6 +30,7 @@ use std::pin::Pin;
 use tokio_util::codec::Decoder;
 
 /// Represents a stateful redis TCP connection.
+#[deprecated(note = "aio::Connection is deprecated. Use aio::MultiplexedConnection instead.")]
 pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
     con: C,
     buf: Vec<u8>,
@@ -153,7 +156,9 @@ where
         let mut received_unsub = false;
         let mut received_punsub = false;
         if self.protocol == ProtocolVersion::RESP3 {
-            while let Value::Push { kind, data } = from_redis_value(&self.read_response().await?)? {
+            while let Value::Push { kind, data } =
+                from_owned_redis_value(self.read_response().await?)?
+            {
                 if data.len() >= 2 {
                     if let Value::Int(num) = data[1] {
                         if resp3_is_pub_sub_state_cleared(
@@ -169,7 +174,8 @@ where
             }
         } else {
             loop {
-                let res: (Vec<u8>, (), isize) = from_redis_value(&self.read_response().await?)?;
+                let res: (Vec<u8>, (), isize) =
+                    from_owned_redis_value(self.read_response().await?)?;
                 if resp2_is_pub_sub_state_cleared(
                     &mut received_unsub,
                     &mut received_punsub,
@@ -380,6 +386,7 @@ where
     }
 
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
+    #[deprecated(note = "aio::Connection is deprecated")]
     pub async fn into_connection(mut self) -> Connection<C> {
         self.0.exit_pubsub().await.ok();
 
@@ -406,7 +413,7 @@ where
         ValueCodec::default()
             .framed(&mut self.0.con)
             .filter_map(|value| {
-                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+                Box::pin(async move { T::from_owned_redis_value(value.ok()?.ok()?).ok() })
             })
     }
 
@@ -415,7 +422,7 @@ where
         ValueCodec::default()
             .framed(self.0.con)
             .filter_map(|value| {
-                Box::pin(async move { T::from_redis_value(&value.ok()?.ok()?).ok() })
+                Box::pin(async move { T::from_owned_redis_value(value.ok()?.ok()?).ok() })
             })
     }
 }
