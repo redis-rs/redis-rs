@@ -66,6 +66,11 @@ pub trait ConnectionLike {
     /// Sends multiple already encoded (packed) command into the TCP socket
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
+    /// Important - this function is meant for internal usage, since it's
+    /// easy to pass incorrect `offset` & `count` parameters, which might
+    /// cause the connection to enter an erroneous state. Users shouldn't
+    /// call it, instead using the Pipeline::query_async function.
+    #[doc(hidden)]
     fn req_packed_commands<'a>(
         &'a mut self,
         cmd: &'a crate::Pipeline,
@@ -158,6 +163,7 @@ where
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
+    #[cfg(not(feature = "disable-client-setinfo"))]
     let _: RedisResult<()> = crate::connection::client_set_info_pipeline()
         .query_async(con)
         .await;

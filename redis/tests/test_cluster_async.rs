@@ -242,7 +242,6 @@ fn test_async_cluster_resp3() {
     .unwrap();
 }
 
-#[ignore] // TODO Handle pipe where the keys do not all go to the same node
 #[test]
 fn test_async_cluster_basic_pipe() {
     let cluster = TestClusterContext::new(3, 0);
@@ -251,11 +250,11 @@ fn test_async_cluster_basic_pipe() {
         let mut connection = cluster.async_connection().await;
         let mut pipe = redis::pipe();
         pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
-        pipe.add_command(cmd("SET").arg("test3").arg("test_data3").clone());
+        pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
         pipe.query_async(&mut connection).await?;
         let res: String = connection.get("test").await?;
         assert_eq!(res, "test_data");
-        let res: String = connection.get("test3").await?;
+        let res: String = connection.get("{test}3").await?;
         assert_eq!(res, "test_data3");
         Ok::<_, RedisError>(())
     })

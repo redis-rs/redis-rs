@@ -1,7 +1,7 @@
 use crate::cluster::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+    from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
@@ -118,13 +118,11 @@ impl ClusterPipeline {
             }
         }
 
-        from_redis_value(
-            &(if self.commands.is_empty() {
-                Value::Array(vec![])
-            } else {
-                self.make_pipeline_results(con.execute_pipeline(self)?)
-            }),
-        )
+        from_owned_redis_value(if self.commands.is_empty() {
+            Value::Array(vec![])
+        } else {
+            self.make_pipeline_results(con.execute_pipeline(self)?)
+        })
     }
 
     /// This is a shortcut to `query()` that does not return a value and

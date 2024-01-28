@@ -301,7 +301,7 @@ fn find_valid_master(
 #[cfg(feature = "aio")]
 async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
     if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_async_connection().await {
+        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
             return check_role_result(&result, target_role);
         }
