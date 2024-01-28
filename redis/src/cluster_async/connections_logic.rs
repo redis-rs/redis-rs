@@ -1,3 +1,8 @@
+use std::{
+    iter::Iterator,
+    net::{IpAddr, SocketAddr},
+};
+
 use super::{AsyncClusterNode, Connect};
 use crate::{
     aio::{get_socket_addrs, ConnectionLike},
@@ -5,18 +10,28 @@ use crate::{
     cluster_client::ClusterParams,
     RedisResult,
 };
+
 use futures_time::future::FutureExt;
-use std::{
-    iter::Iterator,
-    net::{IpAddr, SocketAddr},
-};
+use futures_util::join;
+use tracing::warn;
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RefreshConnectionType {
+    // Refresh only user connections
+    OnlyUserConnection,
+    // Refresh only management connections
+    OnlyManagementConnection,
+    // Refresh all connections: both management and user connections.
+    AllConnections,
+}
 
 /// Return true if a DNS change is detected, otherwise return false.
 /// This function takes a node's address, examines if its host has encountered a DNS change, where the node's endpoint now leads to a different IP address.
 /// If no socket addresses are discovered for the node's host address, or if it's a non-DNS address, it returns false.
 /// In case the node's host address resolves to socket addresses and none of them match the current connection's IP,
 /// a DNS change is detected, so the current connection isn't valid anymore and a new connection should be made.
-async fn is_dns_changed(addr: &str, curr_ip: &IpAddr) -> bool {
+async fn has_dns_changed(addr: &str, curr_ip: &IpAddr) -> bool {
     let (host, port) = match get_host_and_port_from_addr(addr) {
         Some((host, port)) => (host, port),
         None => return false,
@@ -40,7 +55,7 @@ where
     if let Some(node) = node {
         let mut conn = node.user_connection.await;
         if let Some(ref ip) = node.ip {
-            if is_dns_changed(addr, ip).await {
+            if has_dns_changed(addr, ip).await {
                 return connect_and_check(addr, params.clone(), None).await;
             }
         };
@@ -75,6 +90,66 @@ where
         crate::cmd("READONLY").query_async(&mut conn).await?;
     }
     Ok((conn, ip))
+}
+
+/// The function returns None if the checked connection/s are healthy. Otherwise, it returns the type of the unhealthy connection/s.
+#[allow(dead_code)]
+#[doc(hidden)]
+pub async fn check_node_connections<C>(
+    node: &AsyncClusterNode<C>,
+    params: &ClusterParams,
+    conn_type: RefreshConnectionType,
+    address: &str,
+) -> Option<RefreshConnectionType>
+where
+    C: ConnectionLike + Send + 'static + Clone,
+{
+    let timeout = params.connection_timeout.into();
+    let (check_mgmt_connection, check_user_connection) = match conn_type {
+        RefreshConnectionType::OnlyUserConnection => (false, true),
+        RefreshConnectionType::OnlyManagementConnection => (true, false),
+        RefreshConnectionType::AllConnections => (true, true),
+    };
+    let check = |conn, timeout, conn_type| async move {
+        match check_connection(&mut conn.await, timeout).await {
+            Ok(_) => false,
+            Err(err) => {
+                warn!(
+                    "The {} connection for node {} is unhealthy. Error: {:?}",
+                    conn_type, address, err
+                );
+                true
+            }
+        }
+    };
+    let (mgmt_failed, user_failed) = join!(
+        async {
+            if !check_mgmt_connection {
+                return false;
+            }
+            match node.management_connection.clone() {
+                Some(conn) => check(conn, timeout, "management").await,
+                None => {
+                    warn!("The management connection for node {} isn't set", address);
+                    true
+                }
+            }
+        },
+        async {
+            if !check_user_connection {
+                return false;
+            }
+            let conn = node.user_connection.clone();
+            check(conn, timeout, "user").await
+        },
+    );
+
+    match (mgmt_failed, user_failed) {
+        (true, true) => Some(RefreshConnectionType::AllConnections),
+        (true, false) => Some(RefreshConnectionType::OnlyManagementConnection),
+        (false, true) => Some(RefreshConnectionType::OnlyUserConnection),
+        (false, false) => None,
+    }
 }
 
 async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration) -> RedisResult<()>

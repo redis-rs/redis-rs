@@ -39,7 +39,7 @@ pub struct MockConnectionBehavior {
 }
 
 impl MockConnectionBehavior {
-    pub fn new(id: &str, handler: Handler) -> Self {
+    fn new(id: &str, handler: Handler) -> Self {
         Self {
             id: id.to_string(),
             handler,
@@ -49,23 +49,20 @@ impl MockConnectionBehavior {
         }
     }
 
+    #[must_use]
+    pub fn register_new(id: &str, handler: Handler) -> RemoveHandler {
+        get_behaviors().insert(id.to_string(), Self::new(id, handler));
+        RemoveHandler(vec![id.to_string()])
+    }
+
     fn get_handler(&self) -> Handler {
         self.handler.clone()
     }
 }
 
-pub fn add_new_mock_connection_behavior(name: &str, handler: Handler) {
-    MOCK_CONN_BEHAVIORS
-        .write()
-        .unwrap()
-        .insert(name.to_string(), MockConnectionBehavior::new(name, handler));
-}
-
 pub fn modify_mock_connection_behavior(name: &str, func: impl FnOnce(&mut MockConnectionBehavior)) {
     func(
-        MOCK_CONN_BEHAVIORS
-            .write()
-            .unwrap()
+        get_behaviors()
             .get_mut(name)
             .expect("Handler `{name}` was not installed"),
     );
@@ -80,8 +77,25 @@ pub fn get_mock_connection_handler(name: &str) -> Handler {
         .get_handler()
 }
 
+pub fn get_mock_connection(name: &str, id: usize) -> MockConnection {
+    get_mock_connection_with_port(name, id, 6379)
+}
+
+pub fn get_mock_connection_with_port(name: &str, id: usize, port: u16) -> MockConnection {
+    MockConnection {
+        id,
+        handler: get_mock_connection_handler(name),
+        port,
+    }
+}
+
 static MOCK_CONN_BEHAVIORS: Lazy<RwLock<HashMap<String, MockConnectionBehavior>>> =
     Lazy::new(Default::default);
+
+fn get_behaviors() -> std::sync::RwLockWriteGuard<'static, HashMap<String, MockConnectionBehavior>>
+{
+    MOCK_CONN_BEHAVIORS.write().unwrap()
+}
 
 #[derive(Default)]
 pub enum ConnectionIPReturnType {
@@ -410,7 +424,7 @@ pub struct RemoveHandler(Vec<String>);
 impl Drop for RemoveHandler {
     fn drop(&mut self) {
         for id in &self.0 {
-            MOCK_CONN_BEHAVIORS.write().unwrap().remove(id);
+            get_behaviors().remove(id);
         }
     }
 }
@@ -440,7 +454,10 @@ impl MockEnv {
             .unwrap();
 
         let id = id.to_string();
-        add_new_mock_connection_behavior(&id, Arc::new(move |cmd, port| handler(cmd, port)));
+        let handler = MockConnectionBehavior::register_new(
+            &id,
+            Arc::new(move |cmd, port| handler(cmd, port)),
+        );
         let client = client_builder.build().unwrap();
         let connection = client.get_generic_connection().unwrap();
         #[cfg(feature = "cluster-async")]
@@ -454,7 +471,7 @@ impl MockEnv {
             connection,
             #[cfg(feature = "cluster-async")]
             async_connection,
-            handler: RemoveHandler(vec![id]),
+            handler,
         }
     }
 }

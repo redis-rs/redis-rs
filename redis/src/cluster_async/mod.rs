@@ -200,7 +200,8 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
+/// Cluster node for async connections
+pub type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
 type ConnectionMap<C> = connections_container::ConnectionsMap<ConnectionFuture<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
