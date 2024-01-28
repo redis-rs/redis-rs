@@ -23,8 +23,11 @@
 //! ```
 
 mod connections_container;
-#[doc(hidden)]
-pub mod connections_logic;
+mod connections_logic;
+/// Exposed only for testing.
+pub mod testing {
+    pub use super::connections_logic::*;
+}
 use std::{
     collections::HashMap,
     fmt, io,
@@ -45,7 +48,7 @@ use crate::{
     cluster::slot_cmd,
     cluster_async::{
         connections_container::ClusterNode,
-        connections_logic::{get_host_and_port_from_addr, get_or_create_conn},
+        connections_logic::{get_host_and_port_from_addr, get_or_create_conn, ConnectionFuture},
     },
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
@@ -199,9 +202,6 @@ where
     }
 }
 
-type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-/// Cluster node for async connections
-pub type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
 type ConnectionMap<C> = connections_container::ConnectionsMap<ConnectionFuture<C>>;
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
