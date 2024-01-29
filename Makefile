@@ -6,7 +6,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test -p redis --no-default-features -- --nocapture --test-threads=1
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked -p redis --no-default-features -- --nocapture --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP2"
