@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use super::{AsyncClusterNode, Connect};
+use super::{connections_container::ClusterNode, Connect};
 use crate::{
     aio::{get_socket_addrs, ConnectionLike},
     cluster::get_connection_info,
@@ -12,8 +12,13 @@ use crate::{
 };
 
 use futures_time::future::FutureExt;
-use futures_util::join;
+use futures_util::{future::BoxFuture, join};
 use tracing::warn;
+
+pub(crate) type ConnectionFuture<C> = futures::future::Shared<BoxFuture<'static, C>>;
+/// Cluster node for async connections
+#[doc(hidden)]
+pub type AsyncClusterNode<C> = ClusterNode<ConnectionFuture<C>>;
 
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq)]

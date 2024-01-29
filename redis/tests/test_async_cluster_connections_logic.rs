@@ -3,8 +3,9 @@ mod support;
 
 use futures_util::FutureExt;
 use redis::{
-    cluster_async::{connections_logic::RefreshConnectionType, AsyncClusterNode},
-    ClusterParams, ErrorKind,
+    cluster_async::testing::{AsyncClusterNode, RefreshConnectionType},
+    testing::ClusterParams,
+    ErrorKind,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use support::{
 
 mod test_connect_and_check {
     use super::*;
-    use redis::cluster_async::connections_logic::connect_and_check;
+    use redis::cluster_async::testing::connect_and_check;
 
     #[tokio::test]
     async fn test_connect_and_check_connect_successfully() {
@@ -50,7 +51,7 @@ mod test_connect_and_check {
 mod test_check_node_connections {
 
     use super::*;
-    use redis::cluster_async::connections_logic::check_node_connections;
+    use redis::cluster_async::testing::check_node_connections;
 
     #[tokio::test]
     async fn test_check_node_connections_find_no_problem() {
