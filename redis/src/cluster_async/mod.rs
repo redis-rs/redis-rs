@@ -46,9 +46,8 @@ use std::{
 use crate::{
     aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection},
     cluster::slot_cmd,
-    cluster_async::{
-        connections_container::ClusterNode,
-        connections_logic::{get_host_and_port_from_addr, get_or_create_conn, ConnectionFuture},
+    cluster_async::connections_logic::{
+        get_host_and_port_from_addr, get_or_create_conn, ConnectionFuture, RefreshConnectionType,
     },
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
@@ -668,18 +667,21 @@ where
             .map(|(node_addr, socket_addr)| {
                 let params: ClusterParams = params.clone();
                 async move {
-                    let result = connect_and_check(&node_addr, params, socket_addr).await;
+                    let result = connect_and_check(
+                        &node_addr,
+                        params,
+                        socket_addr,
+                        RefreshConnectionType::OnlyUserConnection,
+                        None,
+                    )
+                    .await
+                    .get_node();
                     let node_identifier = if let Some(socket_addr) = socket_addr {
                         socket_addr.to_string()
                     } else {
                         node_addr
                     };
-                    result.map(|(conn, ip)| {
-                        (
-                            node_identifier,
-                            ClusterNode::new(async { conn }.boxed().shared(), None, ip),
-                        )
-                    })
+                    result.map(|node| (node_identifier, node))
                 }
             })
             .buffer_unordered(initial_nodes.len())
@@ -753,12 +755,10 @@ where
                         let addr_option = connections_container.address_for_identifier(&identifier);
                         let node_option = connections_container.remove_node(&identifier);
                         if let Some(addr) = addr_option {
-                            let conn = get_or_create_conn(&addr, node_option, cluster_params).await;
-                            if let Ok((conn, ip)) = conn {
-                                connections_container.replace_or_add_connection_for_address(
-                                    addr,
-                                    ClusterNode::new(async { conn }.boxed().shared(), None, ip),
-                                );
+                            let node = get_or_create_conn(&addr, node_option, cluster_params).await;
+                            if let Ok(node) = node {
+                                connections_container
+                                    .replace_or_add_connection_for_address(addr, node);
                             }
                         }
                         connections_container
@@ -996,11 +996,8 @@ where
                 ConnectionsMap(HashMap::with_capacity(nodes_len)),
                 |mut connections, (addr, connection)| async {
                     let conn = get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                    if let Ok((conn, ip)) = conn {
-                        connections.0.insert(
-                            addr.into(),
-                            ClusterNode::new(async { conn }.boxed().shared(), None, ip),
-                        );
+                    if let Ok(node) = conn {
+                        connections.0.insert(addr.into(), node);
                     }
                     connections
                 },
@@ -1242,20 +1239,23 @@ where
         let (identifier, mut conn) = match conn_check {
             ConnectionCheck::Found((identifier, connection)) => (identifier, connection.await),
             ConnectionCheck::OnlyAddress(addr) => {
-                match connect_and_check::<C>(&addr, core.cluster_params.clone(), None).await {
-                    Ok((connection, ip)) => {
-                        let connection_clone = connection.clone();
+                match connect_and_check::<C>(
+                    &addr,
+                    core.cluster_params.clone(),
+                    None,
+                    RefreshConnectionType::OnlyUserConnection,
+                    None,
+                )
+                .await
+                .get_node()
+                {
+                    Ok(node) => {
+                        let connection_clone = node.user_connection.clone().await;
                         let mut connections = core.conn_lock.write().await;
-                        let identifier = connections.replace_or_add_connection_for_address(
-                            addr,
-                            ClusterNode::new(
-                                async move { connection_clone.clone() }.boxed().shared(),
-                                None,
-                                ip,
-                            ),
-                        );
+                        let identifier =
+                            connections.replace_or_add_connection_for_address(addr, node);
                         drop(connections);
-                        (identifier, connection)
+                        (identifier, connection_clone)
                     }
                     Err(err) => {
                         return Err(err);
