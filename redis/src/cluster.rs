@@ -485,7 +485,7 @@ where
         Ok(result)
     }
 
-    fn exectue_on_all<'a>(
+    fn execute_on_all<'a>(
         &'a self,
         input: Input,
         addresses: HashSet<&'a str>,
@@ -514,25 +514,25 @@ where
             .collect()
     }
 
-    fn exectue_on_all_nodes<'a>(
+    fn execute_on_all_nodes<'a>(
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
         connections: &'a mut HashMap<String, C>,
     ) -> Vec<RedisResult<(&'a str, Value)>> {
-        self.exectue_on_all(input, slots.addresses_for_all_nodes(), connections)
+        self.execute_on_all(input, slots.addresses_for_all_nodes(), connections)
     }
 
-    fn exectue_on_all_primaries<'a>(
+    fn execute_on_all_primaries<'a>(
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
         connections: &'a mut HashMap<String, C>,
     ) -> Vec<RedisResult<(&'a str, Value)>> {
-        self.exectue_on_all(input, slots.addresses_for_all_primaries(), connections)
+        self.execute_on_all(input, slots.addresses_for_all_primaries(), connections)
     }
 
-    fn exectue_multi_slot<'a, 'b>(
+    fn execute_multi_slot<'a, 'b>(
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
@@ -570,13 +570,13 @@ where
 
         let results = match &routing {
             MultipleNodeRoutingInfo::MultiSlot(routes) => {
-                self.exectue_multi_slot(input, &mut slots, &mut connections, routes)
+                self.execute_multi_slot(input, &mut slots, &mut connections, routes)
             }
             MultipleNodeRoutingInfo::AllMasters => {
-                self.exectue_on_all_primaries(input, &mut slots, &mut connections)
+                self.execute_on_all_primaries(input, &mut slots, &mut connections)
             }
             MultipleNodeRoutingInfo::AllNodes => {
-                self.exectue_on_all_nodes(input, &mut slots, &mut connections)
+                self.execute_on_all_nodes(input, &mut slots, &mut connections)
             }
         };
 
