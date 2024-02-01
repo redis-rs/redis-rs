@@ -2234,9 +2234,9 @@ fn test_async_cluster_reroute_from_replica_if_in_loading_state() {
 }
 
 #[test]
-fn test_async_cluster_replica_read_primary_loading() {
-    // Test primary in loading state. The expected behaviour is that the request will be retried until the primary is no loner in loading state.
-    let name = "test_async_cluster_replica_read_primary_loading";
+fn test_async_cluster_read_from_primary_when_primary_loading() {
+    // Test primary in loading state. The expected behaviour is that the request will be retried until the primary is no longer in loading state.
+    let name = "test_async_cluster_read_from_primary_when_primary_loading";
 
     const RETRIES: u32 = 3;
     const ITERATIONS: u32 = 2;

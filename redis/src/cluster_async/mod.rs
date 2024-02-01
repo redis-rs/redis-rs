@@ -1337,6 +1337,7 @@ where
         core: Core<C>,
         info: RequestInfo<C>,
         identifier: ConnectionIdentifier,
+        retry: u32,
     ) -> OperationResult {
         let is_primary = core.conn_lock.read().await.is_primary(&identifier);
 
@@ -1344,6 +1345,10 @@ where
             // If the connection is a replica, remove the connection and retry.
             // The connection will be established again on the next call to refresh slots once the replica is no longer in loading state.
             core.conn_lock.write().await.remove_node(&identifier);
+        } else {
+            // If the connection is primary, just sleep and retry
+            let sleep_duration = core.cluster_params.retry_params.wait_time_for_retry(retry);
+            sleep(sleep_duration.into()).await;
         }
 
         Self::try_request(info, core).await
@@ -1400,6 +1405,7 @@ where
                         self.inner.clone(),
                         request.info.clone(),
                         identifier,
+                        request.retry,
                     );
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
