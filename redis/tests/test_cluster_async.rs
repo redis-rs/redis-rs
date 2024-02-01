@@ -1456,6 +1456,42 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn test_async_cluster_can_be_created_with_partial_slot_coverage() {
+    let name = "test_async_cluster_can_be_created_with_partial_slot_coverage";
+    let slots_config = Some(vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..8000),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8201..16380),
+        },
+    ]);
+
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            Err(Ok(Value::Status("PONG".into())))
+        },
+    );
+
+    let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
+    assert!(res.is_ok());
+}
+
 #[cfg(feature = "tls-rustls")]
 mod mtls_test {
     use crate::support::mtls_test::create_cluster_client_from_cluster;

@@ -57,8 +57,6 @@ use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-const SLOT_SIZE: usize = 16384;
-
 /// This represents an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
@@ -226,7 +224,7 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
             (Some(chosen_route), Some(next_cmd_route)) => {
                 if chosen_route.slot() != next_cmd_route.slot() {
                     Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
-                } else if chosen_route.slot_addr() == &SlotAddr::Replica {
+                } else if chosen_route.slot_addr() != &SlotAddr::Master {
                     Ok(Some(next_cmd_route))
                 } else {
                     Ok(Some(chosen_route))
@@ -453,7 +451,7 @@ where
     ) -> RedisResult<Self> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((connections, Default::default())),
+            conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
         });
@@ -547,9 +545,9 @@ where
                         continue;
                     }
                 };
-                match parse_slots(value, inner.cluster_params.tls).and_then(|v| {
-                    Self::build_slot_map(slots, v, inner.cluster_params.read_from_replicas)
-                }) {
+                match parse_slots(value, inner.cluster_params.tls)
+                    .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+                {
                     Ok(_) => {
                         result = Ok(());
                         break;
@@ -585,37 +583,9 @@ where
         }
     }
 
-    fn build_slot_map(
-        slot_map: &mut SlotMap,
-        mut slots_data: Vec<Slot>,
-        read_from_replicas: bool,
-    ) -> RedisResult<()> {
-        slots_data.sort_by_key(|slot_data| slot_data.start());
-        let last_slot = slots_data.iter().try_fold(0, |prev_end, slot_data| {
-            if prev_end != slot_data.start() {
-                return Err(RedisError::from((
-                    ErrorKind::ResponseError,
-                    "Slot refresh error.",
-                    format!(
-                        "Received overlapping slots {} and {}..{}",
-                        prev_end,
-                        slot_data.start(),
-                        slot_data.end()
-                    ),
-                )));
-            }
-            Ok(slot_data.end() + 1)
-        })?;
-
-        if usize::from(last_slot) != SLOT_SIZE {
-            return Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                format!("Lacks the slots >= {last_slot}"),
-            )));
-        }
+    fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
         slot_map.clear();
-        slot_map.fill_slots(&slots_data, read_from_replicas);
+        slot_map.fill_slots(slots_data);
         trace!("{:?}", slot_map);
         Ok(())
     }
@@ -710,23 +680,9 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> (OperationTarget, RedisResult<Response>) {
         let read_guard = core.conn_lock.read().await;
-        let (receivers, requests): (Vec<_>, Vec<_>) = read_guard
-            .1
-            .addresses_for_multi_routing(routing)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, addr)| {
+        let (receivers, requests): (Vec<_>, Vec<_>) = {
+            let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
                 read_guard.0.get(addr).cloned().map(|conn| {
-                    let cmd = match routing {
-                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
-                            let (_, indices) = vec.get(index).unwrap();
-                            Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
-                                cmd.as_ref(),
-                                indices.iter(),
-                            ))
-                        }
-                        _ => cmd.clone(),
-                    };
                     let (sender, receiver) = oneshot::channel();
                     let addr = addr.to_string();
                     (
@@ -744,8 +700,39 @@ where
                         },
                     )
                 })
-            })
-            .unzip();
+            };
+            let slot_map = &read_guard.1;
+
+            // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
+            // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
+            match routing {
+                MultipleNodeRoutingInfo::AllNodes => slot_map
+                    .addresses_for_all_nodes()
+                    .into_iter()
+                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .unzip(),
+                MultipleNodeRoutingInfo::AllMasters => slot_map
+                    .addresses_for_all_primaries()
+                    .into_iter()
+                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .unzip(),
+                MultipleNodeRoutingInfo::MultiSlot(routes) => slot_map
+                    .addresses_for_multi_slot(routes)
+                    .enumerate()
+                    .filter_map(|(index, addr_opt)| {
+                        addr_opt.and_then(|addr| {
+                            let (_, indices) = routes.get(index).unwrap();
+                            let cmd =
+                                Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
+                                    cmd.as_ref(),
+                                    indices.iter(),
+                                ));
+                            to_request((addr, cmd))
+                        })
+                    })
+                    .unzip(),
+            }
+        };
         drop(read_guard);
         core.pending_requests.lock().unwrap().extend(requests);
 
@@ -1309,7 +1296,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new(12182, SlotAddr::Replica)))
+            Ok(Some(Route::new(12182, SlotAddr::ReplicaOptional)))
         );
     }
 
