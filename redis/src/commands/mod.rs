@@ -2098,7 +2098,7 @@ impl ToRedisArgs for Direction {
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     get: bool,

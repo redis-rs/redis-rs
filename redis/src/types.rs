@@ -46,6 +46,7 @@ pub enum Expiry {
 }
 
 /// Helper enum that is used to define expiry time for SET command
+#[derive(Clone, Copy)]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(usize),
@@ -60,6 +61,7 @@ pub enum SetExpiry {
 }
 
 /// Helper enum that is used to define existence checks
+#[derive(Clone, Copy)]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
     NX,
