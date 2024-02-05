@@ -453,9 +453,7 @@ impl<C> Future for Request<C> {
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,
             RequestStateProj::Sleep { sleep } => {
-                println!("sleeping");
                 ready!(sleep.poll(cx));
-                println!("done sleeping");
                 return Next::Retry {
                     request: self.project().request.take().unwrap(),
                 }
@@ -488,7 +486,6 @@ impl<C> Future for Request<C> {
                         return Next::Done.into();
                     }
                     OperationTarget::NotFound => {
-                        println!("target not found. retry: {}", request.retry);
                         // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
                         request.info.reset_redirect();
@@ -500,7 +497,6 @@ impl<C> Future for Request<C> {
                     }
                 };
 
-                println!("received {err}. retry: {}", request.retry);
                 match err.kind() {
                     ErrorKind::Ask => {
                         let mut request = this.request.take().unwrap();
@@ -523,7 +519,6 @@ impl<C> Future for Request<C> {
                         .into()
                     }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
-                        println!("set try-again sleep");
                         // Sleep and retry.
                         this.future.set(RequestState::Sleep {
                             sleep: boxed_sleep(sleep_duration),
@@ -666,7 +661,6 @@ where
 
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
-        println!("refresh slots started");
         let inner = self.inner.clone();
 
         async move {
@@ -716,7 +710,6 @@ where
                     },
                 )
                 .await;
-            println!("refresh slots completed");
 
             Ok(())
         }
