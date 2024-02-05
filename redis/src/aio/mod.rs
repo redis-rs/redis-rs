@@ -156,6 +156,7 @@ pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
 mod connection_manager;
 #[cfg(feature = "connection-manager")]
+#[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
 pub(super) use runtime::*;
