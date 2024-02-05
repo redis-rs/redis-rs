@@ -18,9 +18,11 @@ use redis::cluster_routing::SingleNodeRoutingInfo;
 use redis::cluster_routing::SlotAddr;
 use redis::ProtocolVersion;
 
+use redis::FromRedisValue;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
+    cluster_async::testing::MANAGEMENT_CONN_NAME,
     cluster_async::Connect,
     cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo},
     cluster_topology::DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
@@ -505,9 +507,9 @@ fn test_async_cluster_async_std_basic_cmd() {
 }
 
 #[test]
-fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_without_host_name() {
+fn test_async_cluster_can_connect_to_server_that_sends_cluster_slots_without_host_name() {
     let name =
-        "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_without_host_name";
+        "test_async_cluster_can_connect_to_server_that_sends_cluster_slots_without_host_name";
 
     let MockEnv {
         runtime,
@@ -540,9 +542,9 @@ fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_without_hos
 }
 
 #[test]
-fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_null_host_name() {
+fn test_async_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name() {
     let name =
-        "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
+        "test_async_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
 
     let MockEnv {
         runtime,
@@ -572,8 +574,8 @@ fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_null_h
 }
 
 #[test]
-fn test_cluster_async_cannot_connect_to_server_with_unknown_host_name() {
-    let name = "test_cluster_async_cannot_connect_to_server_with_unknown_host_name";
+fn test_async_cluster_cannot_connect_to_server_with_unknown_host_name() {
+    let name = "test_async_cluster_cannot_connect_to_server_with_unknown_host_name";
     let handler = move |cmd: &[u8], _| {
         if contains_slice(cmd, b"PING") {
             Err(Ok(Value::SimpleString("OK".into())))
@@ -602,9 +604,9 @@ fn test_cluster_async_cannot_connect_to_server_with_unknown_host_name() {
 }
 
 #[test]
-fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
+fn test_async_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
 ) {
-    let name = "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
+    let name = "test_async_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
 
     let MockEnv {
         runtime,
@@ -751,7 +753,7 @@ fn test_async_cluster_move_error_when_new_node_is_added() {
         }
         started.store(true, atomic::Ordering::SeqCst);
 
-        if contains_slice(cmd, b"PING") {
+        if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
             return Err(Ok(Value::SimpleString("OK".into())));
         }
 
@@ -913,7 +915,7 @@ fn test_async_cluster_refresh_topology_in_client_init_get_succeed(
         move |cmd: &[u8], port| {
             let is_started = started.load(atomic::Ordering::SeqCst);
             if !is_started {
-                if contains_slice(cmd, b"PING") {
+                if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
                     return Err(Ok(Value::SimpleString("OK".into())));
                 } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                     let view_index = get_node_view_index(slots_config_vec.len(), &ports, port);
@@ -1139,7 +1141,7 @@ fn test_async_cluster_ask_error_when_new_node_is_added() {
         }
         started.store(true, atomic::Ordering::SeqCst);
 
-        if contains_slice(cmd, b"PING") {
+        if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
             return Err(Ok(Value::SimpleString("OK".into())));
         }
 
@@ -2083,14 +2085,14 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
     let cluster = TestClusterContext::new_with_cluster_client_builder(
         6,
         1,
-        |builder| builder.periodic_topology_checks(Duration::from_millis(100)),
+        |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
         false,
     );
 
     block_on_all(async move {
         let mut connection = cluster.async_connection().await;
         let mut prev_master_id = "".to_string();
-        let max_requests = 10000;
+        let max_requests = 5000;
         let mut i = 0;
         loop {
             if i == 10 {
@@ -2228,4 +2230,162 @@ mod mtls_test {
             Ok::<_, RedisError>(())
         }).unwrap();
     }
+}
+
+#[test]
+fn test_async_cluster_periodic_checks_use_management_connection() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
+        false,
+    );
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let mut client_list = "".to_string();
+        let max_requests = 1000;
+        let mut i = 0;
+        loop {
+            if i == max_requests {
+                break;
+            } else {
+                client_list = cmd("CLIENT")
+                    .arg("LIST")
+                    .query_async::<_, String>(&mut connection)
+                    .await
+                    .expect("Failed executing CLIENT LIST");
+                let mut client_list_parts = client_list.split('\n');
+                if client_list_parts
+                .any(|line| line.contains(MANAGEMENT_CONN_NAME) && line.contains("cmd=cluster")) 
+                && client_list.matches(MANAGEMENT_CONN_NAME).count() == 1 {
+                    return Ok::<_, RedisError>(());
+                }
+            }
+            i += 1;
+            let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
+        }
+        panic!("Couldn't find a management connection or the connection wasn't used to execute CLUSTER SLOTS {:?}", client_list);
+    })
+    .unwrap();
+}
+
+fn get_conn_id_from_client_list(connection_name: &str, client_list: &str) -> String {
+    client_list
+        .split('\n')
+        .find(|line| line.contains(connection_name))
+        .expect("Failed finding {connection_name:?} in CLIENT LIST")
+        .split(' ')
+        .next()
+        .expect("Failed getting {connection_name:?} connection ID")
+        .split('=')
+        .nth(1)
+        .expect("Failed getting {connection_name:?} connection ID value")
+        .to_string()
+}
+
+#[test]
+fn test_async_cluster_only_management_connection_is_reconnected_after_connection_failure() {
+    // This test will check two aspects:
+    // 1. Ensuring that after a disconnection in the management connection, a new management connection is established.
+    // 2. Confirming that a failure in the management connection does not impact the user connection, which should remain intact.
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
+        false,
+    );
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let _client_list = "".to_string();
+        let max_requests = 500;
+        let mut i = 0;
+        // Set the name of the client connection to 'user-connection', so we'll be able to identify it later on
+        assert!(cmd("CLIENT")
+            .arg("SETNAME")
+            .arg("user-connection")
+            .query_async::<_, Value>(&mut connection)
+            .await
+            .is_ok());
+        // Get the client list
+        let mut list_cmd = redis::cmd("CLIENT");
+        list_cmd.arg("LIST");
+        let client_list: String = String::from_redis_value(
+            &connection
+                .route_command(
+                    &list_cmd,
+                    RoutingInfo::SingleNode(
+                        SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master)),
+                    ),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        eprintln!("{client_list}");
+        // Get the connection ID of 'user-connection'
+        let user_conn_id = get_conn_id_from_client_list("user-connection", &client_list);
+        // Get the connection ID of the management connection
+        let management_conn_id = get_conn_id_from_client_list(MANAGEMENT_CONN_NAME, &client_list);
+        // Get another connection that will be used to kill the management connection
+        let mut killer_connection = cluster.async_connection().await;
+        let mut cmd = redis::cmd("CLIENT");
+        cmd.arg("KILL");
+        cmd.arg("ID");
+        cmd.arg(management_conn_id.clone());
+        // Kill the management connection in the primary node that holds slot 0
+        assert!(killer_connection
+            .route_command(
+                &cmd,
+                RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master,)),
+                ),
+            )
+            .await
+            .is_ok());
+        loop {
+            // In this loop we'll wait for the new management connection to be established
+            if i == max_requests {
+                break;
+            } else {
+                let client_list: String = String::from_redis_value(&connection.route_command(
+                    &list_cmd,
+                    RoutingInfo::SingleNode(
+                        SingleNodeRoutingInfo::SpecificNode(Route::new(
+                            0,
+                            SlotAddr::Master,
+                            )),
+                        ),
+                    )
+                    .await
+                    .unwrap(),
+                    )
+                    .unwrap();
+                eprintln!("{client_list}");
+                if client_list.contains(MANAGEMENT_CONN_NAME) {
+                    // A management connection is found
+                    let curr_management_conn_id =
+                        get_conn_id_from_client_list(MANAGEMENT_CONN_NAME, &client_list);
+                    let curr_user_conn_id =
+                        get_conn_id_from_client_list("user-connection", &client_list);
+                    // Confirm that the management connection has a new connection ID, and verify that the user connection remains unaffected.
+                    if (curr_management_conn_id != management_conn_id)
+                        && (curr_user_conn_id == user_conn_id)
+                    {
+                        return Ok::<_, RedisError>(());
+                    }
+                } else {
+                    i += 1;
+                    let _ = sleep(futures_time::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+            }
+        }
+        panic!(
+            "No reconnection of the management connection found, or there was an unwantedly reconnection of the user connections.
+            \nprev_management_conn_id={:?},prev_user_conn_id={:?}\nclient list={:?}",
+            management_conn_id, user_conn_id, client_list
+        );
+    })
+    .unwrap();
 }

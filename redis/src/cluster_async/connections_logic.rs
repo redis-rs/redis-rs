@@ -80,6 +80,7 @@ pub(crate) async fn get_or_create_conn<C>(
     addr: &str,
     node: Option<AsyncClusterNode<C>>,
     params: &ClusterParams,
+    conn_type: RefreshConnectionType,
 ) -> RedisResult<AsyncClusterNode<C>>
 where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
@@ -91,37 +92,23 @@ where
                     addr,
                     params.clone(),
                     None,
-                    RefreshConnectionType::OnlyUserConnection,
+                    RefreshConnectionType::AllConnections,
                     None,
                 )
                 .await
                 .get_node();
             }
         };
-
-        let mut conn = node.user_connection.await;
-        match check_connection(&mut conn, params.connection_timeout.into()).await {
-            Ok(_) => Ok(AsyncClusterNode::new(to_future(conn), None, node.ip)),
-            Err(_) => connect_and_check(
-                addr,
-                params.clone(),
-                None,
-                RefreshConnectionType::OnlyUserConnection,
-                None,
-            )
-            .await
-            .get_node(),
+        match check_node_connections(&node, params, conn_type, addr).await {
+            None => Ok(node),
+            Some(conn_type) => connect_and_check(addr, params.clone(), None, conn_type, Some(node))
+                .await
+                .get_node(),
         }
     } else {
-        connect_and_check(
-            addr,
-            params.clone(),
-            None,
-            RefreshConnectionType::OnlyUserConnection,
-            None,
-        )
-        .await
-        .get_node()
+        connect_and_check(addr, params.clone(), None, conn_type, None)
+            .await
+            .get_node()
     }
 }
 
@@ -512,7 +499,6 @@ async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration
 where
     C: ConnectionLike + Send + 'static,
 {
-    // TODO: Add a check to re-resolve DNS addresses to verify we that we have a connection to the right node
     crate::cmd("PING")
         .query_async::<_, String>(conn)
         .timeout(timeout)
