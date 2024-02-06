@@ -59,7 +59,8 @@ fn test_args_async_std() {
 #[test]
 fn dont_panic_on_closed_multiplexed_connection() {
     let ctx = TestContext::new();
-    let connect = ctx.multiplexed_async_connection_async_std();
+    let client = ctx.client.clone();
+    let connect = client.get_multiplexed_async_std_connection();
     drop(ctx);
 
     block_on_all_using_async_std(async move {

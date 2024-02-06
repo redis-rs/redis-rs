@@ -36,7 +36,8 @@ fn test_args() {
 #[test]
 fn dont_panic_on_closed_multiplexed_connection() {
     let ctx = TestContext::new();
-    let connect = ctx.multiplexed_async_connection();
+    let client = ctx.client.clone();
+    let connect = client.get_multiplexed_async_connection();
     drop(ctx);
 
     block_on_all(async move {
@@ -535,7 +536,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe("phonewave").await?;
             let mut pubsub_stream = pubsub_conn.on_message();
             let mut publish_conn = ctx.async_connection().await?;
@@ -557,7 +558,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             pubsub_conn.unsubscribe(SUBSCRIPTION_KEY).await?;
 
@@ -583,7 +584,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             drop(pubsub_conn);
 
@@ -616,7 +617,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe("phonewave").await?;
             pubsub_conn.psubscribe("*").await?;
 
