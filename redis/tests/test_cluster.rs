@@ -596,32 +596,24 @@ fn test_cluster_io_error() {
 fn test_cluster_non_retryable_error_should_not_retry() {
     let name = "node";
     let completed = Arc::new(AtomicI32::new(0));
-    let MockEnv {
-        mut connection,
-        handler: _handler,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]),
-        name,
-        {
-            let completed = completed.clone();
-            move |cmd: &[u8], _| {
-                respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
-                completed.fetch_add(1, Ordering::SeqCst);
-                Err(parse_redis_value(b"-ERR mock\r\n"))
-            }
-        },
-    );
+    let MockEnv { mut connection, .. } = MockEnv::new(name, {
+        let completed = completed.clone();
+        move |cmd: &[u8], _| {
+            respond_startup_two_nodes(name, cmd)?;
+            // Error twice with io-error, ensure connection is reestablished w/out calling
+            // other node (i.e., not doing a full slot rebuild)
+            completed.fetch_add(1, Ordering::SeqCst);
+            Err(Err((ErrorKind::ReadOnly, "").into()))
+        }
+    });
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
     match value {
         Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
-            ErrorKind::ResponseError => {}
-            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
+            ErrorKind::ReadOnly => {}
+            _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);

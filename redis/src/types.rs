@@ -484,6 +484,15 @@ impl fmt::Debug for RedisError {
     }
 }
 
+pub(crate) enum RetryMethod {
+    Reconnect,
+    NoRetry,
+    RetryImmediately,
+    WaitAndRetry,
+    AskRedirect,
+    MovedRedirect,
+}
+
 /// Indicates a general failure in the library.
 impl RedisError {
     /// Returns the kind of the error.
@@ -623,6 +632,19 @@ impl RedisError {
         }
     }
 
+    /// Returns true if the error is likely to not be recoverable, and the connection must be replaced.
+    pub fn is_unrecoverable_error(&self) -> bool {
+        match self.retry_method() {
+            RetryMethod::Reconnect => true,
+
+            RetryMethod::NoRetry => false,
+            RetryMethod::RetryImmediately => false,
+            RetryMethod::WaitAndRetry => false,
+            RetryMethod::AskRedirect => false,
+            RetryMethod::MovedRedirect => false,
+        }
+    }
+
     /// Returns the node the error refers to.
     ///
     /// This returns `(addr, slot_id)`.
@@ -675,37 +697,52 @@ impl RedisError {
         Self { repr }
     }
 
-    // TODO: In addition to/instead of returning a bool here, consider a method
-    // that returns an enum with more detail about _how_ to retry errors, e.g.,
-    // `RetryImmediately`, `WaitAndRetry`, etc.
-    #[cfg(feature = "cluster")] // Used to avoid "unused method" warning
-    pub(crate) fn is_retryable(&self) -> bool {
+    pub(crate) fn retry_method(&self) -> RetryMethod {
         match self.kind() {
-            ErrorKind::BusyLoadingError => true,
-            ErrorKind::Moved => true,
-            ErrorKind::Ask => true,
-            ErrorKind::TryAgain => true,
-            ErrorKind::MasterDown => true,
-            ErrorKind::IoError => true,
-            ErrorKind::ReadOnly => true,
-            ErrorKind::ClusterDown => true,
-            ErrorKind::MasterNameNotFoundBySentinel => true,
-            ErrorKind::NoValidReplicasFoundBySentinel => true,
-            ErrorKind::ClusterConnectionNotFound => true,
+            ErrorKind::Moved => RetryMethod::MovedRedirect,
+            ErrorKind::Ask => RetryMethod::AskRedirect,
 
-            ErrorKind::ExtensionError => false,
-            ErrorKind::ExecAbortError => false,
-            ErrorKind::ResponseError => false,
-            ErrorKind::AuthenticationFailed => false,
-            ErrorKind::TypeError => false,
-            ErrorKind::NoScriptError => false,
-            ErrorKind::InvalidClientConfig => false,
-            ErrorKind::CrossSlot => false,
-            ErrorKind::ClientError => false,
-            ErrorKind::EmptySentinelList => false,
-            ErrorKind::NotBusy => false,
+            ErrorKind::TryAgain => RetryMethod::WaitAndRetry,
+            ErrorKind::MasterDown => RetryMethod::WaitAndRetry,
+            ErrorKind::ClusterDown => RetryMethod::WaitAndRetry,
+            ErrorKind::BusyLoadingError => RetryMethod::WaitAndRetry,
+            ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
+            ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
+
+            ErrorKind::ReadOnly => RetryMethod::NoRetry,
+            ErrorKind::ExtensionError => RetryMethod::NoRetry,
+            ErrorKind::ExecAbortError => RetryMethod::NoRetry,
+            ErrorKind::TypeError => RetryMethod::NoRetry,
+            ErrorKind::NoScriptError => RetryMethod::NoRetry,
+            ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
+            ErrorKind::CrossSlot => RetryMethod::NoRetry,
+            ErrorKind::ClientError => RetryMethod::NoRetry,
+            ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
+            ErrorKind::NotBusy => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
-            ErrorKind::Serialize => false,
+            ErrorKind::Serialize => RetryMethod::NoRetry,
+
+            ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
+            ErrorKind::ResponseError => RetryMethod::Reconnect,
+            ErrorKind::ClusterConnectionNotFound => todo!(),
+
+            ErrorKind::IoError => match &self.repr {
+                ErrorRepr::IoError(err) => match err.kind() {
+                    io::ErrorKind::ConnectionRefused => RetryMethod::Reconnect,
+                    io::ErrorKind::NotFound => RetryMethod::Reconnect,
+                    io::ErrorKind::ConnectionReset => RetryMethod::Reconnect,
+                    io::ErrorKind::ConnectionAborted => RetryMethod::Reconnect,
+                    io::ErrorKind::NotConnected => RetryMethod::Reconnect,
+                    io::ErrorKind::BrokenPipe => RetryMethod::Reconnect,
+                    io::ErrorKind::UnexpectedEof => RetryMethod::Reconnect,
+
+                    io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
+                    io::ErrorKind::Unsupported => RetryMethod::NoRetry,
+
+                    _ => RetryMethod::RetryImmediately,
+                },
+                _ => RetryMethod::RetryImmediately,
+            },
         }
     }
 }
