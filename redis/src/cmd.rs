@@ -525,7 +525,7 @@ impl Cmd {
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)
-    pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+    pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&[u8]>> {
         let mut prev = 0;
         self.args.iter().map(move |arg| match *arg {
             Arg::Simple(i) => {

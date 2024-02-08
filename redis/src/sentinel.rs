@@ -211,7 +211,7 @@ fn random_replica_index(max: NonZeroUsize) -> usize {
 }
 
 fn try_connect_to_first_replica(
-    addresses: &Vec<ConnectionInfo>,
+    addresses: &[ConnectionInfo],
     start_index: Option<usize>,
 ) -> Result<Client, crate::RedisError> {
     if addresses.is_empty() {

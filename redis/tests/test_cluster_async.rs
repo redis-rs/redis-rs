@@ -950,7 +950,7 @@ fn test_async_cluster_refresh_topology_in_client_init_get_succeed(
 }
 
 fn generate_topology_view(
-    ports: &Vec<u16>,
+    ports: &[u16],
     interval: usize,
     full_slot_coverage: bool,
 ) -> Vec<MockSlotRange> {
@@ -977,7 +977,7 @@ fn get_ports(num_of_nodes: usize) -> Vec<u16> {
     (6379_u16..6379 + num_of_nodes as u16).collect()
 }
 
-fn get_no_majority_topology_view(ports: &Vec<u16>) -> Vec<Vec<MockSlotRange>> {
+fn get_no_majority_topology_view(ports: &[u16]) -> Vec<Vec<MockSlotRange>> {
     let mut result = vec![];
     let mut full_coverage = true;
     for i in 0..ports.len() {
@@ -987,7 +987,7 @@ fn get_no_majority_topology_view(ports: &Vec<u16>) -> Vec<Vec<MockSlotRange>> {
     result
 }
 
-fn get_topology_with_majority(ports: &Vec<u16>) -> Vec<Vec<MockSlotRange>> {
+fn get_topology_with_majority(ports: &[u16]) -> Vec<Vec<MockSlotRange>> {
     let view: Vec<MockSlotRange> = generate_topology_view(ports, 10, true);
     let result: Vec<_> = ports.iter().map(|_| view.clone()).collect();
     result
