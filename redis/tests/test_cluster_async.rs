@@ -1465,20 +1465,16 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
         handler: _handler,
         runtime,
         ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]),
-        name,
-        {
-            let completed = completed.clone();
-            move |cmd: &[u8], _| {
-                respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
-                completed.fetch_add(1, Ordering::SeqCst);
-                Err(parse_redis_value(b"-ERR mock\r\n"))
-            }
-        },
-    );
+    } = MockEnv::new(name, {
+        let completed = completed.clone();
+        move |cmd: &[u8], _| {
+            respond_startup_two_nodes(name, cmd)?;
+            // Error twice with io-error, ensure connection is reestablished w/out calling
+            // other node (i.e., not doing a full slot rebuild)
+            completed.fetch_add(1, Ordering::SeqCst);
+            Err(Err((ErrorKind::ReadOnly, "").into()))
+        }
+    });
 
     let value = runtime.block_on(
         cmd("GET")
@@ -1489,8 +1485,8 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
     match value {
         Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
-            ErrorKind::ResponseError => {}
-            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
+            ErrorKind::ReadOnly => {}
+            _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);
