@@ -671,7 +671,7 @@ where
                         &node_addr,
                         params,
                         socket_addr,
-                        RefreshConnectionType::OnlyUserConnection,
+                        RefreshConnectionType::AllConnections,
                         None,
                     )
                     .await
@@ -739,34 +739,32 @@ where
         }
     }
 
-    fn refresh_connections(
-        &mut self,
+    async fn refresh_connections(
+        inner: Arc<InnerCore<C>>,
         identifiers: Vec<ConnectionIdentifier>,
-    ) -> impl Future<Output = ()> {
+        conn_type: RefreshConnectionType,
+    ) {
         info!("Started refreshing connections to {:?}", identifiers);
-        let inner = self.inner.clone();
-        async move {
-            let mut connections_container = inner.conn_lock.write().await;
-            let cluster_params = &inner.cluster_params;
-            stream::iter(identifiers.into_iter())
-                .fold(
-                    &mut *connections_container,
-                    |connections_container, identifier| async move {
-                        let addr_option = connections_container.address_for_identifier(&identifier);
-                        let node_option = connections_container.remove_node(&identifier);
-                        if let Some(addr) = addr_option {
-                            let node = get_or_create_conn(&addr, node_option, cluster_params).await;
-                            if let Ok(node) = node {
-                                connections_container
-                                    .replace_or_add_connection_for_address(addr, node);
-                            }
+        let mut connections_container = inner.conn_lock.write().await;
+        let cluster_params = &inner.cluster_params;
+        stream::iter(identifiers.into_iter())
+            .fold(
+                &mut *connections_container,
+                |connections_container, identifier| async move {
+                    let addr_option = connections_container.address_for_identifier(&identifier);
+                    let node_option = connections_container.remove_node(&identifier);
+                    if let Some(addr) = addr_option {
+                        let node =
+                            get_or_create_conn(&addr, node_option, cluster_params, conn_type).await;
+                        if let Ok(node) = node {
+                            connections_container.replace_or_add_connection_for_address(addr, node);
                         }
-                        connections_container
-                    },
-                )
-                .await;
-            info!("refresh connections completed");
-        }
+                    }
+                    connections_container
+                },
+            )
+            .await;
+        info!("refresh connections completed");
     }
 
     async fn aggregate_results(
@@ -994,9 +992,15 @@ where
         let new_connections: ConnectionMap<C> = stream::iter(addresses_and_connections_iter)
             .fold(
                 ConnectionsMap(HashMap::with_capacity(nodes_len)),
-                |mut connections, (addr, connection)| async {
-                    let conn = get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                    if let Ok(node) = conn {
+                |mut connections, (addr, node)| async {
+                    let node = get_or_create_conn(
+                        addr,
+                        node,
+                        &inner.cluster_params,
+                        RefreshConnectionType::AllConnections,
+                    )
+                    .await;
+                    if let Ok(node) = node {
                         connections.0.insert(addr.into(), node);
                     }
                     connections
@@ -1243,7 +1247,7 @@ where
                     &addr,
                     core.cluster_params.clone(),
                     None,
-                    RefreshConnectionType::OnlyUserConnection,
+                    RefreshConnectionType::AllConnections,
                     None,
                 )
                 .await
@@ -1532,7 +1536,11 @@ where
                     }
                     PollFlushAction::Reconnect(identifiers) => {
                         self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                            self.refresh_connections(identifiers),
+                            ClusterConnInner::refresh_connections(
+                                self.inner.clone(),
+                                identifiers,
+                                RefreshConnectionType::OnlyUserConnection,
+                            ),
                         )));
                     }
                     PollFlushAction::ReconnectFromInitialConnections => {
@@ -1580,7 +1588,7 @@ where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
     let requested_nodes = read_guard
-        .random_connections(num_of_nodes_to_query, ConnectionType::User)
+        .random_connections(num_of_nodes_to_query, ConnectionType::PreferManagement)
         .filter_map(|(identifier, conn)| {
             read_guard
                 .address_for_identifier(&identifier)
