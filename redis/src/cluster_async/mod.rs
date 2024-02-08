@@ -214,6 +214,12 @@ enum InternalSingleNodeRouting<C> {
     },
 }
 
+impl<C> Default for InternalSingleNodeRouting<C> {
+    fn default() -> Self {
+        Self::Random
+    }
+}
+
 impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
     fn from(value: SingleNodeRoutingInfo) -> Self {
         match value {
@@ -338,10 +344,7 @@ impl<C> RequestInfo<C> {
                     InternalRoutingInfo::SingleNode(route) => {
                         let redirect = InternalSingleNodeRouting::Redirect {
                             redirect,
-                            previous_routing: Box::new(std::mem::replace(
-                                route,
-                                InternalSingleNodeRouting::Random,
-                            )),
+                            previous_routing: Box::new(std::mem::take(route)),
                         }
                         .into();
                         *routing = redirect;
@@ -353,10 +356,7 @@ impl<C> RequestInfo<C> {
                 CmdArg::Pipeline { route, .. } => {
                     let redirect = InternalSingleNodeRouting::Redirect {
                         redirect,
-                        previous_routing: Box::new(std::mem::replace(
-                            route,
-                            InternalSingleNodeRouting::Random,
-                        )),
+                        previous_routing: Box::new(std::mem::take(route)),
                     };
                     *route = redirect;
                 }
@@ -372,12 +372,8 @@ impl<C> RequestInfo<C> {
                     ..
                 }) = routing
                 {
-                    let mut previous_routing = std::mem::replace(
-                        previous_routing.as_mut(),
-                        InternalSingleNodeRouting::Random,
-                    )
-                    .into();
-                    std::mem::swap(routing, &mut previous_routing);
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *routing = previous_routing.into();
                 }
             }
             CmdArg::Pipeline { route, .. } => {
@@ -385,11 +381,8 @@ impl<C> RequestInfo<C> {
                     previous_routing, ..
                 } = route
                 {
-                    let mut previous_routing = std::mem::replace(
-                        previous_routing.as_mut(),
-                        InternalSingleNodeRouting::Random,
-                    );
-                    std::mem::swap(route, &mut previous_routing);
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *route = previous_routing;
                 }
             }
         }
