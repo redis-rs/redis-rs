@@ -191,7 +191,7 @@ fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> R
     Err(())
 }
 
-fn wait_for_replicas_to_sync(servers: &Vec<RedisServer>, masters: u16) {
+fn wait_for_replicas_to_sync(servers: &[RedisServer], masters: u16) {
     let cluster_size = servers.len() / (masters as usize);
     let clusters = servers.len() / cluster_size;
     let replicas = cluster_size - 1;
