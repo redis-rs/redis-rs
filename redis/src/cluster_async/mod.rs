@@ -425,6 +425,10 @@ enum Next<C> {
     Retry {
         request: PendingRequest<C>,
     },
+    RetryBusyLoadingError {
+        request: PendingRequest<C>,
+        identifier: ConnectionIdentifier,
+    },
     Reconnect {
         request: PendingRequest<C>,
         target: ConnectionIdentifier,
@@ -534,6 +538,11 @@ impl<C> Future for Request<C> {
                         }
                         .into()
                     }
+                    ErrorKind::BusyLoadingError => Next::RetryBusyLoadingError {
+                        request: this.request.take().unwrap(),
+                        identifier,
+                    }
+                    .into(),
                     _ => {
                         if err.is_retryable() {
                             Next::Retry {
@@ -1324,6 +1333,27 @@ where
         }
     }
 
+    async fn handle_loading_error(
+        core: Core<C>,
+        info: RequestInfo<C>,
+        identifier: ConnectionIdentifier,
+        retry: u32,
+    ) -> OperationResult {
+        let is_primary = core.conn_lock.read().await.is_primary(&identifier);
+
+        if !is_primary {
+            // If the connection is a replica, remove the connection and retry.
+            // The connection will be established again on the next call to refresh slots once the replica is no longer in loading state.
+            core.conn_lock.write().await.remove_node(&identifier);
+        } else {
+            // If the connection is primary, just sleep and retry
+            let sleep_duration = core.cluster_params.retry_params.wait_time_for_retry(retry);
+            sleep(sleep_duration.into()).await;
+        }
+
+        Self::try_request(info, core).await
+    }
+
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         let mut poll_flush_action = PollFlushAction::None;
 
@@ -1358,6 +1388,25 @@ where
                 Next::Done => {}
                 Next::Retry { request } => {
                     let future = Self::try_request(request.info.clone(), self.inner.clone());
+                    self.in_flight_requests.push(Box::pin(Request {
+                        retry_params: self.inner.cluster_params.retry_params.clone(),
+                        request: Some(request),
+                        future: RequestState::Future {
+                            future: Box::pin(future),
+                        },
+                    }));
+                }
+                Next::RetryBusyLoadingError {
+                    request,
+                    identifier,
+                } => {
+                    // TODO - do we also want to try and reconnect to replica if it is loading?
+                    let future = Self::handle_loading_error(
+                        self.inner.clone(),
+                        request.info.clone(),
+                        identifier,
+                        request.retry,
+                    );
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),

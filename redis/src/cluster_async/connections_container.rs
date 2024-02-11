@@ -113,7 +113,6 @@ where
     }
 
     /// Returns true if the identifier represents a known primary node.
-    #[allow(dead_code)]
     pub(crate) fn is_primary(&self, identifier: &Identifier) -> bool {
         self.connection_for_identifier(identifier).is_some()
             && self
