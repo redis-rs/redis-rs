@@ -1080,6 +1080,47 @@ fn test_async_cluster_ask_redirect() {
 }
 
 #[test]
+fn test_async_cluster_reset_routing_if_redirect_fails() {
+    let name = "test_async_cluster_reset_routing_if_redirect_fails";
+    let completed = Arc::new(AtomicI32::new(0));
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::new(name, move |cmd: &[u8], port| {
+        if port != 6379 && port != 6380 {
+            return Err(Err(RedisError::from(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "mock-io-error",
+            ))));
+        }
+        respond_startup_two_nodes(name, cmd)?;
+        let count = completed.fetch_add(1, Ordering::SeqCst);
+        match (port, count) {
+            // redirect once to non-existing node
+            (6379, 0) => Err(parse_redis_value(
+                format!("-ASK 14000 {name}:9999\r\n").as_bytes(),
+            )),
+            // accept the next request
+            (6379, 1) => {
+                assert!(contains_slice(cmd, b"GET"));
+                Err(Ok(Value::BulkString(b"123".to_vec())))
+            }
+            _ => panic!("Wrong node. port: {port}, received count: {count}"),
+        }
+    });
+
+    let value = runtime.block_on(
+        cmd("GET")
+            .arg("test")
+            .query_async::<_, Option<i32>>(&mut connection),
+    );
+
+    assert_eq!(value, Ok(Some(123)));
+}
+
+#[test]
 fn test_async_cluster_ask_redirect_even_if_original_call_had_no_route() {
     let name = "node";
     let completed = Arc::new(AtomicI32::new(0));

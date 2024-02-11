@@ -264,7 +264,16 @@ enum InternalSingleNodeRouting<C> {
         identifier: ConnectionIdentifier,
         conn: ConnectionFuture<C>,
     },
-    Redirect(Redirect),
+    Redirect {
+        redirect: Redirect,
+        previous_routing: Box<InternalSingleNodeRouting<C>>,
+    },
+}
+
+impl<C> Default for InternalSingleNodeRouting<C> {
+    fn default() -> Self {
+        Self::Random
+    }
 }
 
 impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
@@ -377,13 +386,50 @@ struct RequestInfo<C> {
 impl<C> RequestInfo<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
-            let redirect = InternalSingleNodeRouting::Redirect(redirect);
             match &mut self.cmd {
-                CmdArg::Cmd { routing, .. } => {
-                    *routing = redirect.into();
-                }
+                CmdArg::Cmd { routing, .. } => match routing {
+                    InternalRoutingInfo::SingleNode(route) => {
+                        let redirect = InternalSingleNodeRouting::Redirect {
+                            redirect,
+                            previous_routing: Box::new(std::mem::take(route)),
+                        }
+                        .into();
+                        *routing = redirect;
+                    }
+                    InternalRoutingInfo::MultiNode(_) => {
+                        panic!("Cannot redirect multinode requests")
+                    }
+                },
                 CmdArg::Pipeline { route, .. } => {
+                    let redirect = InternalSingleNodeRouting::Redirect {
+                        redirect,
+                        previous_routing: Box::new(std::mem::take(route)),
+                    };
                     *route = redirect;
+                }
+            }
+        }
+    }
+
+    fn reset_redirect(&mut self) {
+        match &mut self.cmd {
+            CmdArg::Cmd { routing, .. } => {
+                if let InternalRoutingInfo::SingleNode(InternalSingleNodeRouting::Redirect {
+                    previous_routing,
+                    ..
+                }) = routing
+                {
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *routing = previous_routing.into();
+                }
+            }
+            CmdArg::Pipeline { route, .. } => {
+                if let InternalSingleNodeRouting::Redirect {
+                    previous_routing, ..
+                } = route
+                {
+                    let previous_routing = std::mem::take(previous_routing.as_mut());
+                    *route = previous_routing;
                 }
             }
         }
@@ -493,10 +539,9 @@ impl<C> Future for Request<C> {
                     }
                     OperationTarget::NoTargetFound => {
                         warn!("No connection found: `{err}`");
-                        return Next::RefreshSlots {
-                            request: this.request.take().unwrap(),
-                        }
-                        .into();
+                        let mut request = this.request.take().unwrap();
+                        request.info.reset_redirect();
+                        return Next::RefreshSlots { request }.into();
                     }
                 };
                 trace!("Request error `{}` on node `{:?}", err, identifier);
@@ -531,9 +576,12 @@ impl<C> Future for Request<C> {
                         self.poll(cx)
                     }
                     ErrorKind::IoError => {
+                        let mut request = this.request.take().unwrap();
+                        // TODO should we reset the redirect here?
+                        request.info.reset_redirect();
                         warn!("disconnected from {:?}", identifier);
                         Next::Reconnect {
-                            request: this.request.take().unwrap(),
+                            request,
                             target: identifier,
                         }
                         .into()
@@ -1219,13 +1267,19 @@ where
         let mut asking = false;
 
         let conn_check = match routing {
-            InternalSingleNodeRouting::Redirect(Redirect::Moved(moved_addr)) => read_guard
+            InternalSingleNodeRouting::Redirect {
+                redirect: Redirect::Moved(moved_addr),
+                ..
+            } => read_guard
                 .connection_for_address(moved_addr.as_str())
                 .map_or(
                     ConnectionCheck::OnlyAddress(moved_addr),
                     ConnectionCheck::Found,
                 ),
-            InternalSingleNodeRouting::Redirect(Redirect::Ask(ask_addr)) => {
+            InternalSingleNodeRouting::Redirect {
+                redirect: Redirect::Ask(ask_addr),
+                ..
+            } => {
                 asking = true;
                 read_guard.connection_for_address(ask_addr.as_str()).map_or(
                     ConnectionCheck::OnlyAddress(ask_addr),
