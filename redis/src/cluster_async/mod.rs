@@ -204,6 +204,7 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
+    ByAddress(String),
     Connection {
         identifier: String,
         conn: ConnectionFuture<C>,
@@ -227,6 +228,9 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
             SingleNodeRoutingInfo::SpecificNode(route) => {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
+            SingleNodeRoutingInfo::ByAddress(address) => {
+                InternalSingleNodeRouting::ByAddress(address)
+            }
         }
     }
 }
@@ -247,12 +251,15 @@ enum CmdArg<C> {
 
 fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
-        match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
-                Some(route)
+        match cluster_routing::RoutingInfo::for_routable(cmd) {
+            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(cluster_routing::RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(route),
+            )) => Some(route),
+            Some(cluster_routing::RoutingInfo::MultiNode(_)) => None,
+            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress(_))) => {
+                None
             }
-            Some(RoutingInfo::MultiNode(_)) => None,
             None => None,
         }
     }
@@ -953,6 +960,18 @@ where
                 drop(read_guard);
                 // redirected requests shouldn't use a random connection, so they have a separate codepath.
                 return Self::get_redirected_connection(redirect, core).await;
+            }
+            InternalSingleNodeRouting::ByAddress(address) => {
+                if let Some(conn) = read_guard.0.get(&address).cloned() {
+                    return Ok((address, conn.await));
+                } else {
+                    return Err((
+                        ErrorKind::ClientError,
+                        "Requested connection not found",
+                        address,
+                    )
+                        .into());
+                }
             }
         }
         .map(|addr| {

@@ -75,6 +75,8 @@ pub enum SingleNodeRoutingInfo {
     Random,
     /// Route to the node that matches the [route]
     SpecificNode(Route),
+    /// Route to the node with the given address.
+    ByAddress(String),
 }
 
 impl From<Option<Route>> for SingleNodeRoutingInfo {
