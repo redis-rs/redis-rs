@@ -1881,7 +1881,7 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
             // Error twice with io-error, ensure connection is reestablished w/out calling
             // other node (i.e., not doing a full slot rebuild)
             completed.fetch_add(1, Ordering::SeqCst);
-            Err(parse_redis_value(b"-ERR mock\r\n"))
+            Err(Err((ErrorKind::ReadOnly, "").into()))
         }
     });
 
@@ -1894,8 +1894,8 @@ fn test_async_cluster_non_retryable_error_should_not_retry() {
     match value {
         Ok(_) => panic!("result should be an error"),
         Err(e) => match e.kind() {
-            ErrorKind::ResponseError => {}
-            _ => panic!("Expected ResponseError but got {:?}", e.kind()),
+            ErrorKind::ReadOnly => {}
+            _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
         },
     }
     assert_eq!(completed.load(Ordering::SeqCst), 1);

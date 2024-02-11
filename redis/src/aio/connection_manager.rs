@@ -69,7 +69,7 @@ type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
 macro_rules! reconnect_if_dropped {
     ($self:expr, $result:expr, $current:expr) => {
         if let Err(ref e) = $result {
-            if e.is_connection_dropped() {
+            if e.is_unrecoverable_error() {
                 $self.reconnect($current);
             }
         }
