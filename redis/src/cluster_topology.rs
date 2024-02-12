@@ -143,7 +143,10 @@ pub(crate) fn parse_and_count_slots(
             }
             count += end - start;
 
-            let replicas = nodes.split_off(1);
+            let mut replicas = nodes.split_off(1);
+            // we sort the replicas, because different nodes in a cluster might return the same slot view
+            // with different order of the replicas, which might cause the views to be considered evaluated as not equal.
+            replicas.sort_unstable();
             slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
         }
     }
@@ -154,12 +157,6 @@ pub(crate) fn parse_and_count_slots(
             format!("Raw slot map response: {:?}", raw_slot_resp),
         )));
     }
-    // we sort the slots, because different nodes in a cluster might return the same slot view
-    // in different orders, which might cause the views to be considered evaluated as not equal.
-    slots.sort_unstable_by(|first, second| match first.start().cmp(&second.start()) {
-        core::cmp::Ordering::Equal => first.end().cmp(&second.end()),
-        ord => ord,
-    });
 
     Ok((count, slots))
 }
@@ -270,39 +267,103 @@ mod tests {
         assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
     }
 
+    fn slot_value_with_replicas(start: u16, end: u16, nodes: Vec<(&str, u16)>) -> Value {
+        let mut node_values: Vec<Value> = nodes
+            .iter()
+            .map(|(host, port)| {
+                Value::Array(vec![
+                    Value::BulkString(host.as_bytes().to_vec()),
+                    Value::Int(*port as i64),
+                ])
+            })
+            .collect();
+        let mut slot_vec = vec![Value::Int(start as i64), Value::Int(end as i64)];
+        slot_vec.append(&mut node_values);
+        Value::Array(slot_vec)
+    }
+
     fn slot_value(start: u16, end: u16, node: &str, port: u16) -> Value {
-        Value::Array(vec![
-            Value::Int(start as i64),
-            Value::Int(end as i64),
-            Value::Array(vec![
-                Value::BulkString(node.as_bytes().to_vec()),
-                Value::Int(port as i64),
-            ]),
-        ])
+        slot_value_with_replicas(start, end, vec![(node, port)])
     }
 
     #[test]
-    fn parse_slots_returns_slots_in_same_order() {
+    fn parse_slots_with_different_replicas_order_returns_the_same_view() {
         let view1 = Value::Array(vec![
-            slot_value(0, 4000, "node1", 6379),
-            slot_value(4001, 8000, "node1", 6380),
-            slot_value(8001, 16383, "node1", 6379),
+            slot_value_with_replicas(
+                0,
+                4000,
+                vec![
+                    ("primary1", 6379),
+                    ("replica1_1", 6379),
+                    ("replica1_2", 6379),
+                    ("replica1_3", 6379),
+                ],
+            ),
+            slot_value_with_replicas(
+                4001,
+                8000,
+                vec![
+                    ("primary2", 6379),
+                    ("replica2_1", 6379),
+                    ("replica2_2", 6379),
+                    ("replica2_3", 6379),
+                ],
+            ),
+            slot_value_with_replicas(
+                8001,
+                16383,
+                vec![
+                    ("primary3", 6379),
+                    ("replica3_1", 6379),
+                    ("replica3_2", 6379),
+                    ("replica3_3", 6379),
+                ],
+            ),
         ]);
 
         let view2 = Value::Array(vec![
-            slot_value(8001, 16383, "node1", 6379),
-            slot_value(0, 4000, "node1", 6379),
-            slot_value(4001, 8000, "node1", 6380),
+            slot_value_with_replicas(
+                0,
+                4000,
+                vec![
+                    ("primary1", 6379),
+                    ("replica1_1", 6379),
+                    ("replica1_3", 6379),
+                    ("replica1_2", 6379),
+                ],
+            ),
+            slot_value_with_replicas(
+                4001,
+                8000,
+                vec![
+                    ("primary2", 6379),
+                    ("replica2_2", 6379),
+                    ("replica2_3", 6379),
+                    ("replica2_1", 6379),
+                ],
+            ),
+            slot_value_with_replicas(
+                8001,
+                16383,
+                vec![
+                    ("primary3", 6379),
+                    ("replica3_3", 6379),
+                    ("replica3_1", 6379),
+                    ("replica3_2", 6379),
+                ],
+            ),
         ]);
 
         let res1 = parse_and_count_slots(&view1, None, "foo").unwrap();
         let res2 = parse_and_count_slots(&view2, None, "foo").unwrap();
+        assert_eq!(calculate_hash(&res1), calculate_hash(&res2));
         assert_eq!(res1.0, res2.0);
         assert_eq!(res1.1.len(), res2.1.len());
-        let check =
-            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
-                first.start() == second.start() && first.end() == second.end()
-            });
+        let check = res1
+            .1
+            .into_iter()
+            .zip(res2.1)
+            .all(|(first, second)| first.replicas() == second.replicas());
         assert!(check);
     }
 
@@ -316,17 +377,35 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_and_hash_regardless_of_missing_host_name_and_order() {
+    fn should_parse_and_hash_regardless_of_missing_host_name_and_replicas_order() {
         let view1 = Value::Array(vec![
             slot_value(0, 4000, "", 6379),
             slot_value(4001, 8000, "node2", 6380),
-            slot_value(8001, 16383, "node3", 6379),
+            slot_value_with_replicas(
+                8001,
+                16383,
+                vec![
+                    ("node3", 6379),
+                    ("replica3_1", 6379),
+                    ("replica3_2", 6379),
+                    ("replica3_3", 6379),
+                ],
+            ),
         ]);
 
         let view2 = Value::Array(vec![
-            slot_value(8001, 16383, "", 6379),
             slot_value(0, 4000, "node1", 6379),
             slot_value(4001, 8000, "node2", 6380),
+            slot_value_with_replicas(
+                8001,
+                16383,
+                vec![
+                    ("", 6379),
+                    ("replica3_3", 6379),
+                    ("replica3_2", 6379),
+                    ("replica3_1", 6379),
+                ],
+            ),
         ]);
 
         let res1 = parse_and_count_slots(&view1, None, "node1").unwrap();
@@ -336,10 +415,16 @@ mod tests {
         assert_eq!(res1.0, res2.0);
         assert_eq!(res1.1.len(), res2.1.len());
         let equality_check =
-            res1.1.into_iter().zip(res2.1).all(|(first, second)| {
+            res1.1.iter().zip(&res2.1).all(|(first, second)| {
                 first.start() == second.start() && first.end() == second.end()
             });
         assert!(equality_check);
+        let replicas_check = res1
+            .1
+            .iter()
+            .zip(res2.1)
+            .all(|(first, second)| first.replicas() == second.replicas());
+        assert!(replicas_check);
     }
 
     enum ViewType {

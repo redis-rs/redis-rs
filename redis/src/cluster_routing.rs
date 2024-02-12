@@ -642,6 +642,11 @@ impl Slot {
     pub(crate) fn master(&self) -> &str {
         self.master.as_str()
     }
+
+    #[allow(dead_code)] // used in tests
+    pub fn replicas(&self) -> Vec<String> {
+        self.replicas.clone()
+    }
 }
 
 /// What type of node should a request be routed to, assuming read from replica is enabled.
