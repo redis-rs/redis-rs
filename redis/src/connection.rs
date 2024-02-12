@@ -737,7 +737,7 @@ impl ActualConnection {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
-                        if e.is_connection_dropped() {
+                        if e.is_unrecoverable_error() {
                             connection.open = false;
                         }
                         Err(e)
@@ -750,7 +750,7 @@ impl ActualConnection {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
-                        if e.is_connection_dropped() {
+                        if e.is_unrecoverable_error() {
                             connection.open = false;
                         }
                         Err(e)
@@ -763,7 +763,7 @@ impl ActualConnection {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
-                        if e.is_connection_dropped() {
+                        if e.is_unrecoverable_error() {
                             connection.open = false;
                         }
                         Err(e)
@@ -776,7 +776,7 @@ impl ActualConnection {
                 let result = connection.sock.write_all(bytes).map_err(RedisError::from);
                 match result {
                     Err(e) => {
-                        if e.is_connection_dropped() {
+                        if e.is_unrecoverable_error() {
                             connection.open = false;
                         }
                         Err(e)

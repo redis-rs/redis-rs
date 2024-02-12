@@ -546,8 +546,8 @@ impl<C> Future for Request<C> {
                 };
                 trace!("Request error `{}` on node `{:?}", err, identifier);
 
-                match err.kind() {
-                    ErrorKind::Ask => {
+                match err.retry_method() {
+                    crate::types::RetryMethod::AskRedirect => {
                         let mut request = this.request.take().unwrap();
                         request.info.set_redirect(
                             err.redirect_node()
@@ -555,7 +555,7 @@ impl<C> Future for Request<C> {
                         );
                         Next::Retry { request }.into()
                     }
-                    ErrorKind::Moved => {
+                    crate::types::RetryMethod::MovedRedirect => {
                         let mut request = this.request.take().unwrap();
                         request.info.set_redirect(
                             err.redirect_node()
@@ -563,7 +563,7 @@ impl<C> Future for Request<C> {
                         );
                         Next::RefreshSlots { request }.into()
                     }
-                    ErrorKind::TryAgain | ErrorKind::ClusterDown => {
+                    crate::types::RetryMethod::WaitAndRetry => {
                         // Sleep and retry.
                         let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
                         this.future.set(RequestState::Sleep {
@@ -575,7 +575,7 @@ impl<C> Future for Request<C> {
                         });
                         self.poll(cx)
                     }
-                    ErrorKind::IoError => {
+                    crate::types::RetryMethod::Reconnect => {
                         let mut request = this.request.take().unwrap();
                         // TODO should we reset the redirect here?
                         request.info.reset_redirect();
@@ -586,21 +586,20 @@ impl<C> Future for Request<C> {
                         }
                         .into()
                     }
-                    ErrorKind::BusyLoadingError => Next::RetryBusyLoadingError {
+                    crate::types::RetryMethod::WaitAndRetryOnPrimaryRedirectOnReplica => {
+                        Next::RetryBusyLoadingError {
+                            request: this.request.take().unwrap(),
+                            identifier,
+                        }
+                        .into()
+                    }
+                    crate::types::RetryMethod::RetryImmediately => Next::Retry {
                         request: this.request.take().unwrap(),
-                        identifier,
                     }
                     .into(),
-                    _ => {
-                        if err.is_retryable() {
-                            Next::Retry {
-                                request: this.request.take().unwrap(),
-                            }
-                            .into()
-                        } else {
-                            self.respond(Err(err));
-                            Next::Done.into()
-                        }
+                    crate::types::RetryMethod::NoRetry => {
+                        self.respond(Err(err));
+                        Next::Done.into()
                     }
                 }
             }
