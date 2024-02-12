@@ -55,6 +55,7 @@ where
 
 const MAX_RECURSE_DEPTH: usize = 100;
 
+//TODO - change Output to ValueInternal instead of result
 fn value<'a, I>(
     count: Option<usize>,
 ) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
@@ -105,7 +106,7 @@ where
                 let data = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::value(Value::Nil).left()
+                            combine::produce(|| Value::Nil).left()
                         } else {
                             take(*size as usize)
                                 .map(|bs: &[u8]| Value::Data(bs.to_vec()))
@@ -118,7 +119,7 @@ where
                 let bulk = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::value(Value::Nil).map(Ok).left()
+                            combine::produce(|| Value::Nil).map(Ok).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
@@ -159,7 +160,7 @@ where
                     b':' => int().map(|i| Ok(Value::Int(i))),
                     b'$' => data().map(Ok),
                     b'*' => bulk(),
-                    b'-' => error().map(Err),
+                    b'-' => error().map(|err|Ok(Value::ServerError(err))),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
             })
@@ -207,7 +208,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
+                Some(result) => Ok(Some(result.and_then(Value::remove_error))),
                 None => Ok(None),
             }
         }
@@ -260,7 +261,7 @@ mod aio_support {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.and_then(Value::remove_error),
         }
     }
 }
@@ -318,7 +319,7 @@ impl Parser {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.and_then(Value::remove_error),
         }
     }
 }
@@ -350,6 +351,53 @@ mod tests {
         );
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_eof_returns_error_inside_array_and_can_parse_more_inputs() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes =
+            bytes::BytesMut::from(b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let mut bytes = bytes::BytesMut::from(b"+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(result, Ok(Value::Okay));
+    }
+
+    #[test]
+    fn parse_nested_error_and_handle_more_inputs() {
+        // from https://redis.io/docs/interact/transactions/ -
+        // "EXEC returned two-element bulk string reply where one is an OK code and the other an error reply. It's up to the client library to find a sensible way to provide the error to the user."
+
+        let bytes = b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n";
+        let result = parse_redis_value(bytes);
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let result = parse_redis_value(b"+OK\r\n").unwrap();
+
+        assert_eq!(result, Value::Okay);
     }
 
     #[test]

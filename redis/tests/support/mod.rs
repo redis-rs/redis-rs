@@ -554,6 +554,7 @@ where
         }
         Value::Okay => write!(writer, "+OK\r\n"),
         Value::Status(ref s) => write!(writer, "+{s}\r\n"),
+        Value::ServerError(ref err) => write!(writer, "-{err}\r\n"),
     }
 }
 

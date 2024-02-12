@@ -138,7 +138,7 @@ pub enum ErrorKind {
 }
 
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
@@ -156,6 +156,37 @@ pub enum Value {
     Status(String),
     /// A status response which represents the string "OK".
     Okay,
+    /// error
+    ServerError(RedisError),
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Nil => Self::Nil,
+            Self::Int(arg0) => Self::Int(*arg0),
+            Self::Data(arg0) => Self::Data(arg0.clone()),
+            Self::Bulk(arg0) => Self::Bulk(arg0.clone()),
+            Self::Status(arg0) => Self::Status(arg0.clone()),
+            Self::Okay => Self::Okay,
+            Self::ServerError(arg0) => Self::ServerError(arg0.clone_mostly("unexpected IO error")),
+        }
+    }
+}
+
+impl Value {
+    ///
+    pub fn remove_error(value: Value) -> RedisResult<Value> {
+        match value {
+            Value::ServerError(err) => Err(err),
+            Value::Bulk(val) => Ok(Value::Bulk(
+                val.into_iter()
+                    .map(Value::remove_error)
+                    .collect::<RedisResult<Vec<Value>>>()?,
+            )),
+            _ => Ok(value),
+        }
+    }
 }
 
 pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
@@ -284,6 +315,7 @@ impl fmt::Debug for Value {
             }
             Value::Okay => write!(fmt, "ok"),
             Value::Status(ref s) => write!(fmt, "status({s:?})"),
+            Value::ServerError(ref err) => write!(fmt, "Error({err})"),
         }
     }
 }
@@ -329,6 +361,8 @@ impl PartialEq for RedisError {
         }
     }
 }
+
+impl Eq for RedisError {}
 
 impl From<io::Error> for RedisError {
     fn from(err: io::Error) -> RedisError {
@@ -656,7 +690,6 @@ impl RedisError {
     ///
     /// The `ioerror_description` parameter will be prepended to the message in
     /// case an `IoError` is found.
-    #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
     pub(crate) fn clone_mostly(&self, ioerror_description: &'static str) -> Self {
         let repr = match self.repr {
             ErrorRepr::WithDescription(kind, desc) => ErrorRepr::WithDescription(kind, desc),

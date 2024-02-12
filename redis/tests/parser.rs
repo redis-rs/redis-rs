@@ -43,6 +43,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Status(ref status) => {
                 Box::new(status.shrink().map(Value::Status).map(ArbitraryValue))
             }
+            Value::ServerError(_) => Box::new(Some(self.0.clone()).into_iter().map(ArbitraryValue)),
         }
     }
 }
