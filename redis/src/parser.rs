@@ -3,7 +3,9 @@ use std::{
     str,
 };
 
-use crate::types::{make_extension_error, ErrorKind, RedisError, RedisResult, Value};
+use crate::types::{
+    make_extension_error, ErrorKind, InternalValue, RedisError, RedisResult, Value,
+};
 
 use combine::{
     any,
@@ -18,46 +20,11 @@ use combine::{
     ParseError, Parser as _,
 };
 
-struct ResultExtend<T, E>(Result<T, E>);
-
-impl<T, E> Default for ResultExtend<T, E>
-where
-    T: Default,
-{
-    fn default() -> Self {
-        ResultExtend(Ok(T::default()))
-    }
-}
-
-impl<T, U, E> Extend<Result<U, E>> for ResultExtend<T, E>
-where
-    T: Extend<U>,
-{
-    fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = Result<U, E>>,
-    {
-        let mut returned_err = None;
-        if let Ok(ref mut elems) = self.0 {
-            elems.extend(iter.into_iter().scan((), |_, item| match item {
-                Ok(item) => Some(item),
-                Err(err) => {
-                    returned_err = Some(err);
-                    None
-                }
-            }));
-        }
-        if let Some(err) = returned_err {
-            self.0 = Err(err);
-        }
-    }
-}
-
 const MAX_RECURSE_DEPTH: usize = 100;
 
 fn value<'a, I>(
     count: Option<usize>,
-) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
+) -> impl combine::Parser<I, Output = InternalValue, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
@@ -86,9 +53,9 @@ where
                 let status = || {
                     line().map(|line| {
                         if line == "OK" {
-                            Value::Okay
+                            InternalValue::Okay
                         } else {
-                            Value::Status(line.into())
+                            InternalValue::Status(line.into())
                         }
                     })
                 };
@@ -105,10 +72,10 @@ where
                 let data = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::value(Value::Nil).left()
+                            combine::produce(|| InternalValue::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| Value::Data(bs.to_vec()))
+                                .map(|bs: &[u8]| InternalValue::Data(bs.to_vec()))
                                 .skip(crlf())
                                 .right()
                         }
@@ -118,11 +85,11 @@ where
                 let bulk = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::value(Value::Nil).map(Ok).left()
+                            combine::produce(|| InternalValue::Nil).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(|result: ResultExtend<_, _>| result.0.map(Value::Bulk))
+                                .map(InternalValue::Bulk)
                                 .right()
                         }
                     })
@@ -155,11 +122,11 @@ where
                 };
 
                 combine::dispatch!(b;
-                    b'+' => status().map(Ok),
-                    b':' => int().map(|i| Ok(Value::Int(i))),
-                    b'$' => data().map(Ok),
+                    b'+' => status(),
+                    b':' => int().map(InternalValue::Int),
+                    b'$' => data(),
                     b'*' => bulk(),
-                    b'-' => error().map(Err),
+                    b'-' => error().map(InternalValue::ServerError),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
             })
@@ -207,7 +174,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
+                Some(result) => Ok(Some(result.into())),
                 None => Ok(None),
             }
         }
@@ -260,7 +227,7 @@ mod aio_support {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.into(),
         }
     }
 }
@@ -318,7 +285,7 @@ impl Parser {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.into(),
         }
     }
 }
@@ -350,6 +317,53 @@ mod tests {
         );
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_eof_returns_error_inside_array_and_can_parse_more_inputs() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes =
+            bytes::BytesMut::from(b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let mut bytes = bytes::BytesMut::from(b"+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(result, Ok(Value::Okay));
+    }
+
+    #[test]
+    fn parse_nested_error_and_handle_more_inputs() {
+        // from https://redis.io/docs/interact/transactions/ -
+        // "EXEC returned two-element bulk string reply where one is an OK code and the other an error reply. It's up to the client library to find a sensible way to provide the error to the user."
+
+        let bytes = b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n";
+        let result = parse_redis_value(bytes);
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let result = parse_redis_value(b"+OK\r\n").unwrap();
+
+        assert_eq!(result, Value::Okay);
     }
 
     #[test]

@@ -138,6 +138,46 @@ pub enum ErrorKind {
 }
 
 /// Internal low-level redis value enum.
+#[derive(PartialEq, Eq, Debug)]
+pub(crate) enum InternalValue {
+    /// A nil response from the server.
+    Nil,
+    /// An integer response.  Note that there are a few situations
+    /// in which redis actually returns a string for an integer which
+    /// is why this library generally treats integers and strings
+    /// the same for all numeric responses.
+    Int(i64),
+    /// An arbitary binary data.
+    Data(Vec<u8>),
+    /// A bulk response of more data.  This is generally used by redis
+    /// to express nested structures.
+    Bulk(Vec<InternalValue>),
+    /// A status response.
+    Status(String),
+    /// A status response which represents the string "OK".
+    Okay,
+    ServerError(RedisError),
+}
+
+impl InternalValue {
+    pub(crate) fn into(self) -> RedisResult<Value> {
+        match self {
+            InternalValue::Nil => Ok(Value::Nil),
+            InternalValue::Int(val) => Ok(Value::Int(val)),
+            InternalValue::Data(val) => Ok(Value::Data(val)),
+            InternalValue::Bulk(val) => Ok(Value::Bulk(
+                val.into_iter()
+                    .map(InternalValue::into)
+                    .collect::<RedisResult<Vec<Value>>>()?,
+            )),
+            InternalValue::Status(val) => Ok(Value::Status(val)),
+            InternalValue::Okay => Ok(Value::Okay),
+            InternalValue::ServerError(err) => Err(err),
+        }
+    }
+}
+
+/// Internal low-level redis value enum.
 #[derive(PartialEq, Eq, Clone)]
 pub enum Value {
     /// A nil response from the server.
@@ -329,6 +369,8 @@ impl PartialEq for RedisError {
         }
     }
 }
+
+impl Eq for RedisError {}
 
 impl From<io::Error> for RedisError {
     fn from(err: io::Error) -> RedisError {

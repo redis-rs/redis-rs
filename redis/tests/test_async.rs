@@ -682,6 +682,43 @@ mod pub_sub {
     }
 }
 
+#[test]
+fn test_async_basic_pipe_with_parsing_error() {
+    // Tests a specific case involving repeated errors in transactions.
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut conn = ctx.multiplexed_async_connection().await?;
+
+        // create a transaction where 2 errors are returned.
+        // we call EVALSHA twice with no loaded script, thus triggering 2 errors.
+        redis::pipe()
+            .atomic()
+            .cmd("EVALSHA")
+            .arg("foobar")
+            .arg(0)
+            .cmd("EVALSHA")
+            .arg("foobar")
+            .arg(0)
+            .query_async::<_, ((), ())>(&mut conn)
+            .await
+            .expect_err("should return an error");
+
+        assert!(
+            // Arbitrary Redis command that should not return an error.
+            redis::cmd("SMEMBERS")
+                .arg("nonexistent_key")
+                .query_async::<_, Vec<String>>(&mut conn)
+                .await
+                .is_ok(),
+            "Failed transaction should not interfere with future calls."
+        );
+
+        Ok::<_, redis::RedisError>(())
+    })
+    .unwrap()
+}
+
 #[cfg(feature = "connection-manager")]
 async fn wait_for_server_to_become_ready(client: redis::Client) {
     let millisecond = std::time::Duration::from_millis(1);
