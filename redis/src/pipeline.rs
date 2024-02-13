@@ -96,7 +96,7 @@ impl Pipeline {
         )?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            Some(Value::Array(items)) => Ok(self.make_pipeline_results(items)),
             _ => fail!((
                 ErrorKind::ResponseError,
                 "Invalid response when parsing multi response"
@@ -130,7 +130,7 @@ impl Pipeline {
             ));
         }
         from_owned_redis_value(if self.commands.is_empty() {
-            Value::Bulk(vec![])
+            Value::Array(vec![])
         } else if self.transaction_mode {
             self.execute_transaction(con)?
         } else {
@@ -159,7 +159,7 @@ impl Pipeline {
             .await?;
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Bulk(items)) => Ok(self.make_pipeline_results(items)),
+            Some(Value::Array(items)) => Ok(self.make_pipeline_results(items)),
             _ => Err((
                 ErrorKind::ResponseError,
                 "Invalid response when parsing multi response",
@@ -176,7 +176,7 @@ impl Pipeline {
         C: crate::aio::ConnectionLike,
     {
         let v = if self.commands.is_empty() {
-            return from_owned_redis_value(Value::Bulk(vec![]));
+            return from_owned_redis_value(Value::Array(vec![]));
         } else if self.transaction_mode {
             self.execute_transaction_async(con).await?
         } else {
@@ -309,7 +309,7 @@ macro_rules! implement_pipeline_commands {
                         rv.push(result);
                     }
                 }
-                Value::Bulk(rv)
+                Value::Array(rv)
             }
         }
 

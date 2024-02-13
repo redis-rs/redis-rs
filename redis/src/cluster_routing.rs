@@ -147,7 +147,7 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
     };
     let results = values.into_iter().try_fold(Vec::new(), |acc, curr| {
         let values = match curr {
-            Value::Bulk(values) => values,
+            Value::Array(values) => values,
             _ => {
                 return RedisResult::Err(
                     (
@@ -180,7 +180,7 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
         }
         Ok(acc)
     })?;
-    Ok(Value::Bulk(
+    Ok(Value::Array(
         results
             .into_iter()
             .map(|result| Value::Int(result as i64))
@@ -193,14 +193,14 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
 
     for value in values {
         match value {
-            Value::Bulk(values) => results.extend(values),
+            Value::Array(values) => results.extend(values),
             _ => {
                 return Err((ErrorKind::TypeError, "expected array of values as response").into());
             }
         }
     }
 
-    Ok(Value::Bulk(results))
+    Ok(Value::Array(results))
 }
 
 /// Combines multiple call results in the `values` field, each assume to be an array of results,
@@ -214,7 +214,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
     let mut results = Vec::new();
     results.resize(
         values.iter().fold(0, |acc, value| match value {
-            Value::Bulk(values) => values.len() + acc,
+            Value::Array(values) => values.len() + acc,
             _ => 0,
         }),
         Value::Nil,
@@ -223,7 +223,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
 
     for (key_indices, value) in sorting_order.into_iter().zip(values) {
         match value {
-            Value::Bulk(values) => {
+            Value::Array(values) => {
                 assert_eq!(values.len(), key_indices.len());
                 for (index, value) in key_indices.iter().zip(values) {
                     results[*index] = value;
@@ -235,7 +235,7 @@ pub(crate) fn combine_and_sort_array_results<'a>(
         }
     }
 
-    Ok(Value::Bulk(results))
+    Ok(Value::Array(results))
 }
 
 /// Returns the slot that matches `key`.
@@ -484,8 +484,8 @@ impl Routable for Cmd {
 impl Routable for Value {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
-            Value::Bulk(args) => match args.get(idx) {
-                Some(Value::Data(ref data)) => Some(&data[..]),
+            Value::Array(args) => match args.get(idx) {
+                Some(Value::BulkString(ref data)) => Some(&data[..]),
                 _ => None,
             },
             _ => None,
@@ -494,8 +494,8 @@ impl Routable for Value {
 
     fn position(&self, candidate: &[u8]) -> Option<usize> {
         match self {
-            Value::Bulk(args) => args.iter().position(|a| match a {
-                Value::Data(d) => d.eq_ignore_ascii_case(candidate),
+            Value::Array(args) => args.iter().position(|a| match a {
+                Value::BulkString(d) => d.eq_ignore_ascii_case(candidate),
                 _ => false,
             }),
             _ => None,
@@ -1177,12 +1177,12 @@ mod tests {
 
     #[test]
     fn test_combining_results_into_single_array() {
-        let res1 = Value::Bulk(vec![Value::Nil, Value::Okay]);
-        let res2 = Value::Bulk(vec![
-            Value::Data("1".as_bytes().to_vec()),
-            Value::Data("4".as_bytes().to_vec()),
+        let res1 = Value::Array(vec![Value::Nil, Value::Okay]);
+        let res2 = Value::Array(vec![
+            Value::BulkString("1".as_bytes().to_vec()),
+            Value::BulkString("4".as_bytes().to_vec()),
         ]);
-        let res3 = Value::Bulk(vec![Value::Status("2".to_string()), Value::Int(3)]);
+        let res3 = Value::Array(vec![Value::SimpleString("2".to_string()), Value::Int(3)]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2, res3],
             [vec![0, 5], vec![1, 4], vec![2, 3]].iter(),
@@ -1190,12 +1190,12 @@ mod tests {
 
         assert_eq!(
             results.unwrap(),
-            Value::Bulk(vec![
+            Value::Array(vec![
                 Value::Nil,
-                Value::Data("1".as_bytes().to_vec()),
-                Value::Status("2".to_string()),
+                Value::BulkString("1".as_bytes().to_vec()),
+                Value::SimpleString("2".to_string()),
                 Value::Int(3),
-                Value::Data("4".as_bytes().to_vec()),
+                Value::BulkString("4".as_bytes().to_vec()),
                 Value::Okay,
             ])
         );

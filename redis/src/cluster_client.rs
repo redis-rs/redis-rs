@@ -1,5 +1,5 @@
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
-use crate::types::{ErrorKind, RedisError, RedisResult};
+use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
 use std::time::Duration;
@@ -30,6 +30,7 @@ struct BuilderParams {
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
+    protocol: ProtocolVersion,
 }
 
 #[derive(Clone)]
@@ -83,6 +84,7 @@ pub(crate) struct ClusterParams {
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
+    pub(crate) protocol: ProtocolVersion,
 }
 
 impl ClusterParams {
@@ -106,6 +108,7 @@ impl ClusterParams {
             tls_params,
             connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
+            protocol: value.protocol,
         })
     }
 }
@@ -186,7 +189,7 @@ impl ClusterClientBuilder {
         }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
-        for node in initial_nodes {
+        for mut node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
@@ -205,7 +208,7 @@ impl ClusterClientBuilder {
                     "Cannot use different username among initial nodes.",
                 )));
             }
-
+            node.redis.protocol = cluster_params.protocol;
             nodes.push(node);
         }
 
@@ -306,6 +309,12 @@ impl ClusterClientBuilder {
     /// If enabled, the cluster will only wait the given time to each response from each node.
     pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Sets the protocol with which the client should communicate with the server.
+    pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
+        self.builder_params.protocol = protocol;
         self
     }
 

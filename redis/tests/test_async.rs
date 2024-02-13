@@ -1,8 +1,10 @@
 use futures::{future, prelude::*, StreamExt};
+use redis::aio::ConnectionLike;
+use redis::PushInfo;
 use redis::{
-    aio::{ConnectionLike, MultiplexedConnection},
-    cmd, AsyncCommands, ErrorKind, RedisResult,
+    aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
 };
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
 
@@ -98,6 +100,28 @@ fn test_pipeline_transaction() {
                 assert_eq!(k2, 43);
             })
             .await
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_client_tracking_doesnt_block_execution() {
+    //It checks if the library distinguish a push-type message from the others and continues its normal operation.
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut con = ctx.async_connection().await.unwrap();
+        let mut pipe = redis::pipe();
+        pipe.cmd("GET")
+            .arg("key_1")
+            .ignore()
+            .cmd("SET")
+            .arg("key_1")
+            .arg(42)
+            .ignore();
+        let _: RedisResult<()> = pipe.query_async(&mut con).await;
+        let num: i32 = con.get("key_1").await.unwrap();
+        assert_eq!(num, 42);
+        Ok(())
     })
     .unwrap();
 }
@@ -467,9 +491,8 @@ async fn invalid_password_issue_343() {
     let coninfo = redis::ConnectionInfo {
         addr: ctx.server.client_addr().clone(),
         redis: redis::RedisConnectionInfo {
-            db: 0,
-            username: None,
             password: Some("asdcasc".to_string()),
+            ..Default::default()
         },
     };
     let client = redis::Client::open(coninfo).unwrap();
@@ -526,6 +549,8 @@ async fn test_issue_async_commands_scan_broken() {
 mod pub_sub {
     use std::collections::HashMap;
     use std::time::Duration;
+
+    use redis::ProtocolVersion;
 
     use super::*;
 
@@ -662,6 +687,82 @@ mod pub_sub {
         })
         .unwrap();
     }
+
+    #[test]
+    fn pub_sub_multiple() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let pub_count = 10;
+            let channel_name = "phonewave".to_string();
+            conn.get_push_manager().replace_sender(tx.clone());
+            conn.subscribe(channel_name.clone()).await?;
+            rx.recv().await.unwrap(); //PASS SUBSCRIBE
+
+            let mut publish_conn = ctx.async_connection().await?;
+            for i in 0..pub_count {
+                publish_conn
+                    .publish(channel_name.clone(), format!("banana {i}"))
+                    .await?;
+            }
+            for _ in 0..pub_count {
+                rx.recv().await.unwrap();
+            }
+            assert!(rx.try_recv().is_err());
+
+            {
+                //Lets test if unsubscribing from individual channel subscription works
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                rx.recv().await.unwrap();
+            }
+            {
+                //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
+                conn.unsubscribe(channel_name.clone()).await?;
+                rx.recv().await.unwrap(); //PASS UNSUBSCRIBE
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                //Let's wait for 100ms to make sure there is nothing in channel.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert!(rx.try_recv().is_err());
+            }
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+    #[test]
+    fn push_manager_disconnection() {
+        use redis::RedisError;
+
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        block_on_all(async move {
+            let mut conn = ctx.multiplexed_async_connection().await?;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            conn.get_push_manager().replace_sender(tx.clone());
+
+            conn.set("A", "1").await?;
+            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+            drop(ctx);
+            let x: RedisResult<()> = conn.set("A", "1").await;
+            assert!(x.is_err());
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
 }
 
 #[cfg(feature = "connection-manager")]
@@ -692,6 +793,8 @@ async fn wait_for_server_to_become_ready(client: redis::Client) {
 #[test]
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_reconnect_after_delay() {
+    use redis::ProtocolVersion;
+
     let tempdir = tempfile::Builder::new()
         .prefix("redis")
         .tempdir()
@@ -705,16 +808,21 @@ fn test_connection_manager_reconnect_after_delay() {
             .unwrap();
         let server = ctx.server;
         let addr = server.client_addr().clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        manager.get_push_manager().replace_sender(tx.clone());
         drop(server);
 
         let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
-
+        if ctx.protocol != ProtocolVersion::RESP2 {
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+        }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
         wait_for_server_to_become_ready(ctx.client.clone()).await;
 
         let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
         assert_eq!(result, redis::Value::Okay);
         Ok(())
     })
@@ -781,4 +889,58 @@ mod mtls_test {
             }
         }
     }
+}
+
+#[test]
+#[cfg(feature = "connection-manager")]
+fn test_push_manager_cm() {
+    use redis::ProtocolVersion;
+
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+
+    block_on_all(async move {
+        let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        manager.get_push_manager().replace_sender(tx.clone());
+        manager
+            .send_packed_command(cmd("CLIENT").arg("TRACKING").arg("ON"))
+            .await
+            .unwrap();
+        let pipe = build_simple_pipeline_for_invalidation();
+        let _: RedisResult<()> = pipe.query_async(&mut manager).await;
+        let _: i32 = manager.get("key_1").await.unwrap();
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
+            ),
+            (kind, data)
+        );
+        let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
+        manager.get_push_manager().replace_sender(new_tx);
+        drop(rx);
+        let _: RedisResult<()> = pipe.query_async(&mut manager).await;
+        let _: i32 = manager.get("key_1").await.unwrap();
+        let PushInfo { kind, data } = new_rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
+            ),
+            (kind, data)
+        );
+        assert_eq!(TryRecvError::Empty, new_rx.try_recv().err().unwrap());
+        Ok(())
+    })
+    .unwrap();
 }

@@ -130,7 +130,7 @@ impl From<Output> for Value {
     fn from(value: Output) -> Self {
         match value {
             Output::Single(value) => value,
-            Output::Multi(values) => Value::Bulk(values),
+            Output::Multi(values) => Value::Array(values),
         }
     }
 }
@@ -651,11 +651,11 @@ where
                     .into_iter()
                     .map(|result| {
                         result.map(|(addr, val)| {
-                            Value::Bulk(vec![Value::Data(addr.as_bytes().to_vec()), val])
+                            Value::Array(vec![Value::BulkString(addr.as_bytes().to_vec()), val])
                         })
                     })
                     .collect::<RedisResult<Vec<_>>>()?;
-                Ok(Value::Bulk(results))
+                Ok(Value::Array(results))
             }
         }
     }
@@ -944,9 +944,9 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
     // Parse response.
     let mut result = Vec::with_capacity(2);
 
-    if let Value::Bulk(items) = raw_slot_resp {
+    if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.into_iter();
-        while let Some(Value::Bulk(item)) = iter.next() {
+        while let Some(Value::Array(item)) = iter.next() {
             if item.len() < 3 {
                 continue;
             }
@@ -967,12 +967,12 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                 .into_iter()
                 .skip(2)
                 .filter_map(|node| {
-                    if let Value::Bulk(node) = node {
+                    if let Value::Array(node) = node {
                         if node.len() < 2 {
                             return None;
                         }
 
-                        let ip = if let Value::Data(ref ip) = node[0] {
+                        let ip = if let Value::BulkString(ref ip) = node[0] {
                             String::from_utf8_lossy(ip)
                         } else {
                             return None;
@@ -1034,7 +1034,8 @@ pub(crate) fn get_connection_info(
         redis: RedisConnectionInfo {
             password: cluster_params.password,
             username: cluster_params.username,
-            ..Default::default()
+            protocol: cluster_params.protocol,
+            db: 0,
         },
     })
 }

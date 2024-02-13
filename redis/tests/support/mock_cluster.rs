@@ -111,18 +111,18 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
 
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-        Err(Ok(Value::Bulk(vec![Value::Bulk(vec![
+        Err(Ok(Value::Array(vec![Value::Array(vec![
             Value::Int(0),
             Value::Int(16383),
-            Value::Bulk(vec![
-                Value::Data(name.as_bytes().to_vec()),
+            Value::Array(vec![
+                Value::BulkString(name.as_bytes().to_vec()),
                 Value::Int(6379),
             ]),
         ])])))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -176,7 +176,7 @@ pub fn respond_startup_with_replica_using_config(
         },
     ]);
     if contains_slice(cmd, b"PING") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         let slots = slots_config
             .into_iter()
@@ -186,25 +186,25 @@ pub fn respond_startup_with_replica_using_config(
                     .into_iter()
                     .flat_map(|replica_port| {
                         vec![
-                            Value::Data(name.as_bytes().to_vec()),
+                            Value::BulkString(name.as_bytes().to_vec()),
                             Value::Int(replica_port as i64),
                         ]
                     })
                     .collect();
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Int(slot_config.slot_range.start as i64),
                     Value::Int(slot_config.slot_range.end as i64),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(slot_config.primary_port as i64),
                     ]),
-                    Value::Bulk(replicas),
+                    Value::Array(replicas),
                 ])
             })
             .collect();
-        Err(Ok(Value::Bulk(slots)))
+        Err(Ok(Value::Array(slots)))
     } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::Status("OK".into())))
+        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -248,9 +248,9 @@ impl redis::ConnectionLike for MockConnection {
         match res {
             Err(err) => Err(err),
             Ok(res) => {
-                if let Value::Bulk(results) = res {
+                if let Value::Array(results) = res {
                     match results.into_iter().nth(offset) {
-                        Some(Value::Bulk(res)) => Ok(res),
+                        Some(Value::Array(res)) => Ok(res),
                         _ => Err((ErrorKind::ResponseError, "non-array response").into()),
                     }
                 } else {

@@ -1,14 +1,16 @@
 use super::ConnectionLike;
 use crate::aio::setup_connection;
 use crate::cmd::Cmd;
-use crate::connection::RedisConnectionInfo;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
+use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+use arc_swap::ArcSwap;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -21,6 +23,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
@@ -59,11 +62,18 @@ struct PipelineMessage<S> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<SinkItem>(mpsc::Sender<PipelineMessage<SinkItem>>);
+struct Pipeline<SinkItem> {
+    sender: mpsc::Sender<PipelineMessage<SinkItem>>,
+
+    push_manager: Arc<ArcSwap<PushManager>>,
+}
 
 impl<SinkItem> Clone for Pipeline<SinkItem> {
     fn clone(&self) -> Self {
-        Pipeline(self.0.clone())
+        Pipeline {
+            sender: self.sender.clone(),
+            push_manager: self.push_manager.clone(),
+        }
     }
 }
 
@@ -72,7 +82,7 @@ where
     SinkItem: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Pipeline").field(&self.0).finish()
+        f.debug_tuple("Pipeline").field(&self.sender).finish()
     }
 }
 
@@ -82,6 +92,7 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
+        push_manager: Arc<ArcSwap<PushManager>>,
     }
 }
 
@@ -89,7 +100,7 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new<SinkItem>(sink_stream: T) -> Self
+    fn new<SinkItem>(sink_stream: T, push_manager: Arc<ArcSwap<PushManager>>) -> Self
     where
         T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -97,16 +108,13 @@ where
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
+            push_manager,
         }
     }
 
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
-            // No need to try reading a message if there is no message in flight
-            if self.in_flight.is_empty() {
-                return Poll::Ready(Ok(()));
-            }
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
                 // The redis response stream is not going to produce any more items so we `Err`
@@ -119,28 +127,38 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
-
+        let mut skip_value = false;
+        if let Ok(res) = &result {
+            if let Value::Push { kind, data: _data } = res {
+                self_.push_manager.load().try_send_raw(res);
+                if !kind.has_reply() {
+                    // If it's not true then push kind is converted to reply of a command
+                    skip_value = true;
+                }
+            }
+        }
         {
             let entry = match self_.in_flight.front_mut() {
                 Some(entry) => entry,
                 None => return,
             };
-
             match result {
                 Ok(item) => {
-                    entry.buffer = Some(match entry.buffer.take() {
-                        Some(Value::Bulk(mut values)) => {
-                            values.push(item);
-                            Value::Bulk(values)
-                        }
-                        Some(value) => {
-                            let mut vec = Vec::with_capacity(entry.expected_response_count);
-                            vec.push(value);
-                            vec.push(item);
-                            Value::Bulk(vec)
-                        }
-                        None => item,
-                    });
+                    if !skip_value {
+                        entry.buffer = Some(match entry.buffer.take() {
+                            Some(Value::Array(mut values)) => {
+                                values.push(item);
+                                Value::Array(values)
+                            }
+                            Some(value) => {
+                                let mut vec = Vec::with_capacity(entry.expected_response_count);
+                                vec.push(value);
+                                vec.push(item);
+                                Value::Array(vec)
+                            }
+                            None => item,
+                        });
+                    }
                 }
                 Err(err) => {
                     if entry.first_err.is_none() {
@@ -149,7 +167,9 @@ where
                 }
             }
 
-            entry.current_response_count += 1;
+            if !skip_value {
+                entry.current_response_count += 1;
+            }
             if entry.current_response_count < entry.expected_response_count {
                 // Need to gather more response values
                 return;
@@ -159,7 +179,7 @@ where
         let entry = self_.in_flight.pop_front().unwrap();
         let response = match entry.first_err {
             Some(err) => Err(err),
-            None => Ok(entry.buffer.unwrap_or(Value::Bulk(vec![]))),
+            None => Ok(entry.buffer.unwrap_or(Value::Array(vec![]))),
         };
 
         // `Err` means that the receiver was dropped in which case it does not
@@ -270,11 +290,20 @@ where
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let push_manager: Arc<ArcSwap<PushManager>> =
+            Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
+        let sink = PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
-            .forward(PipelineSink::new::<SinkItem>(sink_stream))
+            .forward(sink)
             .map(|_| ());
-        (Pipeline(sender), f)
+        (
+            Pipeline {
+                sender,
+                push_manager,
+            },
+            f,
+        )
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
@@ -294,7 +323,7 @@ where
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
-        self.0
+        self.sender
             .send(PipelineMessage {
                 input,
                 response_count: count,
@@ -312,6 +341,11 @@ where
             Err(elapsed) => Err(Some(RedisError::from(elapsed))),
         }
     }
+
+    /// Sets `PushManager` of Pipeline
+    async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager.store(Arc::new(push_manager));
+    }
 }
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
@@ -321,6 +355,8 @@ pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>>,
     db: i64,
     response_timeout: futures_time::time::Duration,
+    protocol: ProtocolVersion,
+    push_manager: PushManager,
 }
 
 impl Debug for MultiplexedConnection {
@@ -336,7 +372,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &RedisConnectionInfo,
+        connection_info: &ConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -348,7 +384,7 @@ impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
     pub async fn new_with_response_timeout<C>(
-        connection_info: &RedisConnectionInfo,
+        connection_info: &ConnectionInfo,
         stream: C,
         response_timeout: std::time::Duration,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
@@ -364,18 +400,24 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
+        let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default()
             .framed(stream)
             .and_then(|msg| async move { msg });
-        let (pipeline, driver) = Pipeline::new(codec);
+        let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
+        let pm = PushManager::default();
+        pipeline.set_push_manager(pm.clone()).await;
         let mut con = MultiplexedConnection {
             pipeline,
-            db: connection_info.db,
+            db: connection_info.redis.db,
             response_timeout: response_timeout.into(),
+            push_manager: pm,
+            protocol: redis_connection_info.protocol,
         };
         let driver = {
-            let auth = setup_connection(connection_info, &mut con);
+            let auth = setup_connection(&connection_info.redis, &mut con);
+
             futures_util::pin_mut!(auth);
 
             match futures_util::future::select(auth, driver).await {
@@ -402,12 +444,25 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        self.pipeline
+        let result = self
+            .pipeline
             .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })
+            });
+        if self.protocol != ProtocolVersion::RESP2 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        result
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -419,7 +474,7 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let value = self
+        let result = self
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
@@ -429,15 +484,33 @@ impl MultiplexedConnection {
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })?;
+            });
 
+        if self.protocol != ProtocolVersion::RESP2 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        let value = result?;
         match value {
-            Value::Bulk(mut values) => {
+            Value::Array(mut values) => {
                 values.drain(..offset);
                 Ok(values)
             }
             _ => Ok(vec![value]),
         }
+    }
+
+    /// Sets `PushManager` of connection
+    pub async fn set_push_manager(&mut self, push_manager: PushManager) {
+        self.push_manager = push_manager.clone();
+        self.pipeline.set_push_manager(push_manager).await;
     }
 }
 
@@ -457,5 +530,67 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
+    }
+}
+impl MultiplexedConnection {
+    /// Subscribes to a new channel.
+    pub async fn subscribe(&mut self, channel_name: String) -> RedisResult<()> {
+        if self.protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name.clone());
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel.
+    pub async fn unsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
+        if self.protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Subscribes to a new channel with pattern.
+    pub async fn psubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+        if self.protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern.clone());
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel pattern.
+    pub async fn punsubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+        if self.protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.query_async(self).await?;
+        Ok(())
+    }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }

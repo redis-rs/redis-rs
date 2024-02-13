@@ -119,7 +119,7 @@ impl ClusterPipeline {
         }
 
         from_owned_redis_value(if self.commands.is_empty() {
-            Value::Bulk(vec![])
+            Value::Array(vec![])
         } else {
             self.make_pipeline_results(con.execute_pipeline(self)?)
         })
