@@ -105,8 +105,8 @@ impl Routable for Cmd {
 impl Routable for Value {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
-            Value::Bulk(args) => match args.get(idx) {
-                Some(Value::Data(ref data)) => Some(&data[..]),
+            Value::Array(args) => match args.get(idx) {
+                Some(Value::BulkString(ref data)) => Some(&data[..]),
                 _ => None,
             },
             _ => None,
@@ -115,8 +115,8 @@ impl Routable for Value {
 
     fn position(&self, candidate: &[u8]) -> Option<usize> {
         match self {
-            Value::Bulk(args) => args.iter().position(|a| match a {
-                Value::Data(d) => d.eq_ignore_ascii_case(candidate),
+            Value::Array(args) => args.iter().position(|a| match a {
+                Value::BulkString(d) => d.eq_ignore_ascii_case(candidate),
                 _ => false,
             }),
             _ => None,

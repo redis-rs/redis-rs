@@ -157,7 +157,7 @@ fn test_info() {
     let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
     assert_eq!(
         info.find(&"role"),
-        Some(&redis::Value::Status("master".to_string()))
+        Some(&redis::Value::SimpleString("master".to_string()))
     );
     assert_eq!(info.get("role"), Some("master".to_string()));
     assert_eq!(info.get("loading"), Some(false));
@@ -1260,7 +1260,9 @@ fn test_push_manager() {
         assert_eq!(
             (
                 PushKind::Invalidate,
-                vec![Value::Bulk(vec![Value::Data("key_1".as_bytes().to_vec())])]
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
             ),
             (kind, data)
         );
@@ -1274,7 +1276,9 @@ fn test_push_manager() {
     assert_eq!(
         (
             PushKind::Invalidate,
-            vec![Value::Bulk(vec![Value::Data("key_1".as_bytes().to_vec())])]
+            vec![Value::Array(vec![Value::BulkString(
+                "key_1".as_bytes().to_vec()
+            )])]
         ),
         (kind, data)
     );

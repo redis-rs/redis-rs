@@ -376,14 +376,14 @@ where
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
-        Value::Data(ref val) => {
+        Value::BulkString(ref val) => {
             write!(writer, "${}\r\n", val.len())?;
             writer.write_all(val)?;
             writer.write_all(b"\r\n")
         }
-        Value::Bulk(ref values) => encode_iter(values, writer, "*"),
+        Value::Array(ref values) => encode_iter(values, writer, "*"),
         Value::Okay => write!(writer, "+OK\r\n"),
-        Value::Status(ref s) => write!(writer, "+{s}\r\n"),
+        Value::SimpleString(ref s) => write!(writer, "+{s}\r\n"),
         Value::Map(ref values) => encode_map(values, writer, "%"),
         Value::Attribute {
             ref data,

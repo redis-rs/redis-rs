@@ -126,12 +126,12 @@ fn test_cluster_resp3() {
         result,
         Value::Map(vec![
             (
-                Value::Data("foo".as_bytes().to_vec()),
-                Value::Data("baz".as_bytes().to_vec())
+                Value::BulkString("foo".as_bytes().to_vec()),
+                Value::BulkString("baz".as_bytes().to_vec())
             ),
             (
-                Value::Data("bar".as_bytes().to_vec()),
-                Value::Data("foobar".as_bytes().to_vec())
+                Value::BulkString("bar".as_bytes().to_vec()),
+                Value::BulkString("foobar".as_bytes().to_vec())
             )
         ])
     );
@@ -312,7 +312,7 @@ fn test_cluster_retries() {
 
             match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                 0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
             }
         },
     );
@@ -374,7 +374,7 @@ fn test_cluster_rebuild_with_extra_nodes() {
         started.store(true, atomic::Ordering::SeqCst);
 
         if contains_slice(cmd, b"PING") {
-            return Err(Ok(Value::Status("OK".into())));
+            return Err(Ok(Value::SimpleString("OK".into())));
         }
 
         let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -384,20 +384,20 @@ fn test_cluster_rebuild_with_extra_nodes() {
             // implementation)
             0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
             // Respond with the new masters
-            1 => Err(Ok(Value::Bulk(vec![
-                Value::Bulk(vec![
+            1 => Err(Ok(Value::Array(vec![
+                Value::Array(vec![
                     Value::Int(0),
                     Value::Int(1),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(6379),
                     ]),
                 ]),
-                Value::Bulk(vec![
+                Value::Array(vec![
                     Value::Int(2),
                     Value::Int(16383),
-                    Value::Bulk(vec![
-                        Value::Data(name.as_bytes().to_vec()),
+                    Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(6380),
                     ]),
                 ]),
@@ -405,7 +405,7 @@ fn test_cluster_rebuild_with_extra_nodes() {
             _ => {
                 // Check that the correct node receives the request after rebuilding
                 assert_eq!(port, 6380);
-                Err(Ok(Value::Data(b"123".to_vec())))
+                Err(Ok(Value::BulkString(b"123".to_vec())))
             }
         }
     });
@@ -433,7 +433,7 @@ fn test_cluster_replica_read() {
             respond_startup_with_replica(name, cmd)?;
 
             match port {
-                6380 => Err(Ok(Value::Data(b"123".to_vec()))),
+                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -455,7 +455,7 @@ fn test_cluster_replica_read() {
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
             match port {
-                6379 => Err(Ok(Value::Status("OK".into()))),
+                6379 => Err(Ok(Value::SimpleString("OK".into()))),
                 _ => panic!("Wrong node"),
             }
         },
@@ -465,7 +465,7 @@ fn test_cluster_replica_read() {
         .arg("test")
         .arg("123")
         .query::<Option<Value>>(&mut connection);
-    assert_eq!(value, Ok(Some(Value::Status("OK".to_owned()))));
+    assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
 }
 
 #[test]
@@ -490,7 +490,7 @@ fn test_cluster_io_error() {
                         std::io::ErrorKind::ConnectionReset,
                         "mock-io-error",
                     )))),
-                    _ => Err(Ok(Value::Data(b"123".to_vec()))),
+                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 },
             }
         },
