@@ -708,10 +708,11 @@ where
                         SingleNodeRoutingInfo::SpecificNode(route) => {
                             self.get_connection(&mut connections, route)?
                         }
-                        SingleNodeRoutingInfo::ByAddress(address) => (
-                            address.clone(),
-                            self.get_connection_by_addr(&mut connections, address)?,
-                        ),
+                        SingleNodeRoutingInfo::ByAddress { host, port } => {
+                            let address = format!("{host}:{port}");
+                            let conn = self.get_connection_by_addr(&mut connections, &address)?;
+                            (address, conn)
+                        }
                     }
                 };
                 (addr, input.send(conn))

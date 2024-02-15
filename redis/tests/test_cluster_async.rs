@@ -143,11 +143,14 @@ fn test_async_cluster_route_flush_to_node_by_address() {
         let info_by_address = from_owned_redis_value::<HashMap<String, String>>(value).unwrap();
         // find the info of the first returned node
         let (address, info) = info_by_address.into_iter().next().unwrap();
+        let mut split_address = address.split(':');
+        let host = split_address.next().unwrap().to_string();
+        let port = split_address.next().unwrap().parse().unwrap();
 
         let value = connection
             .route_command(
                 &cmd,
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress(address)),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { host, port }),
             )
             .await
             .unwrap();
@@ -997,7 +1000,10 @@ fn test_async_cluster_route_according_to_passed_argument() {
 
     let _ = runtime.block_on(connection.route_command(
         &cmd,
-        RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress(format!("{name}:6382"))),
+        RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: name.to_string(),
+            port: 6382,
+        }),
     ));
     {
         let mut touched_ports = touched_ports.lock().unwrap();
