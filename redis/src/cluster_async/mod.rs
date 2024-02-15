@@ -260,6 +260,7 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
+    ByAddress(String),
     Connection {
         identifier: ConnectionIdentifier,
         conn: ConnectionFuture<C>,
@@ -282,6 +283,9 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
             SingleNodeRoutingInfo::Random => InternalSingleNodeRouting::Random,
             SingleNodeRoutingInfo::SpecificNode(route) => {
                 InternalSingleNodeRouting::SpecificNode(route)
+            }
+            SingleNodeRoutingInfo::ByAddress { host, port } => {
+                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}"))
             }
         }
     }
@@ -309,6 +313,9 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
                 SingleNodeRoutingInfo::SpecificNode(route),
             )) => Some(route),
             Some(cluster_routing::RoutingInfo::MultiNode(_)) => None,
+            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                ..
+            })) => None,
             None => None,
         }
     }
@@ -1298,6 +1305,18 @@ where
             InternalSingleNodeRouting::Random => ConnectionCheck::RandomConnection,
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn.await));
+            }
+            InternalSingleNodeRouting::ByAddress(address) => {
+                if let Some((identifier, conn)) = read_guard.connection_for_address(&address) {
+                    return Ok((identifier, conn.await));
+                } else {
+                    return Err((
+                        ErrorKind::ConnectionNotFound,
+                        "Requested connection not found",
+                        address,
+                    )
+                        .into());
+                }
             }
         };
         drop(read_guard);
