@@ -339,6 +339,7 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
         },
     )
 }
+
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -1861,6 +1862,7 @@ mod pipeline_routing_tests {
             .get("foo") // route to replica of slot 12182
             .add_command(cmd("FLUSHALL")) // route to all masters
             .add_command(cmd("EVAL"))// route randomly
+            .cmd("CONFIG").arg("GET").arg("timeout") // unkeyed command
             .set("foo", "bar"); // route to primary of slot 12182
 
         assert_eq!(
@@ -1881,6 +1883,23 @@ mod pipeline_routing_tests {
         assert_eq!(
             route_for_pipeline(&pipeline).unwrap_err().kind(),
             crate::ErrorKind::CrossSlot
+        );
+    }
+
+    #[test]
+    fn unkeyed_commands_dont_affect_route() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .set("{foo}bar", "baz") // route to primary of slot 12182
+            .cmd("CONFIG").arg("GET").arg("timeout") // unkeyed command
+            .set("foo", "bar") // route to primary of slot 12182
+            .cmd("DEBUG").arg("PAUSE").arg("100") // unkeyed command
+            .cmd("ECHO").arg("hello world"); // unkeyed command
+
+        assert_eq!(
+            route_for_pipeline(&pipeline),
+            Ok(Some(Route::new(12182, SlotAddr::Master)))
         );
     }
 }
