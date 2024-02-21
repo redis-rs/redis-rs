@@ -336,32 +336,144 @@ impl ResponsePolicy {
     }
 }
 
+enum RouteBy {
+    AllNodes,
+    AllPrimaries,
+    FirstKey,
+    MultiShardNoValues,
+    MultiShardWithValues,
+    Random,
+    SecondArg,
+    SecondArgSlot,
+    StreamsIndex,
+    ThirdArgAfterKeyCount,
+    Undefined,
+}
+
+fn base_routing(cmd: &[u8]) -> RouteBy {
+    match cmd {
+        b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME" | b"CLIENT SETINFO"
+        | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET" | b"CONFIG SET"
+        | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH" | b"SCRIPT LOAD"
+        | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY"
+        | b"LATENCY DOCTOR" | b"LATENCY LATEST" => RouteBy::AllNodes,
+
+        b"DBSIZE"
+        | b"FLUSHALL"
+        | b"FLUSHDB"
+        | b"FUNCTION DELETE"
+        | b"FUNCTION FLUSH"
+        | b"FUNCTION KILL"
+        | b"FUNCTION LOAD"
+        | b"FUNCTION RESTORE"
+        | b"FUNCTION STATS"
+        | b"INFO"
+        | b"KEYS"
+        | b"MEMORY DOCTOR"
+        | b"MEMORY MALLOC-STATS"
+        | b"MEMORY PURGE"
+        | b"MEMORY STATS"
+        | b"PING"
+        | b"SCRIPT EXISTS"
+        | b"SCRIPT KILL"
+        | b"WAIT"
+        | b"RANDOMKEY" => RouteBy::AllPrimaries,
+
+        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => RouteBy::MultiShardNoValues,
+        b"MSET" => RouteBy::MultiShardWithValues,
+
+        // TODO - special handling - b"SCAN"
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => {
+            RouteBy::Undefined
+        }
+
+        b"EVALSHA" | b"EVAL" => RouteBy::ThirdArgAfterKeyCount,
+
+        b"XGROUP CREATE"
+        | b"XGROUP CREATECONSUMER"
+        | b"XGROUP DELCONSUMER"
+        | b"XGROUP DESTROY"
+        | b"XGROUP SETID"
+        | b"XINFO CONSUMERS"
+        | b"XINFO GROUPS"
+        | b"XINFO STREAM" => RouteBy::SecondArg,
+
+        b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
+
+        // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
+        // TODO - double check these, in order to find better ways to route some of them.
+        b"ACL DRYRUN"
+        | b"ACL GENPASS"
+        | b"ACL GETUSER"
+        | b"ACL HELP"
+        | b"ACL LIST"
+        | b"ACL LOG"
+        | b"ACL USERS"
+        | b"ACL WHOAMI"
+        | b"AUTH"
+        | b"BGSAVE"
+        | b"CLIENT GETNAME"
+        | b"CLIENT GETREDIR"
+        | b"CLIENT ID"
+        | b"CLIENT INFO"
+        | b"CLIENT KILL"
+        | b"CLIENT PAUSE"
+        | b"CLIENT REPLY"
+        | b"CLIENT TRACKINGINFO"
+        | b"CLIENT UNBLOCK"
+        | b"CLIENT UNPAUSE"
+        | b"CLUSTER COUNT-FAILURE-REPORTS"
+        | b"CLUSTER INFO"
+        | b"CLUSTER KEYSLOT"
+        | b"CLUSTER MEET"
+        | b"CLUSTER MYSHARDID"
+        | b"CLUSTER NODES"
+        | b"CLUSTER REPLICAS"
+        | b"CLUSTER RESET"
+        | b"CLUSTER SET-CONFIG-EPOCH"
+        | b"CLUSTER SHARDS"
+        | b"CLUSTER SLOTS"
+        | b"COMMAND COUNT"
+        | b"COMMAND GETKEYS"
+        | b"COMMAND LIST"
+        | b"COMMAND"
+        | b"CONFIG GET"
+        | b"DEBUG"
+        | b"ECHO"
+        | b"LASTSAVE"
+        | b"MODULE LIST"
+        | b"MODULE LOAD"
+        | b"MODULE LOADEX"
+        | b"MODULE UNLOAD"
+        | b"PUBSUB CHANNELS"
+        | b"PUBSUB NUMPAT"
+        | b"PUBSUB NUMSUB"
+        | b"PUBSUB SHARDCHANNELS"
+        | b"READONLY"
+        | b"READWRITE"
+        | b"SAVE"
+        | b"TFCALL"
+        | b"TFCALLASYNC"
+        | b"TFUNCTION DELETE"
+        | b"TFUNCTION LIST"
+        | b"TFUNCTION LOAD"
+        | b"TIME"
+        | b"WAITAOF" => RouteBy::Random,
+
+        b"CLUSTER COUNTKEYSINSLOT"
+        | b"CLUSTER DELSLOTS"
+        | b"CLUSTER DELSLOTSRANGE"
+        | b"CLUSTER GETKEYSINSLOT"
+        | b"CLUSTER SETSLOT" => RouteBy::SecondArgSlot,
+
+        _ => RouteBy::FirstKey,
+    }
+}
+
 impl RoutingInfo {
     /// Returns true if the `cmd`` should be routed to all nodes.
     pub fn is_all_nodes(cmd: &[u8]) -> bool {
-        // TODO - this is a duplication of the match in `for_routable`. Should find some way to remove this.
-        matches!(
-            cmd,
-            b"ACL SETUSER"
-                | b"ACL DELUSER"
-                | b"ACL SAVE"
-                | b"CLIENT SETNAME"
-                | b"CLIENT SETINFO"
-                | b"SLOWLOG GET"
-                | b"SLOWLOG LEN"
-                | b"SLOWLOG RESET"
-                | b"CONFIG SET"
-                | b"CONFIG RESETSTAT"
-                | b"CONFIG REWRITE"
-                | b"SCRIPT FLUSH"
-                | b"SCRIPT LOAD"
-                | b"LATENCY RESET"
-                | b"LATENCY GRAPH"
-                | b"LATENCY HISTOGRAM"
-                | b"LATENCY HISTORY"
-                | b"LATENCY DOCTOR"
-                | b"LATENCY LATEST"
-        )
+        matches!(base_routing(cmd), RouteBy::AllNodes)
     }
 
     /// Returns the routing info for `r`.
@@ -370,47 +482,24 @@ impl RoutingInfo {
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
-        match cmd {
-            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
-            | b"CLIENT SETINFO" | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET"
-            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH"
-            | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM"
-            | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
-                Some(RoutingInfo::MultiNode((
-                    MultipleNodeRoutingInfo::AllNodes,
-                    ResponsePolicy::for_command(cmd),
-                )))
-            }
+        match base_routing(cmd) {
+            RouteBy::AllNodes => Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllNodes,
+                ResponsePolicy::for_command(cmd),
+            ))),
 
-            b"RANDOMKEY"
-            | b"KEYS"
-            | b"SCRIPT EXISTS"
-            | b"WAIT"
-            | b"DBSIZE"
-            | b"FLUSHALL"
-            | b"FUNCTION RESTORE"
-            | b"FUNCTION DELETE"
-            | b"FUNCTION FLUSH"
-            | b"FUNCTION LOAD"
-            | b"PING"
-            | b"FLUSHDB"
-            | b"MEMORY PURGE"
-            | b"FUNCTION KILL"
-            | b"SCRIPT KILL"
-            | b"FUNCTION STATS"
-            | b"MEMORY MALLOC-STATS"
-            | b"MEMORY DOCTOR"
-            | b"MEMORY STATS"
-            | b"INFO" => Some(RoutingInfo::MultiNode((
+            RouteBy::AllPrimaries => Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 ResponsePolicy::for_command(cmd),
             ))),
 
-            b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
-            b"MSET" => multi_shard(r, cmd, 1, true),
-            // TODO - special handling - b"SCAN"
-            b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
-            b"EVALSHA" | b"EVAL" => {
+            RouteBy::MultiShardWithValues => multi_shard(r, cmd, 1, true),
+
+            RouteBy::MultiShardNoValues => multi_shard(r, cmd, 1, false),
+
+            RouteBy::Random => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+
+            RouteBy::ThirdArgAfterKeyCount => {
                 let key_count = r
                     .arg_idx(2)
                     .and_then(|x| std::str::from_utf8(x).ok())
@@ -421,85 +510,16 @@ impl RoutingInfo {
                     r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
                 }
             }
-            b"XGROUP CREATE"
-            | b"XGROUP CREATECONSUMER"
-            | b"XGROUP DELCONSUMER"
-            | b"XGROUP DESTROY"
-            | b"XGROUP SETID"
-            | b"XINFO CONSUMERS"
-            | b"XINFO GROUPS"
-            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
-            b"XREAD" | b"XREADGROUP" => {
+
+            RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+
+            RouteBy::StreamsIndex => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
                     .map(|key| RoutingInfo::for_key(cmd, key))
             }
 
-            // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
-            // TODO - double check these, in order to find better ways to route some of them.
-            b"ACL DRYRUN"
-            | b"ACL GENPASS"
-            | b"ACL GETUSER"
-            | b"ACL HELP"
-            | b"ACL LIST"
-            | b"ACL LOG"
-            | b"ACL USERS"
-            | b"ACL WHOAMI"
-            | b"AUTH"
-            | b"TIME"
-            | b"PUBSUB CHANNELS"
-            | b"PUBSUB NUMPAT"
-            | b"PUBSUB NUMSUB"
-            | b"PUBSUB SHARDCHANNELS"
-            | b"BGSAVE"
-            | b"WAITAOF"
-            | b"SAVE"
-            | b"LASTSAVE"
-            | b"CLIENT TRACKINGINFO"
-            | b"CLIENT PAUSE"
-            | b"CLIENT UNPAUSE"
-            | b"CLIENT UNBLOCK"
-            | b"CLIENT ID"
-            | b"CLIENT REPLY"
-            | b"CLIENT GETNAME"
-            | b"CLIENT GETREDIR"
-            | b"CLIENT INFO"
-            | b"CLIENT KILL"
-            | b"CLUSTER INFO"
-            | b"CLUSTER MEET"
-            | b"CLUSTER MYSHARDID"
-            | b"CLUSTER NODES"
-            | b"CLUSTER REPLICAS"
-            | b"CLUSTER RESET"
-            | b"CLUSTER SET-CONFIG-EPOCH"
-            | b"CLUSTER SLOTS"
-            | b"CLUSTER SHARDS"
-            | b"CLUSTER COUNT-FAILURE-REPORTS"
-            | b"CLUSTER KEYSLOT"
-            | b"COMMAND"
-            | b"COMMAND COUNT"
-            | b"COMMAND LIST"
-            | b"COMMAND GETKEYS"
-            | b"CONFIG GET"
-            | b"DEBUG"
-            | b"ECHO"
-            | b"READONLY"
-            | b"READWRITE"
-            | b"TFUNCTION LOAD"
-            | b"TFUNCTION DELETE"
-            | b"TFUNCTION LIST"
-            | b"TFCALL"
-            | b"TFCALLASYNC"
-            | b"MODULE LIST"
-            | b"MODULE LOAD"
-            | b"MODULE UNLOAD"
-            | b"MODULE LOADEX" => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
-
-            b"CLUSTER COUNTKEYSINSLOT"
-            | b"CLUSTER GETKEYSINSLOT"
-            | b"CLUSTER SETSLOT"
-            | b"CLUSTER DELSLOTS"
-            | b"CLUSTER DELSLOTSRANGE" => r
+            RouteBy::SecondArgSlot => r
                 .arg_idx(2)
                 .and_then(|arg| std::str::from_utf8(arg).ok())
                 .and_then(|slot| slot.parse::<u16>().ok())
@@ -510,10 +530,12 @@ impl RoutingInfo {
                     )))
                 }),
 
-            _ => match r.arg_idx(1) {
+            RouteBy::FirstKey => match r.arg_idx(1) {
                 Some(key) => Some(RoutingInfo::for_key(cmd, key)),
                 None => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
             },
+
+            RouteBy::Undefined => None,
         }
     }
 
