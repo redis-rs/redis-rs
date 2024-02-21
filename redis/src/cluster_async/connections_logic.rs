@@ -1,7 +1,4 @@
-use std::{
-    iter::Iterator,
-    net::{IpAddr, SocketAddr},
-};
+use std::net::{IpAddr, SocketAddr};
 
 use super::{connections_container::ClusterNode, Connect};
 use crate::{

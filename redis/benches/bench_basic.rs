@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Bencher, Criterion, Throughput};
-use futures::{prelude::*, stream};
+use futures::prelude::*;
 use redis::{RedisError, Value};
 
 use support::*;

@@ -24,7 +24,6 @@
 //! ```
 
 use std::collections::VecDeque;
-use std::iter::FromIterator;
 use std::sync::{Arc, Mutex};
 
 use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, PushKind, RedisError, RedisResult, Value};

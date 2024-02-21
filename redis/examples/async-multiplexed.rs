@@ -1,4 +1,4 @@
-use futures::{future, prelude::*};
+use futures::prelude::*;
 use redis::{aio::MultiplexedConnection, RedisResult};
 
 async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {

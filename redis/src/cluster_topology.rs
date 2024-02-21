@@ -535,7 +535,7 @@ mod tests {
     fn test_topology_calculator_2_nodes_queried_no_majority_return_full_slot_coverage_view() {
         // 2 nodes queried: No majority, should get the view that has a full slot coverage
         let queried_nodes = 2;
-        let topology_results = vec![
+        let topology_results = [
             get_view(&ViewType::TwoNodesViewFullCoverage),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];
@@ -559,7 +559,7 @@ mod tests {
     ) {
         //  2 nodes queried: No majority, no full slot coverage, should return error
         let queried_nodes = 2;
-        let topology_results = vec![
+        let topology_results = [
             get_view(&ViewType::SingleNodeViewMissingSlots),
             get_view(&ViewType::TwoNodesViewMissingSlots),
         ];

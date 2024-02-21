@@ -146,10 +146,7 @@ impl Display for SlotMap {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
-    use crate::cluster_routing::{Route, Slot, SlotAddr};
 
     #[test]
     fn test_slot_map_retrieve_routes() {

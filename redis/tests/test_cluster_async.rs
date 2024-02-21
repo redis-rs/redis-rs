@@ -11,7 +11,6 @@ use std::sync::{
 
 use crate::support::*;
 use futures::prelude::*;
-use futures::stream;
 use futures_time::task::sleep;
 use once_cell::sync::Lazy;
 use redis::cluster_routing::Route;
@@ -32,9 +31,6 @@ use redis::{
 };
 use std::str::from_utf8;
 use std::time::Duration;
-
-#[cfg(feature = "tls-rustls")]
-use support::build_single_client;
 
 #[test]
 fn test_async_cluster_basic_cmd() {

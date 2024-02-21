@@ -4,7 +4,7 @@ use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
 use std::cmp::min;
 use std::collections::HashMap;
-use std::iter::{Iterator, Once};
+use std::iter::Once;
 
 #[derive(Clone)]
 pub(crate) enum Redirect {
@@ -1094,7 +1094,7 @@ mod tests {
             .arg("baz")
             .arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&original_cmd);
-        let expected = vec![vec![0], vec![1, 3], vec![2]];
+        let expected = [vec![0], vec![1, 3], vec![2]];
 
         let mut indices: Vec<_> = match routing {
             Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), _))) => {

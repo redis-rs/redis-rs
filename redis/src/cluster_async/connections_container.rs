@@ -283,7 +283,7 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::cluster_routing::{Slot, SlotAddr};
+    use crate::cluster_routing::Slot;
 
     use super::*;
     impl<Connection> ClusterNode<Connection>

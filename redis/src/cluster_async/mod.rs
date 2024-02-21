@@ -30,10 +30,7 @@ pub mod testing {
 }
 use std::{
     collections::HashMap,
-    fmt, io,
-    iter::Iterator,
-    marker::Unpin,
-    mem,
+    fmt, io, mem,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{
@@ -77,11 +74,7 @@ use backoff_tokio::future::retry;
 use backoff_tokio::{Error as BackoffError, ExponentialBackoff};
 
 use dispose::{Disposable, Dispose};
-use futures::{
-    future::{self, BoxFuture},
-    prelude::*,
-    ready, stream,
-};
+use futures::{future::BoxFuture, prelude::*, ready};
 use futures_time::{future::FutureExt, task::sleep};
 use pin_project_lite::pin_project;
 use std::sync::atomic::AtomicBool;
