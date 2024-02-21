@@ -945,40 +945,45 @@ where
             }
             let _ = sleep(interval_duration.into()).await;
 
-            let retry_strategy = ExponentialBackoff {
-                initial_interval: DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL,
-                max_interval: DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
-                ..Default::default()
-            };
-            let topology_check_res = retry(retry_strategy, || {
-                Self::check_for_topology_diff(inner.clone()).map_err(BackoffError::from)
-            })
-            .await;
-            if let Ok(true) = topology_check_res {
+            if Self::check_for_topology_diff(inner.clone()).await {
                 let _ = Self::refresh_slots_with_retries(inner.clone()).await;
-            };
+            }
         }
     }
 
     /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
     /// topology view differs from the one currently stored in the connection manager.
     /// Returns true if change was detected, otherwise false.
-    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> RedisResult<bool> {
+    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes: usize = read_guard.len();
         // TODO: Starting from Rust V1.67, integers has logarithms support.
         // When we no longer need to support Rust versions < 1.67, remove fast_math and transition to the ilog2 function.
         let num_of_nodes_to_query =
             std::cmp::max(fast_math::log2_raw(num_of_nodes as f32) as usize, 1);
-        let (_, found_topology_hash) = calculate_topology_from_random_nodes(
+        let (res, failed_connections) = calculate_topology_from_random_nodes(
             &inner,
             num_of_nodes_to_query,
             &read_guard,
             DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
         )
-        .await?;
-        let change_found = read_guard.get_current_topology_hash() != found_topology_hash;
-        Ok(change_found)
+        .await;
+
+        if let Ok((_, found_topology_hash)) = res {
+            if read_guard.get_current_topology_hash() != found_topology_hash {
+                return true;
+            }
+        }
+        drop(read_guard);
+
+        Self::refresh_connections(
+            inner,
+            failed_connections,
+            RefreshConnectionType::OnlyManagementConnection,
+        )
+        .await;
+
+        false
     }
 
     async fn refresh_slots(
@@ -1008,7 +1013,8 @@ where
             &read_guard,
             curr_retry,
         )
-        .await?;
+        .await
+        .0?;
         info!("Found slot map: {new_slots}");
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
@@ -1695,10 +1701,13 @@ async fn calculate_topology_from_random_nodes<'a, C>(
     num_of_nodes_to_query: usize,
     read_guard: &tokio::sync::RwLockReadGuard<'a, ConnectionsContainer<C>>,
     curr_retry: usize,
-) -> RedisResult<(
-    crate::cluster_slotmap::SlotMap,
-    crate::cluster_topology::TopologyHash,
-)>
+) -> (
+    RedisResult<(
+        crate::cluster_slotmap::SlotMap,
+        crate::cluster_topology::TopologyHash,
+    )>,
+    Vec<ConnectionIdentifier>,
+)
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
@@ -1707,27 +1716,36 @@ where
         .filter_map(|(identifier, conn)| {
             read_guard
                 .address_for_identifier(&identifier)
-                .map(|addr| (addr, conn))
+                .map(|addr| (identifier, addr, conn))
         });
     let topology_join_results =
-        futures::future::join_all(requested_nodes.map(|(host, conn)| async move {
+        futures::future::join_all(requested_nodes.map(|(identifier, addr, conn)| async move {
             let mut conn: C = conn.await;
-            conn.req_packed_command(&slot_cmd())
-                .await
-                .map(|res| (host, res))
+            let res = conn.req_packed_command(&slot_cmd()).await;
+            (identifier, addr, res)
         }))
         .await;
-    let topology_values = topology_join_results.iter().filter_map(|r| {
-        r.as_ref().ok().and_then(|(addr, value)| {
-            get_host_and_port_from_addr(addr).map(|(host, _)| (host, value))
+    let failed_identifiers = topology_join_results
+        .iter()
+        .filter_map(|(identifier, _, res)| match res {
+            Err(err) if err.is_unrecoverable_error() => Some(identifier.clone()),
+            _ => None,
         })
+        .collect();
+    let topology_values = topology_join_results.iter().filter_map(|(_, addr, res)| {
+        res.as_ref()
+            .ok()
+            .and_then(|value| get_host_and_port_from_addr(addr).map(|(host, _)| (host, value)))
     });
-    calculate_topology(
-        topology_values,
-        curr_retry,
-        inner.cluster_params.tls,
-        num_of_nodes_to_query,
-        inner.cluster_params.read_from_replicas,
+    (
+        calculate_topology(
+            topology_values,
+            curr_retry,
+            inner.cluster_params.tls,
+            num_of_nodes_to_query,
+            inner.cluster_params.read_from_replicas,
+        ),
+        failed_identifiers,
     )
 }
 

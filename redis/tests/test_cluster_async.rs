@@ -13,6 +13,7 @@ use crate::support::*;
 use futures::prelude::*;
 use futures_time::task::sleep;
 use once_cell::sync::Lazy;
+use redis::cluster_async::ClusterConnection;
 use redis::cluster_routing::Route;
 use redis::cluster_routing::SingleNodeRoutingInfo;
 use redis::cluster_routing::SlotAddr;
@@ -2234,6 +2235,52 @@ fn test_async_cluster_periodic_checks_update_topology_after_failover() {
 }
 
 #[test]
+fn test_async_cluster_recover_disconnected_management_connections() {
+    // This test aims to verify that the management connections used for periodic checks are reconnected, in case that they get killed.
+    // In order to test this, we choose a single node, kill all connections to it which aren't user connections, and then wait until new
+    // connections are created.
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
+        false,
+    );
+
+    block_on_all(async move {
+        let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+            1,
+            SlotAddr::Master,
+        )));
+
+        let mut connection = cluster.async_connection().await;
+        let max_requests = 5000;
+
+        let connections = get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
+        assert!(connections.contains_key(MANAGEMENT_CONN_NAME));
+        let management_conn_id = connections.get(MANAGEMENT_CONN_NAME).unwrap();
+
+        // Get the connection ID of the management connection
+        kill_connection(&mut connection, management_conn_id).await;
+
+        let connections = get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
+        assert!(!connections.contains_key(MANAGEMENT_CONN_NAME));
+
+        for _ in 0..max_requests {
+            let _ = sleep(futures_time::time::Duration::from_millis(10)).await;
+
+            let connections =
+                get_clients_names_to_ids(&mut connection, routing.clone().into()).await;
+            if connections.contains_key(MANAGEMENT_CONN_NAME) {
+                return Ok(());
+            }
+        }
+
+        panic!("Topology connection didn't reconnect!");
+    })
+    .unwrap();
+}
+
+#[test]
 fn test_async_cluster_with_client_name() {
     let cluster = TestClusterContext::new_with_cluster_client_builder(
         3,
@@ -2471,18 +2518,60 @@ fn test_async_cluster_periodic_checks_use_management_connection() {
     .unwrap();
 }
 
-fn get_conn_id_from_client_list(connection_name: &str, client_list: &str) -> String {
-    client_list
+async fn get_clients_names_to_ids(
+    connection: &mut ClusterConnection,
+    routing: Option<RoutingInfo>,
+) -> HashMap<String, String> {
+    let mut client_list_cmd = redis::cmd("CLIENT");
+    client_list_cmd.arg("LIST");
+    let value = match routing {
+        Some(routing) => connection.route_command(&client_list_cmd, routing).await,
+        None => connection.req_packed_command(&client_list_cmd).await,
+    }
+    .unwrap();
+    let string = String::from_owned_redis_value(value).unwrap();
+    string
         .split('\n')
-        .find(|line| line.contains(connection_name))
-        .expect("Failed finding {connection_name:?} in CLIENT LIST")
-        .split(' ')
-        .next()
-        .expect("Failed getting {connection_name:?} connection ID")
-        .split('=')
-        .nth(1)
-        .expect("Failed getting {connection_name:?} connection ID value")
-        .to_string()
+        .filter_map(|line| {
+            if line.is_empty() {
+                return None;
+            }
+            let key_values = line
+                .split(' ')
+                .filter_map(|value| {
+                    let mut split = value.split('=');
+                    match (split.next(), split.next()) {
+                        (Some(key), Some(val)) => Some((key, val)),
+                        _ => None,
+                    }
+                })
+                .collect::<HashMap<_, _>>();
+            match (key_values.get("name"), key_values.get("id")) {
+                (Some(key), Some(val)) if !val.is_empty() => {
+                    Some((key.to_string(), val.to_string()))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+async fn kill_connection(killer_connection: &mut ClusterConnection, connection_to_kill: &str) {
+    let mut cmd = redis::cmd("CLIENT");
+    cmd.arg("KILL");
+    cmd.arg("ID");
+    cmd.arg(connection_to_kill);
+    // Kill the management connection in the primary node that holds slot 0
+    assert!(killer_connection
+        .route_command(
+            &cmd,
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+                0,
+                SlotAddr::Master,
+            )),),
+        )
+        .await
+        .is_ok());
 }
 
 #[test]
@@ -2509,66 +2598,29 @@ fn test_async_cluster_only_management_connection_is_reconnected_after_connection
             .await
             .is_ok());
         // Get the client list
-        let mut list_cmd = redis::cmd("CLIENT");
-        list_cmd.arg("LIST");
-        let client_list: String = String::from_redis_value(
-            &connection
-                .route_command(
-                    &list_cmd,
-                    RoutingInfo::SingleNode(
-                        SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master)),
-                    ),
-                )
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        eprintln!("{client_list}");
+        let names_to_ids = get_clients_names_to_ids(&mut connection, Some(RoutingInfo::SingleNode(
+            SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master))))).await;
+
         // Get the connection ID of 'user-connection'
-        let user_conn_id = get_conn_id_from_client_list("user-connection", &client_list);
+        let user_conn_id = names_to_ids.get("user-connection").unwrap();
         // Get the connection ID of the management connection
-        let management_conn_id = get_conn_id_from_client_list(MANAGEMENT_CONN_NAME, &client_list);
+        let management_conn_id = names_to_ids.get(MANAGEMENT_CONN_NAME).unwrap();
         // Get another connection that will be used to kill the management connection
         let mut killer_connection = cluster.async_connection().await;
-        let mut cmd = redis::cmd("CLIENT");
-        cmd.arg("KILL");
-        cmd.arg("ID");
-        cmd.arg(management_conn_id.clone());
-        // Kill the management connection in the primary node that holds slot 0
-        assert!(killer_connection
-            .route_command(
-                &cmd,
-                RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master,)),
-                ),
-            )
-            .await
-            .is_ok());
+        kill_connection(&mut killer_connection, management_conn_id).await;
         loop {
             // In this loop we'll wait for the new management connection to be established
             if i == max_requests {
                 break;
             } else {
-                let client_list: String = String::from_redis_value(&connection.route_command(
-                    &list_cmd,
-                    RoutingInfo::SingleNode(
-                        SingleNodeRoutingInfo::SpecificNode(Route::new(
-                            0,
-                            SlotAddr::Master,
-                            )),
-                        ),
-                    )
-                    .await
-                    .unwrap(),
-                    )
-                    .unwrap();
-                eprintln!("{client_list}");
-                if client_list.contains(MANAGEMENT_CONN_NAME) {
+                let names_to_ids = get_clients_names_to_ids(&mut connection, Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::SpecificNode(Route::new(0, SlotAddr::Master))))).await;
+                if names_to_ids.contains_key(MANAGEMENT_CONN_NAME) {
                     // A management connection is found
                     let curr_management_conn_id =
-                        get_conn_id_from_client_list(MANAGEMENT_CONN_NAME, &client_list);
+                    names_to_ids.get(MANAGEMENT_CONN_NAME).unwrap();
                     let curr_user_conn_id =
-                        get_conn_id_from_client_list("user-connection", &client_list);
+                    names_to_ids.get("user-connection").unwrap();
                     // Confirm that the management connection has a new connection ID, and verify that the user connection remains unaffected.
                     if (curr_management_conn_id != management_conn_id)
                         && (curr_user_conn_id == user_conn_id)
@@ -2585,7 +2637,7 @@ fn test_async_cluster_only_management_connection_is_reconnected_after_connection
         panic!(
             "No reconnection of the management connection found, or there was an unwantedly reconnection of the user connections.
             \nprev_management_conn_id={:?},prev_user_conn_id={:?}\nclient list={:?}",
-            management_conn_id, user_conn_id, client_list
+            management_conn_id, user_conn_id, names_to_ids
         );
     })
     .unwrap();
