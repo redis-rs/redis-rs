@@ -233,6 +233,7 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
         },
     )
 }
+
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -240,6 +241,7 @@ enum Response {
 
 enum OperationTarget {
     Node { address: String },
+    NotFound,
     FanOut,
 }
 
@@ -359,6 +361,13 @@ where
             (target, Err(err)) => {
                 trace!("Request error {}", err);
 
+                let request = this.request.as_mut().unwrap();
+                if request.retry >= this.retry_params.number_of_retries {
+                    self.respond(Err(err));
+                    return Next::Done.into();
+                }
+                request.retry = request.retry.saturating_add(1);
+
                 let address = match target {
                     OperationTarget::Node { address } => address,
                     OperationTarget::FanOut => {
@@ -366,15 +375,12 @@ where
                         self.respond(Err(err));
                         return Next::Done.into();
                     }
+                    OperationTarget::NotFound => {
+                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
+                        let request = this.request.take().unwrap();
+                        return Next::RefreshSlots { request }.into();
+                    }
                 };
-
-                let request = this.request.as_mut().unwrap();
-
-                if request.retry >= this.retry_params.number_of_retries {
-                    self.respond(Err(err));
-                    return Next::Done.into();
-                }
-                request.retry = request.retry.saturating_add(1);
 
                 match err.kind() {
                     ErrorKind::Ask => {
@@ -748,7 +754,6 @@ where
         redirect: Option<Redirect>,
         routing: CommandRouting<C>,
         core: Core<C>,
-        asking: bool,
     ) -> (OperationTarget, RedisResult<Response>) {
         let route = if redirect.is_some() {
             // if we have a redirect, we don't take info from `routing`.
@@ -761,7 +766,6 @@ where
                     multi_node_routing,
                     response_policy,
                 ))) => {
-                    assert!(!asking);
                     assert!(redirect.is_none());
                     return Self::execute_on_multiple_nodes(
                         &cmd,
@@ -784,34 +788,40 @@ where
             }
         };
 
-        let (addr, mut conn) = Self::get_connection(redirect, route, core, asking).await;
-        let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-        (addr.into(), result)
+        match Self::get_connection(redirect, route, core).await {
+            Ok((addr, mut conn)) => {
+                let result = conn.req_packed_command(&cmd).await.map(Response::Single);
+                (addr.into(), result)
+            }
+            Err(err) => (OperationTarget::NotFound, Err(err)),
+        }
     }
 
     async fn try_pipeline_request(
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = (String, C)>,
+        conn: impl Future<Output = RedisResult<(String, C)>>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let (addr, mut conn) = conn.await;
-        let result = conn
-            .req_packed_commands(&pipeline, offset, count)
-            .await
-            .map(Response::Multiple);
-        (OperationTarget::Node { address: addr }, result)
+        match conn.await {
+            Ok((addr, mut conn)) => {
+                let result = conn
+                    .req_packed_commands(&pipeline, offset, count)
+                    .await
+                    .map(Response::Multiple);
+                (OperationTarget::Node { address: addr }, result)
+            }
+            Err(err) => (OperationTarget::NotFound, Err(err)),
+        }
     }
 
     async fn try_request(
         info: RequestInfo<C>,
         core: Core<C>,
     ) -> (OperationTarget, RedisResult<Response>) {
-        let asking = matches!(&info.redirect, Some(Redirect::Ask(_)));
-
         match info.cmd {
             CmdArg::Cmd { cmd, routing } => {
-                Self::try_cmd_request(cmd, info.redirect, routing, core, asking).await
+                Self::try_cmd_request(cmd, info.redirect, routing, core).await
             }
             CmdArg::Pipeline {
                 pipeline,
@@ -823,7 +833,7 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(info.redirect, route, core, asking),
+                    Self::get_connection(info.redirect, route, core),
                 )
                 .await
             }
@@ -831,23 +841,23 @@ where
     }
 
     async fn get_connection(
-        mut redirect: Option<Redirect>,
+        redirect: Option<Redirect>,
         route: SingleNodeRoutingInfo,
         core: Core<C>,
-        asking: bool,
-    ) -> (String, C) {
+    ) -> RedisResult<(String, C)> {
+        if let Some(redirect) = redirect {
+            // redirected requests shouldn't use a random connection, so they have a separate codepath.
+            return Self::get_redirected_connection(redirect, core).await;
+        }
+
         let read_guard = core.conn_lock.read().await;
 
-        let conn = match redirect.take() {
-            Some(Redirect::Moved(moved_addr)) => Some(moved_addr),
-            Some(Redirect::Ask(ask_addr)) => Some(ask_addr),
-            None => match route {
-                SingleNodeRoutingInfo::Random => None,
-                SingleNodeRoutingInfo::SpecificNode(route) => read_guard
-                    .1
-                    .slot_addr_for_route(&route)
-                    .map(|addr| addr.to_string()),
-            },
+        let conn = match route {
+            SingleNodeRoutingInfo::Random => None,
+            SingleNodeRoutingInfo::SpecificNode(route) => read_guard
+                .1
+                .slot_addr_for_route(&route)
+                .map(|addr| addr.to_string()),
         }
         .map(|addr| {
             let conn = read_guard.0.get(&addr).cloned();
@@ -864,19 +874,47 @@ where
             None => None,
         };
 
-        let (addr, mut conn) = match addr_conn_option {
+        let (addr, conn) = match addr_conn_option {
             Some(tuple) => tuple,
             None => {
                 let read_guard = core.conn_lock.read().await;
-                let (random_addr, random_conn_future) = get_random_connection(&read_guard.0);
-                drop(read_guard);
-                (random_addr, random_conn_future.await)
+                if let Some((random_addr, random_conn_future)) =
+                    get_random_connection(&read_guard.0)
+                {
+                    drop(read_guard);
+                    (random_addr, random_conn_future.await)
+                } else {
+                    return Err(
+                        (ErrorKind::ClusterConnectionNotFound, "No connections found").into(),
+                    );
+                }
             }
+        };
+
+        Ok((addr, conn))
+    }
+
+    async fn get_redirected_connection(
+        redirect: Redirect,
+        core: Core<C>,
+    ) -> RedisResult<(String, C)> {
+        let asking = matches!(redirect, Redirect::Ask(_));
+        let addr = match redirect {
+            Redirect::Moved(addr) => addr,
+            Redirect::Ask(addr) => addr,
+        };
+        let read_guard = core.conn_lock.read().await;
+        let conn = read_guard.0.get(&addr).cloned();
+        drop(read_guard);
+        let mut conn = match conn {
+            Some(conn) => conn.await,
+            None => connect_and_check(&addr, core.cluster_params.clone()).await?,
         };
         if asking {
             let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
         }
-        (addr, conn)
+
+        Ok((addr, conn))
     }
 
     fn poll_recover(
@@ -1259,22 +1297,18 @@ where
     Ok(())
 }
 
-// TODO: This function can panic and should probably
-// return an Option instead:
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> (String, ConnectionFuture<C>)
+fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, ConnectionFuture<C>)>
 where
     C: Clone,
 {
-    let addr = connections
+    connections
         .keys()
         .choose(&mut thread_rng())
-        .expect("Connections is empty")
-        .to_string();
-    let conn = connections
-        .get(&addr)
-        .expect("Connections is empty")
-        .clone();
-    (addr, conn)
+        .and_then(|addr| {
+            connections
+                .get(addr)
+                .map(|conn| (addr.clone(), conn.clone()))
+        })
 }
 
 #[cfg(test)]
