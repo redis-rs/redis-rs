@@ -52,7 +52,7 @@ use futures::{
     prelude::*,
     ready, stream,
 };
-use log::trace;
+use log::{trace, warn};
 use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -163,6 +163,7 @@ struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
+    initial_nodes: Vec<ConnectionInfo>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -432,6 +433,9 @@ enum Next<C> {
         request: PendingRequest<C>,
         sleep_duration: Option<Duration>,
     },
+    ReconnectToInitialNodes {
+        request: PendingRequest<C>,
+    },
     Done,
 }
 
@@ -469,6 +473,14 @@ impl<C> Future for Request<C> {
                     return Next::Done.into();
                 }
                 request.retry = request.retry.saturating_add(1);
+
+                if err.kind() == ErrorKind::ClusterConnectionNotFound {
+                    return Next::ReconnectToInitialNodes {
+                        request: this.request.take().unwrap(),
+                    }
+                    .into();
+                }
+
                 let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
 
                 let address = match target {
@@ -571,14 +583,15 @@ where
             conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
+            initial_nodes: initial_nodes.to_vec(),
         });
-        let mut connection = ClusterConnInner {
+        let connection = ClusterConnInner {
             inner,
             in_flight_requests: Default::default(),
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
-        connection.refresh_slots().await?;
+        Self::refresh_slots(connection.inner.clone()).await?;
         Ok(connection)
     }
 
@@ -619,6 +632,31 @@ where
         Ok(connections)
     }
 
+    fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
+        let inner = self.inner.clone();
+        async move {
+            let connection_map =
+                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
+                    .await
+                {
+                    Ok(map) => map,
+                    Err(err) => {
+                        warn!("Can't reconnect to initial nodes: `{err}`");
+                        return;
+                    }
+                };
+            let mut write_lock = inner.conn_lock.write().await;
+            *write_lock = (
+                connection_map,
+                SlotMap::new(inner.cluster_params.read_from_replicas),
+            );
+            drop(write_lock);
+            if let Err(err) = Self::refresh_slots(inner.clone()).await {
+                warn!("Can't refresh slots with initial nodes: `{err}`");
+            };
+        }
+    }
+
     fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
@@ -645,59 +683,55 @@ where
     }
 
     // Query a node to discover slot-> master mappings.
-    fn refresh_slots(&mut self) -> impl Future<Output = RedisResult<()>> {
-        let inner = self.inner.clone();
-
-        async move {
-            let mut write_guard = inner.conn_lock.write().await;
-            let mut connections = mem::take(&mut write_guard.0);
-            let slots = &mut write_guard.1;
-            let mut result = Ok(());
-            for (_, conn) in connections.iter_mut() {
-                let mut conn = conn.clone().await;
-                let value = match conn.req_packed_command(&slot_cmd()).await {
-                    Ok(value) => value,
-                    Err(err) => {
-                        result = Err(err);
-                        continue;
-                    }
-                };
-                match parse_slots(value, inner.cluster_params.tls)
-                    .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
-                {
-                    Ok(_) => {
-                        result = Ok(());
-                        break;
-                    }
-                    Err(err) => result = Err(err),
+    async fn refresh_slots(inner: Arc<InnerCore<C>>) -> RedisResult<()> {
+        let mut write_guard = inner.conn_lock.write().await;
+        let mut connections = mem::take(&mut write_guard.0);
+        let slots = &mut write_guard.1;
+        let mut result = Ok(());
+        for (_, conn) in connections.iter_mut() {
+            let mut conn = conn.clone().await;
+            let value = match conn.req_packed_command(&slot_cmd()).await {
+                Ok(value) => value,
+                Err(err) => {
+                    result = Err(err);
+                    continue;
                 }
+            };
+            match parse_slots(value, inner.cluster_params.tls)
+                .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+            {
+                Ok(_) => {
+                    result = Ok(());
+                    break;
+                }
+                Err(err) => result = Err(err),
             }
-            result?;
-
-            let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
-            nodes.sort_unstable();
-            nodes.dedup();
-            let nodes_len = nodes.len();
-            let addresses_and_connections_iter = nodes
-                .into_iter()
-                .map(|addr| (addr, connections.remove(addr)));
-
-            write_guard.0 = stream::iter(addresses_and_connections_iter)
-                .fold(
-                    HashMap::with_capacity(nodes_len),
-                    |mut connections, (addr, connection)| async {
-                        let conn =
-                            Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                        if let Ok(conn) = conn {
-                            connections.insert(addr.to_string(), async { conn }.boxed().shared());
-                        }
-                        connections
-                    },
-                )
-                .await;
-
-            Ok(())
         }
+        result?;
+
+        let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes.dedup();
+        let nodes_len = nodes.len();
+        let addresses_and_connections_iter = nodes
+            .into_iter()
+            .map(|addr| (addr, connections.remove(addr)));
+
+        write_guard.0 = stream::iter(addresses_and_connections_iter)
+            .fold(
+                HashMap::with_capacity(nodes_len),
+                |mut connections, (addr, connection)| async {
+                    let conn =
+                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                    if let Ok(conn) = conn {
+                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                    }
+                    connections
+                },
+            )
+            .await;
+
+        Ok(())
     }
 
     fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
@@ -797,6 +831,16 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
         let read_guard = core.conn_lock.read().await;
+        if read_guard.0.is_empty() {
+            return OperationResult::Err((
+                OperationTarget::FanOut,
+                (
+                    ErrorKind::ClusterConnectionNotFound,
+                    "No connections found for multi-node operation",
+                )
+                    .into(),
+            ));
+        }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
             let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
                 read_guard.0.get(addr).cloned().map(|conn| {
@@ -1024,7 +1068,7 @@ where
                 }
                 Poll::Ready(Err(err)) => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                        self.refresh_slots(),
+                        Self::refresh_slots(self.inner.clone()),
                     )));
                     Poll::Ready(Err(err))
                 }
@@ -1118,19 +1162,19 @@ where
                         poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
                     self.inner.pending_requests.lock().unwrap().push(request);
                 }
+                Next::ReconnectToInitialNodes { request } => {
+                    poll_flush_action = poll_flush_action
+                        .change_state(PollFlushAction::ReconnectFromInitialConnections);
+                    self.inner.pending_requests.lock().unwrap().push(request);
+                }
             }
         }
 
-        match poll_flush_action {
-            PollFlushAction::None => {
-                if self.in_flight_requests.is_empty() {
-                    Poll::Ready(poll_flush_action)
-                } else {
-                    Poll::Pending
-                }
-            }
-            rebuild @ PollFlushAction::RebuildSlots => Poll::Ready(rebuild),
-            reestablish @ PollFlushAction::Reconnect(_) => Poll::Ready(reestablish),
+        if !matches!(poll_flush_action, PollFlushAction::None) || self.in_flight_requests.is_empty()
+        {
+            Poll::Ready(poll_flush_action)
+        } else {
+            Poll::Pending
         }
     }
 
@@ -1170,21 +1214,27 @@ enum PollFlushAction {
     None,
     RebuildSlots,
     Reconnect(Vec<String>),
+    ReconnectFromInitialConnections,
 }
 
 impl PollFlushAction {
     fn change_state(self, next_state: PollFlushAction) -> PollFlushAction {
-        match self {
-            Self::None => next_state,
-            rebuild @ Self::RebuildSlots => rebuild,
-            Self::Reconnect(mut addrs) => match next_state {
-                rebuild @ Self::RebuildSlots => rebuild,
-                Self::Reconnect(new_addrs) => {
-                    addrs.extend(new_addrs);
-                    Self::Reconnect(addrs)
-                }
-                Self::None => Self::Reconnect(addrs),
-            },
+        match (self, next_state) {
+            (PollFlushAction::None, next_state) => next_state,
+            (next_state, PollFlushAction::None) => next_state,
+            (PollFlushAction::ReconnectFromInitialConnections, _)
+            | (_, PollFlushAction::ReconnectFromInitialConnections) => {
+                PollFlushAction::ReconnectFromInitialConnections
+            }
+
+            (PollFlushAction::RebuildSlots, _) | (_, PollFlushAction::RebuildSlots) => {
+                PollFlushAction::RebuildSlots
+            }
+
+            (PollFlushAction::Reconnect(mut addrs), PollFlushAction::Reconnect(new_addrs)) => {
+                addrs.extend(new_addrs);
+                Self::Reconnect(addrs)
+            }
         }
     }
 }
@@ -1271,12 +1321,17 @@ where
                     PollFlushAction::None => return Poll::Ready(Ok(())),
                     PollFlushAction::RebuildSlots => {
                         self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(
-                            Box::pin(self.refresh_slots()),
+                            Box::pin(Self::refresh_slots(self.inner.clone())),
                         ));
                     }
                     PollFlushAction::Reconnect(addrs) => {
                         self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
                             self.refresh_connections(addrs),
+                        )));
+                    }
+                    PollFlushAction::ReconnectFromInitialConnections => {
+                        self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+                            self.reconnect_to_initial_nodes(),
                         )));
                     }
                 },

@@ -1,7 +1,7 @@
 #![cfg(feature = "cluster-async")]
 mod support;
 use std::sync::{
-    atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
+    atomic::{self, AtomicBool, AtomicI32, AtomicU16, Ordering},
     Arc,
 };
 
@@ -1530,6 +1530,75 @@ fn test_async_cluster_can_be_created_with_partial_slot_coverage() {
 
     let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
     assert!(res.is_ok());
+}
+
+#[test]
+fn test_async_cluster_handle_complete_server_disconnect_without_panicking() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.retries(2),
+        false,
+    );
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
+        for _ in 0..5 {
+            let cmd = cmd("PING");
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+        }
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_async_cluster_reconnect_after_complete_server_disconnect() {
+    let cluster = TestClusterContext::new_with_cluster_client_builder(
+        3,
+        0,
+        |builder| builder.retries(2),
+        false,
+    );
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
+        for _ in 0..5 {
+            let cmd = cmd("PING");
+
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            let _cluster = TestClusterContext::new_with_cluster_client_builder(
+                3,
+                0,
+                |builder| builder.retries(2),
+                false,
+            );
+
+            let result = connection.req_packed_command(&cmd).await.unwrap();
+            assert_eq!(result, Value::Status("PONG".to_string()));
+        }
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
 }
 
 #[cfg(feature = "tls-rustls")]
