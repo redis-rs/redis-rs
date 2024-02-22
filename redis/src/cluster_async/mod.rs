@@ -234,6 +234,14 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
     )
 }
 
+fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
+    #[cfg(feature = "tokio-comp")]
+    return Box::pin(tokio::time::sleep(duration));
+
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    return Box::pin(async_std::task::sleep(duration));
+}
+
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -326,6 +334,7 @@ enum Next<I, C> {
     },
     RefreshSlots {
         request: PendingRequest<I, C>,
+        sleep_duration: Option<Duration>,
     },
     Done,
 }
@@ -367,6 +376,7 @@ where
                     return Next::Done.into();
                 }
                 request.retry = request.retry.saturating_add(1);
+                let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
 
                 let address = match target {
                     OperationTarget::Node { address } => address,
@@ -378,7 +388,11 @@ where
                     OperationTarget::NotFound => {
                         // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
                         let request = this.request.take().unwrap();
-                        return Next::RefreshSlots { request }.into();
+                        return Next::RefreshSlots {
+                            request,
+                            sleep_duration: Some(sleep_duration),
+                        }
+                        .into();
                     }
                 };
 
@@ -395,17 +409,16 @@ where
                         request.info.redirect = err
                             .redirect_node()
                             .map(|(node, _slot)| Redirect::Moved(node.to_string()));
-                        Next::RefreshSlots { request }.into()
+                        Next::RefreshSlots {
+                            request,
+                            sleep_duration: None,
+                        }
+                        .into()
                     }
                     ErrorKind::TryAgain | ErrorKind::ClusterDown => {
                         // Sleep and retry.
-                        let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
                         this.future.set(RequestState::Sleep {
-                            #[cfg(feature = "tokio-comp")]
-                            sleep: Box::pin(tokio::time::sleep(sleep_duration)),
-
-                            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                            sleep: Box::pin(async_std::task::sleep(sleep_duration)),
+                            sleep: boxed_sleep(sleep_duration),
                         });
                         self.poll(cx)
                     }
@@ -998,16 +1011,34 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots { request } => {
+                Next::RefreshSlots {
+                    request,
+                    sleep_duration,
+                } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future = Self::try_request(request.info.clone(), self.inner.clone());
+                    let future: RequestState<
+                        Pin<
+                            Box<
+                                dyn Future<Output = (OperationTarget, RedisResult<Response>)>
+                                    + Send,
+                            >,
+                        >,
+                    > = match sleep_duration {
+                        Some(sleep_duration) => RequestState::Sleep {
+                            sleep: boxed_sleep(sleep_duration),
+                        },
+                        None => RequestState::Future {
+                            future: Box::pin(Self::try_request(
+                                request.info.clone(),
+                                self.inner.clone(),
+                            )),
+                        },
+                    };
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
-                        future: RequestState::Future {
-                            future: Box::pin(future),
-                        },
+                        future,
                     }));
                 }
                 Next::Reconnect {
