@@ -162,7 +162,7 @@ type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
-    pending_requests: Mutex<Vec<PendingRequest<Response, C>>>,
+    pending_requests: Mutex<Vec<PendingRequest<C>>>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -171,11 +171,7 @@ struct ClusterConnInner<C> {
     inner: Core<C>,
     state: ConnectionState,
     #[allow(clippy::complexity)]
-    in_flight_requests: stream::FuturesUnordered<
-        Pin<
-            Box<Request<BoxFuture<'static, (OperationTarget, RedisResult<Response>)>, Response, C>>,
-        >,
-    >,
+    in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
     refresh_error: Option<RedisError>,
 }
 
@@ -299,6 +295,7 @@ enum OperationTarget {
     NotFound,
     FanOut,
 }
+type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
 impl From<String> for OperationTarget {
     fn from(address: String) -> Self {
@@ -407,42 +404,39 @@ pin_project! {
     }
 }
 
-struct PendingRequest<I, C> {
+struct PendingRequest<C> {
     retry: u32,
-    sender: oneshot::Sender<RedisResult<I>>,
+    sender: oneshot::Sender<RedisResult<Response>>,
     info: RequestInfo<C>,
 }
 
 pin_project! {
-    struct Request<F, I, C> {
+    struct Request<C> {
         retry_params: RetryParams,
-        request: Option<PendingRequest<I, C>>,
+        request: Option<PendingRequest<C>>,
         #[pin]
-        future: RequestState<F>,
+        future: RequestState<BoxFuture<'static, OperationResult>>,
     }
 }
 
 #[must_use]
-enum Next<I, C> {
+enum Next<C> {
     Retry {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
     },
     Reconnect {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
         target: String,
     },
     RefreshSlots {
-        request: PendingRequest<I, C>,
+        request: PendingRequest<C>,
         sleep_duration: Option<Duration>,
     },
     Done,
 }
 
-impl<F, I, C> Future for Request<F, I, C>
-where
-    F: Future<Output = (OperationTarget, RedisResult<I>)>,
-{
-    type Output = Next<I, C>;
+impl<C> Future for Request<C> {
+    type Output = Next<C>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
@@ -461,12 +455,12 @@ where
             _ => panic!("Request future must be Some"),
         };
         match ready!(future.poll(cx)) {
-            (_, Ok(item)) => {
+            Ok(item) => {
                 trace!("Ok");
                 self.respond(Ok(item));
                 Next::Done.into()
             }
-            (target, Err(err)) => {
+            Err((target, err)) => {
                 trace!("Request error {}", err);
 
                 let request = this.request.as_mut().unwrap();
@@ -551,11 +545,8 @@ where
     }
 }
 
-impl<F, I, C> Request<F, I, C>
-where
-    F: Future<Output = (OperationTarget, RedisResult<I>)>,
-{
-    fn respond(self: Pin<&mut Self>, msg: RedisResult<I>) {
+impl<C> Request<C> {
+    fn respond(self: Pin<&mut Self>, msg: RedisResult<Response>) {
         // If `send` errors the receiver has dropped and thus does not care about the message
         let _ = self
             .project()
@@ -804,7 +795,7 @@ where
         routing: &'a MultipleNodeRoutingInfo,
         core: Core<C>,
         response_policy: Option<ResponsePolicy>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         let read_guard = core.conn_lock.read().await;
         let (receivers, requests): (Vec<_>, Vec<_>) = {
             let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
@@ -865,18 +856,17 @@ where
         drop(read_guard);
         core.pending_requests.lock().unwrap().extend(requests);
 
-        let result = Self::aggregate_results(receivers, routing, response_policy)
+        Self::aggregate_results(receivers, routing, response_policy)
             .await
-            .map(Response::Single);
-
-        (OperationTarget::FanOut, result)
+            .map(Response::Single)
+            .map_err(|err| (OperationTarget::FanOut, err))
     }
 
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
         core: Core<C>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         let route = match routing {
             InternalRoutingInfo::SingleNode(single_node_routing) => single_node_routing,
             InternalRoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
@@ -891,11 +881,12 @@ where
         };
 
         match Self::get_connection(route, core).await {
-            Ok((addr, mut conn)) => {
-                let result = conn.req_packed_command(&cmd).await.map(Response::Single);
-                (addr.into(), result)
-            }
-            Err(err) => (OperationTarget::NotFound, Err(err)),
+            Ok((addr, mut conn)) => conn
+                .req_packed_command(&cmd)
+                .await
+                .map(Response::Single)
+                .map_err(|err| (addr.into(), err)),
+            Err(err) => Err((OperationTarget::NotFound, err)),
         }
     }
 
@@ -904,23 +895,18 @@ where
         offset: usize,
         count: usize,
         conn: impl Future<Output = RedisResult<(String, C)>>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    ) -> OperationResult {
         match conn.await {
-            Ok((addr, mut conn)) => {
-                let result = conn
-                    .req_packed_commands(&pipeline, offset, count)
-                    .await
-                    .map(Response::Multiple);
-                (OperationTarget::Node { address: addr }, result)
-            }
-            Err(err) => (OperationTarget::NotFound, Err(err)),
+            Ok((addr, mut conn)) => conn
+                .req_packed_commands(&pipeline, offset, count)
+                .await
+                .map(Response::Multiple)
+                .map_err(|err| (OperationTarget::Node { address: addr }, err)),
+            Err(err) => Err((OperationTarget::NotFound, err)),
         }
     }
 
-    async fn try_request(
-        info: RequestInfo<C>,
-        core: Core<C>,
-    ) -> (OperationTarget, RedisResult<Response>) {
+    async fn try_request(info: RequestInfo<C>, core: Core<C>) -> OperationResult {
         match info.cmd {
             CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
             CmdArg::Pipeline {
@@ -1107,12 +1093,7 @@ where
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
                     let future: RequestState<
-                        Pin<
-                            Box<
-                                dyn Future<Output = (OperationTarget, RedisResult<Response>)>
-                                    + Send,
-                            >,
-                        >,
+                        Pin<Box<dyn Future<Output = OperationResult> + Send>>,
                     > = match sleep_duration {
                         Some(sleep_duration) => RequestState::Sleep {
                             sleep: boxed_sleep(sleep_duration),
