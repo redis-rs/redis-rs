@@ -7,7 +7,7 @@ use crate::{
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
-use arc_swap::{self, ArcSwap};
+use arc_swap::ArcSwap;
 use futures::{
     future::{self, Shared},
     FutureExt,

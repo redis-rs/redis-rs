@@ -1,4 +1,4 @@
-use redis::{self, transaction, Commands};
+use redis::{transaction, Commands};
 
 use std::collections::HashMap;
 use std::env;

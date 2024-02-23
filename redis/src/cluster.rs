@@ -37,7 +37,6 @@
 //! ```
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::iter::Iterator;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
