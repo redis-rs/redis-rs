@@ -1,6 +1,5 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::iter::Iterator;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -1044,7 +1043,7 @@ mod tests {
             .arg("baz")
             .arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&original_cmd);
-        let expected = vec![vec![0], vec![1, 3], vec![2]];
+        let expected = [vec![0], vec![1, 3], vec![2]];
 
         let mut indices: Vec<_> = match routing {
             Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), _))) => {

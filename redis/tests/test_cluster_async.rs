@@ -6,7 +6,6 @@ use std::sync::{
 };
 
 use futures::prelude::*;
-use futures::stream;
 use once_cell::sync::Lazy;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
@@ -16,9 +15,6 @@ use redis::{
     cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
     RedisError, RedisFuture, RedisResult, Script, Value,
 };
-
-#[cfg(feature = "tls-rustls")]
-use support::build_single_client;
 
 use crate::support::*;
 

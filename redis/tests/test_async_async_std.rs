@@ -1,4 +1,4 @@
-use futures::{future, prelude::*};
+use futures::prelude::*;
 
 use crate::support::*;
 

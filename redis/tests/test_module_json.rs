@@ -15,7 +15,7 @@ mod support;
 
 use serde::Serialize;
 // adds json! macro for quick json generation on the fly.
-use serde_json::{self, json};
+use serde_json::json;
 
 const TEST_KEY: &str = "my_json";
 

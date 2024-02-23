@@ -1,4 +1,4 @@
-use futures::{future, prelude::*, StreamExt};
+use futures::{prelude::*, StreamExt};
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cmd, AsyncCommands, ErrorKind, RedisResult,
