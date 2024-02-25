@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::convert::From;
 use std::default::Default;
 use std::error;
 use std::ffi::{CString, NulError};

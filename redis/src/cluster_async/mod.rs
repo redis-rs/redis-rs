@@ -23,10 +23,7 @@
 //! ```
 use std::{
     collections::HashMap,
-    fmt, io,
-    iter::Iterator,
-    marker::Unpin,
-    mem,
+    fmt, io, mem,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{self, Poll},
@@ -47,11 +44,7 @@ use crate::{
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
-use futures::{
-    future::{self, BoxFuture},
-    prelude::*,
-    ready, stream,
-};
+use futures::{future::BoxFuture, prelude::*, ready};
 use log::trace;
 use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};

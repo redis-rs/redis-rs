@@ -166,7 +166,7 @@ mod tests {
         let (tx4, mut rx4) = mpsc::unbounded_channel();
 
         let mut handles = vec![];
-        let txs = vec![tx1, tx2, tx3, tx4];
+        let txs = [tx1, tx2, tx3, tx4];
         let mut expected_sum = 0;
         for i in 0..1000 {
             expected_sum += i;
