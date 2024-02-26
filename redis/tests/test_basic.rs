@@ -110,6 +110,10 @@ fn test_client_tracking_doesnt_block_execution() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let (k1, k2): (i32, i32) = redis::pipe()
+        .cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .ignore()
         .cmd("GET")
         .arg("key_1")
         .ignore()

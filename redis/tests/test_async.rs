@@ -111,7 +111,11 @@ fn test_client_tracking_doesnt_block_execution() {
     block_on_all(async move {
         let mut con = ctx.async_connection().await.unwrap();
         let mut pipe = redis::pipe();
-        pipe.cmd("GET")
+        pipe.cmd("CLIENT")
+            .arg("TRACKING")
+            .arg("ON")
+            .ignore()
+            .cmd("GET")
             .arg("key_1")
             .ignore()
             .cmd("SET")
