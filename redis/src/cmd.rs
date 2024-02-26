@@ -334,6 +334,13 @@ impl Cmd {
         }
     }
 
+    /// Get the capacities for the internal buffers.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn capacity(&self) -> (usize, usize) {
+        (self.args.capacity(), self.data.capacity())
+    }
+
     /// Appends an argument to the command.  The argument passed must
     /// be a type that implements `ToRedisArgs`.  Most primitive types as
     /// well as vectors of primitive types implement it.

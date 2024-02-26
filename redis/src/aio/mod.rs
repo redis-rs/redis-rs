@@ -90,7 +90,7 @@ async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C)
 where
     C: ConnectionLike,
 {
-    if connection_info.protocol == ProtocolVersion::RESP3 {
+    if connection_info.protocol != ProtocolVersion::RESP2 {
         let hello_cmd = resp3_hello(connection_info);
         let val: RedisResult<Value> = hello_cmd.query_async(con).await;
         if let Err(err) = val {
@@ -178,6 +178,7 @@ pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
 mod connection_manager;
 #[cfg(feature = "connection-manager")]
+#[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
 use crate::commands::resp3_hello;

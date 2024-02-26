@@ -212,12 +212,44 @@ impl<'a> ScriptInvocation<'a> {
         cmd
     }
 
+    fn estimate_buflen(&self) -> usize {
+        self
+            .keys
+            .iter()
+            .chain(self.args.iter())
+            .fold(0, |acc, e| acc + e.len())
+            + 7 /* "EVALSHA".len() */
+            + self.script.hash.len()
+            + 4 /* Slots reserved for the length of keys. */
+    }
+
     fn eval_cmd(&self) -> Cmd {
-        let mut cmd = cmd("EVALSHA");
-        cmd.arg(self.script.hash.as_bytes())
+        let args_len = 3 + self.keys.len() + self.args.len();
+        let mut cmd = Cmd::with_capacity(args_len, self.estimate_buflen());
+        cmd.arg("EVALSHA")
+            .arg(self.script.hash.as_bytes())
             .arg(self.keys.len())
             .arg(&*self.keys)
             .arg(&*self.args);
         cmd
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Script;
+
+    #[test]
+    fn script_eval_should_work() {
+        let script = Script::new("return KEYS[1]");
+        let invocation = script.key("dummy");
+        let estimated_buflen = invocation.estimate_buflen();
+        let cmd = invocation.eval_cmd();
+        assert!(estimated_buflen >= cmd.capacity().1);
+        let expected = "*4\r\n$7\r\nEVALSHA\r\n$40\r\n4a2267357833227dd98abdedb8cf24b15a986445\r\n$1\r\n1\r\n$5\r\ndummy\r\n";
+        assert_eq!(
+            expected,
+            std::str::from_utf8(cmd.get_packed_command().as_slice()).unwrap()
+        );
     }
 }

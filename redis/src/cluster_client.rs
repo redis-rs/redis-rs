@@ -199,7 +199,7 @@ impl ClusterClientBuilder {
         }
 
         let mut nodes = Vec::with_capacity(initial_nodes.len());
-        for node in initial_nodes {
+        for mut node in initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
@@ -228,6 +228,7 @@ impl ClusterClientBuilder {
                 )));
             }
 
+            node.redis.protocol = cluster_params.protocol;
             nodes.push(node);
         }
 

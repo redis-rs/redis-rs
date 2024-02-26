@@ -47,6 +47,7 @@ pub enum Expiry {
 }
 
 /// Helper enum that is used to define expiry time for SET command
+#[derive(Clone, Copy)]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(usize),
@@ -61,6 +62,7 @@ pub enum SetExpiry {
 }
 
 /// Helper enum that is used to define existence checks
+#[derive(Clone, Copy)]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
     NX,
@@ -141,9 +143,8 @@ pub enum ErrorKind {
     /// Try disabling resp3 option
     RESP3NotSupported,
 }
-
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
@@ -152,20 +153,20 @@ pub enum Value {
     /// is why this library generally treats integers and strings
     /// the same for all numeric responses.
     Int(i64),
-    /// An arbitrary binary BulkString, usually represents a binary-safe string.
+    /// An arbitrary binary data, usually represents a binary-safe string.
     BulkString(Vec<u8>),
-    /// A response containing an array with more BulkString. This is generally used by redis
+    /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
     Array(Vec<Value>),
     /// A simple string response, without line breaks and not binary safe.
     SimpleString(String),
-    /// A SimpleString response which represents the string "OK".
+    /// A status response which represents the string "OK".
     Okay,
     /// Unordered key,value list from the server. Use `as_map_iter` function.
     Map(Vec<(Value, Value)>),
-    /// Attribute value from the server. Client will give BulkString instead of whole Attribute type.
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
     Attribute {
-        /// BulkString that attributes belong to.
+        /// Data that attributes belong to.
         data: Box<Value>,
         /// Key,Value list of attributes.
         attributes: Vec<(Value, Value)>,
@@ -185,11 +186,11 @@ pub enum Value {
     },
     /// Very large number that out of the range of the signed 64 bit numbers
     BigNumber(BigInt),
-    /// Push BulkString from the server.
+    /// Push data from the server.
     Push {
         /// Push Kind
         kind: PushKind,
-        /// Remaining BulkString from push message
+        /// Remaining data from push message
         data: Vec<Value>,
     },
 }
@@ -208,6 +209,8 @@ pub enum VerbatimFormat {
 /// `Push` type's currently known kinds.
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum PushKind {
+    /// `Disconnection` is sent from the **library** when connection is closed.
+    Disconnection,
     /// Other kind to catch future kinds.
     Other(String),
     /// `invalidate` is received when a key is changed/deleted.
@@ -230,6 +233,21 @@ pub enum PushKind {
     PSubscribe,
     /// `ssubscribe` is received when client subscribed to a shard channel.
     SSubscribe,
+}
+
+impl PushKind {
+    #[cfg(feature = "aio")]
+    pub(crate) fn has_reply(&self) -> bool {
+        matches!(
+            self,
+            &PushKind::Unsubscribe
+                | &PushKind::PUnsubscribe
+                | &PushKind::SUnsubscribe
+                | &PushKind::Subscribe
+                | &PushKind::PSubscribe
+                | &PushKind::SSubscribe
+        )
+    }
 }
 
 impl fmt::Display for VerbatimFormat {
@@ -256,6 +274,7 @@ impl fmt::Display for PushKind {
             PushKind::Subscribe => write!(f, "subscribe"),
             PushKind::PSubscribe => write!(f, "psubscribe"),
             PushKind::SSubscribe => write!(f, "ssubscribe"),
+            PushKind::Disconnection => write!(f, "disconnection"),
         }
     }
 }
@@ -1733,6 +1752,7 @@ impl FromRedisValue for String {
             _ => invalid_type_error!(v, "Response type not string compatible."),
         }
     }
+
     fn from_owned_redis_value(v: Value) -> RedisResult<String> {
         let v = get_owned_inner_value(v);
         match v {
@@ -1931,6 +1951,7 @@ impl<T: FromRedisValue + Eq + Hash> FromRedisValue for ahash::AHashSet<T> {
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
         items.iter().map(|item| from_redis_value(item)).collect()
     }
+
     fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashSet<T>> {
         let v = get_owned_inner_value(v);
         let items = v

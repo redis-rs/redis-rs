@@ -13,22 +13,17 @@ use crate::support::*;
 use futures::prelude::*;
 use futures_time::task::sleep;
 use once_cell::sync::Lazy;
-use redis::cluster_async::ClusterConnection;
-use redis::cluster_routing::Route;
-use redis::cluster_routing::SingleNodeRoutingInfo;
-use redis::cluster_routing::SlotAddr;
-use redis::{from_owned_redis_value, ProtocolVersion};
-
-use redis::FromRedisValue;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
-    cluster_async::testing::MANAGEMENT_CONN_NAME,
-    cluster_async::Connect,
-    cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo},
+    cluster_async::{testing::MANAGEMENT_CONN_NAME, ClusterConnection, Connect},
+    cluster_routing::{
+        MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+    },
     cluster_topology::DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
-    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ErrorKind, FromRedisValue,
+    InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
+    Value,
 };
 use std::str::from_utf8;
 use std::time::Duration;
@@ -2423,6 +2418,42 @@ fn test_async_cluster_read_from_primary_when_primary_loading() {
     }
 
     assert_eq!(load_errors.load(Ordering::Relaxed), ITERATIONS * RETRIES);
+}
+
+#[test]
+fn test_async_cluster_can_be_created_with_partial_slot_coverage() {
+    let name = "test_async_cluster_can_be_created_with_partial_slot_coverage";
+    let slots_config = Some(vec![
+        MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![],
+            slot_range: (0..8000),
+        },
+        MockSlotRange {
+            primary_port: 6381,
+            replica_ports: vec![],
+            slot_range: (8201..16380),
+        },
+    ]);
+
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |received_cmd: &[u8], _| {
+            respond_startup_with_replica_using_config(name, received_cmd, slots_config.clone())?;
+            Err(Ok(Value::SimpleString("PONG".into())))
+        },
+    );
+
+    let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
+    assert!(res.is_ok());
 }
 
 #[cfg(feature = "tls-rustls")]

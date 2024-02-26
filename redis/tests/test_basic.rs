@@ -1,15 +1,16 @@
 #![allow(clippy::let_unit_value)]
 
+use redis::{cmd, ProtocolVersion, PushInfo};
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
-    PubSubCommands, RedisResult, SetExpiry, SetOptions, ToRedisArgs,
+    PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
 };
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::vec;
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
 
@@ -1501,4 +1502,77 @@ fn test_set_client_name_by_config() {
         "Incorrect client name, expecting: {}, got {}",
         CLIENT_NAME, client_attrs["name"]
     );
+}
+
+#[test]
+fn test_push_manager() {
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    let mut con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(tx.clone());
+    let _ = cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .query::<()>(&mut con)
+        .unwrap();
+    let pipe = build_simple_pipeline_for_invalidation();
+    for _ in 0..10 {
+        let _: RedisResult<()> = pipe.query(&mut con);
+        let _: i32 = con.get("key_1").unwrap();
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
+            ),
+            (kind, data)
+        );
+    }
+    let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(new_tx.clone());
+    drop(rx);
+    let _: RedisResult<()> = pipe.query(&mut con);
+    let _: i32 = con.get("key_1").unwrap();
+    let PushInfo { kind, data } = new_rx.try_recv().unwrap();
+    assert_eq!(
+        (
+            PushKind::Invalidate,
+            vec![Value::Array(vec![Value::BulkString(
+                "key_1".as_bytes().to_vec()
+            )])]
+        ),
+        (kind, data)
+    );
+
+    {
+        drop(new_rx);
+        for _ in 0..10 {
+            let _: RedisResult<()> = pipe.query(&mut con);
+            let v: i32 = con.get("key_1").unwrap();
+            assert_eq!(v, 42);
+        }
+    }
+}
+
+#[test]
+fn test_push_manager_disconnection() {
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    let mut con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(tx.clone());
+
+    let _: () = con.set("A", "1").unwrap();
+    assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+    drop(ctx);
+    let x: RedisResult<()> = con.set("A", "1");
+    assert!(x.is_err());
+    assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
 }

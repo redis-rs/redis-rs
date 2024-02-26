@@ -3,7 +3,7 @@
 use std::assert_eq;
 use std::collections::HashMap;
 
-use redis::JsonCommands;
+use redis::{JsonCommands, ProtocolVersion};
 
 use redis::{
     ErrorKind, RedisError, RedisResult,
@@ -351,15 +351,26 @@ fn test_module_json_num_incr_by() {
 
     assert_eq!(set_initial, Ok(true));
 
-    let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    if ctx.protocol != ProtocolVersion::RESP2 && redis_ver.starts_with("7.") {
+        // cannot increment a string
+        let json_numincrby_a: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+        assert_eq!(json_numincrby_a, Ok(vec![Nil]));
 
-    // cannot increment a string
-    assert_eq!(json_numincrby_a, Ok("[null]".into()));
+        let json_numincrby_b: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
 
-    let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
+        // however numbers can be incremented
+        assert_eq!(json_numincrby_b, Ok(vec![Nil, Int(4), Int(7), Nil]));
+    } else {
+        // cannot increment a string
+        let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
+        assert_eq!(json_numincrby_a, Ok("[null]".into()));
 
-    // however numbers can be incremented
-    assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+        let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
+
+        // however numbers can be incremented
+        assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+    }
 }
 
 #[test]
@@ -490,23 +501,40 @@ fn test_module_json_type() {
     assert_eq!(set_initial, Ok(true));
 
     let json_type_a: RedisResult<Value> = con.json_type(TEST_KEY, "$..foo");
-
-    assert_eq!(
-        json_type_a,
-        Ok(Array(vec![BulkString(Vec::from("string".as_bytes()))]))
-    );
-
     let json_type_b: RedisResult<Value> = con.json_type(TEST_KEY, "$..a");
-
-    assert_eq!(
-        json_type_b,
-        Ok(Array(vec![
-            BulkString(Vec::from("integer".as_bytes())),
-            BulkString(Vec::from("boolean".as_bytes()))
-        ]))
-    );
-
     let json_type_c: RedisResult<Value> = con.json_type(TEST_KEY, "$..dummy");
 
-    assert_eq!(json_type_c, Ok(Array(vec![])));
+    let redis_ver = std::env::var("REDIS_VERSION").unwrap_or_default();
+    if ctx.protocol != ProtocolVersion::RESP2 && redis_ver.starts_with("7.") {
+        // In RESP3 current RedisJSON always gives response in an array.
+        assert_eq!(
+            json_type_a,
+            Ok(Array(vec![Array(vec![BulkString(Vec::from(
+                "string".as_bytes()
+            ))])]))
+        );
+
+        assert_eq!(
+            json_type_b,
+            Ok(Array(vec![Array(vec![
+                BulkString(Vec::from("integer".as_bytes())),
+                BulkString(Vec::from("boolean".as_bytes()))
+            ])]))
+        );
+        assert_eq!(json_type_c, Ok(Array(vec![Array(vec![])])));
+    } else {
+        assert_eq!(
+            json_type_a,
+            Ok(Array(vec![BulkString(Vec::from("string".as_bytes()))]))
+        );
+
+        assert_eq!(
+            json_type_b,
+            Ok(Array(vec![
+                BulkString(Vec::from("integer".as_bytes())),
+                BulkString(Vec::from("boolean".as_bytes()))
+            ]))
+        );
+        assert_eq!(json_type_c, Ok(Array(vec![])));
+    }
 }

@@ -155,7 +155,7 @@ where
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        if self.protocol == ProtocolVersion::RESP3 {
+        if self.protocol != ProtocolVersion::RESP2 {
             while let Value::Push { kind, data } =
                 from_owned_redis_value(self.read_response().await?)?
             {
@@ -234,9 +234,7 @@ where
             }
             loop {
                 match self.read_response().await? {
-                    Value::Push { .. } => {
-                        //self.execute_push_message(kind, data) //TODO
-                    }
+                    Value::Push { .. } => continue,
                     val => return Ok(val),
                 }
             }
@@ -281,7 +279,6 @@ where
                         if let Value::Push { .. } = item {
                             // if that is the case we have to extend the loop and handle push data
                             count += 1;
-                            // self.execute_push_message(kind, data); //TODO
                         } else {
                             rv.push(item);
                         }
@@ -327,7 +324,7 @@ where
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
-        if self.0.protocol == ProtocolVersion::RESP3 {
+        if self.0.protocol != ProtocolVersion::RESP2 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -337,7 +334,7 @@ where
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.0.protocol == ProtocolVersion::RESP3 {
+        if self.0.protocol != ProtocolVersion::RESP2 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -347,7 +344,7 @@ where
     pub async fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel);
-        if self.0.protocol == ProtocolVersion::RESP3 {
+        if self.0.protocol != ProtocolVersion::RESP2 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await
@@ -357,7 +354,7 @@ where
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(pchannel);
-        if self.0.protocol == ProtocolVersion::RESP3 {
+        if self.0.protocol != ProtocolVersion::RESP2 {
             cmd.set_no_response(true);
         }
         cmd.query_async(&mut self.0).await

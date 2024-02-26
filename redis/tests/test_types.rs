@@ -224,7 +224,6 @@ fn test_single_string_vec() {
 
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("1".into()));
-
         assert_eq!(v, Ok(vec!["1".to_string()]));
     }
 }
@@ -566,4 +565,31 @@ fn test_0_length_usize_array_to_redis_args_and_back() {
 
     let new_array: [usize; 0] = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
     assert_eq!(new_array, array);
+}
+
+#[test]
+fn test_attributes() {
+    use redis::{parse_redis_value, FromRedisValue, Value};
+    let bytes: &[u8] = b"*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n";
+    let val = parse_redis_value(bytes).unwrap();
+    {
+        // The case user doesn't expect attributes from server
+        let x: Vec<i32> = redis::FromRedisValue::from_redis_value(&val).unwrap();
+        assert_eq!(x, vec![1, 2, 3]);
+    }
+    {
+        // The case user wants raw value from server
+        let x: Value = FromRedisValue::from_redis_value(&val).unwrap();
+        assert_eq!(
+            x,
+            Value::Array(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Attribute {
+                    data: Box::new(Value::Int(3)),
+                    attributes: vec![(Value::SimpleString("ttl".to_string()), Value::Int(3600))]
+                }
+            ])
+        )
+    }
 }

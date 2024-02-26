@@ -24,7 +24,6 @@ use redis::{aio, cluster_async, RedisFuture};
 #[cfg(feature = "cluster-async")]
 use futures::future;
 
-use redis::PushKind;
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
 
@@ -401,10 +400,6 @@ impl redis::ConnectionLike for MockConnection {
 
     fn is_open(&self) -> bool {
         true
-    }
-
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
     }
 }
 

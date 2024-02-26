@@ -2,7 +2,7 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
-use redis::{ConnectionAddr, InfoDict, ProtocolVersion, RedisConnectionInfo, Value};
+use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 use std::path::Path;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
@@ -605,7 +605,6 @@ where
             Ok(())
         }
         Value::Set(ref values) => encode_iter(values, writer, "~"),
-        // Value::Nil => write!(writer, "_\r\n"), //TODO is it okey to use $-1 in resp3 ?
         Value::Double(val) => write!(writer, ",{}\r\n", val),
         Value::Boolean(v) => {
             if v {
@@ -873,4 +872,16 @@ pub(crate) mod mtls_test {
         }
         .build()
     }
+}
+
+pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
+    let mut pipe = redis::pipe();
+    pipe.cmd("GET")
+        .arg("key_1")
+        .ignore()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore();
+    pipe
 }

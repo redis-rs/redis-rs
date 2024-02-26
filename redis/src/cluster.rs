@@ -59,7 +59,7 @@ pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo},
-    IntoConnectionInfo, PushKind,
+    IntoConnectionInfo,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
@@ -911,10 +911,6 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             }
         }
         true
-    }
-
-    fn execute_push_message(&mut self, _kind: PushKind, _data: Vec<Value>) {
-        // TODO - implement handling RESP3 push messages
     }
 }
 

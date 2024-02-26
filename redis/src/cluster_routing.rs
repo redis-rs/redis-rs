@@ -725,10 +725,10 @@ impl Routable for Value {
 
 #[derive(Debug, Hash)]
 pub(crate) struct Slot {
-    start: u16,
-    end: u16,
-    master: String,
-    replicas: Vec<String>,
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+    pub(crate) master: String,
+    pub(crate) replicas: Vec<String>,
 }
 
 impl Slot {
