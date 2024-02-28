@@ -37,7 +37,6 @@
 //! ```
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::iter::Iterator;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
@@ -721,13 +720,13 @@ where
                     }
                     retries += 1;
 
-                    match err.kind() {
-                        ErrorKind::Ask => {
+                    match err.retry_method() {
+                        crate::types::RetryMethod::AskRedirect => {
                             redirected = err
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Ask(node.to_string()));
                         }
-                        ErrorKind::Moved => {
+                        crate::types::RetryMethod::MovedRedirect => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
@@ -735,7 +734,7 @@ where
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
-                        ErrorKind::TryAgain | ErrorKind::ClusterDown => {
+                        crate::types::RetryMethod::WaitAndRetry => {
                             // Sleep and retry.
                             let sleep_time = self
                                 .cluster_params
@@ -743,7 +742,7 @@ where
                                 .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
-                        ErrorKind::IoError => {
+                        crate::types::RetryMethod::Reconnect => {
                             if *self.auto_reconnect.borrow() {
                                 if let Ok(mut conn) = self.connect(&addr) {
                                     if conn.check_connection() {
@@ -752,11 +751,10 @@ where
                                 }
                             }
                         }
-                        _ => {
-                            if !err.is_retryable() {
-                                return Err(err);
-                            }
+                        crate::types::RetryMethod::NoRetry => {
+                            return Err(err);
                         }
+                        crate::types::RetryMethod::RetryImmediately => {}
                     }
                 }
             }

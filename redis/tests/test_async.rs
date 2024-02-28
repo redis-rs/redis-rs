@@ -1,8 +1,7 @@
-use futures::{future, prelude::*, StreamExt};
-use redis::aio::ConnectionLike;
-use redis::PushInfo;
+use futures::{prelude::*, StreamExt};
 use redis::{
-    aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushKind, RedisResult, Value,
+    aio::{ConnectionLike, MultiplexedConnection},
+    cmd, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult, Value,
 };
 use tokio::sync::mpsc::error::TryRecvError;
 
