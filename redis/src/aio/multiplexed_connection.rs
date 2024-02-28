@@ -129,7 +129,7 @@ where
             match result {
                 Ok(item) => {
                     entry.buffer = Some(match entry.buffer.take() {
-                        Some(Value::Bulk(mut values)) => {
+                        Some(Value::Bulk(mut values)) if entry.current_response_count > 1 => {
                             values.push(item);
                             Value::Bulk(values)
                         }
