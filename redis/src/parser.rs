@@ -109,7 +109,7 @@ where
                         } else {
                             take(*size as usize)
                                 .map(|bs: &[u8]| Value::Data(bs.to_vec()))
-                                .skip(crlf())
+                                .skip(combine::optional(crlf()))
                                 .right()
                         }
                     })
