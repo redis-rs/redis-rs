@@ -137,8 +137,66 @@ pub enum ErrorKind {
     Serialize,
 }
 
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerErrorKind {
+    ResponseError,
+    ExecAbortError,
+    BusyLoadingError,
+    NoScriptError,
+    Moved,
+    Ask,
+    TryAgain,
+    ClusterDown,
+    CrossSlot,
+    MasterDown,
+    ReadOnly,
+    NotBusy,
+}
+
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerError {
+    ExtensionError {
+        code: String,
+        detail: Option<String>,
+    },
+    KnownError {
+        kind: ServerErrorKind,
+        detail: Option<String>,
+    },
+}
+
+impl From<ServerError> for RedisError {
+    fn from(value: ServerError) -> Self {
+        // TODO - Consider changing RedisError to explicitly represent whether an error came from the server or not. Today it is only implied.
+        match value {
+            ServerError::ExtensionError { code, detail } => make_extension_error(code, detail),
+            ServerError::KnownError { kind, detail } => {
+                let desc = "An error was signalled by the server";
+                let kind = match kind {
+                    ServerErrorKind::ResponseError => ErrorKind::ResponseError,
+                    ServerErrorKind::ExecAbortError => ErrorKind::ExecAbortError,
+                    ServerErrorKind::BusyLoadingError => ErrorKind::BusyLoadingError,
+                    ServerErrorKind::NoScriptError => ErrorKind::NoScriptError,
+                    ServerErrorKind::Moved => ErrorKind::Moved,
+                    ServerErrorKind::Ask => ErrorKind::Ask,
+                    ServerErrorKind::TryAgain => ErrorKind::TryAgain,
+                    ServerErrorKind::ClusterDown => ErrorKind::ClusterDown,
+                    ServerErrorKind::CrossSlot => ErrorKind::CrossSlot,
+                    ServerErrorKind::MasterDown => ErrorKind::MasterDown,
+                    ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
+                    ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+                };
+                match detail {
+                    Some(detail) => RedisError::from((kind, desc, detail)),
+                    None => RedisError::from((kind, desc)),
+                }
+            }
+        }
+    }
+}
+
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Debug)]
 pub(crate) enum InternalValue {
     /// A nil response from the server.
     Nil,
@@ -156,7 +214,7 @@ pub(crate) enum InternalValue {
     Status(String),
     /// A status response which represents the string "OK".
     Okay,
-    ServerError(RedisError),
+    ServerError(ServerError),
 }
 
 impl InternalValue {
@@ -172,7 +230,7 @@ impl InternalValue {
             )),
             InternalValue::Status(val) => Ok(Value::Status(val)),
             InternalValue::Okay => Ok(Value::Okay),
-            InternalValue::ServerError(err) => Err(err),
+            InternalValue::ServerError(err) => Err(err.into()),
         }
     }
 }
@@ -369,8 +427,6 @@ impl PartialEq for RedisError {
         }
     }
 }
-
-impl Eq for RedisError {}
 
 impl From<io::Error> for RedisError {
     fn from(err: io::Error) -> RedisError {
@@ -789,12 +845,12 @@ impl RedisError {
     }
 }
 
-pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
+pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
-            code.to_string(),
+            code,
             match detail {
-                Some(x) => x.to_string(),
+                Some(x) => x,
                 None => "Unknown extension error encountered".to_string(),
             },
         ),

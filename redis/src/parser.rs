@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::types::{
-    make_extension_error, ErrorKind, InternalValue, RedisError, RedisResult, Value,
+    ErrorKind, InternalValue, RedisError, RedisResult, ServerError, ServerErrorKind, Value,
 };
 
 use combine::{
@@ -97,27 +97,29 @@ where
 
                 let error = || {
                     line().map(|line: &str| {
-                        let desc = "An error was signalled by the server";
                         let mut pieces = line.splitn(2, ' ');
                         let kind = match pieces.next().unwrap() {
-                            "ERR" => ErrorKind::ResponseError,
-                            "EXECABORT" => ErrorKind::ExecAbortError,
-                            "LOADING" => ErrorKind::BusyLoadingError,
-                            "NOSCRIPT" => ErrorKind::NoScriptError,
-                            "MOVED" => ErrorKind::Moved,
-                            "ASK" => ErrorKind::Ask,
-                            "TRYAGAIN" => ErrorKind::TryAgain,
-                            "CLUSTERDOWN" => ErrorKind::ClusterDown,
-                            "CROSSSLOT" => ErrorKind::CrossSlot,
-                            "MASTERDOWN" => ErrorKind::MasterDown,
-                            "READONLY" => ErrorKind::ReadOnly,
-                            "NOTBUSY" => ErrorKind::NotBusy,
-                            code => return make_extension_error(code, pieces.next()),
+                            "ERR" => ServerErrorKind::ResponseError,
+                            "EXECABORT" => ServerErrorKind::ExecAbortError,
+                            "LOADING" => ServerErrorKind::BusyLoadingError,
+                            "NOSCRIPT" => ServerErrorKind::NoScriptError,
+                            "MOVED" => ServerErrorKind::Moved,
+                            "ASK" => ServerErrorKind::Ask,
+                            "TRYAGAIN" => ServerErrorKind::TryAgain,
+                            "CLUSTERDOWN" => ServerErrorKind::ClusterDown,
+                            "CROSSSLOT" => ServerErrorKind::CrossSlot,
+                            "MASTERDOWN" => ServerErrorKind::MasterDown,
+                            "READONLY" => ServerErrorKind::ReadOnly,
+                            "NOTBUSY" => ServerErrorKind::NotBusy,
+                            code => {
+                                return ServerError::ExtensionError {
+                                    code: code.to_string(),
+                                    detail: pieces.next().map(|str| str.to_string()),
+                                }
+                            }
                         };
-                        match pieces.next() {
-                            Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-                            None => RedisError::from((kind, desc)),
-                        }
+                        let detail = pieces.next().map(|str| str.to_string());
+                        ServerError::KnownError { kind, detail }
                     })
                 };
 
