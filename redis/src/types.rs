@@ -11,7 +11,6 @@ use std::string::FromUtf8Error;
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use num_bigint::BigInt;
-use ordered_float::OrderedFloat;
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -174,7 +173,7 @@ pub enum Value {
     /// Unordered set value from the server.
     Set(Vec<Value>),
     /// A floating number response from the server.
-    Double(OrderedFloat<f64>),
+    Double(f64),
     /// A boolean response from the server.
     Boolean(bool),
     /// First String is format and other is the string
@@ -1592,7 +1591,7 @@ macro_rules! from_redis_value_for_num_internal {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
-            Value::Double(val) => Ok(val.into_inner() as $t),
+            Value::Double(val) => Ok(val as $t),
             _ => invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};

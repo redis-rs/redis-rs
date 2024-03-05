@@ -97,7 +97,6 @@ num-bigint = "0.4.4"
 tracing = "0.1"
 futures-time = { version = "3.0.0", optional = true }
 arcstr = "1.1.5"
-ordered-float = "4.1.1"
 
 # Optional uuid support
 uuid = { version = "1.6.1", optional = true }

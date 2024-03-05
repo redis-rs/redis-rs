@@ -1,6 +1,5 @@
 use std::{io, pin::Pin};
 
-use ordered_float::OrderedFloat;
 use redis::Value;
 use {
     futures::{
@@ -70,11 +69,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::SimpleString(ref status) => {
                 Box::new(status.shrink().map(Value::SimpleString).map(ArbitraryValue))
             }
-            Value::Double(i) => Box::new(
-                i.shrink()
-                    .map(|f| Value::Double(OrderedFloat(f)))
-                    .map(ArbitraryValue),
-            ),
+            Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
             Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
             Value::BigNumber(ref i) => {
                 Box::new(vec![ArbitraryValue(Value::BigNumber(i.clone()))].into_iter())

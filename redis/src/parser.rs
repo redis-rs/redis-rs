@@ -315,7 +315,7 @@ where
                     b'~' => set(),
                     b'-' => error().map(Err),
                     b'_' => null(),
-                    b',' => double().map(|i| Ok(Value::Double(i.into()))),
+                    b',' => double().map(|i| Ok(Value::Double(i))),
                     b'#' => boolean().map(|b| Ok(Value::Boolean(b))),
                     b'!' => blob_error().map(Err),
                     b'=' => verbatim(),
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn decode_resp3_double() {
         let val = parse_redis_value(b",1.23\r\n").unwrap();
-        assert_eq!(val, Value::Double(1.23.into()));
+        assert_eq!(val, Value::Double(1.23));
         let val = parse_redis_value(b",nan\r\n").unwrap();
         if let Value::Double(val) = val {
             assert!(val.is_sign_positive());
@@ -533,20 +533,20 @@ mod tests {
         }
         //Allow doubles in scientific E notation
         let val = parse_redis_value(b",2.67923e+8\r\n").unwrap();
-        assert_eq!(val, Value::Double(267923000.0.into()));
+        assert_eq!(val, Value::Double(267923000.0));
         let val = parse_redis_value(b",2.67923E+8\r\n").unwrap();
-        assert_eq!(val, Value::Double(267923000.0.into()));
+        assert_eq!(val, Value::Double(267923000.0));
         let val = parse_redis_value(b",-2.67923E+8\r\n").unwrap();
-        assert_eq!(val, Value::Double((-267923000.0).into()));
+        assert_eq!(val, Value::Double(-267923000.0));
         let val = parse_redis_value(b",2.1E-2\r\n").unwrap();
-        assert_eq!(val, Value::Double(0.021.into()));
+        assert_eq!(val, Value::Double(0.021));
 
         let val = parse_redis_value(b",-inf\r\n").unwrap();
-        assert_eq!(val, Value::Double((-f64::INFINITY).into()));
+        assert_eq!(val, Value::Double(-f64::INFINITY));
         let val = parse_redis_value(b",-inf\r\n").unwrap();
-        assert_eq!(val, Value::Double(f64::NEG_INFINITY.into()));
+        assert_eq!(val, Value::Double(f64::NEG_INFINITY));
         let val = parse_redis_value(b",inf\r\n").unwrap();
-        assert_eq!(val, Value::Double(f64::INFINITY.into()));
+        assert_eq!(val, Value::Double(f64::INFINITY));
     }
 
     #[test]
