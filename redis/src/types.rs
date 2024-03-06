@@ -85,6 +85,8 @@ pub enum NumericBehavior {
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
+    /// The parser failed to parse the server response.
+    ParseError,
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
@@ -661,6 +663,7 @@ impl RedisError {
             ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
+            ErrorKind::ParseError => "parse error",
         }
     }
 
@@ -807,6 +810,7 @@ impl RedisError {
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
+            ErrorKind::ResponseError => RetryMethod::NoRetry,
             ErrorKind::ReadOnly => RetryMethod::NoRetry,
             ErrorKind::ExtensionError => RetryMethod::NoRetry,
             ErrorKind::ExecAbortError => RetryMethod::NoRetry,
@@ -820,9 +824,9 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
 
+            ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ResponseError => RetryMethod::Reconnect,
-            ErrorKind::ClusterConnectionNotFound => todo!(),
+            ErrorKind::ClusterConnectionNotFound => RetryMethod::Reconnect,
 
             ErrorKind::IoError => match &self.repr {
                 ErrorRepr::IoError(err) => match err.kind() {
