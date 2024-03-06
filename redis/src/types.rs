@@ -87,6 +87,8 @@ pub enum NumericBehavior {
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
+    /// The parser failed to parse the server response.
+    ParseError,
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
@@ -716,6 +718,7 @@ impl RedisError {
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ConnectionNotFound => "required connection not found",
+            ErrorKind::ParseError => "parse error",
         }
     }
 
@@ -864,6 +867,7 @@ impl RedisError {
 
             ErrorKind::BusyLoadingError => RetryMethod::WaitAndRetryOnPrimaryRedirectOnReplica,
 
+            ErrorKind::ResponseError => RetryMethod::NoRetry,
             ErrorKind::ReadOnly => RetryMethod::NoRetry,
             ErrorKind::ExtensionError => RetryMethod::NoRetry,
             ErrorKind::ExecAbortError => RetryMethod::NoRetry,
@@ -878,8 +882,8 @@ impl RedisError {
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
 
+            ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ResponseError => RetryMethod::Reconnect,
             ErrorKind::ConnectionNotFound => RetryMethod::Reconnect,
 
             ErrorKind::IoError => match &self.repr {
