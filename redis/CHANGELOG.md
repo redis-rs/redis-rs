@@ -1,3 +1,52 @@
+### 0.25.0 (2024-03-08)
+
+#### Features
+
+* **Breaking change**: Add connection timeout to the cluster client ([#834](https://github.com/redis-rs/redis-rs/pull/834))
+* **Breaking change**: Deprecate aio::Connection ([#889](https://github.com/redis-rs/redis-rs/pull/889))
+* Cluster: fix read from replica & missing slots ([#965](https://github.com/redis-rs/redis-rs/pull/965))
+* Async cluster connection: Improve handling of missing connections ([#968](https://github.com/redis-rs/redis-rs/pull/968))
+* Add support for parsing to/from any sized arrays ([#981](https://github.com/redis-rs/redis-rs/pull/981))
+* Upgrade to rustls 0.22 ([#1000](https://github.com/redis-rs/redis-rs/pull/1000) @djc)
+* add SMISMEMBER command ([#1002](https://github.com/redis-rs/redis-rs/pull/1002) @Zacaria)
+* Add support for some big number types ([#1014](https://github.com/redis-rs/redis-rs/pull/1014) @AkiraMiyakoda)
+* Add Support for UUIDs ([#1029](https://github.com/redis-rs/redis-rs/pull/1029) @Rabbitminers)
+* Add FromRedisValue::from_owned_redis_value to reduce copies while parsing response ([#1030](https://github.com/redis-rs/redis-rs/pull/1030) @Nathan-Fenner)
+* Save reconnected connections during retries ([#1033](https://github.com/redis-rs/redis-rs/pull/1033))
+* Avoid panic on connection failure ([#1035](https://github.com/redis-rs/redis-rs/pull/1035))
+* add disable client setinfo feature and its default mode is off ([#1036](https://github.com/redis-rs/redis-rs/pull/1036) @Ggiggle)
+* Reconnect on parsing errors ([#1051](https://github.com/redis-rs/redis-rs/pull/1051))
+* preallocate buffer for evalsha in Script ([#1044](https://github.com/redis-rs/redis-rs/pull/1044) @framlog)
+
+#### Changes
+
+* Align more commands routings ([#938](https://github.com/redis-rs/redis-rs/pull/938))
+* Fix HashMap conversion ([#977](https://github.com/redis-rs/redis-rs/pull/977) @mxbrt)
+* MultiplexedConnection: Remove unnecessary allocation in send ([#990](https://github.com/redis-rs/redis-rs/pull/990))
+* Tests: Reduce cluster setup flakiness ([#999](https://github.com/redis-rs/redis-rs/pull/999))
+* Remove the unwrap_or! macro ([#1010](https://github.com/redis-rs/redis-rs/pull/1010))
+* Remove allocation from command function ([#1008](https://github.com/redis-rs/redis-rs/pull/1008))
+* Catch panics from task::spawn in tests ([#1015](https://github.com/redis-rs/redis-rs/pull/1015))
+* Fix lint errors from new Rust version ([#1016](https://github.com/redis-rs/redis-rs/pull/1016))
+* Fix warnings that appear only with native-TLS ([#1018](https://github.com/redis-rs/redis-rs/pull/1018))
+* Hide the req_packed_commands from docs ([#1020](https://github.com/redis-rs/redis-rs/pull/1020))
+* Fix documentaion error ([#1022](https://github.com/redis-rs/redis-rs/pull/1022) @rcl-viveksharma)
+* Fixes minor grammar mistake in json.rs file ([#1026](https://github.com/redis-rs/redis-rs/pull/1026) @RScrusoe)
+* Enable ignored pipe test ([#1027](https://github.com/redis-rs/redis-rs/pull/1027))
+* Fix names of existing async cluster tests ([#1028](https://github.com/redis-rs/redis-rs/pull/1028))
+* Add lock file to keep MSRV constant ([#1039](https://github.com/redis-rs/redis-rs/pull/1039))
+* Fail CI if lock file isn't updated ([#1042](https://github.com/redis-rs/redis-rs/pull/1042))
+* impl Clone/Copy for SetOptions ([#1046](https://github.com/redis-rs/redis-rs/pull/1046) @ahmadbky)
+* docs: add "connection-manager" cfg attr ([#1048](https://github.com/redis-rs/redis-rs/pull/1048) @DCNick3)
+* Remove the usage of aio::Connection in tests ([#1049](https://github.com/redis-rs/redis-rs/pull/1049))
+* Fix new clippy lints ([#1052](https://github.com/redis-rs/redis-rs/pull/1052))
+* Handle server errors in array response ([#1056](https://github.com/redis-rs/redis-rs/pull/1056))
+* Appease Clippy ([#1061](https://github.com/redis-rs/redis-rs/pull/1061))
+* make Pipeline handle returned bulks correctly ([#1063](https://github.com/redis-rs/redis-rs/pull/1063) @framlog)
+* Update mio dependency due to vulnerability ([#1064](https://github.com/redis-rs/redis-rs/pull/1064))
+* Simplify Sink polling logic ([#1065](https://github.com/redis-rs/redis-rs/pull/1065))
+* Separate parsing errors from general response errors ([#1069](https://github.com/redis-rs/redis-rs/pull/1069))
+
 ### 0.24.0 (2023-12-05)
 
 #### Features
