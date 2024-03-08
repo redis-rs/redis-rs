@@ -87,6 +87,8 @@ pub enum NumericBehavior {
 pub enum ErrorKind {
     /// The server generated an invalid response.
     ResponseError,
+    /// The parser failed to parse the server response.
+    ParseError,
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
@@ -142,6 +144,164 @@ pub enum ErrorKind {
     /// Try disabling resp3 option
     RESP3NotSupported,
 }
+
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerErrorKind {
+    ResponseError,
+    ExecAbortError,
+    BusyLoadingError,
+    NoScriptError,
+    Moved,
+    Ask,
+    TryAgain,
+    ClusterDown,
+    CrossSlot,
+    MasterDown,
+    ReadOnly,
+    NotBusy,
+}
+
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerError {
+    ExtensionError {
+        code: String,
+        detail: Option<String>,
+    },
+    KnownError {
+        kind: ServerErrorKind,
+        detail: Option<String>,
+    },
+}
+
+impl From<ServerError> for RedisError {
+    fn from(value: ServerError) -> Self {
+        // TODO - Consider changing RedisError to explicitly represent whether an error came from the server or not. Today it is only implied.
+        match value {
+            ServerError::ExtensionError { code, detail } => make_extension_error(code, detail),
+            ServerError::KnownError { kind, detail } => {
+                let desc = "An error was signalled by the server";
+                let kind = match kind {
+                    ServerErrorKind::ResponseError => ErrorKind::ResponseError,
+                    ServerErrorKind::ExecAbortError => ErrorKind::ExecAbortError,
+                    ServerErrorKind::BusyLoadingError => ErrorKind::BusyLoadingError,
+                    ServerErrorKind::NoScriptError => ErrorKind::NoScriptError,
+                    ServerErrorKind::Moved => ErrorKind::Moved,
+                    ServerErrorKind::Ask => ErrorKind::Ask,
+                    ServerErrorKind::TryAgain => ErrorKind::TryAgain,
+                    ServerErrorKind::ClusterDown => ErrorKind::ClusterDown,
+                    ServerErrorKind::CrossSlot => ErrorKind::CrossSlot,
+                    ServerErrorKind::MasterDown => ErrorKind::MasterDown,
+                    ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
+                    ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+                };
+                match detail {
+                    Some(detail) => RedisError::from((kind, desc, detail)),
+                    None => RedisError::from((kind, desc)),
+                }
+            }
+        }
+    }
+}
+
+/// Internal low-level redis value enum.
+#[derive(PartialEq, Debug)]
+pub(crate) enum InternalValue {
+    /// A nil response from the server.
+    Nil,
+    /// An integer response.  Note that there are a few situations
+    /// in which redis actually returns a string for an integer which
+    /// is why this library generally treats integers and strings
+    /// the same for all numeric responses.
+    Int(i64),
+    /// An arbitrary binary data, usually represents a binary-safe string.
+    BulkString(Vec<u8>),
+    /// A response containing an array with more data. This is generally used by redis
+    /// to express nested structures.
+    Array(Vec<InternalValue>),
+    /// A simple string response, without line breaks and not binary safe.
+    SimpleString(String),
+    /// A status response which represents the string "OK".
+    Okay,
+    /// Unordered key,value list from the server. Use `as_map_iter` function.
+    Map(Vec<(InternalValue, InternalValue)>),
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
+    Attribute {
+        /// Data that attributes belong to.
+        data: Box<InternalValue>,
+        /// Key,Value list of attributes.
+        attributes: Vec<(InternalValue, InternalValue)>,
+    },
+    /// Unordered set value from the server.
+    Set(Vec<InternalValue>),
+    /// A floating number response from the server.
+    Double(f64),
+    /// A boolean response from the server.
+    Boolean(bool),
+    /// First String is format and other is the string
+    VerbatimString {
+        /// Text's format type
+        format: VerbatimFormat,
+        /// Remaining string check format before using!
+        text: String,
+    },
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(BigInt),
+    /// Push data from the server.
+    Push {
+        /// Push Kind
+        kind: PushKind,
+        /// Remaining data from push message
+        data: Vec<InternalValue>,
+    },
+    ServerError(ServerError),
+}
+
+impl InternalValue {
+    pub(crate) fn try_into(self) -> RedisResult<Value> {
+        match self {
+            InternalValue::Nil => Ok(Value::Nil),
+            InternalValue::Int(val) => Ok(Value::Int(val)),
+            InternalValue::BulkString(val) => Ok(Value::BulkString(val)),
+            InternalValue::Array(val) => Ok(Value::Array(Self::try_into_vec(val)?)),
+            InternalValue::SimpleString(val) => Ok(Value::SimpleString(val)),
+            InternalValue::Okay => Ok(Value::Okay),
+            InternalValue::Map(map) => Ok(Value::Map(Self::try_into_map(map)?)),
+            InternalValue::Attribute { data, attributes } => {
+                let data = Box::new((*data).try_into()?);
+                let attributes = Self::try_into_map(attributes)?;
+                Ok(Value::Attribute { data, attributes })
+            }
+            InternalValue::Set(set) => Ok(Value::Set(Self::try_into_vec(set)?)),
+            InternalValue::Double(double) => Ok(Value::Double(double)),
+            InternalValue::Boolean(boolean) => Ok(Value::Boolean(boolean)),
+            InternalValue::VerbatimString { format, text } => {
+                Ok(Value::VerbatimString { format, text })
+            }
+            InternalValue::BigNumber(number) => Ok(Value::BigNumber(number)),
+            InternalValue::Push { kind, data } => Ok(Value::Push {
+                kind,
+                data: Self::try_into_vec(data)?,
+            }),
+
+            InternalValue::ServerError(err) => Err(err.into()),
+        }
+    }
+
+    fn try_into_vec(vec: Vec<InternalValue>) -> RedisResult<Vec<Value>> {
+        vec.into_iter()
+            .map(InternalValue::try_into)
+            .collect::<RedisResult<Vec<_>>>()
+    }
+
+    fn try_into_map(map: Vec<(InternalValue, InternalValue)>) -> RedisResult<Vec<(Value, Value)>> {
+        let mut vec = Vec::with_capacity(map.len());
+        for (key, value) in map.into_iter() {
+            vec.push((key.try_into()?, value.try_into()?));
+        }
+        Ok(vec)
+    }
+}
+
 /// Internal low-level redis value enum.
 #[derive(PartialEq, Clone)]
 pub enum Value {
@@ -715,6 +875,7 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
+            ErrorKind::ParseError => "parse error",
         }
     }
 
@@ -861,6 +1022,7 @@ impl RedisError {
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
+            ErrorKind::ResponseError => RetryMethod::NoRetry,
             ErrorKind::ReadOnly => RetryMethod::NoRetry,
             ErrorKind::ExtensionError => RetryMethod::NoRetry,
             ErrorKind::ExecAbortError => RetryMethod::NoRetry,
@@ -875,9 +1037,9 @@ impl RedisError {
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
 
+            ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ResponseError => RetryMethod::Reconnect,
-            ErrorKind::ClusterConnectionNotFound => todo!(),
+            ErrorKind::ClusterConnectionNotFound => RetryMethod::Reconnect,
 
             ErrorKind::IoError => match &self.repr {
                 ErrorRepr::IoError(err) => match err.kind() {
@@ -900,12 +1062,12 @@ impl RedisError {
     }
 }
 
-pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
+pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
-            code.to_string(),
+            code,
             match detail {
-                Some(x) => x.to_string(),
+                Some(x) => x,
                 None => "Unknown extension error encountered".to_string(),
             },
         ),

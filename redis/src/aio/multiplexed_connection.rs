@@ -146,7 +146,7 @@ where
                 Ok(item) => {
                     if !skip_value {
                         entry.buffer = Some(match entry.buffer.take() {
-                            Some(Value::Array(mut values)) => {
+                            Some(Value::Array(mut values)) if entry.current_response_count > 1 => {
                                 values.push(item);
                                 Value::Array(values)
                             }
