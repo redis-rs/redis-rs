@@ -1,6 +1,6 @@
 [package]
 name = "redis-test"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Testing helpers for the `redis` crate"
 homepage = "https://github.com/redis-rs/redis-rs"
