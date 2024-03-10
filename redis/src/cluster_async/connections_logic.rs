@@ -83,19 +83,8 @@ where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
 {
     if let Some(node) = node {
-        if let Some(ref ip) = node.ip {
-            if has_dns_changed(addr, ip).await {
-                return connect_and_check(
-                    addr,
-                    params.clone(),
-                    None,
-                    RefreshConnectionType::AllConnections,
-                    None,
-                )
-                .await
-                .get_node();
-            }
-        };
+        // We won't check whether the DNS address of this node has changed and now points to a new IP.
+        // Instead, we depend on managed Redis services to close the connection for refresh if the node has changed.
         match check_node_connections(&node, params, conn_type, addr).await {
             None => Ok(node),
             Some(conn_type) => connect_and_check(addr, params.clone(), None, conn_type, Some(node))
