@@ -56,7 +56,7 @@ pub struct ConnectionManager {
     retry_strategy: ExponentialBackoff,
     number_of_retries: usize,
     response_timeout: std::time::Duration,
-    connection_timeout: futures_time::time::Duration,
+    connection_timeout: std::time::Duration,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -161,7 +161,7 @@ impl ConnectionManager {
             retry_strategy.clone(),
             number_of_retries,
             response_timeout,
-            connection_timeout.into(),
+            connection_timeout,
         )
         .await?;
 
@@ -175,7 +175,7 @@ impl ConnectionManager {
             number_of_retries,
             retry_strategy,
             response_timeout,
-            connection_timeout: connection_timeout.into(),
+            connection_timeout,
         })
     }
 
@@ -184,13 +184,13 @@ impl ConnectionManager {
         exponential_backoff: ExponentialBackoff,
         number_of_retries: usize,
         response_timeout: std::time::Duration,
-        connection_timeout: futures_time::time::Duration,
+        connection_timeout: std::time::Duration,
     ) -> RedisResult<MultiplexedConnection> {
         let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
         Retry::spawn(retry_strategy, || {
             client.get_multiplexed_async_connection_with_timeouts(
                 response_timeout,
-                connection_timeout.into(),
+                connection_timeout,
             )
         })
         .await

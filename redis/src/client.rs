@@ -5,8 +5,6 @@ use crate::{
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
-use futures_time::future::FutureExt;
-#[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
@@ -155,24 +153,33 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let connection_timeout: futures_time::time::Duration = connection_timeout.into();
-        match Runtime::locate() {
+        let result = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => {
-                self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
-                    response_timeout,
+            rt @ Runtime::Tokio => {
+                rt.timeout(
+                    connection_timeout,
+                    self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                        response_timeout,
+                    ),
                 )
-                .timeout(connection_timeout)
-                .await?
+                .await
             }
             #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => {
-                self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                    response_timeout,
+            rt @ Runtime::AsyncStd => {
+                rt.timeout(
+                    connection_timeout,
+                    self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                        response_timeout,
+                    ),
                 )
-                .timeout(connection_timeout)
-                .await?
+                .await
             }
+        };
+
+        match result {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(e)) => Err(e),
+            Err(elapsed) => Err(elapsed.into()),
         }
     }
 
@@ -187,10 +194,20 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let connection_timeout: futures_time::time::Duration = connection_timeout.into();
-        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(response_timeout)
-            .timeout(connection_timeout)
-            .await?
+        let result = Runtime::locate()
+            .timeout(
+                connection_timeout,
+                self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                    response_timeout,
+                ),
+            )
+            .await;
+
+        match result {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(e)) => Err(e),
+            Err(elapsed) => Err(elapsed.into()),
+        }
     }
 
     /// Returns an async multiplexed connection from the client.
@@ -220,12 +237,20 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let connection_timeout: futures_time::time::Duration = connection_timeout.into();
-        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-            response_timeout,
-        )
-        .timeout(connection_timeout)
-        .await?
+        let result = Runtime::locate()
+            .timeout(
+                connection_timeout,
+                self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                    response_timeout,
+                ),
+            )
+            .await;
+
+        match result {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(e)) => Err(e),
+            Err(elapsed) => Err(elapsed.into()),
+        }
     }
 
     /// Returns an async multiplexed connection from the client.
