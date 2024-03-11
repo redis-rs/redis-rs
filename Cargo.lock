@@ -1542,7 +1542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1_smol",
- "socket2 0.4.10",
+ "socket2 0.5.5",
  "tempfile",
  "tokio",
  "tokio-native-tls",
