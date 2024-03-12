@@ -217,7 +217,6 @@ fn test_cluster_resp3() {
     .unwrap();
 }
 
-#[ignore] // TODO Handle pipe where the keys do not all go to the same node
 #[test]
 fn test_async_cluster_basic_pipe() {
     let cluster = TestClusterContext::new(3, 0);
