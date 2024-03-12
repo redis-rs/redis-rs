@@ -74,6 +74,13 @@ pub enum SingleNodeRoutingInfo {
     Random,
     /// Route to the node that matches the [route]
     SpecificNode(Route),
+    /// Route to the node with the given address.
+    ByAddress {
+        /// DNS hostname of the node
+        host: String,
+        /// port of the node
+        port: u16,
+    },
 }
 
 impl From<Option<Route>> for SingleNodeRoutingInfo {

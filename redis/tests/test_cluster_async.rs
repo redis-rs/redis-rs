@@ -1,19 +1,23 @@
 #![cfg(feature = "cluster-async")]
 mod support;
-use std::sync::{
-    atomic::{self, AtomicBool, AtomicI32, AtomicU16, Ordering},
-    Arc,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{self, AtomicBool, AtomicI32, AtomicU16, Ordering},
+        Arc,
+    },
 };
 
 use futures::prelude::*;
 use once_cell::sync::Lazy;
+
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
     cluster_async::Connect,
     cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
-    ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict,
+    IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
 };
 
 use crate::support::*;
@@ -106,6 +110,46 @@ fn test_async_cluster_route_flush_to_specific_node() {
         assert_eq!(res, "bar".to_string());
         let res2: Option<String> = connection.get("bar").await.unwrap();
         assert_eq!(res2, None);
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_async_cluster_route_flush_to_node_by_address() {
+    let cluster = TestClusterContext::new(3, 0);
+
+    block_on_all(async move {
+        let mut connection = cluster.async_connection().await;
+        let mut cmd = redis::cmd("INFO");
+        // The other sections change with time.
+        // TODO - after we remove support of redis 6, we can add more than a single section - .arg("Persistence").arg("Memory").arg("Replication")
+        cmd.arg("Clients");
+        let value = connection
+            .route_command(
+                &cmd,
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .await
+            .unwrap();
+
+        let info_by_address = from_owned_redis_value::<HashMap<String, String>>(value).unwrap();
+        // find the info of the first returned node
+        let (address, info) = info_by_address.into_iter().next().unwrap();
+        let mut split_address = address.split(':');
+        let host = split_address.next().unwrap().to_string();
+        let port = split_address.next().unwrap().parse().unwrap();
+
+        let value = connection
+            .route_command(
+                &cmd,
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { host, port }),
+            )
+            .await
+            .unwrap();
+        let new_info = from_owned_redis_value::<String>(value).unwrap();
+
+        assert_eq!(new_info, info);
         Ok::<_, RedisError>(())
     })
     .unwrap();
@@ -1016,7 +1060,7 @@ fn test_async_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
 
 #[test]
 fn test_async_cluster_route_according_to_passed_argument() {
-    let name = "node";
+    let name = "test_async_cluster_route_according_to_passed_argument";
 
     let touched_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
     let cloned_ports = touched_ports.clone();
@@ -1060,6 +1104,20 @@ fn test_async_cluster_route_according_to_passed_argument() {
         let mut touched_ports = touched_ports.lock().unwrap();
         touched_ports.sort();
         assert_eq!(*touched_ports, vec![6379, 6380, 6381, 6382]);
+        touched_ports.clear();
+    }
+
+    let _ = runtime.block_on(connection.route_command(
+        &cmd,
+        RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: name.to_string(),
+            port: 6382,
+        }),
+    ));
+    {
+        let mut touched_ports = touched_ports.lock().unwrap();
+        touched_ports.sort();
+        assert_eq!(*touched_ports, vec![6382]);
         touched_ports.clear();
     }
 }
