@@ -809,17 +809,14 @@ where
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
-                // TODO - once RESP3 is merged, return a map value here.
+
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok(Value::Array(vec![
-                        Value::BulkString(addr.into_bytes()),
-                        result,
-                    ]))
+                    Ok((Value::BulkString(addr.into_bytes()), result))
                 }))
                 .await
-                .map(Value::Array)
+                .map(Value::Map)
             }
         }
     }
