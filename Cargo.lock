@@ -1542,7 +1542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1_smol",
- "socket2 0.4.10",
+ "socket2 0.5.5",
  "tempfile",
  "tokio",
  "tokio-native-tls",
@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "redis-test"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "futures",
