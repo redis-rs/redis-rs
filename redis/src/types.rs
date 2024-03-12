@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::default::Default;
 use std::error;
 use std::ffi::{CString, NulError};
 use std::fmt;
@@ -9,6 +10,7 @@ use std::string::FromUtf8Error;
 
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use num_bigint::BigInt;
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -137,6 +139,10 @@ pub enum ErrorKind {
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
     Serialize,
+
+    /// Redis Servers prior to v6.0.0 doesn't support RESP3.
+    /// Try disabling resp3 option
+    RESP3NotSupported,
 }
 
 #[derive(PartialEq, Debug)]
@@ -207,38 +213,97 @@ pub(crate) enum InternalValue {
     /// is why this library generally treats integers and strings
     /// the same for all numeric responses.
     Int(i64),
-    /// An arbitary binary data.
-    Data(Vec<u8>),
-    /// A bulk response of more data.  This is generally used by redis
+    /// An arbitrary binary data, usually represents a binary-safe string.
+    BulkString(Vec<u8>),
+    /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
-    Bulk(Vec<InternalValue>),
-    /// A status response.
-    Status(String),
+    Array(Vec<InternalValue>),
+    /// A simple string response, without line breaks and not binary safe.
+    SimpleString(String),
     /// A status response which represents the string "OK".
     Okay,
+    /// Unordered key,value list from the server. Use `as_map_iter` function.
+    Map(Vec<(InternalValue, InternalValue)>),
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
+    Attribute {
+        /// Data that attributes belong to.
+        data: Box<InternalValue>,
+        /// Key,Value list of attributes.
+        attributes: Vec<(InternalValue, InternalValue)>,
+    },
+    /// Unordered set value from the server.
+    Set(Vec<InternalValue>),
+    /// A floating number response from the server.
+    Double(f64),
+    /// A boolean response from the server.
+    Boolean(bool),
+    /// First String is format and other is the string
+    VerbatimString {
+        /// Text's format type
+        format: VerbatimFormat,
+        /// Remaining string check format before using!
+        text: String,
+    },
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(BigInt),
+    /// Push data from the server.
+    Push {
+        /// Push Kind
+        kind: PushKind,
+        /// Remaining data from push message
+        data: Vec<InternalValue>,
+    },
     ServerError(ServerError),
 }
 
 impl InternalValue {
-    pub(crate) fn into(self) -> RedisResult<Value> {
+    pub(crate) fn try_into(self) -> RedisResult<Value> {
         match self {
             InternalValue::Nil => Ok(Value::Nil),
             InternalValue::Int(val) => Ok(Value::Int(val)),
-            InternalValue::Data(val) => Ok(Value::Data(val)),
-            InternalValue::Bulk(val) => Ok(Value::Bulk(
-                val.into_iter()
-                    .map(InternalValue::into)
-                    .collect::<RedisResult<Vec<Value>>>()?,
-            )),
-            InternalValue::Status(val) => Ok(Value::Status(val)),
+            InternalValue::BulkString(val) => Ok(Value::BulkString(val)),
+            InternalValue::Array(val) => Ok(Value::Array(Self::try_into_vec(val)?)),
+            InternalValue::SimpleString(val) => Ok(Value::SimpleString(val)),
             InternalValue::Okay => Ok(Value::Okay),
+            InternalValue::Map(map) => Ok(Value::Map(Self::try_into_map(map)?)),
+            InternalValue::Attribute { data, attributes } => {
+                let data = Box::new((*data).try_into()?);
+                let attributes = Self::try_into_map(attributes)?;
+                Ok(Value::Attribute { data, attributes })
+            }
+            InternalValue::Set(set) => Ok(Value::Set(Self::try_into_vec(set)?)),
+            InternalValue::Double(double) => Ok(Value::Double(double)),
+            InternalValue::Boolean(boolean) => Ok(Value::Boolean(boolean)),
+            InternalValue::VerbatimString { format, text } => {
+                Ok(Value::VerbatimString { format, text })
+            }
+            InternalValue::BigNumber(number) => Ok(Value::BigNumber(number)),
+            InternalValue::Push { kind, data } => Ok(Value::Push {
+                kind,
+                data: Self::try_into_vec(data)?,
+            }),
+
             InternalValue::ServerError(err) => Err(err.into()),
         }
+    }
+
+    fn try_into_vec(vec: Vec<InternalValue>) -> RedisResult<Vec<Value>> {
+        vec.into_iter()
+            .map(InternalValue::try_into)
+            .collect::<RedisResult<Vec<_>>>()
+    }
+
+    fn try_into_map(map: Vec<(InternalValue, InternalValue)>) -> RedisResult<Vec<(Value, Value)>> {
+        let mut vec = Vec::with_capacity(map.len());
+        for (key, value) in map.into_iter() {
+            vec.push((key.try_into()?, value.try_into()?));
+        }
+        Ok(vec)
     }
 }
 
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum Value {
     /// A nil response from the server.
     Nil,
@@ -247,44 +312,181 @@ pub enum Value {
     /// is why this library generally treats integers and strings
     /// the same for all numeric responses.
     Int(i64),
-    /// An arbitary binary data.
-    Data(Vec<u8>),
-    /// A bulk response of more data.  This is generally used by redis
+    /// An arbitrary binary data, usually represents a binary-safe string.
+    BulkString(Vec<u8>),
+    /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
-    Bulk(Vec<Value>),
-    /// A status response.
-    Status(String),
+    Array(Vec<Value>),
+    /// A simple string response, without line breaks and not binary safe.
+    SimpleString(String),
     /// A status response which represents the string "OK".
     Okay,
+    /// Unordered key,value list from the server. Use `as_map_iter` function.
+    Map(Vec<(Value, Value)>),
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
+    Attribute {
+        /// Data that attributes belong to.
+        data: Box<Value>,
+        /// Key,Value list of attributes.
+        attributes: Vec<(Value, Value)>,
+    },
+    /// Unordered set value from the server.
+    Set(Vec<Value>),
+    /// A floating number response from the server.
+    Double(f64),
+    /// A boolean response from the server.
+    Boolean(bool),
+    /// First String is format and other is the string
+    VerbatimString {
+        /// Text's format type
+        format: VerbatimFormat,
+        /// Remaining string check format before using!
+        text: String,
+    },
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(BigInt),
+    /// Push data from the server.
+    Push {
+        /// Push Kind
+        kind: PushKind,
+        /// Remaining data from push message
+        data: Vec<Value>,
+    },
 }
 
-pub struct MapIter<'a>(std::slice::Iter<'a, Value>);
+/// `VerbatimString`'s format types defined by spec
+#[derive(PartialEq, Clone, Debug)]
+pub enum VerbatimFormat {
+    /// Unknown type to catch future formats.
+    Unknown(String),
+    /// `mkd` format
+    Markdown,
+    /// `txt` format
+    Text,
+}
+
+/// `Push` type's currently known kinds.
+#[derive(PartialEq, Clone, Debug)]
+pub enum PushKind {
+    /// `Disconnection` is sent from the **library** when connection is closed.
+    Disconnection,
+    /// Other kind to catch future kinds.
+    Other(String),
+    /// `invalidate` is received when a key is changed/deleted.
+    Invalidate,
+    /// `message` is received when pubsub message published by another client.
+    Message,
+    /// `pmessage` is received when pubsub message published by another client and client subscribed to topic via pattern.
+    PMessage,
+    /// `smessage` is received when pubsub message published by another client and client subscribed to it with sharding.
+    SMessage,
+    /// `unsubscribe` is received when client unsubscribed from a channel.
+    Unsubscribe,
+    /// `punsubscribe` is received when client unsubscribed from a pattern.
+    PUnsubscribe,
+    /// `sunsubscribe` is received when client unsubscribed from a shard channel.
+    SUnsubscribe,
+    /// `subscribe` is received when client subscribed to a channel.
+    Subscribe,
+    /// `psubscribe` is received when client subscribed to a pattern.
+    PSubscribe,
+    /// `ssubscribe` is received when client subscribed to a shard channel.
+    SSubscribe,
+}
+
+impl PushKind {
+    #[cfg(feature = "aio")]
+    pub(crate) fn has_reply(&self) -> bool {
+        matches!(
+            self,
+            &PushKind::Unsubscribe
+                | &PushKind::PUnsubscribe
+                | &PushKind::SUnsubscribe
+                | &PushKind::Subscribe
+                | &PushKind::PSubscribe
+                | &PushKind::SSubscribe
+        )
+    }
+}
+
+impl fmt::Display for VerbatimFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VerbatimFormat::Markdown => write!(f, "mkd"),
+            VerbatimFormat::Unknown(val) => write!(f, "{val}"),
+            VerbatimFormat::Text => write!(f, "txt"),
+        }
+    }
+}
+
+impl fmt::Display for PushKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PushKind::Other(kind) => write!(f, "{}", kind),
+            PushKind::Invalidate => write!(f, "invalidate"),
+            PushKind::Message => write!(f, "message"),
+            PushKind::PMessage => write!(f, "pmessage"),
+            PushKind::SMessage => write!(f, "smessage"),
+            PushKind::Unsubscribe => write!(f, "unsubscribe"),
+            PushKind::PUnsubscribe => write!(f, "punsubscribe"),
+            PushKind::SUnsubscribe => write!(f, "sunsubscribe"),
+            PushKind::Subscribe => write!(f, "subscribe"),
+            PushKind::PSubscribe => write!(f, "psubscribe"),
+            PushKind::SSubscribe => write!(f, "ssubscribe"),
+            PushKind::Disconnection => write!(f, "disconnection"),
+        }
+    }
+}
+
+pub enum MapIter<'a> {
+    Array(std::slice::Iter<'a, Value>),
+    Map(std::slice::Iter<'a, (Value, Value)>),
+}
 
 impl<'a> Iterator for MapIter<'a> {
     type Item = (&'a Value, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some((self.0.next()?, self.0.next()?))
+        match self {
+            MapIter::Array(iter) => Some((iter.next()?, iter.next()?)),
+            MapIter::Map(iter) => {
+                let (k, v) = iter.next()?;
+                Some((k, v))
+            }
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (low, high) = self.0.size_hint();
-        (low / 2, high.map(|h| h / 2))
+        match self {
+            MapIter::Array(iter) => iter.size_hint(),
+            MapIter::Map(iter) => iter.size_hint(),
+        }
     }
 }
 
-pub struct OwnedMapIter(std::vec::IntoIter<Value>);
+pub enum OwnedMapIter {
+    Array(std::vec::IntoIter<Value>),
+    Map(std::vec::IntoIter<(Value, Value)>),
+}
 
 impl Iterator for OwnedMapIter {
     type Item = (Value, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some((self.0.next()?, self.0.next()?))
+        match self {
+            OwnedMapIter::Array(iter) => Some((iter.next()?, iter.next()?)),
+            OwnedMapIter::Map(iter) => iter.next(),
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (low, high) = self.0.size_hint();
-        (low / 2, high.map(|h| h / 2))
+        match self {
+            OwnedMapIter::Array(iter) => {
+                let (low, high) = iter.size_hint();
+                (low / 2, high.map(|h| h / 2))
+            }
+            OwnedMapIter::Map(iter) => iter.size_hint(),
+        }
     }
 }
 
@@ -297,16 +499,16 @@ impl Iterator for OwnedMapIter {
 /// types.
 impl Value {
     /// Checks if the return value looks like it fulfils the cursor
-    /// protocol.  That means the result is a bulk item of length
-    /// two with the first one being a cursor and the second a
-    /// bulk response.
+    /// protocol.  That means the result is an array item of length
+    /// two with the first one being a cursor and the second an
+    /// array response.
     pub fn looks_like_cursor(&self) -> bool {
         match *self {
-            Value::Bulk(ref items) => {
+            Value::Array(ref items) => {
                 if items.len() != 2 {
                     return false;
                 }
-                matches!(items[0], Value::Data(_)) && matches!(items[1], Value::Bulk(_))
+                matches!(items[0], Value::BulkString(_)) && matches!(items[1], Value::Array(_))
             }
             _ => false,
         }
@@ -315,7 +517,8 @@ impl Value {
     /// Returns an `&[Value]` if `self` is compatible with a sequence type
     pub fn as_sequence(&self) -> Option<&[Value]> {
         match self {
-            Value::Bulk(items) => Some(&items[..]),
+            Value::Array(items) => Some(&items[..]),
+            Value::Set(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
             _ => None,
         }
@@ -325,7 +528,8 @@ impl Value {
     /// otherwise returns `Err(self)`.
     pub fn into_sequence(self) -> Result<Vec<Value>, Value> {
         match self {
-            Value::Bulk(items) => Ok(items),
+            Value::Array(items) => Ok(items),
+            Value::Set(items) => Ok(items),
             Value::Nil => Ok(vec![]),
             _ => Err(self),
         }
@@ -334,13 +538,14 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Bulk(items) => {
+            Value::Array(items) => {
                 if items.len() % 2 == 0 {
-                    Some(MapIter(items.iter()))
+                    Some(MapIter::Array(items.iter()))
                 } else {
                     None
                 }
             }
+            Value::Map(items) => Some(MapIter::Map(items.iter())),
             _ => None,
         }
     }
@@ -349,13 +554,14 @@ impl Value {
     /// If not, returns `Err(self)`.
     pub fn into_map_iter(self) -> Result<OwnedMapIter, Value> {
         match self {
-            Value::Bulk(items) => {
+            Value::Array(items) => {
                 if items.len() % 2 == 0 {
-                    Ok(OwnedMapIter(items.into_iter()))
+                    Ok(OwnedMapIter::Array(items.into_iter()))
                 } else {
-                    Err(Value::Bulk(items))
+                    Err(Value::Array(items))
                 }
             }
+            Value::Map(items) => Ok(OwnedMapIter::Map(items.into_iter())),
             _ => Err(self),
         }
     }
@@ -366,24 +572,29 @@ impl fmt::Debug for Value {
         match *self {
             Value::Nil => write!(fmt, "nil"),
             Value::Int(val) => write!(fmt, "int({val:?})"),
-            Value::Data(ref val) => match from_utf8(val) {
-                Ok(x) => write!(fmt, "string-data('{x:?}')"),
+            Value::BulkString(ref val) => match from_utf8(val) {
+                Ok(x) => write!(fmt, "bulk-string('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
-            Value::Bulk(ref values) => {
-                write!(fmt, "bulk(")?;
-                let mut is_first = true;
-                for val in values.iter() {
-                    if !is_first {
-                        write!(fmt, ", ")?;
-                    }
-                    write!(fmt, "{val:?}")?;
-                    is_first = false;
-                }
-                write!(fmt, ")")
-            }
+            Value::Array(ref values) => write!(fmt, "array({values:?})"),
+            Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
             Value::Okay => write!(fmt, "ok"),
-            Value::Status(ref s) => write!(fmt, "status({s:?})"),
+            Value::SimpleString(ref s) => write!(fmt, "simple-string({s:?})"),
+            Value::Map(ref values) => write!(fmt, "map({values:?})"),
+            Value::Attribute {
+                ref data,
+                attributes: _,
+            } => write!(fmt, "attribute({data:?})"),
+            Value::Set(ref values) => write!(fmt, "set({values:?})"),
+            Value::Double(ref d) => write!(fmt, "double({d:?})"),
+            Value::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
+            Value::VerbatimString {
+                ref format,
+                ref text,
+            } => {
+                write!(fmt, "verbatim-string({:?},{:?})", format, text)
+            }
+            Value::BigNumber(ref m) => write!(fmt, "big-number({:?})", m),
         }
     }
 }
@@ -663,6 +874,7 @@ impl RedisError {
             ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
+            ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
         }
     }
@@ -823,6 +1035,7 @@ impl RedisError {
             ErrorKind::NotBusy => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
+            ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
@@ -906,7 +1119,7 @@ impl InfoDict {
                 (Some(k), Some(v)) => (k.to_string(), v.to_string()),
                 _ => continue,
             };
-            map.insert(k, Value::Status(v));
+            map.insert(k, Value::SimpleString(v));
         }
         InfoDict { map }
     }
@@ -1416,7 +1629,7 @@ fn vec_to_array<T, const N: usize>(items: Vec<T>, original_value: &Value) -> Red
 impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
     fn from_redis_value(value: &Value) -> RedisResult<[T; N]> {
         match *value {
-            Value::Data(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+            Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
                 Some(items) => vec_to_array(items, value),
                 None => {
                     let msg = format!(
@@ -1426,7 +1639,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                     invalid_type_error!(value, msg)
                 }
             },
-            Value::Bulk(ref items) => {
+            Value::Array(ref items) => {
                 let items = FromRedisValue::from_redis_values(items)?;
                 vec_to_array(items, value)
             }
@@ -1481,30 +1694,63 @@ pub trait FromRedisValue: Sized {
 
     /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        Self::from_owned_redis_value(Value::Data(_vec.into()))
+        Self::from_owned_redis_value(Value::BulkString(_vec.into()))
             .map(|rv| vec![rv])
             .ok()
     }
 
     /// Convert bytes to a single element vector.
     fn from_owned_byte_vec(_vec: Vec<u8>) -> RedisResult<Vec<Self>> {
-        Self::from_owned_redis_value(Value::Data(_vec)).map(|rv| vec![rv])
+        Self::from_owned_redis_value(Value::BulkString(_vec)).map(|rv| vec![rv])
+    }
+}
+
+fn get_inner_value(v: &Value) -> &Value {
+    if let Value::Attribute {
+        data,
+        attributes: _,
+    } = v
+    {
+        data.as_ref()
+    } else {
+        v
+    }
+}
+
+fn get_owned_inner_value(v: Value) -> Value {
+    if let Value::Attribute {
+        data,
+        attributes: _,
+    } = v
+    {
+        *data
+    } else {
+        v
     }
 }
 
 macro_rules! from_redis_value_for_num_internal {
     ($t:ty, $v:expr) => {{
-        let v = $v;
+        let v = if let Value::Attribute {
+            data,
+            attributes: _,
+        } = $v
+        {
+            data
+        } else {
+            $v
+        };
         match *v {
             Value::Int(val) => Ok(val as $t),
-            Value::Status(ref s) => match s.parse::<$t>() {
+            Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
-            Value::Data(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+            Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
+            Value::Double(val) => Ok(val as $t),
             _ => invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
@@ -1559,11 +1805,11 @@ macro_rules! from_redis_value_for_bignum_internal {
         match *v {
             Value::Int(val) => <$t>::try_from(val)
                 .map_err(|_| invalid_type_error_inner!(v, "Could not convert from integer.")),
-            Value::Status(ref s) => match s.parse::<$t>() {
+            Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
-            Value::Data(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+            Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
                 Err(_) => invalid_type_error!(v, "Could not convert from string."),
             },
@@ -1598,10 +1844,11 @@ from_redis_value_for_bignum!(num_bigint::BigUint);
 
 impl FromRedisValue for bool {
     fn from_redis_value(v: &Value) -> RedisResult<bool> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
-            Value::Status(ref s) => {
+            Value::SimpleString(ref s) => {
                 if &s[..] == "1" {
                     Ok(true)
                 } else if &s[..] == "0" {
@@ -1610,7 +1857,7 @@ impl FromRedisValue for bool {
                     invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
-            Value::Data(ref bytes) => {
+            Value::BulkString(ref bytes) => {
                 if bytes == b"1" {
                     Ok(true)
                 } else if bytes == b"0" {
@@ -1619,6 +1866,7 @@ impl FromRedisValue for bool {
                     invalid_type_error!(v, "Response type not bool compatible.");
                 }
             }
+            Value::Boolean(b) => Ok(b),
             Value::Okay => Ok(true),
             _ => invalid_type_error!(v, "Response type not bool compatible."),
         }
@@ -1627,18 +1875,20 @@ impl FromRedisValue for bool {
 
 impl FromRedisValue for CString {
     fn from_redis_value(v: &Value) -> RedisResult<CString> {
+        let v = get_inner_value(v);
         match *v {
-            Value::Data(ref bytes) => Ok(CString::new(bytes.as_slice())?),
+            Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
             Value::Okay => Ok(CString::new("OK")?),
-            Value::Status(ref val) => Ok(CString::new(val.as_bytes())?),
+            Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<CString> {
+        let v = get_owned_inner_value(v);
         match v {
-            Value::Data(bytes) => Ok(CString::new(bytes)?),
+            Value::BulkString(bytes) => Ok(CString::new(bytes)?),
             Value::Okay => Ok(CString::new("OK")?),
-            Value::Status(val) => Ok(CString::new(val)?),
+            Value::SimpleString(val) => Ok(CString::new(val)?),
             _ => invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
@@ -1646,18 +1896,30 @@ impl FromRedisValue for CString {
 
 impl FromRedisValue for String {
     fn from_redis_value(v: &Value) -> RedisResult<String> {
+        let v = get_inner_value(v);
         match *v {
-            Value::Data(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
+            Value::BulkString(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
             Value::Okay => Ok("OK".to_string()),
-            Value::Status(ref val) => Ok(val.to_string()),
+            Value::SimpleString(ref val) => Ok(val.to_string()),
+            Value::VerbatimString {
+                format: _,
+                ref text,
+            } => Ok(text.to_string()),
+            Value::Double(ref val) => Ok(val.to_string()),
+            Value::Int(val) => Ok(val.to_string()),
             _ => invalid_type_error!(v, "Response type not string compatible."),
         }
     }
+
     fn from_owned_redis_value(v: Value) -> RedisResult<String> {
+        let v = get_owned_inner_value(v);
         match v {
-            Value::Data(bytes) => Ok(String::from_utf8(bytes)?),
+            Value::BulkString(bytes) => Ok(String::from_utf8(bytes)?),
             Value::Okay => Ok("OK".to_string()),
-            Value::Status(val) => Ok(val),
+            Value::SimpleString(val) => Ok(val),
+            Value::VerbatimString { format: _, text } => Ok(text),
+            Value::Double(val) => Ok(val.to_string()),
+            Value::Int(val) => Ok(val.to_string()),
             _ => invalid_type_error!(v, "Response type not string compatible."),
         }
     }
@@ -1678,14 +1940,29 @@ macro_rules! from_vec_from_redis_value {
                 match v {
                     // All binary data except u8 will try to parse into a single element vector.
                     // u8 has its own implementation of from_byte_vec.
-                    Value::Data(bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                    Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
                         Some(x) => Ok($convert(x)),
                         None => invalid_type_error!(
                             v,
                             format!("Conversion to {} failed.", std::any::type_name::<$Type>())
                         ),
                     },
-                    Value::Bulk(items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Array(items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Set(ref items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Map(ref items) => {
+                        let mut n: Vec<T> = vec![];
+                        for item in items {
+                            match FromRedisValue::from_redis_value(&Value::Map(vec![item.clone()])) {
+                                Ok(v) => {
+                                    n.push(v);
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        Ok($convert(n))
+                    }
                     Value::Nil => Ok($convert(Vec::new())),
                     _ => invalid_type_error!(v, "Response type not vector compatible."),
                 }
@@ -1695,8 +1972,23 @@ macro_rules! from_vec_from_redis_value {
                     // Binary data is parsed into a single-element vector, except
                     // for the element type `u8`, which directly consumes the entire
                     // array of bytes.
-                    Value::Data(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
-                    Value::Bulk(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::BulkString(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
+                    Value::Array(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::Set(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::Map(items) => {
+                        let mut n: Vec<T> = vec![];
+                        for item in items {
+                            match FromRedisValue::from_owned_redis_value(Value::Map(vec![item])) {
+                                Ok(v) => {
+                                    n.push(v);
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        Ok($convert(n))
+                    }
                     Value::Nil => Ok($convert(Vec::new())),
                     _ => invalid_type_error!(v, "Response type not vector compatible."),
                 }
@@ -1713,6 +2005,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     for std::collections::HashMap<K, V, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(Default::default()),
             _ => v
@@ -1725,6 +2018,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
         }
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
+        let v = get_owned_inner_value(v);
         match v {
             Value::Nil => Ok(Default::default()),
             _ => v
@@ -1739,6 +2033,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
 #[cfg(feature = "ahash")]
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash::AHashMap<K, V> {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V>> {
+        let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
             _ => v
@@ -1751,6 +2046,7 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash:
         }
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashMap<K, V>> {
+        let v = get_owned_inner_value(v);
         match v {
             Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
             _ => v
@@ -1767,12 +2063,14 @@ where
     K: Ord,
 {
     fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
+        let v = get_inner_value(v);
         v.as_map_iter()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
             .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
             .collect()
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<BTreeMap<K, V>> {
+        let v = get_owned_inner_value(v);
         v.into_map_iter()
             .map_err(|v| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
             .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
@@ -1784,12 +2082,14 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
     for std::collections::HashSet<T, S>
 {
     fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashSet<T, S>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
         items.iter().map(|item| from_redis_value(item)).collect()
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashSet<T, S>> {
+        let v = get_owned_inner_value(v);
         let items = v
             .into_sequence()
             .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
@@ -1803,12 +2103,15 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
 #[cfg(feature = "ahash")]
 impl<T: FromRedisValue + Eq + Hash> FromRedisValue for ahash::AHashSet<T> {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
         items.iter().map(|item| from_redis_value(item)).collect()
     }
+
     fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashSet<T>> {
+        let v = get_owned_inner_value(v);
         let items = v
             .into_sequence()
             .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
@@ -1824,12 +2127,14 @@ where
     T: Ord,
 {
     fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
+        let v = get_inner_value(v);
         let items = v
             .as_sequence()
             .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
         items.iter().map(|item| from_redis_value(item)).collect()
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<BTreeSet<T>> {
+        let v = get_owned_inner_value(v);
         let items = v
             .into_sequence()
             .map_err(|v| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
@@ -1864,13 +2169,14 @@ macro_rules! from_redis_value_for_tuple {
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
+                let v = get_inner_value(v);
                 match *v {
-                    Value::Bulk(ref items) => {
+                    Value::Array(ref items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
                         if items.len() != n {
-                            invalid_type_error!(v, "Bulk response of wrong dimension")
+                            invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
                         // this is pretty ugly too.  The { i += 1; i - 1} is rust's
@@ -1879,7 +2185,29 @@ macro_rules! from_redis_value_for_tuple {
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
-                    _ => invalid_type_error!(v, "Not a bulk response")
+
+                    Value::Map(ref items) => {
+                        // hacky way to count the tuple size
+                        let mut n = 0;
+                        $(let $name = (); n += 1;)*
+                        if n != 2 {
+                            invalid_type_error!(v, "Map response of wrong dimension")
+                        }
+
+                        let mut flatten_items = vec![];
+                        for (k,v) in items {
+                            flatten_items.push(k);
+                            flatten_items.push(v);
+                        }
+
+                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                        // postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_redis_value(
+                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                    }
+
+                    _ => invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -1887,13 +2215,14 @@ macro_rules! from_redis_value_for_tuple {
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
             fn from_owned_redis_value(v: Value) -> RedisResult<($($name,)*)> {
+                let v = get_owned_inner_value(v);
                 match v {
-                    Value::Bulk(mut items) => {
+                    Value::Array(mut items) => {
                         // hacky way to count the tuple size
                         let mut n = 0;
                         $(let $name = (); n += 1;)*
                         if items.len() != n {
-                            invalid_type_error!(Value::Bulk(items), "Bulk response of wrong dimension")
+                            invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
                         // this is pretty ugly too.  The { i += 1; i - 1} is rust's
@@ -1903,7 +2232,29 @@ macro_rules! from_redis_value_for_tuple {
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
                         )?},)*))
                     }
-                    _ => invalid_type_error!(v, "Not a bulk response")
+
+                    Value::Map(items) => {
+                        // hacky way to count the tuple size
+                        let mut n = 0;
+                        $(let $name = (); n += 1;)*
+                        if n != 2 {
+                            invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
+                        }
+
+                        let mut flatten_items = vec![];
+                        for (k,v) in items {
+                            flatten_items.push(k);
+                            flatten_items.push(v);
+                        }
+
+                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                        // postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_redis_value(
+                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                    }
+
+                    _ => invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -1912,20 +2263,36 @@ macro_rules! from_redis_value_for_tuple {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
-                if items.len() % n != 0 {
-                    invalid_type_error!(items, "Bulk response of wrong dimension")
-                }
-
-                // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                // postfix increment :)
                 let mut rv = vec![];
                 if items.len() == 0 {
                     return Ok(rv)
                 }
-                for chunk in items.chunks_exact(n) {
+                //It's uglier then before!
+                for item in items {
+                    match item {
+                        Value::Array(ch) => {
+                           if  let [$($name),*] = &ch[..] {
+                            rv.push(($(from_redis_value(&$name)?),*),)
+                           } else {
+                                unreachable!()
+                            };
+                        },
+                        _ => {},
+
+                    }
+                }
+                if !rv.is_empty(){
+                    return Ok(rv);
+                }
+
+                if let  [$($name),*] = items{
+                    rv.push(($(from_redis_value($name)?),*),);
+                    return Ok(rv);
+                }
+                 for chunk in items.chunks_exact(n) {
                     match chunk {
                         [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
-                         _ => unreachable!(),
+                         _ => {},
                     }
                 }
                 Ok(rv)
@@ -1936,8 +2303,27 @@ macro_rules! from_redis_value_for_tuple {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
-                if items.len() % n != 0 {
-                    invalid_type_error!(items, "Bulk response of wrong dimension")
+
+                let mut rv = vec![];
+                if items.len() == 0 {
+                    return Ok(rv)
+                }
+                //It's uglier then before!
+                for item in items.iter() {
+                    match item {
+                        Value::Array(ch) => {
+                            // TODO - this copies when we could've used the owned value. need to find out how to do this.
+                        if  let [$($name),*] = &ch[..] {
+                            rv.push(($(from_redis_value($name)?),*),)
+                           } else {
+                                unreachable!()
+                            };
+                        },
+                        _ => {},
+                    }
+                }
+                if !rv.is_empty(){
+                    return Ok(rv);
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -1972,10 +2358,12 @@ from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12,
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
+        let v = get_inner_value(v);
         let s: String = from_redis_value(v)?;
         Ok(InfoDict::new(&s))
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<InfoDict> {
+        let v = get_owned_inner_value(v);
         let s: String = from_owned_redis_value(v)?;
         Ok(InfoDict::new(&s))
     }
@@ -1983,12 +2371,14 @@ impl FromRedisValue for InfoDict {
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
     fn from_redis_value(v: &Value) -> RedisResult<Option<T>> {
+        let v = get_inner_value(v);
         if *v == Value::Nil {
             return Ok(None);
         }
         Ok(Some(from_redis_value(v)?))
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<Option<T>> {
+        let v = get_owned_inner_value(v);
         if v == Value::Nil {
             return Ok(None);
         }
@@ -1999,15 +2389,17 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
 #[cfg(feature = "bytes")]
 impl FromRedisValue for bytes::Bytes {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        let v = get_inner_value(v);
         match v {
-            Value::Data(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
-            _ => invalid_type_error!(v, "Not binary data"),
+            Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            _ => invalid_type_error!(v, "Not a bulk string"),
         }
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        let v = get_owned_inner_value(v);
         match v {
-            Value::Data(bytes_vec) => Ok(bytes_vec.into()),
-            _ => invalid_type_error!(v, "Not binary data"),
+            Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
+            _ => invalid_type_error!(v, "Not a bulk string"),
         }
     }
 }
@@ -2016,7 +2408,7 @@ impl FromRedisValue for bytes::Bytes {
 impl FromRedisValue for uuid::Uuid {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         match *v {
-            Value::Data(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
+            Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
             _ => invalid_type_error!(v, "Response type not uuid compatible."),
         }
     }
@@ -2044,5 +2436,13 @@ pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> RedisResult<T> {
     FromRedisValue::from_owned_redis_value(v)
 }
 
-#[cfg(test)]
-mod tests {}
+/// Enum representing the communication protocol with the server. This enum represents the types
+/// of data that the server can send to the client, and the capabilities that the client can use.
+#[derive(Clone, Eq, PartialEq, Default, Debug, Copy)]
+pub enum ProtocolVersion {
+    /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP2.md>
+    #[default]
+    RESP2,
+    /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP3.md>
+    RESP3,
+}

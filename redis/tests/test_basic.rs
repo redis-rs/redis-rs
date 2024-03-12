@@ -1,15 +1,16 @@
 #![allow(clippy::let_unit_value)]
 
+use redis::{cmd, ProtocolVersion, PushInfo};
 use redis::{
     Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
-    PubSubCommands, RedisResult, SetExpiry, SetOptions, ToRedisArgs,
+    PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
 };
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::vec;
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
 
@@ -104,6 +105,43 @@ fn test_key_type() {
 }
 
 #[test]
+fn test_client_tracking_doesnt_block_execution() {
+    //It checks if the library distinguish a push-type message from the others and continues its normal operation.
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    let (k1, k2): (i32, i32) = redis::pipe()
+        .cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .ignore()
+        .cmd("GET")
+        .arg("key_1")
+        .ignore()
+        .cmd("SET")
+        .arg("key_1")
+        .arg(42)
+        .ignore()
+        .cmd("SET")
+        .arg("key_2")
+        .arg(43)
+        .ignore()
+        .cmd("GET")
+        .arg("key_1")
+        .cmd("GET")
+        .arg("key_2")
+        .cmd("SET")
+        .arg("key_1")
+        .arg(45)
+        .ignore()
+        .query(&mut con)
+        .unwrap();
+    assert_eq!(k1, 42);
+    assert_eq!(k2, 43);
+    let num: i32 = con.get("key_1").unwrap();
+    assert_eq!(num, 45);
+}
+
+#[test]
 fn test_incr() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -169,7 +207,7 @@ fn test_info() {
     let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
     assert_eq!(
         info.find(&"role"),
-        Some(&redis::Value::Status("master".to_string()))
+        Some(&redis::Value::SimpleString("master".to_string()))
     );
     assert_eq!(info.get("role"), Some("master".to_string()));
     assert_eq!(info.get("loading"), Some(false));
@@ -1107,6 +1145,15 @@ fn test_zunionstore_weights() {
             ("two".to_string(), "10".to_string())
         ])
     );
+    // test converting to double
+    assert_eq!(
+        con.zrange_withscores("out", 0, -1),
+        Ok(vec![
+            ("one".to_string(), 5.0),
+            ("three".to_string(), 9.0),
+            ("two".to_string(), 10.0)
+        ])
+    );
 
     // zunionstore_min_weights
     assert_eq!(
@@ -1173,6 +1220,8 @@ fn test_zrembylex() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn test_zrandmember() {
+    use redis::ProtocolVersion;
+
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
@@ -1204,11 +1253,19 @@ fn test_zrandmember() {
     let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
     assert_eq!(results.len(), 5);
 
-    let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
-    assert_eq!(results.len(), 10);
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
+        assert_eq!(results.len(), 10);
 
-    let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
-    assert_eq!(results.len(), 10);
+        let results: Vec<String> = con.zrandmember_withscores(setname, -5).unwrap();
+        assert_eq!(results.len(), 10);
+    }
+
+    let results: Vec<(String, f64)> = con.zrandmember_withscores(setname, 5).unwrap();
+    assert_eq!(results.len(), 5);
+
+    let results: Vec<(String, f64)> = con.zrandmember_withscores(setname, -5).unwrap();
+    assert_eq!(results.len(), 5);
 }
 
 #[test]
@@ -1422,4 +1479,77 @@ fn test_blocking_sorted_set_api() {
             (String::from("5a"), String::from("5"))
         );
     }
+}
+
+#[test]
+fn test_push_manager() {
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    let mut con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(tx.clone());
+    let _ = cmd("CLIENT")
+        .arg("TRACKING")
+        .arg("ON")
+        .query::<()>(&mut con)
+        .unwrap();
+    let pipe = build_simple_pipeline_for_invalidation();
+    for _ in 0..10 {
+        let _: RedisResult<()> = pipe.query(&mut con);
+        let _: i32 = con.get("key_1").unwrap();
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Invalidate,
+                vec![Value::Array(vec![Value::BulkString(
+                    "key_1".as_bytes().to_vec()
+                )])]
+            ),
+            (kind, data)
+        );
+    }
+    let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(new_tx.clone());
+    drop(rx);
+    let _: RedisResult<()> = pipe.query(&mut con);
+    let _: i32 = con.get("key_1").unwrap();
+    let PushInfo { kind, data } = new_rx.try_recv().unwrap();
+    assert_eq!(
+        (
+            PushKind::Invalidate,
+            vec![Value::Array(vec![Value::BulkString(
+                "key_1".as_bytes().to_vec()
+            )])]
+        ),
+        (kind, data)
+    );
+
+    {
+        drop(new_rx);
+        for _ in 0..10 {
+            let _: RedisResult<()> = pipe.query(&mut con);
+            let v: i32 = con.get("key_1").unwrap();
+            assert_eq!(v, 42);
+        }
+    }
+}
+
+#[test]
+fn test_push_manager_disconnection() {
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    let mut con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    con.get_push_manager().replace_sender(tx.clone());
+
+    let _: () = con.set("A", "1").unwrap();
+    assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+    drop(ctx);
+    let x: RedisResult<()> = con.set("A", "1");
+    assert!(x.is_err());
+    assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
 }

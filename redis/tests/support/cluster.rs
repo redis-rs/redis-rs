@@ -12,6 +12,7 @@ use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
+use redis::ProtocolVersion;
 use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
@@ -19,6 +20,7 @@ use crate::support::{build_keys_and_certs_for_tls, Module};
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
 
+use super::use_protocol;
 use super::RedisServer;
 use super::TlsFilePaths;
 
@@ -339,6 +341,7 @@ pub struct TestClusterContext {
     pub client: redis::cluster::ClusterClient,
     pub mtls_enabled: bool,
     pub nodes: Vec<ConnectionInfo>,
+    pub protocol: ProtocolVersion,
 }
 
 impl TestClusterContext {
@@ -365,7 +368,9 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
+            .use_protocol(use_protocol());
+        builder = builder.use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {
@@ -383,6 +388,7 @@ impl TestClusterContext {
             client,
             mtls_enabled,
             nodes: initial_nodes,
+            protocol: use_protocol(),
         }
     }
 
@@ -445,8 +451,9 @@ impl TestClusterContext {
                 .unwrap();
 
             // subsequent unauthenticated command should fail:
-            let mut con = client.get_connection().unwrap();
-            assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+            if let Ok(mut con) = client.get_connection() {
+                assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+            }
         }
     }
 

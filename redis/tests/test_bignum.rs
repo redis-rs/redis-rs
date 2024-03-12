@@ -16,7 +16,8 @@ where
         + std::fmt::Debug,
     <T as FromStr>::Err: std::fmt::Debug,
 {
-    let v: RedisResult<T> = FromRedisValue::from_redis_value(&Value::Data(Vec::from(content)));
+    let v: RedisResult<T> =
+        FromRedisValue::from_redis_value(&Value::BulkString(Vec::from(content)));
     assert_eq!(v, Ok(T::from_str(content).unwrap()));
 
     let arg = ToRedisArgs::to_redis_args(&v.unwrap());

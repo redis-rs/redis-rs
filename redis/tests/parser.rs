@@ -27,8 +27,10 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
         match self.0 {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
-            Value::Data(ref xs) => Box::new(xs.shrink().map(Value::Data).map(ArbitraryValue)),
-            Value::Bulk(ref xs) => {
+            Value::BulkString(ref xs) => {
+                Box::new(xs.shrink().map(Value::BulkString).map(ArbitraryValue))
+            }
+            Value::Array(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
@@ -36,13 +38,52 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
-                        .map(Value::Bulk)
+                        .map(Value::Array)
                         .map(ArbitraryValue),
                 )
             }
-            Value::Status(ref status) => {
-                Box::new(status.shrink().map(Value::Status).map(ArbitraryValue))
+            Value::Map(ref _xs) => Box::new(vec![ArbitraryValue(Value::Map(vec![]))].into_iter()),
+            Value::Attribute {
+                ref data,
+                ref attributes,
+            } => Box::new(
+                vec![ArbitraryValue(Value::Attribute {
+                    data: data.clone(),
+                    attributes: attributes.clone(),
+                })]
+                .into_iter(),
+            ),
+            Value::Push { ref kind, ref data } => {
+                let mut ys = data
+                    .iter()
+                    .map(|x| ArbitraryValue(x.clone()))
+                    .collect::<Vec<_>>();
+                ys.insert(0, ArbitraryValue(Value::SimpleString(kind.to_string())));
+                Box::new(
+                    ys.shrink()
+                        .map(|xs| xs.into_iter().map(|x| x.0).collect())
+                        .map(Value::Array)
+                        .map(ArbitraryValue),
+                )
             }
+            Value::SimpleString(ref status) => {
+                Box::new(status.shrink().map(Value::SimpleString).map(ArbitraryValue))
+            }
+            Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
+            Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
+            Value::BigNumber(ref i) => {
+                Box::new(vec![ArbitraryValue(Value::BigNumber(i.clone()))].into_iter())
+            }
+            Value::VerbatimString {
+                ref format,
+                ref text,
+            } => Box::new(
+                vec![ArbitraryValue(Value::VerbatimString {
+                    format: format.clone(),
+                    text: text.clone(),
+                })]
+                .into_iter(),
+            ),
         }
     }
 }
@@ -55,13 +96,13 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
         match u8::arbitrary(g) % 6 {
             0 => Value::Nil,
             1 => Value::Int(Arbitrary::arbitrary(g)),
-            2 => Value::Data(Arbitrary::arbitrary(g)),
+            2 => Value::BulkString(Arbitrary::arbitrary(g)),
             3 => {
                 let size = {
                     let s = g.size();
                     usize::arbitrary(g) % s
                 };
-                Value::Bulk(
+                Value::Array(
                     (0..size)
                         .map(|_| arbitrary_value(g, recursive_size / size))
                         .collect(),
@@ -73,18 +114,18 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
 
-                let mut status = String::with_capacity(size);
+                let mut string = String::with_capacity(size);
                 for _ in 0..size {
                     let c = char::arbitrary(g);
                     if c.is_ascii_alphabetic() {
-                        status.push(c);
+                        string.push(c);
                     }
                 }
 
-                if status == "OK" {
+                if string == "OK" {
                     Value::Okay
                 } else {
-                    Value::Status(status)
+                    Value::SimpleString(string)
                 }
             }
             5 => Value::Okay,

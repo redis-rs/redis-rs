@@ -254,12 +254,12 @@ fn bench_decode_simple(b: &mut Bencher, input: &[u8]) {
     b.iter(|| redis::parse_redis_value(input).unwrap());
 }
 fn bench_decode(c: &mut Criterion) {
-    let value = Value::Bulk(vec![
+    let value = Value::Array(vec![
         Value::Okay,
-        Value::Status("testing".to_string()),
-        Value::Bulk(vec![]),
+        Value::SimpleString("testing".to_string()),
+        Value::Array(vec![]),
         Value::Nil,
-        Value::Data(vec![b'a'; 10]),
+        Value::BulkString(vec![b'a'; 10]),
         Value::Int(7512182390),
     ]);
 

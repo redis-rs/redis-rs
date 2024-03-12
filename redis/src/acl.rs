@@ -159,11 +159,11 @@ impl FromRedisValue for AclInfo {
                 let flags = flags
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                        not_convertible_error!(flags, "Expect an array response of ACL flags")
                     })?
                     .iter()
                     .map(|flag| match flag {
-                        Value::Data(flag) => match flag.as_slice() {
+                        Value::BulkString(flag) => match flag.as_slice() {
                             b"on" => Ok(Rule::On),
                             b"off" => Ok(Rule::Off),
                             b"allkeys" => Ok(Rule::AllKeys),
@@ -181,14 +181,14 @@ impl FromRedisValue for AclInfo {
                 let passwords = passwords
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect a bulk response of ACL flags")
+                        not_convertible_error!(flags, "Expect an array response of ACL flags")
                     })?
                     .iter()
                     .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value(pass)?)))
                     .collect::<RedisResult<_>>()?;
 
                 let commands = match commands {
-                    Value::Data(cmd) => std::str::from_utf8(cmd)?,
+                    Value::BulkString(cmd) => std::str::from_utf8(cmd)?,
                     _ => {
                         return Err(not_convertible_error!(
                             commands,
@@ -281,18 +281,18 @@ mod tests {
 
     #[test]
     fn test_from_redis_value() {
-        let redis_value = Value::Bulk(vec![
-            Value::Data("flags".into()),
-            Value::Bulk(vec![
-                Value::Data("on".into()),
-                Value::Data("allchannels".into()),
+        let redis_value = Value::Array(vec![
+            Value::BulkString("flags".into()),
+            Value::Array(vec![
+                Value::BulkString("on".into()),
+                Value::BulkString("allchannels".into()),
             ]),
-            Value::Data("passwords".into()),
-            Value::Bulk(vec![]),
-            Value::Data("commands".into()),
-            Value::Data("-@all +get".into()),
-            Value::Data("keys".into()),
-            Value::Bulk(vec![Value::Data("pat:*".into())]),
+            Value::BulkString("passwords".into()),
+            Value::Array(vec![]),
+            Value::BulkString("commands".into()),
+            Value::BulkString("-@all +get".into()),
+            Value::BulkString("keys".into()),
+            Value::Array(vec![Value::BulkString("pat:*".into())]),
         ]);
         let acl_info = AclInfo::from_redis_value(&redis_value).expect("Parse successfully");
 

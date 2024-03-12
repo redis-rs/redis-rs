@@ -11,15 +11,18 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_owned_redis_value, from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult,
-    ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
+    Value,
 };
+use crate::{from_owned_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+use std::vec::IntoIter;
 
+use crate::commands::resp3_hello;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::{TlsConnector, TlsStream};
 
@@ -27,6 +30,9 @@ use native_tls::{TlsConnector, TlsStream};
 use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
+
+use crate::push_manager::PushManager;
+use crate::PushInfo;
 
 #[cfg(all(
     feature = "tls-rustls",
@@ -218,6 +224,8 @@ pub struct RedisConnectionInfo {
     pub username: Option<String>,
     /// Optionally a password that should be used for connection.
     pub password: Option<String>,
+    /// Version of the protocol to use.
+    pub protocol: ProtocolVersion,
 }
 
 impl FromStr for ConnectionInfo {
@@ -342,6 +350,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     } else {
         ConnectionAddr::Tcp(host, port)
     };
+    let query: HashMap<_, _> = url.query_pairs().collect();
     Ok(ConnectionInfo {
         addr,
         redis: RedisConnectionInfo {
@@ -372,6 +381,16 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 },
                 None => None,
             },
+            protocol: match query.get("resp3") {
+                Some(v) => {
+                    if v == "true" {
+                        ProtocolVersion::RESP3
+                    } else {
+                        ProtocolVersion::RESP2
+                    }
+                }
+                _ => ProtocolVersion::RESP2,
+            },
         },
     })
 }
@@ -393,6 +412,16 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
+            protocol: match query.get("resp3") {
+                Some(v) => {
+                    if v == "true" {
+                        ProtocolVersion::RESP3
+                    } else {
+                        ProtocolVersion::RESP2
+                    }
+                }
+                _ => ProtocolVersion::RESP2,
+            },
         },
     })
 }
@@ -510,6 +539,13 @@ pub struct Connection {
     /// This flag is checked when attempting to send a command, and if it's raised, we attempt to
     /// exit the pubsub state before executing the new request.
     pubsub: bool,
+
+    // Field indicating which protocol to use for server communications.
+    protocol: ProtocolVersion,
+
+    /// `PushManager` instance for the connection.
+    /// This is used to manage Push messages in RESP3 mode.
+    push_manager: PushManager,
 }
 
 /// Represents a pubsub connection.
@@ -958,12 +994,19 @@ fn setup_connection(
         parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
+        protocol: connection_info.protocol,
+        push_manager: PushManager::new(),
     };
 
-    if connection_info.password.is_some() {
+    if connection_info.protocol != ProtocolVersion::RESP2 {
+        let hello_cmd = resp3_hello(connection_info);
+        let val: RedisResult<Value> = hello_cmd.query(&mut rv);
+        if let Err(err) = val {
+            return Err(get_resp3_hello_command_error(err));
+        }
+    } else if connection_info.password.is_some() {
         connect_auth(&mut rv, connection_info)?;
     }
-
     if connection_info.db != 0 {
         match cmd("SELECT")
             .arg(connection_info.db)
@@ -1059,7 +1102,7 @@ impl Connection {
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
     pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         Ok(())
     }
 
@@ -1122,13 +1165,9 @@ impl Connection {
             let unsubscribe = cmd("UNSUBSCRIBE").get_packed_command();
             let punsubscribe = cmd("PUNSUBSCRIBE").get_packed_command();
 
-            // Grab a reference to the underlying connection so that we may send
-            // the commands without immediately blocking for a response.
-            let con = &mut self.con;
-
             // Execute commands
-            con.send_bytes(&unsubscribe)?;
-            con.send_bytes(&punsubscribe)?;
+            self.send_bytes(&unsubscribe)?;
+            self.send_bytes(&punsubscribe)?;
         }
 
         // Receive responses
@@ -1138,17 +1177,32 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        loop {
-            let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
-
-            match res.0.first() {
-                Some(&b'u') => received_unsub = true,
-                Some(&b'p') => received_punsub = true,
-                _ => (),
+        if self.protocol != ProtocolVersion::RESP2 {
+            while let Value::Push { kind, data } = from_owned_redis_value(self.recv_response()?)? {
+                if data.len() >= 2 {
+                    if let Value::Int(num) = data[1] {
+                        if resp3_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &kind,
+                            num as isize,
+                        ) {
+                            break;
+                        }
+                    }
+                }
             }
-
-            if received_unsub && received_punsub && res.2 == 0 {
-                break;
+        } else {
+            loop {
+                let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
+                if resp2_is_pub_sub_state_cleared(
+                    &mut received_unsub,
+                    &mut received_punsub,
+                    &res.0,
+                    res.2,
+                ) {
+                    break;
+                }
             }
         }
 
@@ -1161,21 +1215,29 @@ impl Connection {
     fn read_response(&mut self) -> RedisResult<Value> {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                self.parser.parse_value(reader)
+                let result = self.parser.parse_value(reader);
+                self.push_manager.try_send(&result);
+                result
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
-                self.parser.parse_value(sock)
+                let result = self.parser.parse_value(sock);
+                self.push_manager.try_send(&result);
+                result
             }
         };
         // shutdown connection on protocol error
@@ -1185,6 +1247,11 @@ impl Connection {
                 None => false,
             };
             if shutdown {
+                // Notify the PushManager that the connection was lost
+                self.push_manager.try_send_raw(&Value::Push {
+                    kind: PushKind::Disconnection,
+                    data: vec![],
+                });
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
@@ -1210,16 +1277,66 @@ impl Connection {
         }
         result
     }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+        let result = self.con.send_bytes(bytes);
+        if self.protocol != ProtocolVersion::RESP2 {
+            if let Err(e) = &result {
+                if e.is_connection_dropped() {
+                    // Notify the PushManager that the connection was lost
+                    self.push_manager.try_send_raw(&Value::Push {
+                        kind: PushKind::Disconnection,
+                        data: vec![],
+                    });
+                }
+            }
+        }
+        result
+    }
 }
 
 impl ConnectionLike for Connection {
+    /// Sends a [Cmd] into the TCP socket and reads a single response from it.
+    fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let pcmd = cmd.get_packed_command();
+        if self.pubsub {
+            self.exit_pubsub()?;
+        }
+
+        self.send_bytes(&pcmd)?;
+        if cmd.is_no_response() {
+            return Ok(Value::Nil);
+        }
+        loop {
+            match self.read_response()? {
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
+                val => return Ok(val),
+            }
+        }
+    }
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         if self.pubsub {
             self.exit_pubsub()?;
         }
 
-        self.con.send_bytes(cmd)?;
-        self.read_response()
+        self.send_bytes(cmd)?;
+        loop {
+            match self.read_response()? {
+                Value::Push {
+                    kind: _kind,
+                    data: _data,
+                } => continue,
+                val => return Ok(val),
+            }
+        }
     }
 
     fn req_packed_commands(
@@ -1231,10 +1348,12 @@ impl ConnectionLike for Connection {
         if self.pubsub {
             self.exit_pubsub()?;
         }
-        self.con.send_bytes(cmd)?;
+        self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
-        for idx in 0..(offset + count) {
+        let mut count = count;
+        let mut idx = 0;
+        while idx < (offset + count) {
             // When processing a transaction, some responses may be errors.
             // We need to keep processing the rest of the responses in that case,
             // so bailing early with `?` would not be correct.
@@ -1242,7 +1361,15 @@ impl ConnectionLike for Connection {
             let response = self.read_response();
             match response {
                 Ok(item) => {
-                    if idx >= offset {
+                    // RESP3 can insert push data between command replies
+                    if let Value::Push {
+                        kind: _kind,
+                        data: _data,
+                    } = item
+                    {
+                        // if that is the case we have to extend the loop and handle push data
+                        count += 1;
+                    } else if idx >= offset {
                         rv.push(item);
                     }
                 }
@@ -1252,6 +1379,7 @@ impl ConnectionLike for Connection {
                     }
                 }
             }
+            idx += 1;
         }
 
         first_err.map_or(Ok(rv), Err)
@@ -1261,12 +1389,12 @@ impl ConnectionLike for Connection {
         self.db
     }
 
-    fn is_open(&self) -> bool {
-        self.con.is_open()
-    }
-
     fn check_connection(&mut self) -> bool {
         cmd("PING").query::<String>(self).is_ok()
+    }
+
+    fn is_open(&self) -> bool {
+        self.con.is_open()
     }
 }
 
@@ -1338,8 +1466,11 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    fn cache_messages_until_received_response(&mut self, cmd: &Cmd) -> RedisResult<()> {
-        let mut response = self.con.req_packed_command(&cmd.get_packed_command())?;
+    fn cache_messages_until_received_response(&mut self, cmd: &mut Cmd) -> RedisResult<()> {
+        if self.con.protocol != ProtocolVersion::RESP2 {
+            cmd.set_no_response(true);
+        }
+        let mut response = cmd.query(self.con)?;
         loop {
             if let Some(msg) = Msg::from_value(&response) {
                 self.waiting_messages.push_back(msg);
@@ -1409,18 +1540,57 @@ impl<'a> Drop for PubSub<'a> {
 /// connection.  It only contains actual message data.
 impl Msg {
     /// Tries to convert provided [`Value`] into [`Msg`].
+    #[allow(clippy::unnecessary_to_owned)]
     pub fn from_value(value: &Value) -> Option<Self> {
-        let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
-        let mut iter = raw_msg.into_iter();
-        let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
         let mut pattern = None;
         let payload;
         let channel;
 
-        if msg_type == "message" {
+        if let Value::Push { kind, data } = value {
+            let mut iter: IntoIter<Value> = data.to_vec().into_iter();
+            if kind == &PushKind::Message || kind == &PushKind::SMessage {
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else if kind == &PushKind::PMessage {
+                pattern = Some(iter.next()?);
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else {
+                return None;
+            }
+        } else {
+            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
+            let mut iter = raw_msg.into_iter();
+            let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
+            if msg_type == "message" {
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else if msg_type == "pmessage" {
+                pattern = Some(iter.next()?);
+                channel = iter.next()?;
+                payload = iter.next()?;
+            } else {
+                return None;
+            }
+        };
+        Some(Msg {
+            payload,
+            channel,
+            pattern,
+        })
+    }
+
+    /// Tries to convert provided [`PushInfo`] into [`Msg`].
+    pub fn from_push_info(push_info: &PushInfo) -> Option<Self> {
+        let mut pattern = None;
+        let payload;
+        let channel;
+
+        let mut iter = push_info.data.iter().cloned();
+        if push_info.kind == PushKind::Message || push_info.kind == PushKind::SMessage {
             channel = iter.next()?;
             payload = iter.next()?;
-        } else if msg_type == "pmessage" {
+        } else if push_info.kind == PushKind::PMessage {
             pattern = Some(iter.next()?);
             channel = iter.next()?;
             payload = iter.next()?;
@@ -1446,7 +1616,7 @@ impl Msg {
     /// not happen) then the return value is `"?"`.
     pub fn get_channel_name(&self) -> &str {
         match self.channel {
-            Value::Data(ref bytes) => from_utf8(bytes).unwrap_or("?"),
+            Value::BulkString(ref bytes) => from_utf8(bytes).unwrap_or("?"),
             _ => "?",
         }
     }
@@ -1461,7 +1631,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes(&self) -> &[u8] {
         match self.payload {
-            Value::Data(ref bytes) => bytes,
+            Value::BulkString(ref bytes) => bytes,
             _ => b"",
         }
     }
@@ -1545,6 +1715,51 @@ pub fn transaction<
         }
     }
 }
+//TODO: for both clearing logic support sharded channels.
+
+/// Common logic for clearing subscriptions in RESP2 async/sync
+pub fn resp2_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    kind: &[u8],
+    num: isize,
+) -> bool {
+    match kind.first() {
+        Some(&b'u') => *received_unsub = true,
+        Some(&b'p') => *received_punsub = true,
+        _ => (),
+    };
+    *received_unsub && *received_punsub && num == 0
+}
+
+/// Common logic for clearing subscriptions in RESP3 async/sync
+pub fn resp3_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    kind: &PushKind,
+    num: isize,
+) -> bool {
+    match kind {
+        PushKind::Unsubscribe => *received_unsub = true,
+        PushKind::PUnsubscribe => *received_punsub = true,
+        _ => (),
+    };
+    *received_unsub && *received_punsub && num == 0
+}
+
+/// Common logic for checking real cause of hello3 command error
+pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
+    if let Some(detail) = err.detail() {
+        if detail.starts_with("unknown command `HELLO`") {
+            return (
+                ErrorKind::RESP3NotSupported,
+                "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+            )
+                .into();
+        }
+    }
+    err
+}
 
 #[cfg(test)]
 mod tests {
@@ -1595,6 +1810,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        ..Default::default()
                     },
                 },
             ),
@@ -1661,6 +1877,7 @@ mod tests {
                         db: 0,
                         username: None,
                         password: None,
+                        protocol: ProtocolVersion::RESP2,
                     },
                 },
             ),
@@ -1670,8 +1887,7 @@ mod tests {
                     addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 1,
-                        username: None,
-                        password: None,
+                        ..Default::default()
                     },
                 },
             ),
@@ -1686,6 +1902,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("#@<>$".to_string()),
+                        ..Default::default()
                     },
                 },
             ),
@@ -1700,6 +1917,7 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".to_string()),
                         password: Some("&?= *+".to_string()),
+                        ..Default::default()
                     },
                 },
             ),

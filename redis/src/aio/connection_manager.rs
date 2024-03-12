@@ -1,5 +1,6 @@
 use super::RedisFuture;
 use crate::cmd::Cmd;
+use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
@@ -57,6 +58,7 @@ pub struct ConnectionManager {
     number_of_retries: usize,
     response_timeout: std::time::Duration,
     connection_timeout: std::time::Duration,
+    push_manager: PushManager,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -153,10 +155,10 @@ impl ConnectionManager {
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
-
+        let push_manager = PushManager::default();
         let runtime = Runtime::locate();
         let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
-        let connection = Self::new_connection(
+        let mut connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
             number_of_retries,
@@ -166,6 +168,7 @@ impl ConnectionManager {
         .await?;
 
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
+        connection.set_push_manager(push_manager.clone()).await;
         Ok(Self {
             client,
             connection: Arc::new(ArcSwap::from_pointee(
@@ -176,6 +179,7 @@ impl ConnectionManager {
             retry_strategy,
             response_timeout,
             connection_timeout,
+            push_manager,
         })
     }
 
@@ -206,15 +210,18 @@ impl ConnectionManager {
         let number_of_retries = self.number_of_retries;
         let response_timeout = self.response_timeout;
         let connection_timeout = self.connection_timeout;
+        let pmc = self.push_manager.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            Ok(Self::new_connection(
+            let mut con = Self::new_connection(
                 client,
                 retry_strategy,
                 number_of_retries,
                 response_timeout,
                 connection_timeout,
             )
-            .await?)
+            .await?;
+            con.set_push_manager(pmc).await;
+            Ok(con)
         }
         .boxed()
         .shared();
@@ -268,6 +275,11 @@ impl ConnectionManager {
             .await;
         reconnect_if_dropped!(self, &result, guard);
         result
+    }
+
+    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
+    pub fn get_push_manager(&self) -> PushManager {
+        self.push_manager.clone()
     }
 }
 

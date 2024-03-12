@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.x.x ]
   pull_request:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.x.x ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         redis:
-          - 6.2.4
+          - 6.2.13
           - 7.2.0
         rust:
           - stable
@@ -73,7 +73,7 @@ jobs:
       run: make test
 
     - name: Checkout RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.4'
+      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.13'
       uses: actions/checkout@v4
       with:
         repository: "RedisJSON/RedisJSON"
@@ -94,7 +94,7 @@ jobs:
       # This shouldn't cause issues in the future so long as no profiles or patches
       # are applied to the workspace Cargo.toml file
     - name: Compile RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.4'
+      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.13'
       run: |
         cp ./Cargo.toml ./Cargo.toml.actual
         echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
@@ -104,8 +104,10 @@ jobs:
         rm -rf ./__ci/redis-json
 
     - name: Run module-specific tests
-      if: matrix.redis != '6.2.4'
+      if: matrix.redis != '6.2.13'
       run: make test-module
+      env:
+        REDIS_VERSION: ${{ matrix.redis }}
 
     - name: Check features
       run: |

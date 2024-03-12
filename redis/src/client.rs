@@ -524,7 +524,7 @@ impl Client {
     {
         let con = self.get_simple_async_connection::<T>().await?;
         crate::aio::MultiplexedConnection::new_with_response_timeout(
-            &self.connection_info.redis,
+            &self.connection_info,
             con,
             response_timeout,
         )
