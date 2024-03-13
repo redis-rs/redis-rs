@@ -2,31 +2,31 @@
 mod support;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::str::from_utf8;
 use std::sync::atomic::AtomicU32;
 use std::sync::{
-    atomic::{self, AtomicI32, AtomicU16},
-    atomic::{AtomicBool, Ordering},
+    atomic::{self, AtomicBool, AtomicI32, AtomicU16, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 use crate::support::*;
 use futures::prelude::*;
 use futures_time::task::sleep;
 use once_cell::sync::Lazy;
+use redis::cluster_async::ClusterConnection;
+use redis::cluster_routing::{Route, SlotAddr};
+use redis::cluster_topology::DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES;
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::ClusterClient,
-    cluster_async::{testing::MANAGEMENT_CONN_NAME, ClusterConnection, Connect},
-    cluster_routing::{
-        MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
-    },
-    cluster_topology::DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
-    cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ErrorKind, FromRedisValue,
-    InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
-    Value,
+    cluster_async::testing::MANAGEMENT_CONN_NAME,
+    cluster_async::Connect,
+    cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
+    cmd, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo,
+    ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
 };
-use std::str::from_utf8;
-use std::time::Duration;
+use redis::{from_owned_redis_value, FromRedisValue};
 
 #[test]
 fn test_async_cluster_basic_cmd() {
@@ -1112,6 +1112,48 @@ fn test_async_cluster_ask_redirect() {
 }
 
 #[test]
+fn test_async_cluster_ask_save_new_connection() {
+    let name = "node";
+    let ping_attempts = Arc::new(AtomicI32::new(0));
+    let ping_attempts_clone = ping_attempts.clone();
+    let MockEnv {
+        async_connection: mut connection,
+        handler: _handler,
+        runtime,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+        name,
+        {
+            move |cmd: &[u8], port| {
+                if port != 6391 {
+                    respond_startup_two_nodes(name, cmd)?;
+                    return Err(parse_redis_value(b"-ASK 14000 node:6391\r\n"));
+                }
+
+                if contains_slice(cmd, b"PING") {
+                    ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
+                }
+                respond_startup_two_nodes(name, cmd)?;
+                Err(Ok(Value::Okay))
+            }
+        },
+    );
+
+    for _ in 0..4 {
+        runtime
+            .block_on(
+                cmd("GET")
+                    .arg("test")
+                    .query_async::<_, Value>(&mut connection),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(ping_attempts.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn test_async_cluster_reset_routing_if_redirect_fails() {
     let name = "test_async_cluster_reset_routing_if_redirect_fails";
     let completed = Arc::new(AtomicI32::new(0));
@@ -1265,19 +1307,9 @@ fn test_async_cluster_replica_read() {
         name,
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
-            let cmd = std::str::from_utf8(cmd).unwrap();
-            if cmd.contains("GET") {
-                match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
-                    _ => panic!("Wrong node"),
-                }
-            } else if cmd.contains("SET") {
-                match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
-                    _ => panic!("Wrong node"),
-                }
-            } else {
-                Err(Err((ErrorKind::ResponseError, "wrong request").into()))
+            match port {
+                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                _ => panic!("Wrong node"),
             }
         },
     );
@@ -1288,6 +1320,26 @@ fn test_async_cluster_replica_read() {
             .query_async::<_, Option<i32>>(&mut connection),
     );
     assert_eq!(value, Ok(Some(123)));
+
+    // requests should route to primary
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+            match port {
+                6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                _ => panic!("Wrong node"),
+            }
+        },
+    );
 
     let value = runtime.block_on(
         cmd("SET")
@@ -1842,7 +1894,8 @@ fn test_async_cluster_handle_missing_slots_in_split_multi_shard_command() {
         .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
         .unwrap_err();
     assert!(
-        matches!(result.kind(), ErrorKind::ConnectionNotFound) || result.is_connection_dropped()
+        matches!(result.kind(), ErrorKind::ClusterConnectionNotFound)
+            || result.is_connection_dropped()
     );
 }
 
@@ -2454,6 +2507,81 @@ fn test_async_cluster_can_be_created_with_partial_slot_coverage() {
 
     let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
     assert!(res.is_ok());
+}
+
+#[test]
+fn test_async_cluster_saves_reconnected_connection() {
+    let name = "test_async_cluster_saves_reconnected_connection";
+    let ping_attempts = Arc::new(AtomicI32::new(0));
+    let ping_attempts_clone = ping_attempts.clone();
+    let get_attempts = AtomicI32::new(0);
+
+    let MockEnv {
+        runtime,
+        async_connection: mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(1),
+        name,
+        move |cmd: &[u8], port| {
+            if port == 6380 {
+                respond_startup_two_nodes(name, cmd)?;
+                return Err(parse_redis_value(
+                    format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
+                ));
+            }
+
+            if contains_slice(cmd, b"PING") {
+                let connect_attempt = ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
+                let past_get_attempts = get_attempts.load(Ordering::Relaxed);
+                // We want connection checks to fail after the first GET attempt, until it retries. Hence, we wait for 5 PINGs -
+                // 1. initial connection,
+                // 2. refresh slots on client creation,
+                // 3. refresh_connections `check_connection` after first GET failed,
+                // 4. refresh_connections `connect_and_check` after first GET failed,
+                // 5. reconnect on 2nd GET attempt.
+                // more than 5 attempts mean that the server reconnects more than once, which is the behavior we're testing against.
+                if past_get_attempts != 1 || connect_attempt > 3 {
+                    respond_startup_two_nodes(name, cmd)?;
+                }
+                if connect_attempt > 5 {
+                    panic!("Too many pings!");
+                }
+                Err(Err(RedisError::from(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "mock-io-error",
+                ))))
+            } else {
+                respond_startup_two_nodes(name, cmd)?;
+                let past_get_attempts = get_attempts.fetch_add(1, Ordering::Relaxed);
+                // we fail the initial GET request, and after that we'll fail the first reconnect attempt, in the `refresh_connections` attempt.
+                if past_get_attempts == 0 {
+                    // Error once with io-error, ensure connection is reestablished w/out calling
+                    // other node (i.e., not doing a full slot rebuild)
+                    Err(Err(RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "mock-io-error",
+                    ))))
+                } else {
+                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                }
+            }
+        },
+    );
+
+    for _ in 0..4 {
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<_, Option<i32>>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Some(123)));
+    }
+    // If you need to change the number here due to a change in the cluster, you probably also need to adjust the test.
+    // See the PING counts above to explain why 5 is the target number.
+    assert_eq!(ping_attempts.load(Ordering::Acquire), 5);
 }
 
 #[cfg(feature = "tls-rustls")]

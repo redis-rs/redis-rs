@@ -17,10 +17,10 @@ use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
-use super::use_protocol;
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
 
+use super::use_protocol;
 use super::RedisServer;
 use super::TlsFilePaths;
 
@@ -372,8 +372,8 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
-            .use_protocol(use_protocol());
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
+        builder = builder.use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {

@@ -1,8 +1,7 @@
 use futures::{prelude::*, StreamExt};
-use redis::aio::ConnectionLike;
 use redis::{
-    aio::MultiplexedConnection, cmd, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult,
-    Value,
+    aio::{ConnectionLike, MultiplexedConnection},
+    cmd, pipe, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult, Value,
 };
 use tokio::sync::mpsc::error::TryRecvError;
 
@@ -38,7 +37,8 @@ fn test_args() {
 #[test]
 fn dont_panic_on_closed_multiplexed_connection() {
     let ctx = TestContext::new();
-    let connect = ctx.multiplexed_async_connection();
+    let client = ctx.client.clone();
+    let connect = client.get_multiplexed_async_connection();
     drop(ctx);
 
     block_on_all(async move {
@@ -207,6 +207,23 @@ fn test_error(con: &MultiplexedConnection) -> impl Future<Output = RedisResult<(
             })
             .await
     }
+}
+
+#[test]
+fn test_pipe_over_multiplexed_connection() {
+    let ctx = TestContext::new();
+    block_on_all(async move {
+        let mut con = ctx.multiplexed_async_connection().await?;
+        let mut pipe = pipe();
+        pipe.zrange("zset", 0, 0);
+        pipe.zrange("zset", 0, 0);
+        let frames = con.send_packed_commands(&pipe, 0, 2).await?;
+        assert_eq!(frames.len(), 2);
+        assert!(matches!(frames[0], redis::Value::Array(_)));
+        assert!(matches!(frames[1], redis::Value::Array(_)));
+        RedisResult::Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -564,7 +581,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe("phonewave").await?;
             let mut pubsub_stream = pubsub_conn.on_message();
             let mut publish_conn = ctx.async_connection().await?;
@@ -586,7 +603,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             pubsub_conn.unsubscribe(SUBSCRIPTION_KEY).await?;
 
@@ -612,7 +629,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
             drop(pubsub_conn);
 
@@ -645,7 +662,7 @@ mod pub_sub {
 
         let ctx = TestContext::new();
         block_on_all(async move {
-            let mut pubsub_conn = ctx.async_connection().await?.into_pubsub();
+            let mut pubsub_conn = ctx.async_pubsub().await?;
             pubsub_conn.subscribe("phonewave").await?;
             pubsub_conn.psubscribe("*").await?;
 
@@ -767,6 +784,43 @@ mod pub_sub {
         })
         .unwrap();
     }
+}
+
+#[test]
+fn test_async_basic_pipe_with_parsing_error() {
+    // Tests a specific case involving repeated errors in transactions.
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut conn = ctx.multiplexed_async_connection().await?;
+
+        // create a transaction where 2 errors are returned.
+        // we call EVALSHA twice with no loaded script, thus triggering 2 errors.
+        redis::pipe()
+            .atomic()
+            .cmd("EVALSHA")
+            .arg("foobar")
+            .arg(0)
+            .cmd("EVALSHA")
+            .arg("foobar")
+            .arg(0)
+            .query_async::<_, ((), ())>(&mut conn)
+            .await
+            .expect_err("should return an error");
+
+        assert!(
+            // Arbitrary Redis command that should not return an error.
+            redis::cmd("SMEMBERS")
+                .arg("nonexistent_key")
+                .query_async::<_, Vec<String>>(&mut conn)
+                .await
+                .is_ok(),
+            "Failed transaction should not interfere with future calls."
+        );
+
+        Ok::<_, redis::RedisError>(())
+    })
+    .unwrap()
 }
 
 #[cfg(feature = "connection-manager")]

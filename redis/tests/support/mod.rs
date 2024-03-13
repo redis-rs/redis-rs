@@ -515,15 +515,20 @@ impl TestContext {
     }
 
     #[cfg(feature = "aio")]
-    #[allow(deprecated)]
-    pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::Connection> {
-        self.client.get_async_connection().await
+    pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+        self.client.get_multiplexed_async_connection().await
+    }
+
+    #[cfg(feature = "aio")]
+    pub async fn async_pubsub(&self) -> redis::RedisResult<redis::aio::PubSub> {
+        self.client.get_async_pubsub().await
     }
 
     #[cfg(feature = "async-std-comp")]
-    #[allow(deprecated)]
-    pub async fn async_connection_async_std(&self) -> redis::RedisResult<redis::aio::Connection> {
-        self.client.get_async_std_connection().await
+    pub async fn async_connection_async_std(
+        &self,
+    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+        self.client.get_multiplexed_async_std_connection().await
     }
 
     pub fn stop_server(&mut self) {
@@ -531,25 +536,24 @@ impl TestContext {
     }
 
     #[cfg(feature = "tokio-comp")]
-    pub fn multiplexed_async_connection(
+    pub async fn multiplexed_async_connection(
         &self,
-    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
-        self.multiplexed_async_connection_tokio()
+    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+        self.multiplexed_async_connection_tokio().await
     }
 
     #[cfg(feature = "tokio-comp")]
-    pub fn multiplexed_async_connection_tokio(
+    pub async fn multiplexed_async_connection_tokio(
         &self,
-    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
-        let client = self.client.clone();
-        async move { client.get_multiplexed_tokio_connection().await }
+    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+        self.client.get_multiplexed_tokio_connection().await
     }
+
     #[cfg(feature = "async-std-comp")]
-    pub fn multiplexed_async_connection_async_std(
+    pub async fn multiplexed_async_connection_async_std(
         &self,
-    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
-        let client = self.client.clone();
-        async move { client.get_multiplexed_async_std_connection().await }
+    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+        self.client.get_multiplexed_async_std_connection().await
     }
 
     pub fn get_version(&self) -> Version {

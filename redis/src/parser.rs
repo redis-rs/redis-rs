@@ -1,11 +1,11 @@
-use std::vec::IntoIter;
 use std::{
     io::{self, Read},
     str,
 };
 
 use crate::types::{
-    make_extension_error, ErrorKind, PushKind, RedisError, RedisResult, Value, VerbatimFormat,
+    ErrorKind, InternalValue, PushKind, RedisError, RedisResult, ServerError, ServerErrorKind,
+    Value, VerbatimFormat,
 };
 
 use combine::{
@@ -22,65 +22,32 @@ use combine::{
 };
 use num_bigint::BigInt;
 
-struct ResultExtend<T, E>(Result<T, E>);
-
-impl<T, E> Default for ResultExtend<T, E>
-where
-    T: Default,
-{
-    fn default() -> Self {
-        ResultExtend(Ok(T::default()))
-    }
-}
-
-impl<T, U, E> Extend<Result<U, E>> for ResultExtend<T, E>
-where
-    T: Extend<U>,
-{
-    fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = Result<U, E>>,
-    {
-        let mut returned_err = None;
-        if let Ok(ref mut elems) = self.0 {
-            elems.extend(iter.into_iter().scan((), |_, item| match item {
-                Ok(item) => Some(item),
-                Err(err) => {
-                    returned_err = Some(err);
-                    None
-                }
-            }));
-        }
-        if let Some(err) = returned_err {
-            self.0 = Err(err);
-        }
-    }
-}
-
 const MAX_RECURSE_DEPTH: usize = 100;
 
-fn err_parser(line: &str) -> RedisError {
-    let desc = "An error was signalled by the server";
+fn err_parser(line: &str) -> ServerError {
     let mut pieces = line.splitn(2, ' ');
     let kind = match pieces.next().unwrap() {
-        "ERR" => ErrorKind::ResponseError,
-        "EXECABORT" => ErrorKind::ExecAbortError,
-        "LOADING" => ErrorKind::BusyLoadingError,
-        "NOSCRIPT" => ErrorKind::NoScriptError,
-        "MOVED" => ErrorKind::Moved,
-        "ASK" => ErrorKind::Ask,
-        "TRYAGAIN" => ErrorKind::TryAgain,
-        "CLUSTERDOWN" => ErrorKind::ClusterDown,
-        "CROSSSLOT" => ErrorKind::CrossSlot,
-        "MASTERDOWN" => ErrorKind::MasterDown,
-        "READONLY" => ErrorKind::ReadOnly,
-        "NOTBUSY" => ErrorKind::NotBusy,
-        code => return make_extension_error(code, pieces.next()),
+        "ERR" => ServerErrorKind::ResponseError,
+        "EXECABORT" => ServerErrorKind::ExecAbortError,
+        "LOADING" => ServerErrorKind::BusyLoadingError,
+        "NOSCRIPT" => ServerErrorKind::NoScriptError,
+        "MOVED" => ServerErrorKind::Moved,
+        "ASK" => ServerErrorKind::Ask,
+        "TRYAGAIN" => ServerErrorKind::TryAgain,
+        "CLUSTERDOWN" => ServerErrorKind::ClusterDown,
+        "CROSSSLOT" => ServerErrorKind::CrossSlot,
+        "MASTERDOWN" => ServerErrorKind::MasterDown,
+        "READONLY" => ServerErrorKind::ReadOnly,
+        "NOTBUSY" => ServerErrorKind::NotBusy,
+        code => {
+            return ServerError::ExtensionError {
+                code: code.to_string(),
+                detail: pieces.next().map(|str| str.to_string()),
+            }
+        }
     };
-    match pieces.next() {
-        Some(detail) => RedisError::from((kind, desc, detail.to_string())),
-        None => RedisError::from((kind, desc)),
-    }
+    let detail = pieces.next().map(|str| str.to_string());
+    ServerError::KnownError { kind, detail }
 }
 
 pub fn get_push_kind(kind: String) -> PushKind {
@@ -101,7 +68,7 @@ pub fn get_push_kind(kind: String) -> PushKind {
 
 fn value<'a, I>(
     count: Option<usize>,
-) -> impl combine::Parser<I, Output = RedisResult<Value>, PartialState = AnySendSyncPartialState>
+) -> impl combine::Parser<I, Output = InternalValue, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
@@ -130,29 +97,30 @@ where
                 let simple_string = || {
                     line().map(|line| {
                         if line == "OK" {
-                            Value::Okay
+                            InternalValue::Okay
                         } else {
-                            Value::SimpleString(line.into())
+                            InternalValue::SimpleString(line.into())
                         }
                     })
                 };
 
                 let int = || {
-                    line().and_then(|line| match line.trim().parse::<i64>() {
-                        Err(_) => Err(StreamErrorFor::<I>::message_static_message(
-                            "Expected integer, got garbage",
-                        )),
-                        Ok(value) => Ok(value),
+                    line().and_then(|line| {
+                        line.trim().parse::<i64>().map_err(|_| {
+                            StreamErrorFor::<I>::message_static_message(
+                                "Expected integer, got garbage",
+                            )
+                        })
                     })
                 };
 
-                let data = || {
+                let bulk_string = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::value(Value::Nil).left()
+                            combine::produce(|| InternalValue::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| Value::BulkString(bs.to_vec()))
+                                .map(|bs: &[u8]| InternalValue::BulkString(bs.to_vec()))
                                 .skip(crlf())
                                 .right()
                         }
@@ -169,11 +137,11 @@ where
                 let array = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::value(Value::Nil).map(Ok).left()
+                            combine::produce(|| InternalValue::Nil).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(|result: ResultExtend<_, _>| result.0.map(Value::Array))
+                                .map(InternalValue::Array)
                                 .right()
                         }
                     })
@@ -184,15 +152,15 @@ where
                     int().then_partial(move |&mut kv_length| {
                         let length = kv_length as usize * 2;
                         combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: ResultExtend<Vec<Value>, _>| {
-                                let mut it: IntoIter<Value> = result.0?.into_iter();
+                            move |result: Vec<InternalValue>| {
+                                let mut it = result.into_iter();
                                 let mut x = vec![];
                                 for _ in 0..kv_length {
                                     if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                         x.push((k, v))
                                     }
                                 }
-                                Ok(Value::Map(x))
+                                InternalValue::Map(x)
                             },
                         )
                     })
@@ -202,72 +170,76 @@ where
                         // + 1 is for data!
                         let length = kv_length as usize * 2 + 1;
                         combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: ResultExtend<Vec<Value>, _>| {
-                                let mut it: IntoIter<Value> = result.0?.into_iter();
+                            move |result: Vec<InternalValue>| {
+                                let mut it = result.into_iter();
                                 let mut attributes = vec![];
                                 for _ in 0..kv_length {
                                     if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                         attributes.push((k, v))
                                     }
                                 }
-                                Ok(Value::Attribute {
+                                InternalValue::Attribute {
                                     data: Box::new(it.next().unwrap()),
                                     attributes,
-                                })
+                                }
                             },
                         )
                     })
                 };
                 let set = || {
                     int().then_partial(move |&mut length| {
-                        let length = length as usize;
-                        combine::count_min_max(length, length, value(Some(count + 1)))
-                            .map(|result: ResultExtend<_, _>| result.0.map(Value::Set))
+                        if length < 0 {
+                            combine::produce(|| InternalValue::Nil).left()
+                        } else {
+                            let length = length as usize;
+                            combine::count_min_max(length, length, value(Some(count + 1)))
+                                .map(InternalValue::Set)
+                                .right()
+                        }
                     })
                 };
                 let push = || {
                     int().then_partial(move |&mut length| {
                         if length <= 0 {
-                            combine::value(Value::Push {
+                            combine::produce(|| InternalValue::Push {
                                 kind: PushKind::Other("".to_string()),
                                 data: vec![],
                             })
-                            .map(Ok)
                             .left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(|result: ResultExtend<Vec<Value>, _>| {
-                                    let mut it: IntoIter<Value> = result.0?.into_iter();
-                                    let first = it.next().unwrap_or(Value::Nil);
-                                    if let Value::BulkString(kind) = first {
-                                        Ok(Value::Push {
-                                            kind: get_push_kind(String::from_utf8(kind)?),
+                                .and_then(|result: Vec<InternalValue>| {
+                                    let mut it = result.into_iter();
+                                    let first = it.next().unwrap_or(InternalValue::Nil);
+                                    if let InternalValue::BulkString(kind) = first {
+                                        let push_kind = String::from_utf8(kind)
+                                            .map_err(StreamErrorFor::<I>::other)?;
+                                        Ok(InternalValue::Push {
+                                            kind: get_push_kind(push_kind),
                                             data: it.collect(),
                                         })
-                                    } else if let Value::SimpleString(kind) = first {
-                                        Ok(Value::Push {
+                                    } else if let InternalValue::SimpleString(kind) = first {
+                                        Ok(InternalValue::Push {
                                             kind: get_push_kind(kind),
                                             data: it.collect(),
                                         })
                                     } else {
-                                        Err(RedisError::from((
-                                            ErrorKind::ParseError,
-                                            "parse error",
-                                        )))
+                                        Err(StreamErrorFor::<I>::message_static_message(
+                                            "parse error when decoding push",
+                                        ))
                                     }
                                 })
                                 .right()
                         }
                     })
                 };
-                let null = || line().map(|_| Ok(Value::Nil));
+                let null = || line().map(|_| InternalValue::Nil);
                 let double = || {
-                    line().and_then(|line| match line.trim().parse::<f64>() {
-                        Err(_) => Err(StreamErrorFor::<I>::message_static_message(
-                            "Expected double, got garbage",
-                        )),
-                        Ok(value) => Ok(value),
+                    line().and_then(|line| {
+                        line.trim()
+                            .parse::<f64>()
+                            .map_err(StreamErrorFor::<I>::other)
                     })
                 };
                 let boolean = || {
@@ -281,45 +253,48 @@ where
                 };
                 let blob_error = || blob().map(|line| err_parser(&line));
                 let verbatim = || {
-                    blob().map(|line| {
+                    blob().and_then(|line| {
                         if let Some((format, text)) = line.split_once(':') {
                             let format = match format {
                                 "txt" => VerbatimFormat::Text,
                                 "mkd" => VerbatimFormat::Markdown,
                                 x => VerbatimFormat::Unknown(x.to_string()),
                             };
-                            Ok(Value::VerbatimString {
+                            Ok(InternalValue::VerbatimString {
                                 format,
                                 text: text.to_string(),
                             })
                         } else {
-                            Err(RedisError::from((ErrorKind::ParseError, "parse error")))
+                            Err(StreamErrorFor::<I>::message_static_message(
+                                "parse error when decoding verbatim string",
+                            ))
                         }
                     })
                 };
                 let big_number = || {
-                    line().and_then(|line| match BigInt::parse_bytes(line.as_bytes(), 10) {
-                        None => Err(StreamErrorFor::<I>::message_static_message(
-                            "Expected bigint, got garbage",
-                        )),
-                        Some(value) => Ok(value),
+                    line().and_then(|line| {
+                        BigInt::parse_bytes(line.as_bytes(), 10).ok_or_else(|| {
+                            StreamErrorFor::<I>::message_static_message(
+                                "Expected bigint, got garbage",
+                            )
+                        })
                     })
                 };
                 combine::dispatch!(b;
-                    b'+' => simple_string().map(Ok),
-                    b':' => int().map(|i| Ok(Value::Int(i))),
-                    b'$' => data().map(Ok),
+                    b'+' => simple_string(),
+                    b':' => int().map(InternalValue::Int),
+                    b'$' => bulk_string(),
                     b'*' => array(),
                     b'%' => map(),
                     b'|' => attribute(),
                     b'~' => set(),
-                    b'-' => error().map(Err),
+                    b'-' => error().map(InternalValue::ServerError),
                     b'_' => null(),
-                    b',' => double().map(|i| Ok(Value::Double(i))),
-                    b'#' => boolean().map(|b| Ok(Value::Boolean(b))),
-                    b'!' => blob_error().map(Err),
+                    b',' => double().map(InternalValue::Double),
+                    b'#' => boolean().map(InternalValue::Boolean),
+                    b'!' => blob_error().map(InternalValue::ServerError),
                     b'=' => verbatim(),
-                    b'(' => big_number().map(|i| Ok(Value::BigNumber(i))),
+                    b'(' => big_number().map(InternalValue::BigNumber),
                     b'>' => push(),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
@@ -368,7 +343,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
+                Some(result) => Ok(Some(result.try_into())),
                 None => Ok(None),
             }
         }
@@ -421,7 +396,7 @@ mod aio_support {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.try_into(),
         }
     }
 }
@@ -479,7 +454,7 @@ impl Parser {
                     }
                 }
             }),
-            Ok(result) => result,
+            Ok(result) => result.try_into(),
         }
     }
 }
@@ -495,6 +470,8 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::make_extension_error;
+
     use super::*;
 
     #[cfg(feature = "aio")]
@@ -510,6 +487,53 @@ mod tests {
         );
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
         assert_eq!(codec.decode_eof(&mut bytes), Ok(None));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_eof_returns_error_inside_array_and_can_parse_more_inputs() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes =
+            bytes::BytesMut::from(b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let mut bytes = bytes::BytesMut::from(b"+OK\r\n".as_slice());
+        let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
+
+        assert_eq!(result, Ok(Value::Okay));
+    }
+
+    #[test]
+    fn parse_nested_error_and_handle_more_inputs() {
+        // from https://redis.io/docs/interact/transactions/ -
+        // "EXEC returned two-element bulk string reply where one is an OK code and the other an error reply. It's up to the client library to find a sensible way to provide the error to the user."
+
+        let bytes = b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n";
+        let result = parse_redis_value(bytes);
+
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                ErrorKind::BusyLoadingError,
+                "An error was signalled by the server",
+                "server is loading".to_string()
+            )))
+        );
+
+        let result = parse_redis_value(b"+OK\r\n").unwrap();
+
+        assert_eq!(result, Value::Okay);
     }
 
     #[test]
@@ -580,7 +604,10 @@ mod tests {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
         assert_eq!(
             val.err(),
-            Some(make_extension_error("SYNTAX", Some("invalid syntax")))
+            Some(make_extension_error(
+                "SYNTAX".to_string(),
+                Some("invalid syntax".to_string())
+            ))
         )
     }
 

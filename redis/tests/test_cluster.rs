@@ -617,25 +617,34 @@ fn test_cluster_replica_read() {
         move |cmd: &[u8], port| {
             respond_startup_with_replica(name, cmd)?;
 
-            let cmd = std::str::from_utf8(cmd).unwrap();
-            if cmd.contains("GET") {
-                match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
-                    _ => panic!("Wrong node"),
-                }
-            } else if cmd.contains("SET") {
-                match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
-                    _ => panic!("Wrong node"),
-                }
-            } else {
-                Err(Err((ErrorKind::ResponseError, "wrong request").into()))
+            match port {
+                6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                _ => panic!("Wrong node"),
             }
         },
     );
 
     let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
     assert_eq!(value, Ok(Some(123)));
+
+    // requests should route to primary
+    let MockEnv {
+        mut connection,
+        handler: _handler,
+        ..
+    } = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(0)
+            .read_from_replicas(),
+        name,
+        move |cmd: &[u8], port| {
+            respond_startup_with_replica(name, cmd)?;
+            match port {
+                6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                _ => panic!("Wrong node"),
+            }
+        },
+    );
 
     let value = cmd("SET")
         .arg("test")

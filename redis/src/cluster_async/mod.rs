@@ -41,7 +41,7 @@ use std::{
 };
 
 use crate::{
-    aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection},
+    aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection, Runtime},
     cluster::slot_cmd,
     cluster_async::connections_logic::{
         get_host_and_port_from_addr, get_or_create_conn, ConnectionFuture, RefreshConnectionType,
@@ -75,7 +75,6 @@ use backoff_tokio::{Error as BackoffError, ExponentialBackoff};
 
 use dispose::{Disposable, Dispose};
 use futures::{future::BoxFuture, prelude::*, ready};
-use futures_time::{future::FutureExt, task::sleep};
 use pin_project_lite::pin_project;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::{
@@ -333,6 +332,14 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
     )
 }
 
+fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
+    #[cfg(feature = "tokio-comp")]
+    return Box::pin(tokio::time::sleep(duration));
+
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    return Box::pin(async_std::task::sleep(duration));
+}
+
 enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -341,7 +348,7 @@ enum Response {
 enum OperationTarget {
     Node { identifier: ConnectionIdentifier },
     FanOut,
-    NoTargetFound,
+    NotFound,
 }
 type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
@@ -482,6 +489,7 @@ enum Next<C> {
     },
     RefreshSlots {
         request: PendingRequest<C>,
+        sleep_duration: Option<Duration>,
     },
     ReconnectToInitialNodes {
         request: PendingRequest<C>,
@@ -522,12 +530,14 @@ impl<C> Future for Request<C> {
                 }
                 request.retry = request.retry.saturating_add(1);
 
-                if err.kind() == ErrorKind::ConnectionNotFound {
+                if err.kind() == ErrorKind::ClusterConnectionNotFound {
                     return Next::ReconnectToInitialNodes {
                         request: this.request.take().unwrap(),
                     }
                     .into();
                 }
+
+                let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
 
                 let identifier = match target {
                     OperationTarget::Node { identifier } => identifier,
@@ -538,11 +548,15 @@ impl<C> Future for Request<C> {
                         self.respond(Err(err));
                         return Next::Done.into();
                     }
-                    OperationTarget::NoTargetFound => {
-                        warn!("No connection found: `{err}`");
+                    OperationTarget::NotFound => {
+                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
                         request.info.reset_redirect();
-                        return Next::RefreshSlots { request }.into();
+                        return Next::RefreshSlots {
+                            request,
+                            sleep_duration: Some(sleep_duration),
+                        }
+                        .into();
                     }
                 };
                 trace!("Request error `{}` on node `{:?}", err, identifier);
@@ -562,17 +576,17 @@ impl<C> Future for Request<C> {
                             err.redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string())),
                         );
-                        Next::RefreshSlots { request }.into()
+                        Next::RefreshSlots {
+                            request,
+                            sleep_duration: None,
+                        }
+                        .into()
                     }
                     crate::types::RetryMethod::WaitAndRetry => {
-                        // Sleep and retry.
                         let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
+                        // Sleep and retry.
                         this.future.set(RequestState::Sleep {
-                            #[cfg(feature = "tokio-comp")]
-                            sleep: Box::pin(tokio::time::sleep(sleep_duration)),
-
-                            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                            sleep: Box::pin(async_std::task::sleep(sleep_duration)),
+                            sleep: boxed_sleep(sleep_duration),
                         });
                         self.poll(cx)
                     }
@@ -943,7 +957,7 @@ where
             if shutdown_flag.load(Ordering::Relaxed) {
                 return;
             }
-            let _ = sleep(interval_duration.into()).await;
+            let _ = boxed_sleep(interval_duration).await;
 
             if Self::check_for_topology_diff(inner.clone()).await {
                 let _ = Self::refresh_slots_with_retries(inner.clone()).await;
@@ -1096,7 +1110,7 @@ where
             return OperationResult::Err((
                 OperationTarget::FanOut,
                 (
-                    ErrorKind::ConnectionNotFound,
+                    ErrorKind::ClusterConnectionNotFound,
                     "No connections found for multi-node operation",
                 )
                     .into(),
@@ -1146,7 +1160,7 @@ where
                         )
                     } else {
                         let _ = sender.send(Err((
-                            ErrorKind::ConnectionNotFound,
+                            ErrorKind::ClusterConnectionNotFound,
                             "Connection not found",
                         )
                             .into()));
@@ -1222,7 +1236,7 @@ where
         // right connection to the node.
         let (identifier, mut conn) = Self::get_connection(routing, core)
             .await
-            .map_err(|err| (OperationTarget::NoTargetFound, err))?;
+            .map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_command(&cmd)
             .await
             .map(Response::Single)
@@ -1236,9 +1250,7 @@ where
         conn: impl Future<Output = RedisResult<(ConnectionIdentifier, C)>>,
     ) -> OperationResult {
         trace!("try_pipeline_request");
-        let (identifier, mut conn) = conn
-            .await
-            .map_err(|err| (OperationTarget::NoTargetFound, err))?;
+        let (identifier, mut conn) = conn.await.map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_commands(&pipeline, offset, count)
             .await
             .map(Response::Multiple)
@@ -1311,7 +1323,7 @@ where
                     return Ok((identifier, conn.await));
                 } else {
                     return Err((
-                        ErrorKind::ConnectionNotFound,
+                        ErrorKind::ClusterConnectionNotFound,
                         "Requested connection not found",
                         address,
                     )
@@ -1353,7 +1365,7 @@ where
                     .random_connections(1, ConnectionType::User)
                     .next()
                     .ok_or(RedisError::from((
-                        ErrorKind::ConnectionNotFound,
+                        ErrorKind::ClusterConnectionNotFound,
                         "No random connection found",
                     )))?;
                 return Ok((random_identifier, random_conn_future.await));
@@ -1366,42 +1378,30 @@ where
         Ok((identifier, conn))
     }
 
-    fn poll_recover(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        future: RecoverFuture,
-    ) -> Poll<Result<(), RedisError>> {
-        match future {
-            RecoverFuture::RecoverSlots(mut future) => match future.as_mut().poll(cx) {
-                Poll::Ready(Ok(_)) => {
+    fn poll_recover(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), RedisError>> {
+        let recover_future = match &mut self.state {
+            ConnectionState::PollComplete => return Poll::Ready(Ok(())),
+            ConnectionState::Recover(future) => future,
+        };
+        match recover_future {
+            RecoverFuture::RecoverSlots(ref mut future) => match ready!(future.as_mut().poll(cx)) {
+                Ok(_) => {
                     trace!("Recovered!");
                     self.state = ConnectionState::PollComplete;
                     Poll::Ready(Ok(()))
                 }
-                Poll::Pending => {
-                    self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(future));
-                    trace!("Recover not ready");
-                    Poll::Pending
-                }
-                Poll::Ready(Err(err)) => {
-                    self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                        Self::refresh_slots_with_retries(self.inner.clone()),
-                    )));
+                Err(err) => {
+                    trace!("Recover slots failed!");
+                    *future = Box::pin(Self::refresh_slots_with_retries(self.inner.clone()));
                     Poll::Ready(Err(err))
                 }
             },
-            RecoverFuture::Reconnect(mut future) => match future.as_mut().poll(cx) {
-                Poll::Ready(_) => {
-                    trace!("Reconnected connections");
-                    self.state = ConnectionState::PollComplete;
-                    Poll::Ready(Ok(()))
-                }
-                Poll::Pending => {
-                    self.state = ConnectionState::Recover(RecoverFuture::Reconnect(future));
-                    trace!("Recover not ready");
-                    Poll::Pending
-                }
-            },
+            RecoverFuture::Reconnect(ref mut future) => {
+                ready!(future.as_mut().poll(cx));
+                trace!("Reconnected connections");
+                self.state = ConnectionState::PollComplete;
+                Poll::Ready(Ok(()))
+            }
         }
     }
 
@@ -1420,7 +1420,7 @@ where
         } else {
             // If the connection is primary, just sleep and retry
             let sleep_duration = core.cluster_params.retry_params.wait_time_for_retry(retry);
-            sleep(sleep_duration.into()).await;
+            boxed_sleep(sleep_duration).await;
         }
 
         Self::try_request(info, core).await
@@ -1487,16 +1487,29 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots { request } => {
+                Next::RefreshSlots {
+                    request,
+                    sleep_duration,
+                } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future = Self::try_request(request.info.clone(), self.inner.clone());
+                    let future: RequestState<
+                        Pin<Box<dyn Future<Output = OperationResult> + Send>>,
+                    > = match sleep_duration {
+                        Some(sleep_duration) => RequestState::Sleep {
+                            sleep: boxed_sleep(sleep_duration),
+                        },
+                        None => RequestState::Future {
+                            future: Box::pin(Self::try_request(
+                                request.info.clone(),
+                                self.inner.clone(),
+                            )),
+                        },
+                    };
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
-                        future: RequestState::Future {
-                            future: Box::pin(future),
-                        },
+                        future,
                     }));
                 }
                 Next::Reconnect {
@@ -1576,32 +1589,8 @@ where
 {
     type Error = ();
 
-    fn poll_ready(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context,
-    ) -> Poll<Result<(), Self::Error>> {
-        match mem::replace(&mut self.state, ConnectionState::PollComplete) {
-            ConnectionState::PollComplete => Poll::Ready(Ok(())),
-            ConnectionState::Recover(future) => {
-                match ready!(self.as_mut().poll_recover(cx, future)) {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(err) => {
-                        // We failed to reconnect, while we will try again we will report the
-                        // error if we can to avoid getting trapped in an infinite loop of
-                        // trying to reconnect
-                        if let Some(mut request) = Pin::new(&mut self.in_flight_requests)
-                            .iter_pin_mut()
-                            .find(|request| request.request.is_some())
-                        {
-                            (*request).as_mut().respond(Err(err));
-                        } else {
-                            self.refresh_error = Some(err);
-                        }
-                        Poll::Ready(Ok(()))
-                    }
-                }
-            }
-        }
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut task::Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
@@ -1625,51 +1614,44 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        trace!("poll_complete: {:?}", self.state);
+        trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
 
-            match mem::replace(&mut self.state, ConnectionState::PollComplete) {
-                ConnectionState::Recover(future) => {
-                    match ready!(self.as_mut().poll_recover(cx, future)) {
-                        Ok(()) => (),
-                        Err(err) => {
-                            // We failed to reconnect, while we will try again we will report the
-                            // error if we can to avoid getting trapped in an infinite loop of
-                            // trying to reconnect
-                            self.refresh_error = Some(err);
+            if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
+                // We failed to reconnect, while we will try again we will report the
+                // error if we can to avoid getting trapped in an infinite loop of
+                // trying to reconnect
+                self.refresh_error = Some(err);
 
-                            // Give other tasks a chance to progress before we try to recover
-                            // again. Since the future may not have registered a wake up we do so
-                            // now so the task is not forgotten
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                    }
+                // Give other tasks a chance to progress before we try to recover
+                // again. Since the future may not have registered a wake up we do so
+                // now so the task is not forgotten
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
+            match ready!(self.poll_complete(cx)) {
+                PollFlushAction::None => return Poll::Ready(Ok(())),
+                PollFlushAction::RebuildSlots => {
+                    self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
+                        ClusterConnInner::refresh_slots_with_retries(self.inner.clone()),
+                    )));
                 }
-                ConnectionState::PollComplete => match ready!(self.poll_complete(cx)) {
-                    PollFlushAction::None => return Poll::Ready(Ok(())),
-                    PollFlushAction::RebuildSlots => {
-                        self.state =
-                            ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                                ClusterConnInner::refresh_slots_with_retries(self.inner.clone()),
-                            )));
-                    }
-                    PollFlushAction::Reconnect(identifiers) => {
-                        self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                            ClusterConnInner::refresh_connections(
-                                self.inner.clone(),
-                                identifiers,
-                                RefreshConnectionType::OnlyUserConnection,
-                            ),
-                        )));
-                    }
-                    PollFlushAction::ReconnectFromInitialConnections => {
-                        self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                            self.reconnect_to_initial_nodes(),
-                        )));
-                    }
-                },
+                PollFlushAction::Reconnect(identifiers) => {
+                    self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+                        ClusterConnInner::refresh_connections(
+                            self.inner.clone(),
+                            identifiers,
+                            RefreshConnectionType::OnlyUserConnection,
+                        ),
+                    )));
+                }
+                PollFlushAction::ReconnectFromInitialConnections => {
+                    self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+                        self.reconnect_to_initial_nodes(),
+                    )));
+                }
             }
         }
     }
@@ -1680,10 +1662,8 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         // Try to drive any in flight requests to completion
         match self.poll_complete(cx) {
-            Poll::Ready(poll_flush_action) => match poll_flush_action {
-                PollFlushAction::None => (),
-                _ => Err(()).map_err(|_| ())?,
-            },
+            Poll::Ready(PollFlushAction::None) => (),
+            Poll::Ready(_) => Err(())?,
             Poll::Pending => (),
         };
         // If we no longer have any requests in flight we are done (skips any reconnection
@@ -1807,25 +1787,29 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-            let connection_timeout: futures_time::time::Duration = connection_timeout.into();
 
-            #[cfg(feature = "tokio-comp")]
-            return client
-                .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
-                    response_timeout,
-                    socket_addr,
-                )
-                .timeout(connection_timeout)
-                .await?;
-
-            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-            return client
-                .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                    response_timeout,
-                    socket_addr,
-                )
-                .timeout(connection_timeout)
-                .await?;
+            match Runtime::locate() {
+                #[cfg(feature = "tokio-comp")]
+                rt @ Runtime::Tokio => {
+                    rt.timeout(
+                        connection_timeout,
+                        client.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                            response_timeout,
+                            socket_addr,
+                        ),
+                    )
+                    .await?
+                }
+                #[cfg(feature = "async-std-comp")]
+                rt @ Runtime::AsyncStd => {
+                    rt.timeout(connection_timeout,client
+                        .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                            response_timeout,
+                            socket_addr,
+                        ))
+                        .await?
+                }
+            }
         }
         .boxed()
     }

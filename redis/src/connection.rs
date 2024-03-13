@@ -11,10 +11,10 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_owned_redis_value, from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError,
-    RedisResult, ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
+    Value,
 };
-use crate::ProtocolVersion;
+use crate::{from_owned_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use crate::types::HashMap;

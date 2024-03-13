@@ -1,4 +1,4 @@
-use super::ConnectionLike;
+use super::{ConnectionLike, Runtime};
 use crate::aio::setup_connection;
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -25,6 +25,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
+use std::time::Duration;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
@@ -146,7 +147,7 @@ where
                 Ok(item) => {
                     if !skip_value {
                         entry.buffer = Some(match entry.buffer.take() {
-                            Some(Value::Array(mut values)) => {
+                            Some(Value::Array(mut values)) if entry.current_response_count > 1 => {
                                 values.push(item);
                                 Value::Array(values)
                             }
@@ -310,7 +311,7 @@ where
     async fn send_single(
         &mut self,
         item: SinkItem,
-        timeout: futures_time::time::Duration,
+        timeout: Duration,
     ) -> Result<Value, Option<RedisError>> {
         self.send_recv(item, 1, timeout).await
     }
@@ -319,7 +320,7 @@ where
         &mut self,
         input: SinkItem,
         count: usize,
-        timeout: futures_time::time::Duration,
+        timeout: Duration,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
@@ -331,14 +332,14 @@ where
             })
             .await
             .map_err(|_| None)?;
-        match futures_time::future::FutureExt::timeout(receiver, timeout).await {
+        match Runtime::locate().timeout(timeout, receiver).await {
             Ok(Ok(result)) => result.map_err(Some),
             Ok(Err(_)) => {
                 // The `sender` was dropped which likely means that the stream part
                 // failed for one reason or another
                 Err(None)
             }
-            Err(elapsed) => Err(Some(RedisError::from(elapsed))),
+            Err(elapsed) => Err(Some(elapsed.into())),
         }
     }
 
@@ -354,7 +355,7 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>>,
     db: i64,
-    response_timeout: futures_time::time::Duration,
+    response_timeout: Duration,
     protocol: ProtocolVersion,
     push_manager: PushManager,
 }
@@ -411,7 +412,7 @@ impl MultiplexedConnection {
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.redis.db,
-            response_timeout: response_timeout.into(),
+            response_timeout,
             push_manager: pm,
             protocol: redis_connection_info.protocol,
         };
@@ -438,7 +439,7 @@ impl MultiplexedConnection {
 
     /// Sets the time that the multiplexer will wait for responses on operations before failing.
     pub fn set_response_timeout(&mut self, timeout: std::time::Duration) {
-        self.response_timeout = timeout.into();
+        self.response_timeout = timeout;
     }
 
     /// Sends an already encoded (packed) command into the TCP socket and

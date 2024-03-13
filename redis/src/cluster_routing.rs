@@ -1,9 +1,10 @@
+use std::cmp::min;
+use std::collections::HashMap;
+
 use crate::cluster_topology::get_slot;
 use crate::cmd::{Arg, Cmd};
 use crate::types::Value;
 use crate::{ErrorKind, RedisResult};
-use std::cmp::min;
-use std::collections::HashMap;
 use std::iter::Once;
 
 #[derive(Clone)]

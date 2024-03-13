@@ -133,8 +133,8 @@ pub enum ErrorKind {
     EmptySentinelList,
     /// Attempted to kill a script/function while they werent' executing
     NotBusy,
-    /// The required connection was not found in the cluster.
-    ConnectionNotFound,
+    /// Used when a cluster connection cannot find a connection to a valid node.
+    ClusterConnectionNotFound,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -144,6 +144,164 @@ pub enum ErrorKind {
     /// Try disabling resp3 option
     RESP3NotSupported,
 }
+
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerErrorKind {
+    ResponseError,
+    ExecAbortError,
+    BusyLoadingError,
+    NoScriptError,
+    Moved,
+    Ask,
+    TryAgain,
+    ClusterDown,
+    CrossSlot,
+    MasterDown,
+    ReadOnly,
+    NotBusy,
+}
+
+#[derive(PartialEq, Debug)]
+pub(crate) enum ServerError {
+    ExtensionError {
+        code: String,
+        detail: Option<String>,
+    },
+    KnownError {
+        kind: ServerErrorKind,
+        detail: Option<String>,
+    },
+}
+
+impl From<ServerError> for RedisError {
+    fn from(value: ServerError) -> Self {
+        // TODO - Consider changing RedisError to explicitly represent whether an error came from the server or not. Today it is only implied.
+        match value {
+            ServerError::ExtensionError { code, detail } => make_extension_error(code, detail),
+            ServerError::KnownError { kind, detail } => {
+                let desc = "An error was signalled by the server";
+                let kind = match kind {
+                    ServerErrorKind::ResponseError => ErrorKind::ResponseError,
+                    ServerErrorKind::ExecAbortError => ErrorKind::ExecAbortError,
+                    ServerErrorKind::BusyLoadingError => ErrorKind::BusyLoadingError,
+                    ServerErrorKind::NoScriptError => ErrorKind::NoScriptError,
+                    ServerErrorKind::Moved => ErrorKind::Moved,
+                    ServerErrorKind::Ask => ErrorKind::Ask,
+                    ServerErrorKind::TryAgain => ErrorKind::TryAgain,
+                    ServerErrorKind::ClusterDown => ErrorKind::ClusterDown,
+                    ServerErrorKind::CrossSlot => ErrorKind::CrossSlot,
+                    ServerErrorKind::MasterDown => ErrorKind::MasterDown,
+                    ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
+                    ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+                };
+                match detail {
+                    Some(detail) => RedisError::from((kind, desc, detail)),
+                    None => RedisError::from((kind, desc)),
+                }
+            }
+        }
+    }
+}
+
+/// Internal low-level redis value enum.
+#[derive(PartialEq, Debug)]
+pub(crate) enum InternalValue {
+    /// A nil response from the server.
+    Nil,
+    /// An integer response.  Note that there are a few situations
+    /// in which redis actually returns a string for an integer which
+    /// is why this library generally treats integers and strings
+    /// the same for all numeric responses.
+    Int(i64),
+    /// An arbitrary binary data, usually represents a binary-safe string.
+    BulkString(Vec<u8>),
+    /// A response containing an array with more data. This is generally used by redis
+    /// to express nested structures.
+    Array(Vec<InternalValue>),
+    /// A simple string response, without line breaks and not binary safe.
+    SimpleString(String),
+    /// A status response which represents the string "OK".
+    Okay,
+    /// Unordered key,value list from the server. Use `as_map_iter` function.
+    Map(Vec<(InternalValue, InternalValue)>),
+    /// Attribute value from the server. Client will give data instead of whole Attribute type.
+    Attribute {
+        /// Data that attributes belong to.
+        data: Box<InternalValue>,
+        /// Key,Value list of attributes.
+        attributes: Vec<(InternalValue, InternalValue)>,
+    },
+    /// Unordered set value from the server.
+    Set(Vec<InternalValue>),
+    /// A floating number response from the server.
+    Double(f64),
+    /// A boolean response from the server.
+    Boolean(bool),
+    /// First String is format and other is the string
+    VerbatimString {
+        /// Text's format type
+        format: VerbatimFormat,
+        /// Remaining string check format before using!
+        text: String,
+    },
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(BigInt),
+    /// Push data from the server.
+    Push {
+        /// Push Kind
+        kind: PushKind,
+        /// Remaining data from push message
+        data: Vec<InternalValue>,
+    },
+    ServerError(ServerError),
+}
+
+impl InternalValue {
+    pub(crate) fn try_into(self) -> RedisResult<Value> {
+        match self {
+            InternalValue::Nil => Ok(Value::Nil),
+            InternalValue::Int(val) => Ok(Value::Int(val)),
+            InternalValue::BulkString(val) => Ok(Value::BulkString(val)),
+            InternalValue::Array(val) => Ok(Value::Array(Self::try_into_vec(val)?)),
+            InternalValue::SimpleString(val) => Ok(Value::SimpleString(val)),
+            InternalValue::Okay => Ok(Value::Okay),
+            InternalValue::Map(map) => Ok(Value::Map(Self::try_into_map(map)?)),
+            InternalValue::Attribute { data, attributes } => {
+                let data = Box::new((*data).try_into()?);
+                let attributes = Self::try_into_map(attributes)?;
+                Ok(Value::Attribute { data, attributes })
+            }
+            InternalValue::Set(set) => Ok(Value::Set(Self::try_into_vec(set)?)),
+            InternalValue::Double(double) => Ok(Value::Double(double)),
+            InternalValue::Boolean(boolean) => Ok(Value::Boolean(boolean)),
+            InternalValue::VerbatimString { format, text } => {
+                Ok(Value::VerbatimString { format, text })
+            }
+            InternalValue::BigNumber(number) => Ok(Value::BigNumber(number)),
+            InternalValue::Push { kind, data } => Ok(Value::Push {
+                kind,
+                data: Self::try_into_vec(data)?,
+            }),
+
+            InternalValue::ServerError(err) => Err(err.into()),
+        }
+    }
+
+    fn try_into_vec(vec: Vec<InternalValue>) -> RedisResult<Vec<Value>> {
+        vec.into_iter()
+            .map(InternalValue::try_into)
+            .collect::<RedisResult<Vec<_>>>()
+    }
+
+    fn try_into_map(map: Vec<(InternalValue, InternalValue)>) -> RedisResult<Vec<(Value, Value)>> {
+        let mut vec = Vec::with_capacity(map.len());
+        for (key, value) in map.into_iter() {
+            vec.push((key.try_into()?, value.try_into()?));
+        }
+        Ok(vec)
+    }
+}
+
 /// Internal low-level redis value enum.
 #[derive(PartialEq, Clone)]
 pub enum Value {
@@ -197,7 +355,7 @@ pub enum Value {
 }
 
 /// `VerbatimString`'s format types defined by spec
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum VerbatimFormat {
     /// Unknown type to catch future formats.
     Unknown(String),
@@ -208,7 +366,7 @@ pub enum VerbatimFormat {
 }
 
 /// `Push` type's currently known kinds.
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum PushKind {
     /// `Disconnection` is sent from the **library** when connection is closed.
     Disconnection,
@@ -416,7 +574,7 @@ impl fmt::Debug for Value {
             Value::Int(val) => write!(fmt, "int({val:?})"),
             Value::BulkString(ref val) => match from_utf8(val) {
                 Ok(x) => write!(fmt, "bulk-string('{x:?}')"),
-                Err(_) => write!(fmt, "binary-array({val:?})"),
+                Err(_) => write!(fmt, "binary-data({val:?})"),
             },
             Value::Array(ref values) => write!(fmt, "array({values:?})"),
             Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
@@ -714,10 +872,10 @@ impl RedisError {
             ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
             ErrorKind::NotBusy => "not busy",
+            ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
-            ErrorKind::ConnectionNotFound => "required connection not found",
             ErrorKind::ParseError => "parse error",
         }
     }
@@ -884,7 +1042,7 @@ impl RedisError {
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ConnectionNotFound => RetryMethod::Reconnect,
+            ErrorKind::ClusterConnectionNotFound => RetryMethod::Reconnect,
 
             ErrorKind::IoError => match &self.repr {
                 ErrorRepr::IoError(err) => match err.kind() {
@@ -907,12 +1065,12 @@ impl RedisError {
     }
 }
 
-pub fn make_extension_error(code: &str, detail: Option<&str>) -> RedisError {
+pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
-            code.to_string(),
+            code,
             match detail {
-                Some(x) => x.to_string(),
+                Some(x) => x,
                 None => "Unknown extension error encountered".to_string(),
             },
         ),
@@ -932,9 +1090,9 @@ pub struct InfoDict {
     map: HashMap<String, Value>,
 }
 
-/// This type provides convenient access to key/value BulkString returned by
+/// This type provides convenient access to key/value data returned by
 /// the "INFO" command.  It acts like a regular mapping but also has
-/// a convenience method `get` which can return BulkString in the appropriate
+/// a convenience method `get` which can return data in the appropriate
 /// type.
 ///
 /// For instance this can be used to query the server for the role it's
@@ -1616,7 +1774,7 @@ impl FromRedisValue for u8 {
         from_redis_value_for_num_internal!(u8, v)
     }
 
-    // this hack allows us to specialize Vec<u8> to work with binary BulkString.
+    // this hack allows us to specialize Vec<u8> to work with binary data.
     fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
@@ -1699,7 +1857,7 @@ impl FromRedisValue for bool {
                 } else if &s[..] == "0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response SimpleString not valid boolean");
+                    invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::BulkString(ref bytes) => {
@@ -1783,7 +1941,7 @@ macro_rules! from_vec_from_redis_value {
         impl<$T: FromRedisValue> FromRedisValue for $Type {
             fn from_redis_value(v: &Value) -> RedisResult<$Type> {
                 match v {
-                    // All binary BulkString except u8 will try to parse into a single element vector.
+                    // All binary data except u8 will try to parse into a single element vector.
                     // u8 has its own implementation of from_byte_vec.
                     Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
                         Some(x) => Ok($convert(x)),
@@ -1814,7 +1972,7 @@ macro_rules! from_vec_from_redis_value {
             }
             fn from_owned_redis_value(v: Value) -> RedisResult<$Type> {
                 match v {
-                    // Binary BulkString is parsed into a single-element vector, except
+                    // Binary data is parsed into a single-element vector, except
                     // for the element type `u8`, which directly consumes the entire
                     // array of bytes.
                     Value::BulkString(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
@@ -2237,14 +2395,14 @@ impl FromRedisValue for bytes::Bytes {
         let v = get_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
-            _ => invalid_type_error!(v, "Not binary BulkString"),
+            _ => invalid_type_error!(v, "Not a bulk string"),
         }
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
-            _ => invalid_type_error!(v, "Not binary BulkString"),
+            _ => invalid_type_error!(v, "Not a bulk string"),
         }
     }
 }
@@ -2275,8 +2433,14 @@ pub fn from_redis_value<T: FromRedisValue>(v: &Value) -> RedisResult<T> {
     FromRedisValue::from_redis_value(v)
 }
 
+/// A shortcut function to invoke `FromRedisValue::from_owned_redis_value`
+/// to make the API slightly nicer.
+pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> RedisResult<T> {
+    FromRedisValue::from_owned_redis_value(v)
+}
+
 /// Enum representing the communication protocol with the server. This enum represents the types
-/// of BulkString that the server can send to the client, and the capabilities that the client can use.
+/// of data that the server can send to the client, and the capabilities that the client can use.
 #[derive(Clone, Eq, PartialEq, Default, Debug, Copy)]
 pub enum ProtocolVersion {
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP2.md>
@@ -2284,10 +2448,4 @@ pub enum ProtocolVersion {
     RESP2,
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP3.md>
     RESP3,
-}
-
-/// A shortcut function to invoke `FromRedisValue::from_owned_redis_value`
-/// to make the API slightly nicer.
-pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> RedisResult<T> {
-    FromRedisValue::from_owned_redis_value(v)
 }

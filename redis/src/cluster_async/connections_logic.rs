@@ -2,14 +2,13 @@ use std::net::{IpAddr, SocketAddr};
 
 use super::{connections_container::ClusterNode, Connect};
 use crate::{
-    aio::{get_socket_addrs, ConnectionLike},
+    aio::{get_socket_addrs, ConnectionLike, Runtime},
     cluster::get_connection_info,
     cluster_client::ClusterParams,
     ErrorKind, RedisError, RedisResult,
 };
 
 use futures::prelude::*;
-use futures_time::future::FutureExt;
 use futures_util::{future::BoxFuture, join};
 use tracing::warn;
 
@@ -384,7 +383,7 @@ where
 {
     let read_from_replicas = params.read_from_replicas
         != crate::cluster_slotmap::ReadFromReplicaStrategy::AlwaysFromPrimary;
-    let connection_timeout = params.connection_timeout.into();
+    let connection_timeout = params.connection_timeout;
     check_connection(conn, connection_timeout).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
@@ -433,7 +432,7 @@ pub async fn check_node_connections<C>(
 where
     C: ConnectionLike + Send + 'static + Clone,
 {
-    let timeout = params.connection_timeout.into();
+    let timeout = params.connection_timeout;
     let (check_mgmt_connection, check_user_connection) = match conn_type {
         RefreshConnectionType::OnlyUserConnection => (false, true),
         RefreshConnectionType::OnlyManagementConnection => (true, false),
@@ -481,13 +480,12 @@ where
     }
 }
 
-async fn check_connection<C>(conn: &mut C, timeout: futures_time::time::Duration) -> RedisResult<()>
+async fn check_connection<C>(conn: &mut C, timeout: std::time::Duration) -> RedisResult<()>
 where
     C: ConnectionLike + Send + 'static,
 {
-    crate::cmd("PING")
-        .query_async::<_, String>(conn)
-        .timeout(timeout)
+    Runtime::locate()
+        .timeout(timeout, crate::cmd("PING").query_async::<_, String>(conn))
         .await??;
     Ok(())
 }

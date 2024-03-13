@@ -1,9 +1,13 @@
+use std::{io, time::Duration};
+
+use futures_util::Future;
+
 #[cfg(feature = "async-std-comp")]
 use super::async_std;
 #[cfg(feature = "tokio-comp")]
 use super::tokio;
 use super::RedisRuntime;
-use futures_util::Future;
+use crate::types::RedisError;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Runtime {
@@ -48,5 +52,31 @@ impl Runtime {
             #[cfg(feature = "async-std-comp")]
             Runtime::AsyncStd => async_std::AsyncStd::spawn(f),
         }
+    }
+
+    pub(crate) async fn timeout<F: Future>(
+        &self,
+        duration: Duration,
+        future: F,
+    ) -> Result<F::Output, Elapsed> {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => ::tokio::time::timeout(duration, future)
+                .await
+                .map_err(|_| Elapsed(())),
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => ::async_std::future::timeout(duration, future)
+                .await
+                .map_err(|_| Elapsed(())),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Elapsed(());
+
+impl From<Elapsed> for RedisError {
+    fn from(_: Elapsed) -> Self {
+        io::Error::from(io::ErrorKind::TimedOut).into()
     }
 }
