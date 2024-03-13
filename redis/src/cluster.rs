@@ -644,17 +644,14 @@ where
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
-                // TODO - once RESP3 is merged, return a map value here.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 let results = results
                     .into_iter()
                     .map(|result| {
-                        result.map(|(addr, val)| {
-                            Value::Array(vec![Value::BulkString(addr.as_bytes().to_vec()), val])
-                        })
+                        result.map(|(addr, val)| (Value::BulkString(addr.as_bytes().to_vec()), val))
                     })
                     .collect::<RedisResult<Vec<_>>>()?;
-                Ok(Value::Array(results))
+                Ok(Value::Map(results))
             }
         }
     }
@@ -671,11 +668,8 @@ where
                 count: _,
             } => Some(RoutingInfo::SingleNode(route.clone())),
         };
-        let route = match route_option {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
-                Some(route)
-            }
+        let single_node_routing = match route_option {
+            Some(RoutingInfo::SingleNode(single_node_routing)) => single_node_routing,
             Some(RoutingInfo::MultiNode((multi_node_routing, response_policy))) => {
                 return self
                     .execute_on_multiple_nodes(input, multi_node_routing, response_policy)
@@ -704,10 +698,18 @@ where
                         conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
                     }
                     (addr.to_string(), conn)
-                } else if route.is_none() {
-                    get_random_connection(&mut connections)
                 } else {
-                    self.get_connection(&mut connections, route.as_ref().unwrap())?
+                    match &single_node_routing {
+                        SingleNodeRoutingInfo::Random => get_random_connection(&mut connections),
+                        SingleNodeRoutingInfo::SpecificNode(route) => {
+                            self.get_connection(&mut connections, route)?
+                        }
+                        SingleNodeRoutingInfo::ByAddress { host, port } => {
+                            let address = format!("{host}:{port}");
+                            let conn = self.get_connection_by_addr(&mut connections, &address)?;
+                            (address, conn)
+                        }
+                    }
                 };
                 (addr, input.send(conn))
             };
