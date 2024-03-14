@@ -1351,6 +1351,15 @@ impl ConnectionLike for Connection {
             // See: https://github.com/redis-rs/redis-rs/issues/436
             let response = self.read_response();
             match response {
+                Ok(Value::ServerError(err)) => {
+                    if idx < offset {
+                        if first_err.is_none() {
+                            first_err = Some(err.into());
+                        }
+                    } else {
+                        rv.push(Value::ServerError(err));
+                    }
+                }
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
                     if let Value::Push {

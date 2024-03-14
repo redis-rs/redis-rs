@@ -7,7 +7,7 @@ mod basic_async {
     use futures::{prelude::*, StreamExt};
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushInfo, PushKind,
+        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushInfo, PushKind,
         RedisConnectionInfo, RedisResult, ScanOptions, Value,
     };
     use tokio::{sync::mpsc::error::TryRecvError, time::timeout};
@@ -673,8 +673,6 @@ mod basic_async {
     mod pub_sub {
         use std::time::Duration;
 
-        use redis::ProtocolVersion;
-
         use super::*;
 
         #[test]
@@ -1051,8 +1049,6 @@ mod basic_async {
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_push_manager_cm() {
-        use redis::ProtocolVersion;
-
         let ctx = TestContext::new();
         let mut connection_info = ctx.server.connection_info();
         connection_info.redis.protocol = ProtocolVersion::RESP3;
