@@ -356,7 +356,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result.extract_error())),
+                Some(result) => Ok(Some(Ok(result))),
                 None => Ok(None),
             }
         }
@@ -409,7 +409,7 @@ mod aio_support {
                     }
                 }
             }),
-            Ok(result) => result.extract_error(),
+            Ok(result) => Ok(result),
         }
     }
 }
@@ -467,7 +467,7 @@ impl Parser {
                     }
                 }
             }),
-            Ok(result) => result.extract_error(),
+            Ok(result) => Ok(result),
         }
     }
 }
@@ -483,8 +483,6 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::make_extension_error;
-
     use super::*;
 
     #[cfg(feature = "aio")]
@@ -513,12 +511,15 @@ mod tests {
         let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
 
         assert_eq!(
-            result,
-            Err(RedisError::from((
-                ErrorKind::BusyLoadingError,
-                "An error was signalled by the server",
-                "server is loading".to_string()
-            )))
+            result.unwrap(),
+            Value::Array(vec![
+                Value::Okay,
+                Value::ServerError(ServerError::KnownError {
+                    kind: ServerErrorKind::BusyLoadingError,
+                    detail: Some("server is loading".to_string())
+                }),
+                Value::Okay
+            ])
         );
 
         let mut bytes = bytes::BytesMut::from(b"+OK\r\n".as_slice());
@@ -536,12 +537,15 @@ mod tests {
         let result = parse_redis_value(bytes);
 
         assert_eq!(
-            result,
-            Err(RedisError::from((
-                ErrorKind::BusyLoadingError,
-                "An error was signalled by the server",
-                "server is loading".to_string()
-            )))
+            result.unwrap(),
+            Value::Array(vec![
+                Value::Okay,
+                Value::ServerError(ServerError::KnownError {
+                    kind: ServerErrorKind::BusyLoadingError,
+                    detail: Some("server is loading".to_string())
+                }),
+                Value::Okay
+            ])
         );
 
         let result = parse_redis_value(b"+OK\r\n").unwrap();
@@ -614,11 +618,11 @@ mod tests {
     fn decode_resp3_blob_error() {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
         assert_eq!(
-            val.err(),
-            Some(make_extension_error(
-                "SYNTAX".to_string(),
-                Some("invalid syntax".to_string())
-            ))
+            val.unwrap(),
+            Value::ServerError(ServerError::ExtensionError {
+                code: "SYNTAX".to_string(),
+                detail: Some("invalid syntax".to_string())
+            })
         )
     }
 

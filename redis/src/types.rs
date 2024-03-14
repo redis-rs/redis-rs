@@ -146,7 +146,7 @@ pub enum ErrorKind {
     RESP3NotSupported,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum ServerErrorKind {
     ResponseError,
     ExecAbortError,
@@ -175,6 +175,13 @@ pub enum ServerError {
 }
 
 impl ServerError {
+    pub fn kind(&self) -> Option<ServerErrorKind> {
+        match self {
+            ServerError::ExtensionError { .. } => None,
+            ServerError::KnownError { kind, .. } => Some(*kind),
+        }
+    }
+
     pub fn code(&self) -> &str {
         match self {
             ServerError::ExtensionError { code, .. } => code,
@@ -519,13 +526,13 @@ impl Value {
         }
     }
 
-    fn extract_error_vec(vec: Vec<Self>) -> RedisResult<Vec<Self>> {
+    pub(crate) fn extract_error_vec(vec: Vec<Self>) -> RedisResult<Vec<Self>> {
         vec.into_iter()
             .map(Self::extract_error)
             .collect::<RedisResult<Vec<_>>>()
     }
 
-    fn extract_error_map(map: Vec<(Self, Self)>) -> RedisResult<Vec<(Self, Self)>> {
+    pub(crate) fn extract_error_map(map: Vec<(Self, Self)>) -> RedisResult<Vec<(Self, Self)>> {
         let mut vec = Vec::with_capacity(map.len());
         for (key, value) in map.into_iter() {
             vec.push((key.extract_error()?, value.extract_error()?));

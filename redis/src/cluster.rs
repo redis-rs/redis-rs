@@ -87,10 +87,14 @@ enum Input<'a> {
 impl<'a> Input<'a> {
     fn send(&'a self, connection: &mut impl ConnectionLike) -> RedisResult<Output> {
         match self {
-            Input::Slice { cmd, routable: _ } => {
-                connection.req_packed_command(cmd).map(Output::Single)
-            }
-            Input::Cmd(cmd) => connection.req_command(cmd).map(Output::Single),
+            Input::Slice { cmd, routable: _ } => connection
+                .req_packed_command(cmd)
+                .and_then(|value| value.extract_error())
+                .map(Output::Single),
+            Input::Cmd(cmd) => connection
+                .req_command(cmd)
+                .and_then(|value| value.extract_error())
+                .map(Output::Single),
             Input::Commands {
                 cmd,
                 route: _,
@@ -98,6 +102,7 @@ impl<'a> Input<'a> {
                 count,
             } => connection
                 .req_packed_commands(cmd, *offset, *count)
+                .and_then(Value::extract_error_vec)
                 .map(Output::Multi),
         }
     }
@@ -497,8 +502,12 @@ where
             .map(|addr| {
                 let connection = self.get_connection_by_addr(connections, addr)?;
                 match input {
-                    Input::Slice { cmd, routable: _ } => connection.req_packed_command(cmd),
-                    Input::Cmd(cmd) => connection.req_command(cmd),
+                    Input::Slice { cmd, routable: _ } => connection
+                        .req_packed_command(cmd)
+                        .and_then(|value| value.extract_error()),
+                    Input::Cmd(cmd) => connection
+                        .req_command(cmd)
+                        .and_then(|value| value.extract_error()),
                     Input::Commands {
                         cmd: _,
                         route: _,
@@ -697,7 +706,8 @@ where
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
                         // actually want to execute.
-                        conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
+                        conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])
+                            .and_then(|value| value.extract_error())?;
                     }
                     (addr.to_string(), conn)
                 } else {
