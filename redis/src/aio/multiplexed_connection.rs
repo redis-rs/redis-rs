@@ -32,31 +32,41 @@ use tokio_util::codec::Decoder;
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
-struct InFlight {
-    output: PipelineOutput,
-    expected_response_count: usize,
-    current_response_count: usize,
-    buffer: Option<Value>,
-    first_err: Option<RedisError>,
+enum ResponseAggregate {
+    SingleCommand,
+    Pipeline {
+        expected_response_count: usize,
+        current_response_count: usize,
+        buffer: Vec<Value>,
+        first_err: Option<RedisError>,
+    },
 }
 
-impl InFlight {
-    fn new(output: PipelineOutput, expected_response_count: usize) -> Self {
-        Self {
-            output,
-            expected_response_count,
-            current_response_count: 0,
-            buffer: None,
-            first_err: None,
+impl ResponseAggregate {
+    fn new(pipeline_response_count: Option<usize>) -> Self {
+        match pipeline_response_count {
+            Some(response_count) => ResponseAggregate::Pipeline {
+                expected_response_count: response_count,
+                current_response_count: 0,
+                buffer: Vec::new(),
+                first_err: None,
+            },
+            None => ResponseAggregate::SingleCommand,
         }
     }
+}
+
+struct InFlight {
+    output: PipelineOutput,
+    response_aggregate: ResponseAggregate,
 }
 
 // A single message sent through the pipeline
 struct PipelineMessage<S> {
     input: S,
     output: PipelineOutput,
-    response_count: usize,
+    // If `None`, this is a single request, not a pipeline of multiple requests.
+    pipeline_response_count: Option<usize>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -138,55 +148,56 @@ where
                 }
             }
         }
-        {
-            let entry = match self_.in_flight.front_mut() {
-                Some(entry) => entry,
-                None => return,
-            };
-            match result {
-                Ok(item) => {
-                    if !skip_value {
-                        entry.buffer = Some(match entry.buffer.take() {
-                            Some(Value::Array(mut values)) if entry.current_response_count > 1 => {
-                                values.push(item);
-                                Value::Array(values)
-                            }
-                            Some(value) => {
-                                let mut vec = Vec::with_capacity(entry.expected_response_count);
-                                vec.push(value);
-                                vec.push(item);
-                                Value::Array(vec)
-                            }
-                            None => item,
-                        });
-                    }
-                }
-                Err(err) => {
-                    if entry.first_err.is_none() {
-                        entry.first_err = Some(err);
-                    }
-                }
-            }
 
-            if !skip_value {
-                entry.current_response_count += 1;
-            }
-            if entry.current_response_count < entry.expected_response_count {
-                // Need to gather more response values
-                return;
-            }
-        }
-
-        let entry = self_.in_flight.pop_front().unwrap();
-        let response = match entry.first_err {
-            Some(err) => Err(err),
-            None => Ok(entry.buffer.unwrap_or(Value::Array(vec![]))),
+        let mut entry = match self_.in_flight.pop_front() {
+            Some(entry) => entry,
+            None => return,
         };
 
-        // `Err` means that the receiver was dropped in which case it does not
-        // care about the output and we can continue by just dropping the value
-        // and sender
-        entry.output.send(response).ok();
+        if skip_value {
+            self_.in_flight.push_front(entry);
+            return;
+        }
+
+        match &mut entry.response_aggregate {
+            ResponseAggregate::SingleCommand => {
+                entry.output.send(result).ok();
+            }
+            ResponseAggregate::Pipeline {
+                expected_response_count,
+                current_response_count,
+                buffer,
+                first_err,
+            } => {
+                match result {
+                    Ok(item) => {
+                        buffer.push(item);
+                    }
+                    Err(err) => {
+                        if first_err.is_none() {
+                            *first_err = Some(err);
+                        }
+                    }
+                }
+
+                *current_response_count += 1;
+                if current_response_count < expected_response_count {
+                    // Need to gather more response values
+                    self_.in_flight.push_front(entry);
+                    return;
+                }
+
+                let response = match first_err.take() {
+                    Some(err) => Err(err),
+                    None => Ok(Value::Array(std::mem::take(buffer))),
+                };
+
+                // `Err` means that the receiver was dropped in which case it does not
+                // care about the output and we can continue by just dropping the value
+                // and sender
+                entry.output.send(response).ok();
+            }
+        }
     }
 }
 
@@ -215,7 +226,7 @@ where
         PipelineMessage {
             input,
             output,
-            response_count,
+            pipeline_response_count,
         }: PipelineMessage<SinkItem>,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
@@ -234,9 +245,13 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
-                self_
-                    .in_flight
-                    .push_back(InFlight::new(output, response_count));
+                let response_aggregate = ResponseAggregate::new(pipeline_response_count);
+                let entry = InFlight {
+                    output,
+                    response_aggregate,
+                };
+
+                self_.in_flight.push_back(entry);
                 Ok(())
             }
             Err(err) => {
@@ -313,13 +328,14 @@ where
         item: SinkItem,
         timeout: Duration,
     ) -> Result<Value, Option<RedisError>> {
-        self.send_recv(item, 1, timeout).await
+        self.send_recv(item, None, timeout).await
     }
 
     async fn send_recv(
         &mut self,
         input: SinkItem,
-        count: usize,
+        // If `None`, this is a single request, not a pipeline of multiple requests.
+        pipeline_response_count: Option<usize>,
         timeout: Duration,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
@@ -327,7 +343,7 @@ where
         self.sender
             .send(PipelineMessage {
                 input,
-                response_count: count,
+                pipeline_response_count,
                 output: sender,
             })
             .await
@@ -479,7 +495,7 @@ impl MultiplexedConnection {
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
-                offset + count,
+                Some(offset + count),
                 self.response_timeout,
             )
             .await

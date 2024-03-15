@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use futures::{prelude::*, StreamExt};
 use redis::{
     aio::{ConnectionLike, MultiplexedConnection},
@@ -6,7 +8,6 @@ use redis::{
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::support::*;
-
 mod support;
 
 #[test]
@@ -31,6 +32,61 @@ fn test_args() {
         assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
         result
     }))
+    .unwrap();
+}
+
+#[test]
+fn test_nice_hash_api() {
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut connection = ctx.async_connection().await.unwrap();
+
+        assert_eq!(
+            connection
+                .hset_multiple("my_hash", &[("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8)])
+                .await,
+            Ok(())
+        );
+
+        let hm: HashMap<String, isize> = connection.hgetall("my_hash").await.unwrap();
+        assert_eq!(hm.len(), 4);
+        assert_eq!(hm.get("f1"), Some(&1));
+        assert_eq!(hm.get("f2"), Some(&2));
+        assert_eq!(hm.get("f3"), Some(&4));
+        assert_eq!(hm.get("f4"), Some(&8));
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_nice_hash_api_in_pipe() {
+    let ctx = TestContext::new();
+
+    block_on_all(async move {
+        let mut connection = ctx.async_connection().await.unwrap();
+
+        assert_eq!(
+            connection
+                .hset_multiple("my_hash", &[("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8)])
+                .await,
+            Ok(())
+        );
+
+        let mut pipe = redis::pipe();
+        pipe.cmd("HGETALL").arg("my_hash");
+        let mut vec: Vec<HashMap<String, isize>> = pipe.query_async(&mut connection).await.unwrap();
+        assert_eq!(vec.len(), 1);
+        let hash = vec.pop().unwrap();
+        assert_eq!(hash.len(), 4);
+        assert_eq!(hash.get("f1"), Some(&1));
+        assert_eq!(hash.get("f2"), Some(&2));
+        assert_eq!(hash.get("f3"), Some(&4));
+        assert_eq!(hash.get("f4"), Some(&8));
+
+        Ok(())
+    })
     .unwrap();
 }
 
@@ -568,7 +624,6 @@ async fn test_issue_async_commands_scan_broken() {
 }
 
 mod pub_sub {
-    use std::collections::HashMap;
     use std::time::Duration;
 
     use redis::ProtocolVersion;
