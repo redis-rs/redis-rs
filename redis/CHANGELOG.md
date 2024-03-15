@@ -1,3 +1,7 @@
+### 0.25.2 (2024-03-15)
+
+* MultiplexedConnection: Separate response handling for pipeline. ([#1078](https://github.com/redis-rs/redis-rs/pull/1078))
+
 ### 0.25.1 (2024-03-12)
 
 * Fix small disambiguity in examples ([#1072](https://github.com/redis-rs/redis-rs/pull/1072) @sunhuachuang)
