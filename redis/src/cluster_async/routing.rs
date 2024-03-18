@@ -107,7 +107,7 @@ pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Opti
 mod pipeline_routing_tests {
     use super::route_for_pipeline;
     use crate::{
-        cluster_routing::{Route, SlotAddr},
+        cluster_slotmap::{Route, SlotAddr},
         cmd,
     };
 
