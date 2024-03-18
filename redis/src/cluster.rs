@@ -42,9 +42,6 @@ use std::thread;
 use std::time::Duration;
 
 use crate::cluster_pipeline::UNROUTABLE_ERROR;
-use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
-};
 use crate::cluster_topology::parse_slots;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
@@ -56,7 +53,11 @@ use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
+    cluster_routing::{
+        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Routable, RoutingInfo,
+        SingleNodeRoutingInfo, SLOT_SIZE,
+    },
+    cluster_slotmap::{Route, SlotAddr, SlotMap},
 };
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 

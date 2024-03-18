@@ -77,8 +77,8 @@ use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotMap,
     },
+    cluster_slotmap::{Slot, SlotMap},
     cluster_topology::parse_slots,
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
