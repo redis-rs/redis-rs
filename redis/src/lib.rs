@@ -56,6 +56,7 @@
 //! * `aio`: enables async IO support (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
+//! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
@@ -63,6 +64,10 @@
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
+//! * `tcp_nodelay`: enables the no-delay flag on  communication sockets (optional)
+//! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
+//! * `uuid`: enables type conversion to UUID (optional)
+//! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //!
 //! ## Connection Parameters
 //!
