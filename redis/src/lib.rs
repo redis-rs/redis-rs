@@ -383,6 +383,57 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
 //! [`async-std`]:https://async.rs/
+#![cfg_attr(
+    feature = "sentinel",
+    doc = r##"
+# Sentinel
+Sentinel types allow users to connect to Redis sentinels and find primaries and replicas.
+
+```rust,no_run
+use redis::{ Commands, RedisConnectionInfo };
+use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+
+let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+let mut sentinel = SentinelClient::build(
+    nodes,
+    String::from("primary1"),
+    Some(SentinelNodeConnectionInfo {
+        tls_mode: Some(redis::TlsMode::Insecure),
+        redis_connection_info: None,
+    }),
+    redis::sentinel::SentinelServerType::Master,
+)
+.unwrap();
+
+let primary = sentinel.get_connection().unwrap();
+```
+
+An async API also exists:
+
+```rust,no_run
+use futures::prelude::*;
+use redis::{ Commands, RedisConnectionInfo };
+use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+
+# #[tokio::main]
+# async fn main() -> redis::RedisResult<()> {
+let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+let mut sentinel = SentinelClient::build(
+    nodes,
+    String::from("primary1"),
+    Some(SentinelNodeConnectionInfo {
+        tls_mode: Some(redis::TlsMode::Insecure),
+        redis_connection_info: None,
+    }),
+    redis::sentinel::SentinelServerType::Master,
+)
+.unwrap();
+
+let primary = sentinel.get_async_connection().await.unwrap();
+# Ok(()) }
+"##
+)]
+//!
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
