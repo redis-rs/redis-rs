@@ -734,7 +734,7 @@ impl Client {
     ///
     ///     println!(">>> connection info: {connection_info:?}");
     ///
-    ///     let mut con = client.get_async_connection().await?;
+    ///     let mut con = client.get_multiplexed_async_connection().await?;
     ///
     ///     con.set("key1", b"foo").await?;
     ///
