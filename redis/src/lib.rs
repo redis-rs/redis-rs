@@ -351,7 +351,7 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][].
+asynchronous interface based on [`futures`][] and [`tokio`][], or [`async-std`][].
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
@@ -382,6 +382,7 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
+//! [`async-std`]:https://async.rs/
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
