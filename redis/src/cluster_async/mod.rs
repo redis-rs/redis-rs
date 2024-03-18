@@ -35,9 +35,9 @@ use crate::{
     cluster::{get_connection_info, parse_slots, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
-        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
+        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
     },
+    cluster_slotmap::{Route, Slot, SlotAddr, SlotMap},
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -1453,7 +1453,7 @@ where
 mod pipeline_routing_tests {
     use super::route_for_pipeline;
     use crate::{
-        cluster_routing::{Route, SlotAddr},
+        cluster_slotmap::{Route, SlotAddr},
         cmd,
     };
 
