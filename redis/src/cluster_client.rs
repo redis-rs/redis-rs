@@ -32,8 +32,8 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     topology_checks_interval: Option<Duration>,
     client_name: Option<String>,
-    protocol: ProtocolVersion,
     response_timeout: Option<Duration>,
+    protocol: ProtocolVersion,
 }
 
 #[derive(Clone)]
@@ -88,9 +88,9 @@ pub struct ClusterParams {
     pub(crate) topology_checks_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) client_name: Option<String>,
-    pub(crate) protocol: ProtocolVersion,
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
+    pub(crate) protocol: ProtocolVersion,
 }
 
 impl ClusterParams {
@@ -115,8 +115,8 @@ impl ClusterParams {
             topology_checks_interval: value.topology_checks_interval,
             tls_params,
             client_name: value.client_name,
-            protocol: value.protocol,
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
+            protocol: value.protocol,
         })
     }
 }
@@ -331,12 +331,6 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Sets the protocol with which the client should communicate with the server.
-    pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
-        self.builder_params.protocol = protocol;
-        self
-    }
-
     /// Enables timing out on slow connection time.
     ///
     /// If enabled, the cluster will only wait the given time on each connection attempt to each node.
@@ -350,6 +344,12 @@ impl ClusterClientBuilder {
     /// If enabled, the cluster will only wait the given time to each response from each node.
     pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Sets the protocol with which the client should communicate with the server.
+    pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
+        self.builder_params.protocol = protocol;
         self
     }
 

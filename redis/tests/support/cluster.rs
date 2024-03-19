@@ -372,8 +372,8 @@ impl TestClusterContext {
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone());
-        builder = builder.use_protocol(use_protocol());
+        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
+            .use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {

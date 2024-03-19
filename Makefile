@@ -23,11 +23,6 @@ test:
 	@REDISRS_SERVER_TYPE=tcp PROTOCOL=RESP3 cargo test -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features and RESP3"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp PROTOCOL=RESP3 cargo test -p redis --all-features -- --nocapture --test-threads=1  --skip test_module
-
-	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test --locked -p redis --all-features -- --nocapture --test-threads=1 --skip test_module
@@ -68,11 +63,6 @@ test-module:
 	@echo "Testing RESP2 with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked --all-features test_module -- --test-threads=1
-
-	@echo "===================================================================="
-	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 RESP3=true cargo test --all-features test_module -- --test-threads=1
 
 	@echo "===================================================================="
 	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
