@@ -880,6 +880,34 @@ fn test_script_load() {
 }
 
 #[test]
+#[cfg(feature = "script")]
+fn test_script_from_hash() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let script = redis::Script::new(
+        r"
+       return {redis.call('GET', KEYS[1]), ARGV[1]}
+    ",
+    );
+
+    let hash = script.prepare_invoke().load(&mut con);
+
+    let script_from_hash = redis::Script::from_hash(hash.as_ref().unwrap());
+
+    assert_eq!(hash, Ok(script_from_hash.get_hash().to_string()));
+
+    let _: () = redis::cmd("SET")
+        .arg("my_key")
+        .arg("foo")
+        .query(&mut con)
+        .unwrap();
+    let response = script_from_hash.key("my_key").arg(42).invoke(&mut con);
+
+    assert_eq!(response, Ok(("foo".to_string(), 42)));
+}
+
+#[test]
 fn test_tuple_args() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
