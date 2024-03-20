@@ -16,8 +16,9 @@ use redis::{
     cluster::ClusterClient,
     cluster_async::Connect,
     cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-    cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict,
-    IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
+    cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ConnectionConfig,
+    ErrorKind, InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult,
+    Script, Value,
 };
 
 use crate::support::*;
@@ -435,17 +436,12 @@ struct ErrorConnection {
 }
 
 impl Connect for ErrorConnection {
-    fn connect<'a, T>(
-        info: T,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
-    ) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, connection_config: &'a ConnectionConfig) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {
         Box::pin(async move {
-            let inner =
-                MultiplexedConnection::connect(info, response_timeout, connection_timeout).await?;
+            let inner = MultiplexedConnection::connect(info, connection_config).await?;
             Ok(ErrorConnection { inner })
         })
     }

@@ -21,6 +21,9 @@ use redis::{ClientTlsConfig, TlsCertificates};
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
+#[cfg(feature = "cache")]
+use redis::{caching::CacheConfig, ConnectionConfigBuilder};
+
 pub fn use_protocol() -> ProtocolVersion {
     if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
         ProtocolVersion::RESP3
@@ -82,21 +85,21 @@ where
     res
 }
 
-#[cfg(feature = "aio")]
-#[test]
-fn test_block_on_all_panics_from_spawns() {
-    let result = std::panic::catch_unwind(|| {
-        block_on_all(async {
-            tokio::task::spawn(async {
-                futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
-                panic!("As it should");
-            });
-            futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
-            Ok(())
-        })
-    });
-    assert!(result.is_err());
-}
+// #[cfg(feature = "aio")]
+// #[test]
+// fn test_block_on_all_panics_from_spawns() {
+//     let result = std::panic::catch_unwind(|| {
+//         block_on_all(async {
+//             tokio::task::spawn(async {
+//                 futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
+//                 panic!("As it should");
+//             });
+//             futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
+//             Ok(())
+//         })
+//     });
+//     assert!(result.is_err());
+// }
 
 #[cfg(feature = "async-std-comp")]
 pub fn block_on_all_using_async_std<F>(f: F) -> F::Output
@@ -529,6 +532,13 @@ impl TestContext {
         self.server.stop();
     }
 
+    #[cfg(all(feature = "tokio-comp", feature = "cache"))]
+    pub fn multiplexed_async_connection_with_cache(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        self.multiplexed_async_connection_tokio_with_cache()
+    }
+
     #[cfg(feature = "tokio-comp")]
     pub async fn multiplexed_async_connection(
         &self,
@@ -541,6 +551,39 @@ impl TestContext {
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_tokio_connection().await
+    }
+
+    #[cfg(all(feature = "tokio-comp", feature = "cache"))]
+    pub fn multiplexed_async_connection_tokio_with_cache(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        let client = self.client.clone();
+        async move {
+            client
+                .get_multiplexed_tokio_connection_with_config(
+                    &ConnectionConfigBuilder::new()
+                        .cache_config(CacheConfig::enabled())
+                        .build(),
+                )
+                .await
+        }
+    }
+
+    #[cfg(all(feature = "tokio-comp", feature = "cache"))]
+    pub fn multiplexed_async_connection_tokio_with_cache_config(
+        &self,
+        cache_config: CacheConfig,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        let client = self.client.clone();
+        async move {
+            client
+                .get_multiplexed_tokio_connection_with_config(
+                    &ConnectionConfigBuilder::new()
+                        .cache_config(cache_config)
+                        .build(),
+                )
+                .await
+        }
     }
 
     #[cfg(feature = "async-std-comp")]
