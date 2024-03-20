@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use redis::{FromRedisValue, ToRedisArgs, Value};
+use redis::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
 mod support;
 
 #[test]
@@ -50,7 +50,7 @@ impl RedisParseMode {
 
 #[test]
 fn test_info_dict() {
-    use redis::{InfoDict, Value};
+    use redis::InfoDict;
 
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let d: InfoDict = parse_mode
@@ -67,31 +67,32 @@ fn test_info_dict() {
 
 #[test]
 fn test_i32() {
-    use redis::{ErrorKind, Value};
+    // from hte book hitchhiker's guide to the galaxy
+    let everything_num = 42i32;
+    let everything_str_x = "42x";
 
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-        let i = parse_mode.parse_redis_value(Value::SimpleString("42".into()));
-        assert_eq!(i, Ok(42i32));
+        let i = parse_mode.parse_redis_value(Value::SimpleString(everything_num.to_string()));
+        assert_eq!(i, Ok(everything_num));
 
-        let i = parse_mode.parse_redis_value(Value::Int(42));
-        assert_eq!(i, Ok(42i32));
+        let i = parse_mode.parse_redis_value(Value::Int(everything_num.into()));
+        assert_eq!(i, Ok(everything_num));
 
-        let i = parse_mode.parse_redis_value(Value::BulkString("42".into()));
-        assert_eq!(i, Ok(42i32));
+        let i = parse_mode.parse_redis_value(Value::BulkString(everything_num.to_string().into()));
+        assert_eq!(i, Ok(everything_num));
 
-        let bad_i: Result<i32, _> = parse_mode.parse_redis_value(Value::SimpleString("42x".into()));
+        let bad_i: Result<i32, _> =
+            parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
         assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
 
         let bad_i_deref: Result<Box<i32>, _> =
-            parse_mode.parse_redis_value(Value::SimpleString("42x".into()));
+            parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
         assert_eq!(bad_i_deref.unwrap_err().kind(), ErrorKind::TypeError);
     }
 }
 
 #[test]
 fn test_u32() {
-    use redis::{ErrorKind, Value};
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let i = parse_mode.parse_redis_value(Value::SimpleString("42".into()));
         assert_eq!(i, Ok(42u32));
@@ -103,8 +104,6 @@ fn test_u32() {
 
 #[test]
 fn test_parse_boxed() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let simple_string_exp = "Simple string".to_string();
         let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
@@ -114,9 +113,6 @@ fn test_parse_boxed() {
 
 #[test]
 fn test_parse_arc() {
-    use redis::Value;
-    use std::sync::Arc;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let simple_string_exp = "Simple string".to_string();
         let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
@@ -130,8 +126,6 @@ fn test_parse_arc() {
 
 #[test]
 fn test_vec() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::Array(vec![
             Value::BulkString("1".into()),
@@ -156,7 +150,6 @@ fn test_vec() {
 
 #[test]
 fn test_box_slice() {
-    use redis::{FromRedisValue, Value};
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::Array(vec![
             Value::BulkString("1".into()),
@@ -188,9 +181,6 @@ fn test_box_slice() {
 
 #[test]
 fn test_arc_slice() {
-    use redis::{FromRedisValue, Value};
-    use std::sync::Arc;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::Array(vec![
             Value::BulkString("1".into()),
@@ -222,8 +212,6 @@ fn test_arc_slice() {
 
 #[test]
 fn test_single_bool_vec() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("1".into()));
 
@@ -233,8 +221,6 @@ fn test_single_bool_vec() {
 
 #[test]
 fn test_single_i32_vec() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("1".into()));
 
@@ -244,8 +230,6 @@ fn test_single_i32_vec() {
 
 #[test]
 fn test_single_u32_vec() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("42".into()));
 
@@ -255,8 +239,6 @@ fn test_single_u32_vec() {
 
 #[test]
 fn test_single_string_vec() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("1".into()));
         assert_eq!(v, Ok(vec!["1".to_string()]));
@@ -265,8 +247,6 @@ fn test_single_string_vec() {
 
 #[test]
 fn test_tuple() {
-    use redis::Value;
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::Array(vec![Value::Array(vec![
             Value::BulkString("1".into()),
@@ -281,7 +261,6 @@ fn test_tuple() {
 #[test]
 fn test_hashmap() {
     use fnv::FnvHasher;
-    use redis::{ErrorKind, Value};
     use std::collections::HashMap;
     use std::hash::BuildHasherDefault;
 
@@ -328,8 +307,6 @@ fn test_hashmap() {
 
 #[test]
 fn test_bool() {
-    use redis::{ErrorKind, Value};
-
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let v = parse_mode.parse_redis_value(Value::BulkString("1".into()));
         assert_eq!(v, Ok(true));
@@ -368,7 +345,6 @@ fn test_bool() {
 #[test]
 fn test_bytes() {
     use bytes::Bytes;
-    use redis::{ErrorKind, RedisResult, Value};
 
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
         let content: &[u8] = b"\x01\x02\x03\x04";
@@ -401,7 +377,6 @@ fn test_bytes() {
 fn test_uuid() {
     use std::str::FromStr;
 
-    use redis::{ErrorKind, FromRedisValue, RedisResult, Value};
     use uuid::Uuid;
 
     let uuid = Uuid::from_str("abab64b7-e265-4052-a41b-23e1e28674bf").unwrap();
@@ -429,7 +404,6 @@ fn test_uuid() {
 
 #[test]
 fn test_cstring() {
-    use redis::{ErrorKind, RedisResult, Value};
     use std::ffi::CString;
 
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
@@ -463,7 +437,6 @@ fn test_cstring() {
 
 #[test]
 fn test_std_types_to_redis_args() {
-    use redis::ToRedisArgs;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::collections::HashMap;
@@ -508,7 +481,6 @@ fn test_std_types_to_redis_args() {
 #[test]
 #[allow(unused_allocation)]
 fn test_deref_types_to_redis_args() {
-    use redis::ToRedisArgs;
     use std::collections::BTreeMap;
 
     let number = 456i64;
@@ -534,7 +506,6 @@ fn test_deref_types_to_redis_args() {
 #[test]
 fn test_large_usize_array_to_redis_args_and_back() {
     use crate::support::encode_value;
-    use redis::ToRedisArgs;
 
     let mut array = [0; 1000];
     for (i, item) in array.iter_mut().enumerate() {
@@ -559,7 +530,6 @@ fn test_large_usize_array_to_redis_args_and_back() {
 #[test]
 fn test_large_u8_array_to_redis_args_and_back() {
     use crate::support::encode_value;
-    use redis::ToRedisArgs;
 
     let mut array: [u8; 1000] = [0; 1000];
     for (i, item) in array.iter_mut().enumerate() {
@@ -581,7 +551,6 @@ fn test_large_u8_array_to_redis_args_and_back() {
 #[test]
 fn test_large_string_array_to_redis_args_and_back() {
     use crate::support::encode_value;
-    use redis::ToRedisArgs;
 
     let mut array: [String; 1000] = [(); 1000].map(|_| String::new());
     for (i, item) in array.iter_mut().enumerate() {
@@ -606,7 +575,6 @@ fn test_large_string_array_to_redis_args_and_back() {
 #[test]
 fn test_0_length_usize_array_to_redis_args_and_back() {
     use crate::support::encode_value;
-    use redis::ToRedisArgs;
 
     let array: [usize; 0] = [0; 0];
 
@@ -630,7 +598,7 @@ fn test_0_length_usize_array_to_redis_args_and_back() {
 
 #[test]
 fn test_attributes() {
-    use redis::{parse_redis_value, FromRedisValue, Value};
+    use redis::parse_redis_value;
     let bytes: &[u8] = b"*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n";
     let val = parse_redis_value(bytes).unwrap();
     {
