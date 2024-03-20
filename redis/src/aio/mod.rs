@@ -157,6 +157,41 @@ where
         .query_async(con)
         .await;
 
+    #[cfg(feature = "cache")]
+    client_caching_setup(connection_info, cache_config, con).await?;
+    Ok(())
+}
+
+#[cfg(feature = "cache")]
+async fn client_caching_setup<C>(
+    connection_info: &RedisConnectionInfo,
+    cache_config: crate::caching::CacheConfig,
+    con: &mut C,
+) -> RedisResult<()>
+where
+    C: ConnectionLike,
+{
+    if connection_info.protocol == ProtocolVersion::RESP2 {
+        return Ok(());
+    }
+    match cache_config.mode {
+        crate::caching::CacheMode::None => {}
+        crate::caching::CacheMode::All => {
+            cmd("CLIENT")
+                .arg("TRACKING")
+                .arg("ON")
+                .query_async(con)
+                .await?
+        }
+        crate::caching::CacheMode::OptIn => {
+            cmd("CLIENT")
+                .arg("TRACKING")
+                .arg("ON")
+                .arg("OPTIN")
+                .query_async(con)
+                .await?
+        }
+    }
     Ok(())
 }
 

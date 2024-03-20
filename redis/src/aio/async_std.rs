@@ -26,6 +26,7 @@ use async_std::net::TcpStream;
 use async_std::os::unix::net::UnixStream;
 use async_trait::async_trait;
 use futures_util::ready;
+use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[inline(always)]
@@ -55,10 +56,12 @@ use crate::tls::TlsConnParams;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use crate::connection::TlsConnParams;
 
-pin_project_lite::pin_project! {
-    /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
-    /// for it
-    pub struct AsyncStdWrapped<T> {  #[pin] inner: T }
+/// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
+/// for it
+#[pin_project]
+pub struct AsyncStdWrapped<T> {
+    #[pin]
+    inner: T,
 }
 
 impl<T> AsyncStdWrapped<T> {

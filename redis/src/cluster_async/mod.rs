@@ -49,7 +49,7 @@ use crate::caching::CacheConfig;
 use crate::connection_config::ConnectionConfig;
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
-use pin_project_lite::pin_project;
+use pin_project::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -404,19 +404,16 @@ impl<C> RequestInfo<C> {
     }
 }
 
-pin_project! {
-    #[project = RequestStateProj]
-    enum RequestState<F> {
-        None,
-        Future {
-            #[pin]
-            future: F,
-        },
-        Sleep {
-            #[pin]
-            sleep: BoxFuture<'static, ()>,
-        },
-    }
+#[pin_project(project = RequestStateProj)]
+enum RequestState<F> {
+    Future {
+        #[pin]
+        future: F,
+    },
+    Sleep {
+        #[pin]
+        sleep: BoxFuture<'static, ()>,
+    },
 }
 
 struct PendingRequest<C> {
@@ -425,13 +422,12 @@ struct PendingRequest<C> {
     info: RequestInfo<C>,
 }
 
-pin_project! {
-    struct Request<C> {
-        retry_params: RetryParams,
-        request: Option<PendingRequest<C>>,
-        #[pin]
-        future: RequestState<BoxFuture<'static, OperationResult>>,
-    }
+#[pin_project]
+struct Request<C> {
+    retry_params: RetryParams,
+    request: Option<PendingRequest<C>>,
+    #[pin]
+    future: RequestState<BoxFuture<'static, OperationResult>>,
 }
 
 #[must_use]
@@ -470,7 +466,6 @@ impl<C> Future for Request<C> {
                 }
                 .into();
             }
-            _ => panic!("Request future must be Some"),
         };
         match ready!(future.poll(cx)) {
             Ok(item) => {
