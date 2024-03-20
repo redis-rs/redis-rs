@@ -1499,10 +1499,6 @@ deref_impl! {
 }
 
 deref_impl! {
-    /// Encoding a data structure containing `Arc` will encode a copy of
-    /// the contents of the `Arc` each time the `Arc` is referenced within the
-    /// data structure. Encoding will not attempt to deduplicate these
-    /// repeated data.
     <T: ?Sized> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
 }
 
@@ -1659,7 +1655,7 @@ fn vec_to_array<T, const N: usize>(items: Vec<T>, original_value: &Value) -> Red
     }
 }
 
-impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
+impl<T: ?Sized + FromRedisValue, const N: usize> FromRedisValue for [T; N] {
     fn from_redis_value(value: &Value) -> RedisResult<[T; N]> {
         match *value {
             Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
@@ -1964,7 +1960,7 @@ macro_rules! forwarded_impl {
         ($id:ident), $ty:ty, $func:expr
     ) => {
         $(#[$attr])*
-        impl<$id: FromRedisValue> FromRedisValue for $ty {
+        impl<$id: ?Sized + FromRedisValue> FromRedisValue for $ty {
             fn from_redis_value(v: &Value) -> RedisResult<Self>
             {
                 FromRedisValue::from_redis_value(v).map($func)
@@ -1978,33 +1974,7 @@ macro_rules! forwarded_impl {
 }
 
 forwarded_impl!((T), Box<T>, Box::new);
-forwarded_impl!((T), Box<[T]>, Vec::into_boxed_slice);
-
-macro_rules! box_forwarded_impl {
-    (
-        $(#[$attr:meta])*
-        $t:ident,
-        $ty:ty
-    ) => {
-        $(#[$attr])*
-        impl<$t: FromRedisValue> FromRedisValue for $ty
-        where
-            Box<$t>: FromRedisValue,
-        {
-            fn from_redis_value(v: &Value) -> RedisResult<Self>
-            {
-                Box::from_redis_value(v).map(Into::into)
-            }
-
-            fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
-                Box::from_owned_redis_value(v).map(Into::into)
-            }
-        }
-    };
-}
-
-box_forwarded_impl!(T, std::sync::Arc<T>);
-// box_forwarded_impl!(T, std::sync::Arc<[T]>);
+forwarded_impl!((T), std::sync::Arc<T>, std::sync::Arc::new);
 
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
@@ -2080,6 +2050,7 @@ macro_rules! from_vec_from_redis_value {
 
 from_vec_from_redis_value!(<T> Vec<T>);
 from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
+from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
     for std::collections::HashMap<K, V, S>
