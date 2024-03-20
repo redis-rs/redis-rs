@@ -1,16 +1,12 @@
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use rand::{Rng, SeedableRng};
 use redis::caching::CacheConfig;
-use redis::ConnectionConfigBuilder;
+use std::env;
 
 use support::*;
 
 #[path = "../tests/support/mod.rs"]
 mod support;
-
-fn get_client() -> redis::Client {
-    redis::Client::open("redis://127.0.0.1:6379/?resp3=true").unwrap()
-}
 
 struct BenchmarkConfig {
     cache_config: CacheConfig,
@@ -20,18 +16,19 @@ struct BenchmarkConfig {
 }
 
 fn bench_multiplexed_async(b: &mut Bencher, benchmark_config: BenchmarkConfig) {
-    let client = get_client();
+    let ctx = TestContext::new();
     let runtime = current_thread_runtime();
     let mut con = runtime
-        .block_on(
-            client.get_multiplexed_tokio_connection_with_config(
-                &ConnectionConfigBuilder::new()
-                    .cache_config(benchmark_config.cache_config)
-                    .build(),
-            ),
-        )
+        .block_on(async {
+            let old_value = env::var("PROTOCOL");
+            env::set_var("PROTOCOL", "RESP3");
+            if let Ok(old_value) = old_value {
+                env::set_var("PROTOCOL", old_value);
+            }
+            ctx.multiplexed_async_connection_tokio_with_cache_config(benchmark_config.cache_config)
+                .await
+        })
         .unwrap();
-
     let mut small_rng = rand::rngs::SmallRng::from_entropy();
     b.iter(|| {
         runtime.block_on(async {
@@ -43,7 +40,7 @@ fn bench_multiplexed_async(b: &mut Bencher, benchmark_config: BenchmarkConfig) {
                 } else {
                     cmd.arg("SET").arg(format!("{i}")).arg(i)
                 };
-                let _ = cmd.query_async::<_, ()>(&mut con).await.unwrap();
+                cmd.query_async::<_, ()>(&mut con).await.unwrap();
             }
         });
     });

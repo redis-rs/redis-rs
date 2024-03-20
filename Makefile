@@ -86,7 +86,7 @@ style-check:
 
 lint:
 	@rustup component add clippy 2> /dev/null
-	cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
+	cargo clippy --all-features --all-targets -- -D warnings
 
 fuzz:
 	cd afl/parser/ && \
