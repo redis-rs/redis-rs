@@ -371,6 +371,9 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
 };
+pub use crate::connection_config::{
+    ConnectionConfig, ConnectionConfigBuilder, ConnectionManagerBackOffConfig,
+};
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
 pub use push_manager::{PushInfo, PushManager};

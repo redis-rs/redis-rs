@@ -1,6 +1,9 @@
-use super::{ConnectionLike, Runtime};
-use crate::aio::setup_connection;
+use super::{setup_connection, ConnectionLike, Runtime};
+#[cfg(feature = "cache")]
+use crate::caching::{CacheConfig, CacheManager, CacheMode, CacheStatistics};
 use crate::cmd::Cmd;
+#[cfg(feature = "cache")]
+use crate::cmd::{CommandCacheInformation, CommandCacheInformationByRef};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
@@ -296,7 +299,10 @@ impl<SinkItem> Pipeline<SinkItem>
 where
     SinkItem: Send + 'static,
 {
-    fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
+    fn new<T>(
+        sink_stream: T,
+        #[cfg(feature = "cache")] cache_manager: CacheManager,
+    ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
         T: Send + 'static,
@@ -308,7 +314,12 @@ where
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
         let push_manager: Arc<ArcSwap<PushManager>> =
             Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
-        let sink = PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone());
+        let sink = PipelineSink::new::<SinkItem>(
+            sink_stream,
+            push_manager.clone(),
+            #[cfg(feature = "cache")]
+            cache_manager,
+        );
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
@@ -374,6 +385,8 @@ pub struct MultiplexedConnection {
     response_timeout: Duration,
     protocol: ProtocolVersion,
     push_manager: PushManager,
+    #[cfg(feature = "cache")]
+    pub(crate) cache_manager: CacheManager,
 }
 
 impl Debug for MultiplexedConnection {
@@ -404,6 +417,7 @@ impl MultiplexedConnection {
         connection_info: &ConnectionInfo,
         stream: C,
         response_timeout: std::time::Duration,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
@@ -416,12 +430,23 @@ impl MultiplexedConnection {
 
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
+        #[cfg(feature = "cache")]
+        let cache_config = if connection_info.redis.protocol == ProtocolVersion::RESP2 {
+            CacheConfig::disabled()
+        } else {
+            cache_config
+        };
         let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default()
             .framed(stream)
             .and_then(|msg| async move { msg });
-        let (mut pipeline, driver) = Pipeline::new(codec);
+        #[cfg(feature = "cache")]
+        let cache_manager = CacheManager::new(cache_config);
+        let (mut pipeline, driver) = Pipeline::new(
+            codec,
+            #[cfg(feature = "cache")]
+            cache_manager.clone(),
+        );
         let driver = boxed(driver);
         let pm = PushManager::default();
         pipeline.set_push_manager(pm.clone()).await;
@@ -431,13 +456,19 @@ impl MultiplexedConnection {
             response_timeout,
             push_manager: pm,
             protocol: redis_connection_info.protocol,
+            #[cfg(feature = "cache")]
+            cache_manager,
         };
         let driver = {
-            let auth = setup_connection(&connection_info.redis, &mut con);
+            let setup_conn = setup_connection(
+                redis_connection_info,
+                &mut con,
+                #[cfg(feature = "cache")]
+                cache_config,
+            );
+            futures_util::pin_mut!(setup_conn);
 
-            futures_util::pin_mut!(auth);
-
-            match futures_util::future::select(auth, driver).await {
+            match futures_util::future::select(setup_conn, driver).await {
                 futures_util::future::Either::Left((result, driver)) => {
                     result?;
                     driver

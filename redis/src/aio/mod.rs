@@ -86,7 +86,11 @@ pub trait ConnectionLike {
 }
 
 // Initial setup for every connection.
-async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
+async fn setup_connection<C>(
+    connection_info: &RedisConnectionInfo,
+    con: &mut C,
+    #[cfg(feature = "cache")] cache_config: crate::caching::CacheConfig,
+) -> RedisResult<()>
 where
     C: ConnectionLike,
 {
