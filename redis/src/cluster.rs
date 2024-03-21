@@ -38,6 +38,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -207,7 +208,7 @@ impl Connect for Connection {
 /// as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
-    connections: RefCell<HashMap<String, C>>,
+    connections: RefCell<HashMap<Arc<str>, C>>,
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
     read_timeout: RefCell<Option<Duration>>,
@@ -311,7 +312,7 @@ where
         let mut connections = HashMap::with_capacity(self.initial_nodes.len());
 
         for info in self.initial_nodes.iter() {
-            let addr = info.addr.to_string();
+            let addr = Arc::from(info.addr.to_string());
 
             if let Ok(mut conn) = self.connect(&addr) {
                 if conn.check_connection() {
@@ -349,13 +350,13 @@ where
                 if connections.contains_key(addr) {
                     let mut conn = connections.remove(addr).unwrap();
                     if conn.check_connection() {
-                        return Some((addr.to_string(), conn));
+                        return Some((addr.clone(), conn));
                     }
                 }
 
                 if let Ok(mut conn) = self.connect(addr) {
                     if conn.check_connection() {
-                        return Some((addr.to_string(), conn));
+                        return Some((addr.clone(), conn));
                     }
                 }
 
@@ -410,14 +411,14 @@ where
 
     fn get_connection<'a>(
         &self,
-        connections: &'a mut HashMap<String, C>,
+        connections: &'a mut HashMap<Arc<str>, C>,
         route: &Route,
-    ) -> RedisResult<(String, &'a mut C)> {
+    ) -> RedisResult<(Arc<str>, &'a mut C)> {
         let slots = self.slots.borrow();
         if let Some(addr) = slots.slot_addr_for_route(route) {
             Ok((
-                addr.to_string(),
-                self.get_connection_by_addr(connections, addr)?,
+                addr.clone(),
+                self.get_connection_by_addr(connections, &addr)?,
             ))
         } else {
             // try a random node next.  This is safe if slots are involved
@@ -428,8 +429,8 @@ where
 
     fn get_connection_by_addr<'a>(
         &self,
-        connections: &'a mut HashMap<String, C>,
-        addr: &str,
+        connections: &'a mut HashMap<Arc<str>, C>,
+        addr: &Arc<str>,
     ) -> RedisResult<&'a mut C> {
         if connections.contains_key(addr) {
             Ok(connections.get_mut(addr).unwrap())
@@ -437,18 +438,18 @@ where
             // Create new connection.
             // TODO: error handling
             let conn = self.connect(addr)?;
-            Ok(connections.entry(addr.to_string()).or_insert(conn))
+            Ok(connections.entry(addr.clone()).or_insert(conn))
         }
     }
 
-    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<String> {
+    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<Arc<str>> {
         let slots = self.slots.borrow();
 
-        let addr_for_slot = |route: Route| -> RedisResult<String> {
+        let addr_for_slot = |route: Route| -> RedisResult<Arc<str>> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
-            Ok(slot_addr.to_string())
+            Ok(slot_addr.clone())
         };
 
         match RoutingInfo::for_routable(cmd) {
@@ -467,7 +468,7 @@ where
     }
 
     fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut cmd_map: HashMap<String, NodeCmd> = HashMap::new();
+        let mut cmd_map: HashMap<Arc<str>, NodeCmd> = HashMap::new();
 
         for (idx, cmd) in cmds.iter().enumerate() {
             let addr = self.get_addr_for_cmd(cmd)?;
@@ -488,9 +489,9 @@ where
     fn execute_on_all<'a>(
         &'a self,
         input: Input,
-        addresses: HashSet<&'a str>,
-        connections: &'a mut HashMap<String, C>,
-    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        addresses: HashSet<&'a Arc<str>>,
+        connections: &'a mut HashMap<Arc<str>, C>,
+    ) -> Vec<RedisResult<(Arc<str>, Value)>> {
         addresses
             .into_iter()
             .map(|addr| {
@@ -509,7 +510,7 @@ where
                     )
                         .into()),
                 }
-                .map(|res| (addr, res))
+                .map(|res| (addr.clone(), res))
             })
             .collect()
     }
@@ -518,8 +519,8 @@ where
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-        connections: &'a mut HashMap<String, C>,
-    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        connections: &'a mut HashMap<Arc<str>, C>,
+    ) -> Vec<RedisResult<(Arc<str>, Value)>> {
         self.execute_on_all(input, slots.addresses_for_all_nodes(), connections)
     }
 
@@ -527,8 +528,8 @@ where
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-        connections: &'a mut HashMap<String, C>,
-    ) -> Vec<RedisResult<(&'a str, Value)>> {
+        connections: &'a mut HashMap<Arc<str>, C>,
+    ) -> Vec<RedisResult<(Arc<str>, Value)>> {
         self.execute_on_all(input, slots.addresses_for_all_primaries(), connections)
     }
 
@@ -536,9 +537,9 @@ where
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-        connections: &'a mut HashMap<String, C>,
+        connections: &'a mut HashMap<Arc<str>, C>,
         routes: &'b [(Route, Vec<usize>)],
-    ) -> Vec<RedisResult<(&'a str, Value)>>
+    ) -> Vec<RedisResult<(Arc<str>, Value)>>
     where
         'b: 'a,
     {
@@ -550,7 +551,7 @@ where
                     ErrorKind::IoError,
                     "Couldn't find connection",
                 )))?;
-                let connection = self.get_connection_by_addr(connections, addr)?;
+                let connection = self.get_connection_by_addr(connections, &addr)?;
                 let (_, indices) = routes.get(index).unwrap();
                 let cmd =
                     crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
@@ -691,6 +692,7 @@ where
                         Redirect::Moved(addr) => (addr, false),
                         Redirect::Ask(addr) => (addr, true),
                     };
+                    let addr = Arc::from(addr);
                     let conn = self.get_connection_by_addr(&mut connections, &addr)?;
                     if is_asking {
                         // if we are in asking mode we want to feed a single
@@ -698,7 +700,7 @@ where
                         // actually want to execute.
                         conn.req_packed_command(&b"*1\r\n$6\r\nASKING\r\n"[..])?;
                     }
-                    (addr.to_string(), conn)
+                    (addr, conn)
                 } else {
                     match &single_node_routing {
                         SingleNodeRoutingInfo::Random => get_random_connection(&mut connections),
@@ -706,7 +708,7 @@ where
                             self.get_connection(&mut connections, route)?
                         }
                         SingleNodeRoutingInfo::ByAddress { host, port } => {
-                            let address = format!("{host}:{port}");
+                            let address = Arc::from(format!("{host}:{port}"));
                             let conn = self.get_connection_by_addr(&mut connections, &address)?;
                             (address, conn)
                         }
@@ -913,11 +915,11 @@ struct NodeCmd {
     // The original command indexes
     indexes: Vec<usize>,
     pipe: Vec<u8>,
-    addr: String,
+    addr: Arc<str>,
 }
 
 impl NodeCmd {
-    fn new(a: String) -> NodeCmd {
+    fn new(a: Arc<str>) -> NodeCmd {
         NodeCmd {
             indexes: vec![],
             pipe: vec![],
@@ -929,13 +931,13 @@ impl NodeCmd {
 // TODO: This function can panic and should probably
 // return an Option instead:
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
-    connections: &mut HashMap<String, C>,
-) -> (String, &mut C) {
+    connections: &mut HashMap<Arc<str>, C>,
+) -> (Arc<str>, &mut C) {
     let addr = connections
         .keys()
         .choose(&mut thread_rng())
         .expect("Connections is empty")
-        .to_string();
+        .clone();
     let con = connections.get_mut(&addr).expect("Connections is empty");
     (addr, con)
 }
@@ -946,6 +948,7 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
     let mut result = Vec::with_capacity(2);
 
     if let Value::Array(items) = raw_slot_resp {
+        let mut node_map = HashMap::new();
         let mut iter = items.into_iter();
         while let Some(Value::Array(item)) = iter.next() {
             if item.len() < 3 {
@@ -964,7 +967,7 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                 continue;
             };
 
-            let mut nodes: Vec<String> = item
+            let mut nodes: Vec<_> = item
                 .into_iter()
                 .skip(2)
                 .filter_map(|node| {
@@ -987,8 +990,12 @@ pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisRe
                         } else {
                             return None;
                         };
+                        let str: Arc<str> = std::sync::Arc::from(
+                            get_connection_addr(ip.into_owned(), port, tls, None).to_string(),
+                        );
+                        let address = node_map.entry(str.clone()).or_insert(str).clone();
                         // This is only "stringifying" IP addresses, so `TLS parameters` are not required
-                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
+                        Some(address)
                     } else {
                         None
                     }
