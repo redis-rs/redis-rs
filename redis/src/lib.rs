@@ -449,6 +449,9 @@ mod cluster_client;
 #[cfg(feature = "cluster")]
 mod cluster_pipeline;
 
+#[cfg(feature = "cluster")]
+mod cluster_connections_map;
+
 /// Routing information for cluster commands.
 #[cfg(feature = "cluster")]
 pub mod cluster_routing;

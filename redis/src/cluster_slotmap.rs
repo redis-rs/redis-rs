@@ -147,12 +147,6 @@ impl SlotMap {
         }
     }
 
-    pub fn fill_slots(&mut self, slots: Vec<Slot>) {
-        for slot in slots {
-            self.slots.insert(slot.end, SlotMapValue::from_slot(slot));
-        }
-    }
-
     pub fn slot_addr_for_route(&self, route: &Route) -> Option<Arc<str>> {
         let slot = route.slot();
         self.slots
