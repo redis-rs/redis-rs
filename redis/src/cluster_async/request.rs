@@ -86,8 +86,8 @@ impl<C> CmdArg<C> {
                 }
                 // If a specific connection is specified, then reconnecting without resetting the routing
                 // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
+                InternalSingleNodeRouting::Connection { address, .. } => {
+                    *route = InternalSingleNodeRouting::ByAddress(address.clone());
                 }
                 _ => {}
             }
@@ -351,7 +351,7 @@ mod tests {
         let err = || to_err(&format!("-ASK 123 {ADDRESS}\r\n"));
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
@@ -373,7 +373,7 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
@@ -390,7 +390,7 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
@@ -412,7 +412,7 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
@@ -460,7 +460,7 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
@@ -492,7 +492,7 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let result = Err((
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: Arc::from(ADDRESS),
             },
             err(),
         ));
