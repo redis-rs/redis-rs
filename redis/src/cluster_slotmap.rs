@@ -1,6 +1,9 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 /// Defines the slot and the [`SlotAddr`] to which
 /// a command should be sent
@@ -26,12 +29,12 @@ impl Route {
 pub(crate) struct Slot {
     pub(crate) start: u16,
     pub(crate) end: u16,
-    pub(crate) master: String,
-    pub(crate) replicas: Vec<String>,
+    pub(crate) master: Arc<str>,
+    pub(crate) replicas: Vec<Arc<str>>,
 }
 
 impl Slot {
-    pub fn new(s: u16, e: u16, m: String, r: Vec<String>) -> Self {
+    pub fn new(s: u16, e: u16, m: Arc<str>, r: Vec<Arc<str>>) -> Self {
         Self {
             start: s,
             end: e,
@@ -60,22 +63,22 @@ pub enum SlotAddr {
 /// a command is executed
 #[derive(Debug)]
 pub(crate) struct SlotAddrs {
-    primary: String,
-    replicas: Vec<String>,
+    primary: Arc<str>,
+    replicas: Vec<Arc<str>>,
 }
 
 impl SlotAddrs {
-    pub(crate) fn new(primary: String, replicas: Vec<String>) -> Self {
+    pub(crate) fn new(primary: Arc<str>, replicas: Vec<Arc<str>>) -> Self {
         Self { primary, replicas }
     }
 
-    fn get_replica_node(&self) -> &str {
+    fn get_replica_node(&self) -> &Arc<str> {
         self.replicas
             .choose(&mut thread_rng())
             .unwrap_or(&self.primary)
     }
 
-    pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr, read_from_replica: bool) -> &str {
+    pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr, read_from_replica: bool) -> &Arc<str> {
         match slot_addr {
             SlotAddr::Master => &self.primary,
             SlotAddr::ReplicaOptional => {
@@ -95,20 +98,20 @@ impl SlotAddrs {
 }
 
 impl<'a> IntoIterator for &'a SlotAddrs {
-    type Item = &'a String;
-    type IntoIter = std::iter::Chain<std::iter::Once<&'a String>, std::slice::Iter<'a, String>>;
+    type Item = &'a Arc<str>;
+    type IntoIter = std::iter::Chain<std::iter::Once<&'a Arc<str>>, std::slice::Iter<'a, Arc<str>>>;
 
     fn into_iter(
         self,
-    ) -> std::iter::Chain<std::iter::Once<&'a String>, std::slice::Iter<'a, String>> {
+    ) -> std::iter::Chain<std::iter::Once<&'a Arc<str>>, std::slice::Iter<'a, Arc<str>>> {
         std::iter::once(&self.primary).chain(self.replicas.iter())
     }
 }
 
 #[derive(Debug)]
-struct SlotMapValue {
+pub(crate) struct SlotMapValue {
     start: u16,
-    addrs: SlotAddrs,
+    pub(crate) addrs: SlotAddrs,
 }
 
 impl SlotMapValue {
@@ -144,13 +147,7 @@ impl SlotMap {
         }
     }
 
-    pub fn fill_slots(&mut self, slots: Vec<Slot>) {
-        for slot in slots {
-            self.slots.insert(slot.end, SlotMapValue::from_slot(slot));
-        }
-    }
-
-    pub fn slot_addr_for_route(&self, route: &Route) -> Option<&str> {
+    pub fn slot_addr_for_route(&self, route: &Route) -> Option<Arc<str>> {
         let slot = route.slot();
         self.slots
             .range(slot..)
@@ -160,7 +157,8 @@ impl SlotMap {
                     Some(
                         slot_value
                             .addrs
-                            .slot_addr(route.slot_addr(), self.read_from_replica),
+                            .slot_addr(route.slot_addr(), self.read_from_replica)
+                            .clone(),
                     )
                 } else {
                     None
@@ -168,16 +166,12 @@ impl SlotMap {
             })
     }
 
-    pub fn clear(&mut self) {
-        self.slots.clear();
-    }
-
     pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
         self.slots.values().map(|slot_value| &slot_value.addrs)
     }
 
-    fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&str> {
-        let mut addresses: HashSet<&str> = HashSet::new();
+    fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&Arc<str>> {
+        let mut addresses: HashSet<&Arc<str>> = HashSet::new();
         if only_primaries {
             addresses.extend(
                 self.values().map(|slot_addrs| {
@@ -185,28 +179,24 @@ impl SlotMap {
                 }),
             );
         } else {
-            addresses.extend(
-                self.values()
-                    .flat_map(|slot_addrs| slot_addrs.into_iter())
-                    .map(|str| str.as_str()),
-            );
+            addresses.extend(self.values().flat_map(|slot_addrs| slot_addrs.into_iter()));
         }
 
         addresses
     }
 
-    pub fn addresses_for_all_primaries(&self) -> HashSet<&str> {
+    pub fn addresses_for_all_primaries(&self) -> HashSet<&Arc<str>> {
         self.all_unique_addresses(true)
     }
 
-    pub fn addresses_for_all_nodes(&self) -> HashSet<&str> {
+    pub fn addresses_for_all_nodes(&self) -> HashSet<&Arc<str>> {
         self.all_unique_addresses(false)
     }
 
     pub fn addresses_for_multi_slot<'a, 'b>(
         &'a self,
         routes: &'b [(Route, Vec<usize>)],
-    ) -> impl Iterator<Item = Option<&'a str>> + 'a
+    ) -> impl Iterator<Item = Option<Arc<str>>> + 'a
     where
         'b: 'a,
     {
@@ -226,14 +216,14 @@ mod tests {
                 Slot {
                     start: 1,
                     end: 1000,
-                    master: "node1:6379".to_owned(),
-                    replicas: vec!["replica1:6379".to_owned()],
+                    master: "node1:6379".to_owned().into(),
+                    replicas: vec!["replica1:6379".to_owned().into()],
                 },
                 Slot {
                     start: 1002,
                     end: 2000,
-                    master: "node2:6379".to_owned(),
-                    replicas: vec!["replica2:6379".to_owned()],
+                    master: "node2:6379".to_owned().into(),
+                    replicas: vec!["replica2:6379".to_owned().into()],
                 },
             ],
             true,
@@ -243,19 +233,19 @@ mod tests {
             .slot_addr_for_route(&Route::new(0, SlotAddr::Master))
             .is_none());
         assert_eq!(
-            "node1:6379",
+            Arc::from("node1:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(1, SlotAddr::Master))
                 .unwrap()
         );
         assert_eq!(
-            "node1:6379",
+            Arc::from("node1:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(500, SlotAddr::Master))
                 .unwrap()
         );
         assert_eq!(
-            "node1:6379",
+            Arc::from("node1:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(1000, SlotAddr::Master))
                 .unwrap()
@@ -265,19 +255,19 @@ mod tests {
             .is_none());
 
         assert_eq!(
-            "node2:6379",
+            Arc::from("node2:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(1002, SlotAddr::Master))
                 .unwrap()
         );
         assert_eq!(
-            "node2:6379",
+            Arc::from("node2:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(1500, SlotAddr::Master))
                 .unwrap()
         );
         assert_eq!(
-            "node2:6379",
+            Arc::from("node2:6379".to_string()),
             slot_map
                 .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
                 .unwrap()
@@ -293,30 +283,36 @@ mod tests {
                 Slot::new(
                     1,
                     1000,
-                    "node1:6379".to_owned(),
-                    vec!["replica1:6379".to_owned()],
+                    "node1:6379".to_owned().into(),
+                    vec!["replica1:6379".to_owned().into()],
                 ),
                 Slot::new(
                     1002,
                     2000,
-                    "node2:6379".to_owned(),
-                    vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+                    "node2:6379".to_owned().into(),
+                    vec![
+                        "replica2:6379".to_owned().into(),
+                        "replica3:6379".to_owned().into(),
+                    ],
                 ),
                 Slot::new(
                     2001,
                     3000,
-                    "node3:6379".to_owned(),
+                    "node3:6379".to_owned().into(),
                     vec![
-                        "replica4:6379".to_owned(),
-                        "replica5:6379".to_owned(),
-                        "replica6:6379".to_owned(),
+                        "replica4:6379".to_owned().into(),
+                        "replica5:6379".to_owned().into(),
+                        "replica6:6379".to_owned().into(),
                     ],
                 ),
                 Slot::new(
                     3001,
                     4000,
-                    "node2:6379".to_owned(),
-                    vec!["replica2:6379".to_owned(), "replica3:6379".to_owned()],
+                    "node2:6379".to_owned().into(),
+                    vec![
+                        "replica2:6379".to_owned().into(),
+                        "replica3:6379".to_owned().into(),
+                    ],
                 ),
             ],
             read_from_replica,
@@ -326,29 +322,41 @@ mod tests {
     #[test]
     fn test_slot_map_get_all_primaries() {
         let slot_map = get_slot_map(false);
-        let addresses = slot_map.addresses_for_all_primaries();
+        let addresses: HashSet<_> = slot_map
+            .addresses_for_all_primaries()
+            .into_iter()
+            .cloned()
+            .collect();
         assert_eq!(
             addresses,
-            HashSet::from_iter(["node1:6379", "node2:6379", "node3:6379"])
+            HashSet::from_iter([
+                Arc::from("node1:6379"),
+                Arc::from("node2:6379"),
+                Arc::from("node3:6379")
+            ])
         );
     }
 
     #[test]
     fn test_slot_map_get_all_nodes() {
         let slot_map = get_slot_map(false);
-        let addresses = slot_map.addresses_for_all_nodes();
+        let addresses: HashSet<_> = slot_map
+            .addresses_for_all_nodes()
+            .into_iter()
+            .cloned()
+            .collect();
         assert_eq!(
             addresses,
             HashSet::from_iter([
-                "node1:6379",
-                "node2:6379",
-                "node3:6379",
-                "replica1:6379",
-                "replica2:6379",
-                "replica3:6379",
-                "replica4:6379",
-                "replica5:6379",
-                "replica6:6379"
+                Arc::from("node1:6379"),
+                Arc::from("node2:6379"),
+                Arc::from("node3:6379"),
+                Arc::from("replica1:6379"),
+                Arc::from("replica2:6379"),
+                Arc::from("replica3:6379"),
+                Arc::from("replica4:6379"),
+                Arc::from("replica5:6379"),
+                Arc::from("replica6:6379")
             ])
         );
     }
@@ -362,12 +370,13 @@ mod tests {
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes)
+            .map(|opt| opt.unwrap().clone())
             .collect::<Vec<_>>();
-        assert!(addresses.contains(&Some("node1:6379")));
+        assert!(addresses.contains(&Arc::from("node1:6379")));
         assert!(
-            addresses.contains(&Some("replica4:6379"))
-                || addresses.contains(&Some("replica5:6379"))
-                || addresses.contains(&Some("replica6:6379"))
+            addresses.contains(&Arc::from("replica4:6379"))
+                || addresses.contains(&Arc::from("replica5:6379"))
+                || addresses.contains(&Arc::from("replica6:6379"))
         );
     }
 
@@ -380,8 +389,12 @@ mod tests {
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes)
+            .map(|opt| opt.unwrap().clone())
             .collect::<Vec<_>>();
-        assert_eq!(addresses, vec![Some("node1:6379"), Some("node3:6379")]);
+        assert_eq!(
+            addresses,
+            vec![Arc::from("node1:6379"), Arc::from("node3:6379")]
+        );
     }
 
     /// This test is needed in order to verify that if the MultiSlot route finds the same node for more than a single route,
@@ -399,16 +412,17 @@ mod tests {
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes)
+            .map(|opt| opt.unwrap().clone())
             .collect::<Vec<_>>();
         assert_eq!(
             addresses,
             vec![
-                Some("replica1:6379"),
-                Some("node3:6379"),
-                Some("replica1:6379"),
-                Some("node3:6379"),
-                Some("replica1:6379"),
-                Some("node3:6379")
+                Arc::from("replica1:6379"),
+                Arc::from("node3:6379"),
+                Arc::from("replica1:6379"),
+                Arc::from("node3:6379"),
+                Arc::from("replica1:6379"),
+                Arc::from("node3:6379")
             ]
         );
     }
@@ -427,7 +441,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             addresses,
-            vec![Some("replica1:6379"), None, None, Some("node3:6379")]
+            vec![
+                Some(Arc::from("replica1:6379")),
+                None,
+                None,
+                Some(Arc::from("node3:6379"))
+            ]
         );
     }
 }

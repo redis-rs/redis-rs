@@ -153,7 +153,7 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
+type ConnectionMap<C> = HashMap<Arc<str>, ConnectionFuture<C>>;
 
 struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
@@ -186,14 +186,14 @@ pub(crate) enum Response {
 }
 
 enum OperationTarget {
-    Node { address: String },
+    Node { address: Arc<str> },
     NotFound,
     FanOut,
 }
 type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
-impl From<String> for OperationTarget {
-    fn from(address: String) -> Self {
+impl From<Arc<str>> for OperationTarget {
+    fn from(address: Arc<str>) -> Self {
         OperationTarget::Node { address }
     }
 }
@@ -233,7 +233,7 @@ enum Next<C> {
     },
     Reconnect {
         request: PendingRequest<C>,
-        target: String,
+        target: Arc<str>,
     },
     RefreshSlots {
         request: PendingRequest<C>,
@@ -293,7 +293,7 @@ where
             .fold(
                 HashMap::with_capacity(initial_nodes.len()),
                 |mut connections: ConnectionMap<C>, conn| async move {
-                    connections.extend(conn);
+                    connections.extend(conn.map(|(addr, conn)| (Arc::from(addr), conn)));
                     connections
                 },
             )
@@ -332,7 +332,7 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
+    fn refresh_connections(&mut self, addrs: Vec<Arc<str>>) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
@@ -381,7 +381,7 @@ where
                 inner.cluster_params.tls,
                 addr.rsplit_once(':').unwrap().0,
             )
-            .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+            .map(|v: Vec<Slot>| SlotMap::from_slots(v, inner.cluster_params.read_from_replicas))
             {
                 Ok(_) => {
                     result = Ok(());
@@ -392,22 +392,22 @@ where
         }
         result?;
 
-        let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
+        let mut nodes = slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
         let nodes_len = nodes.len();
         let addresses_and_connections_iter = nodes
             .into_iter()
-            .map(|addr| (addr, connections.remove(addr)));
+            .map(|addr| (addr.clone(), connections.remove(addr)));
 
         write_guard.0 = stream::iter(addresses_and_connections_iter)
             .fold(
                 HashMap::with_capacity(nodes_len),
                 |mut connections, (addr, connection)| async {
                     let conn =
-                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                        Self::get_or_create_conn(&addr, connection, &inner.cluster_params).await;
                     if let Ok(conn) = conn {
-                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        connections.insert(addr, async { conn }.boxed().shared());
                     }
                     connections
                 },
@@ -417,15 +417,8 @@ where
         Ok(())
     }
 
-    fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
-        slot_map.clear();
-        slot_map.fill_slots(slots_data);
-        trace!("{:?}", slot_map);
-        Ok(())
-    }
-
     async fn aggregate_results(
-        receivers: Vec<(String, oneshot::Receiver<RedisResult<Response>>)>,
+        receivers: Vec<(Arc<str>, oneshot::Receiver<RedisResult<Response>>)>,
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
@@ -515,7 +508,7 @@ where
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok((Value::BulkString(addr.into_bytes()), result))
+                    Ok((Value::BulkString(addr.to_string().into_bytes()), result))
                 }))
                 .await
                 .map(Value::Map)
@@ -541,10 +534,9 @@ where
             ));
         }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
+            let to_request = |(addr, cmd): (&Arc<str>, Arc<Cmd>)| {
                 read_guard.0.get(addr).cloned().map(|conn| {
                     let (sender, receiver) = oneshot::channel();
-                    let addr = addr.to_string();
                     (
                         (addr.clone(), receiver),
                         PendingRequest {
@@ -553,7 +545,7 @@ where
                             cmd: CmdArg::Cmd {
                                 cmd,
                                 routing: InternalSingleNodeRouting::Connection {
-                                    identifier: addr,
+                                    address: addr.clone(),
                                     conn,
                                 }
                                 .into(),
@@ -588,7 +580,7 @@ where
                                     cmd.as_ref(),
                                     indices.iter(),
                                 ));
-                            to_request((addr, cmd))
+                            to_request((&addr, cmd))
                         })
                     })
                     .unzip(),
@@ -636,15 +628,15 @@ where
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = RedisResult<(String, C)>>,
+        conn: impl Future<Output = RedisResult<(Arc<str>, C)>>,
     ) -> OperationResult {
         match conn.await {
-            Ok((addr, mut conn)) => conn
+            Ok((address, mut conn)) => conn
                 .req_packed_commands(&pipeline, offset, count)
                 .await
                 .and_then(Value::extract_error_vec)
                 .map(Response::Multiple)
-                .map_err(|err| (OperationTarget::Node { address: addr }, err)),
+                .map_err(|err| (OperationTarget::Node { address }, err)),
             Err(err) => Err((OperationTarget::NotFound, err)),
         }
     }
@@ -672,17 +664,16 @@ where
     async fn get_connection(
         route: InternalSingleNodeRouting<C>,
         core: Core<C>,
-    ) -> RedisResult<(String, C)> {
+    ) -> RedisResult<(Arc<str>, C)> {
         let read_guard = core.conn_lock.read().await;
 
         let conn = match route {
             InternalSingleNodeRouting::Random => None,
-            InternalSingleNodeRouting::SpecificNode(route) => read_guard
-                .1
-                .slot_addr_for_route(&route)
-                .map(|addr| addr.to_string()),
-            InternalSingleNodeRouting::Connection { identifier, conn } => {
-                return Ok((identifier, conn.await));
+            InternalSingleNodeRouting::SpecificNode(route) => {
+                read_guard.1.slot_addr_for_route(&route)
+            }
+            InternalSingleNodeRouting::Connection { address, conn } => {
+                return Ok((address, conn.await));
             }
             InternalSingleNodeRouting::Redirect { redirect, .. } => {
                 drop(read_guard);
@@ -696,7 +687,7 @@ where
                     return Err((
                         ErrorKind::ClientError,
                         "Requested connection not found",
-                        address,
+                        address.to_string(),
                     )
                         .into());
                 }
@@ -704,7 +695,7 @@ where
         }
         .map(|addr| {
             let conn = read_guard.0.get(&addr).cloned();
-            (addr, conn)
+            (addr.clone(), conn)
         });
         drop(read_guard);
 
@@ -740,15 +731,16 @@ where
     async fn get_redirected_connection(
         redirect: Redirect,
         core: Core<C>,
-    ) -> RedisResult<(String, C)> {
+    ) -> RedisResult<(Arc<str>, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
             Redirect::Moved(addr) => addr,
             Redirect::Ask(addr) => addr,
         };
         let read_guard = core.conn_lock.read().await;
-        let conn = read_guard.0.get(&addr).cloned();
+        let conn = read_guard.0.get(addr.as_str()).cloned();
         drop(read_guard);
+        let addr: Arc<str> = Arc::from(addr);
         let mut conn = match conn {
             Some(conn) => conn.await,
             None => connect_check_and_add(core.clone(), addr.clone()).await?,
@@ -915,7 +907,7 @@ where
 enum PollFlushAction {
     None,
     RebuildSlots,
-    Reconnect(Vec<String>),
+    Reconnect(Vec<Arc<str>>),
     ReconnectFromInitialConnections,
 }
 
@@ -1093,7 +1085,7 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_check_and_add<C>(core: Core<C>, addr: String) -> RedisResult<C>
+async fn connect_check_and_add<C>(core: Core<C>, addr: Arc<str>) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + Clone + 'static,
 {
@@ -1138,7 +1130,9 @@ where
     Ok(())
 }
 
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, ConnectionFuture<C>)>
+fn get_random_connection<C>(
+    connections: &ConnectionMap<C>,
+) -> Option<(Arc<str>, ConnectionFuture<C>)>
 where
     C: Clone,
 {

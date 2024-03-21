@@ -1,5 +1,7 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
+use std::sync::Arc;
+
 use crate::cluster::get_connection_addr;
 use crate::cluster_slotmap::Slot;
 use crate::{cluster::TlsMode, RedisResult, Value};
@@ -33,7 +35,7 @@ pub(crate) fn parse_slots(
                 continue;
             };
 
-            let mut nodes: Vec<String> = item
+            let mut nodes: Vec<Arc<str>> = item
                 .into_iter()
                 .skip(2)
                 .filter_map(|node| {
@@ -67,9 +69,9 @@ pub(crate) fn parse_slots(
                         } else {
                             return None;
                         };
-                        Some(
+                        Some(std::sync::Arc::from(
                             get_connection_addr(hostname.into_owned(), port, tls, None).to_string(),
-                        )
+                        ))
                     } else {
                         None
                     }
@@ -116,6 +118,6 @@ mod tests {
         let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
 
         let slots = parse_slots(view, None, "node").unwrap();
-        assert_eq!(slots[0].master, "node:6379");
+        assert_eq!(&*slots[0].master, "node:6379");
     }
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     cluster_routing::{
         self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, SingleNodeRoutingInfo,
@@ -37,9 +39,9 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 pub(super) enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
-    ByAddress(String),
+    ByAddress(Arc<str>),
     Connection {
-        identifier: String,
+        address: Arc<str>,
         conn: ConnectionFuture<C>,
     },
     Redirect {
@@ -62,7 +64,7 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
             SingleNodeRoutingInfo::ByAddress { host, port } => {
-                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}"))
+                InternalSingleNodeRouting::ByAddress(Arc::from(format!("{host}:{port}")))
             }
         }
     }
