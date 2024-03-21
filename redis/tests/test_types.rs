@@ -182,24 +182,25 @@ fn test_box_slice() {
 #[test]
 fn test_arc_slice() {
     for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-        let v = parse_mode.parse_redis_value(Value::Array(vec![
+        let v = parse_mode.parse_redis_value::<Arc<[_]>>(Value::Array(vec![
             Value::BulkString("1".into()),
             Value::BulkString("2".into()),
             Value::BulkString("3".into()),
         ]));
-        assert_eq!(v, Ok(Arc::new(vec![1i32, 2, 3])));
+        assert_eq!(v, Ok(Arc::from(vec![1i32, 2, 3])));
 
         let content: &[u8] = b"\x01\x02\x03\x04";
         let content_vec: Vec<u8> = Vec::from(content);
-        let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
-        assert_eq!(v, Ok(Arc::new(content_vec)));
+        let v = parse_mode.parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec.clone()));
+        assert_eq!(v, Ok(Arc::from(content_vec)));
 
         let content: &[u8] = b"1";
         let content_vec: Vec<u8> = Vec::from(content);
-        let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
-        assert_eq!(v, Ok(Arc::new(vec![b'1'])));
-        let v = parse_mode.parse_redis_value(Value::BulkString(content_vec));
-        assert_eq!(v, Ok(Arc::new(vec![1_u16])));
+        let v: Result<Arc<[u8]>, _> =
+            parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+        assert_eq!(v, Ok(Arc::from(vec![b'1'])));
+        let v = parse_mode.parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec));
+        assert_eq!(v, Ok(Arc::from(vec![1_u16])));
 
         assert_eq!(
             Arc::<[i32]>::from_redis_value(
