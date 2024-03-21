@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rand::seq::IteratorRandom;
 
-use crate::cluster_slotmap::{Route, SlotMap};
+use crate::cluster_slotmap::{Route, SlotAddr, SlotMap};
 use crate::types::HashMap;
 
 // TODO - Do we want a more memory efficient identifier, such as `arcstr`?
@@ -30,11 +30,21 @@ impl<Connection> ConnectionsMap<Connection> {
         }
     }
 
+    // return a connection for the route, or a primary connection if the route is for a replica and no replica connection exists.
     pub(crate) fn connection_for_route(&self, route: &Route) -> Option<(Arc<str>, &Connection)> {
-        self.address_for_route(route)
-            .and_then(|addr| self.connection_for_address(&addr).map(|conn| (addr, conn)))
+        let conn_opt = self
+            .address_for_route(route)
+            .and_then(|addr| self.connection_for_address(&addr).map(|conn| (addr, conn)));
+        // if the route was for a replica and no replica connection was found, then we try again with a master
+        if conn_opt.is_none() && route.1 != SlotAddr::Master {
+            self.address_for_route(&Route::new(route.slot(), SlotAddr::Master))
+                .and_then(|addr| self.connection_for_address(&addr).map(|conn| (addr, conn)))
+        } else {
+            conn_opt
+        }
     }
 
+    // Return the address of a node that matches the route, even if no connection exists.
     pub(crate) fn address_for_route(&self, route: &Route) -> Option<Arc<str>> {
         self.slot_map.slot_addr_for_route(route)
     }
@@ -170,45 +180,45 @@ mod tests {
         let container = create_container();
 
         assert!(container
-            .address_for_route(&Route::new(0, SlotAddr::Master))
+            .connection_for_route(&Route::new(0, SlotAddr::Master))
             .is_none());
 
         assert_eq!(
-            Arc::from("primary1"),
+            (Arc::from("primary1"), &1),
             container
-                .address_for_route(&Route::new(500, SlotAddr::Master))
+                .connection_for_route(&Route::new(500, SlotAddr::Master))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary1"),
+            (Arc::from("primary1"), &1),
             container
-                .address_for_route(&Route::new(1000, SlotAddr::Master))
+                .connection_for_route(&Route::new(1000, SlotAddr::Master))
                 .unwrap()
         );
 
         assert!(container
-            .address_for_route(&Route::new(1001, SlotAddr::Master))
+            .connection_for_route(&Route::new(1001, SlotAddr::Master))
             .is_none());
 
         assert_eq!(
-            Arc::from("primary2"),
+            (Arc::from("primary2"), &2),
             container
-                .address_for_route(&Route::new(1002, SlotAddr::Master))
+                .connection_for_route(&Route::new(1002, SlotAddr::Master))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary2"),
+            (Arc::from("primary2"), &2),
             container
-                .address_for_route(&Route::new(1500, SlotAddr::Master))
+                .connection_for_route(&Route::new(1500, SlotAddr::Master))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary3"),
+            (Arc::from("primary3"), &3),
             container
-                .address_for_route(&Route::new(2001, SlotAddr::Master))
+                .connection_for_route(&Route::new(2001, SlotAddr::Master))
                 .unwrap()
         );
     }
@@ -218,26 +228,30 @@ mod tests {
         let container = create_container();
 
         assert!(container
-            .address_for_route(&Route::new(1001, SlotAddr::ReplicaOptional))
+            .connection_for_route(&Route::new(1001, SlotAddr::ReplicaOptional))
             .is_none());
 
         assert_eq!(
-            Arc::from("replica2-1"),
+            (Arc::from("replica2-1"), &21),
             container
-                .address_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("replica2-1"),
+            (Arc::from("replica2-1"), &21),
             container
-                .address_for_route(&Route::new(1500, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(1500, SlotAddr::ReplicaOptional))
                 .unwrap()
         );
 
-        assert!([Arc::from("replica3-1"), Arc::from("replica3-2")].contains(
+        assert!([
+            (Arc::from("replica3-1"), &31),
+            (Arc::from("replica3-2"), &32)
+        ]
+        .contains(
             &container
-                .address_for_route(&Route::new(2001, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaOptional))
                 .unwrap()
         ));
     }
@@ -247,34 +261,33 @@ mod tests {
         let container = create_container();
 
         assert!(container
-            .address_for_route(&Route::new(0, SlotAddr::ReplicaOptional))
+            .connection_for_route(&Route::new(0, SlotAddr::ReplicaOptional))
             .is_none());
 
         assert_eq!(
-            Arc::from("primary1"),
+            (Arc::from("primary1"), &1),
             container
-                .address_for_route(&Route::new(500, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(500, SlotAddr::ReplicaOptional))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary1"),
+            (Arc::from("primary1"), &1),
             container
-                .address_for_route(&Route::new(1000, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(1000, SlotAddr::ReplicaOptional))
                 .unwrap()
         );
     }
 
     #[test]
-    #[ignore] //TODO - enable once round robin read from replica is enabled.
-    fn get_replica_connection_for_replica_route_if_some_but_not_all_replicas_were_removed() {
+    fn get_primary_connection_for_replica_route_if_replicas_were_removed() {
         let mut container = create_container();
-        container.remove_connection("replica3-2");
+        container.remove_connection("replica2-1");
 
         assert_eq!(
-            Arc::from("replica3-1"),
+            (Arc::from("primary2"), &2),
             container
-                .address_for_route(&Route::new(2001, SlotAddr::ReplicaRequired))
+                .connection_for_route(&Route::new(1500, SlotAddr::ReplicaRequired))
                 .unwrap()
         );
     }
@@ -284,37 +297,47 @@ mod tests {
     ) {
         let container = create_container_with_strategy(false);
 
-        assert!([Arc::from("replica3-1"), Arc::from("replica3-2")].contains(
+        assert!([
+            (Arc::from("replica3-1"), &31),
+            (Arc::from("replica3-2"), &32)
+        ]
+        .contains(
             &container
-                .address_for_route(&Route::new(2001, SlotAddr::ReplicaRequired))
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaRequired))
                 .unwrap()
         ));
     }
 
     #[test]
-    #[ignore] //TODO - enable once round robin read from replica is enabled.
-    fn get_primary_connection_for_replica_route_if_all_replicas_were_removed() {
+    fn get_primary_connection_for_replica_optional_route_if_all_replicas_were_removed() {
         let mut container = create_container();
         remove_nodes(&mut container, &["replica2-1", "replica3-1", "replica3-2"]);
 
         assert_eq!(
-            Arc::from("primary2"),
+            (Arc::from("primary2"), &2),
             container
-                .address_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(1002, SlotAddr::ReplicaOptional))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary2"),
+            (Arc::from("primary2"), &2),
             container
-                .address_for_route(&Route::new(1500, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(1002, SlotAddr::ReplicaRequired))
                 .unwrap()
         );
 
         assert_eq!(
-            Arc::from("primary3"),
+            (Arc::from("primary3"), &3),
             container
-                .address_for_route(&Route::new(2001, SlotAddr::ReplicaOptional))
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaOptional))
+                .unwrap()
+        );
+
+        assert_eq!(
+            (Arc::from("primary3"), &3),
+            container
+                .connection_for_route(&Route::new(2001, SlotAddr::ReplicaRequired))
                 .unwrap()
         );
     }
