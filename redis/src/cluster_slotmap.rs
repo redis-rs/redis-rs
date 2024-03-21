@@ -277,6 +277,62 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn test_slot_map_read_from_replica_false_retrieve_routes_for_primary_if_replica_is_optional_and_to_replica_if_required(
+    ) {
+        let slot_map = get_slot_map(false);
+
+        assert_eq!(
+            Arc::from("node1:6379".to_string()),
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::ReplicaOptional))
+                .unwrap()
+        );
+        assert_eq!(
+            Arc::from("replica1:6379".to_string()),
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::ReplicaRequired))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_slot_map_retrieve_routes_for_replicas() {
+        let slot_map = get_slot_map(true);
+
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(0, SlotAddr::ReplicaOptional))
+            .is_none());
+
+        assert!(slot_map
+            .slot_addr_for_route(&Route::new(0, SlotAddr::ReplicaRequired))
+            .is_none());
+        assert_eq!(
+            Arc::from("replica1:6379".to_string()),
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::ReplicaOptional))
+                .unwrap()
+        );
+        assert_eq!(
+            Arc::from("replica1:6379".to_string()),
+            slot_map
+                .slot_addr_for_route(&Route::new(1, SlotAddr::ReplicaRequired))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_slot_map_retrieve_routes_for_primaries_when_replicas_are_optional() {
+        let slot_map = get_slot_map(true);
+
+        assert_eq!(
+            Arc::from("node4:6379".to_string()),
+            slot_map
+                .slot_addr_for_route(&Route::new(4001, SlotAddr::ReplicaOptional))
+                .unwrap()
+        );
+    }
+
     fn get_slot_map(read_from_replica: bool) -> SlotMap {
         SlotMap::from_slots(
             vec![
@@ -314,6 +370,7 @@ mod tests {
                         "replica3:6379".to_owned().into(),
                     ],
                 ),
+                Slot::new(4001, 5000, "node4:6379".to_owned().into(), vec![]),
             ],
             read_from_replica,
         )
@@ -332,7 +389,8 @@ mod tests {
             HashSet::from_iter([
                 Arc::from("node1:6379"),
                 Arc::from("node2:6379"),
-                Arc::from("node3:6379")
+                Arc::from("node3:6379"),
+                Arc::from("node4:6379")
             ])
         );
     }
@@ -351,6 +409,7 @@ mod tests {
                 Arc::from("node1:6379"),
                 Arc::from("node2:6379"),
                 Arc::from("node3:6379"),
+                Arc::from("node4:6379"),
                 Arc::from("replica1:6379"),
                 Arc::from("replica2:6379"),
                 Arc::from("replica3:6379"),
@@ -443,7 +502,7 @@ mod tests {
             addresses,
             vec![
                 Some(Arc::from("replica1:6379")),
-                None,
+                Some(Arc::from("node4:6379")),
                 None,
                 Some(Arc::from("node3:6379"))
             ]
