@@ -114,7 +114,7 @@ mod tests {
     // type is an actual connection - the map is just a container.
     use std::collections::HashSet;
 
-    use crate::cluster_slotmap::{Slot, SlotAddr};
+    use crate::cluster_slotmap::Slot;
 
     use super::*;
 

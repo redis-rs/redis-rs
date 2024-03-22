@@ -606,7 +606,7 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cmd, parser::parse_redis_value, Value};
+    use crate::{cmd, parser::parse_redis_value};
     use core::panic;
 
     #[test]
