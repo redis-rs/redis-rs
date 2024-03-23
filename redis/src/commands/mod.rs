@@ -2487,15 +2487,13 @@ impl ToRedisArgs for SetOptions {
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");
-    if connection_info.password.is_some() {
+    if let Some(password) = &connection_info.password {
         let username: &str = match connection_info.username.as_ref() {
             None => "default",
             Some(username) => username,
         };
-        hello_cmd
-            .arg("AUTH")
-            .arg(username)
-            .arg(connection_info.password.as_ref().unwrap());
+        hello_cmd.arg("AUTH").arg(username).arg(password);
     }
+
     hello_cmd
 }
