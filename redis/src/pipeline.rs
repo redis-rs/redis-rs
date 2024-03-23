@@ -80,6 +80,10 @@ impl Pipeline {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.commands.len()
+    }
+
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
         self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),

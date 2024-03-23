@@ -1873,4 +1873,18 @@ mod basic {
             (kind, data)
         );
     }
+
+    #[test]
+    fn test_select_db() {
+        let ctx = TestContext::new();
+        let mut connection_info = ctx.client.get_connection_info().clone();
+        connection_info.redis.db = 5;
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut connection = client.get_connection().unwrap();
+        let info: String = redis::cmd("CLIENT")
+            .arg("info")
+            .query(&mut connection)
+            .unwrap();
+        assert!(info.contains("db=5"));
+    }
 }
