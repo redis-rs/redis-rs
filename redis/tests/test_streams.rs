@@ -387,6 +387,7 @@ fn test_xread_options_deleted_pel_entry() {
         result_deleted_entry.keys[0].ids[0].id
     );
 }
+
 #[test]
 fn test_xclaim() {
     // Tests the following commands....
@@ -490,6 +491,94 @@ fn test_xclaim() {
     // we just claimed the original 10 ids
     // and only returned the ids
     assert_eq!(claimed.len(), 10);
+}
+
+#[test]
+fn test_xautoclaim() {
+    // Tests the following commands....
+    // xautoclaim
+    // xclaim_options
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // xautoclaim test basic idea:
+    // 1. we need to test adding messages to a group
+    // 2. then xreadgroup needs to define a consumer and read pending
+    //    messages without acking them
+    // 3. then we need to sleep 5ms and call xpending
+    // 4. from here we should be able to claim message
+    //    past the idle time and read them from a different consumer
+
+    // create the group
+    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    assert!(result.is_ok());
+
+    // add some keys
+    xadd_keyrange(&mut con, "k1", 0, 10);
+
+    // read the pending items for this key & group
+    let read_reply: StreamReadReply = con
+        .xread_options(
+            &["k1"],
+            &[">"],
+            &StreamReadOptions::default().group("g1", "c1"),
+        )
+        .unwrap();
+
+    // verify we have 10 ids
+    assert_eq!(read_reply.keys[0].ids.len(), 10);
+
+    // ids to claim
+    let to_cliam = &read_reply.keys[0]
+        .ids
+        .iter()
+        .skip(2)
+        .map(|msg| &msg.id)
+        .collect::<Vec<&String>>();
+
+    // Only claim 8 messages
+    let xack_result: i32 = con.xack("k1", "g1", to_cliam).unwrap();
+    // Check if 8 messages was indeed claimed.
+    assert_eq!(xack_result, 8);
+    // sleep for 5ms
+    sleep(Duration::from_millis(5));
+
+    // grab id if > 4ms
+    let reply: StreamAutoClaimReply = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            4,
+            "0-0",
+            StreamAutoClaimOptions::default().count(1),
+        )
+        .unwrap();
+
+    assert_eq!(reply.start_stream_id, read_reply.keys[0].ids[1].id);
+    assert_eq!(reply.ids.len(), 1);
+
+    // Only claim given id
+    let xack_result: i32 = con.xack("k1", "g1", &[&reply.ids[0].id]).unwrap();
+
+    // Check if 1 messages was indeed claimed.
+    assert_eq!(xack_result, 1);
+
+    // grab id if > 4ms with just ids
+    let (start_id, ids, deleted_ids): (String, Vec<String>, Vec<String>) = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            4,
+            &reply.start_stream_id,
+            StreamAutoClaimOptions::default().with_justid(),
+        )
+        .unwrap();
+
+    assert_eq!(start_id, "0-0");
+    assert_eq!(ids, vec![reply.start_stream_id]);
+    assert_eq!(deleted_ids, Vec::<String>::new());
 }
 
 #[test]
