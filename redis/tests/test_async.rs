@@ -1085,4 +1085,25 @@ mod basic_async {
         })
         .unwrap();
     }
+
+    #[test]
+    fn test_select_db() {
+        let ctx = TestContext::new();
+        let mut connection_info = ctx.client.get_connection_info().clone();
+        connection_info.redis.db = 5;
+        let client = redis::Client::open(connection_info).unwrap();
+        block_on_all(async move {
+            let mut connection = client.get_multiplexed_async_connection().await.unwrap();
+
+            let info: String = redis::cmd("CLIENT")
+                .arg("info")
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            assert!(info.contains("db=5"));
+
+            Ok(())
+        })
+        .unwrap();
+    }
 }
