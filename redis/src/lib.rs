@@ -371,6 +371,9 @@ pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
 };
+pub use crate::connection_config::{
+    ConnectionConfig, ConnectionConfigBuilder, ConnectionManagerBackOffConfig,
+};
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
 pub use push_manager::{PushInfo, PushManager};
@@ -409,7 +412,7 @@ pub use crate::types::{
     Value,
     PushKind,
     VerbatimFormat,
-    ProtocolVersion
+    ProtocolVersion,
 };
 
 #[cfg(feature = "aio")]
@@ -473,10 +476,13 @@ mod tls;
 #[cfg(feature = "tls-rustls")]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
+#[cfg(feature = "cache")]
+pub mod caching;
 mod client;
 mod cmd;
 mod commands;
 mod connection;
+mod connection_config;
 mod parser;
 mod push_manager;
 mod script;

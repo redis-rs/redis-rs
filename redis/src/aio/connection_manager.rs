@@ -4,7 +4,7 @@ use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
-    Client,
+    Client, ConnectionConfig, ConnectionConfigBuilder, ConnectionManagerBackOffConfig,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
@@ -55,9 +55,7 @@ pub struct ConnectionManager {
 
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
-    number_of_retries: usize,
-    response_timeout: std::time::Duration,
-    connection_timeout: std::time::Duration,
+    connection_config: ConnectionConfig,
     push_manager: PushManager,
 }
 
@@ -92,22 +90,12 @@ macro_rules! reconnect_if_io_error {
 }
 
 impl ConnectionManager {
-    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
-    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
-
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
     /// This requires the `connection-manager` feature, which will also pull in
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
-        Self::new_with_backoff(
-            client,
-            Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
-        )
-        .await
+        Self::new_with_connection_config(client, ConnectionConfig::default()).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -124,13 +112,15 @@ impl ConnectionManager {
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<Self> {
-        Self::new_with_backoff_and_timeouts(
+        Self::new_with_connection_config(
             client,
-            exponent_base,
-            factor,
-            number_of_retries,
-            std::time::Duration::MAX,
-            std::time::Duration::MAX,
+            ConnectionConfigBuilder::new()
+                .back_off(ConnectionManagerBackOffConfig {
+                    exponent_base,
+                    factor,
+                    number_of_retries,
+                })
+                .build(),
         )
         .await
     }
@@ -154,18 +144,45 @@ impl ConnectionManager {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
+        Self::new_with_connection_config(
+            client,
+            ConnectionConfigBuilder::new()
+                .back_off(ConnectionManagerBackOffConfig {
+                    exponent_base,
+                    factor,
+                    number_of_retries,
+                })
+                .response_timeout(response_timeout)
+                .connection_timeout(connection_timeout)
+                .build(),
+        )
+        .await
+    }
+
+    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    ///
+    /// In case of reconnection issues, the manager will retry reconnection
+    /// number_of_retries times, with an exponentially increasing delay, calculated as
+    /// rand(0 .. factor * (exponent_base ^ current-try)).
+    ///
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub async fn new_with_connection_config(
+        client: Client,
+        connection_config: ConnectionConfig,
+    ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
-        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
-        let mut connection = Self::new_connection(
-            client.clone(),
-            retry_strategy.clone(),
-            number_of_retries,
-            response_timeout,
-            connection_timeout,
-        )
-        .await?;
+        let retry_strategy =
+            ExponentialBackoff::from_millis(connection_config.back_off.exponent_base)
+                .factor(connection_config.back_off.factor);
+        let mut connection =
+            Self::new_connection(client.clone(), retry_strategy.clone(), &connection_config)
+                .await?;
 
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
         connection.set_push_manager(push_manager.clone()).await;
@@ -175,10 +192,8 @@ impl ConnectionManager {
                 future::ok(connection).boxed().shared(),
             )),
             runtime,
-            number_of_retries,
             retry_strategy,
-            response_timeout,
-            connection_timeout,
+            connection_config,
             push_manager,
         })
     }
@@ -186,16 +201,13 @@ impl ConnectionManager {
     async fn new_connection(
         client: Client,
         exponential_backoff: ExponentialBackoff,
-        number_of_retries: usize,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
+        connection_config: &ConnectionConfig,
     ) -> RedisResult<MultiplexedConnection> {
-        let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
+        let retry_strategy = exponential_backoff
+            .map(jitter)
+            .take(connection_config.back_off.number_of_retries);
         Retry::spawn(retry_strategy, || {
-            client.get_multiplexed_async_connection_with_timeouts(
-                response_timeout,
-                connection_timeout,
-            )
+            client.get_multiplexed_async_connection_with_config(connection_config)
         })
         .await
     }
@@ -207,19 +219,10 @@ impl ConnectionManager {
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
-        let number_of_retries = self.number_of_retries;
-        let response_timeout = self.response_timeout;
-        let connection_timeout = self.connection_timeout;
+        let connection_config = self.connection_config.clone();
         let pmc = self.push_manager.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let mut con = Self::new_connection(
-                client,
-                retry_strategy,
-                number_of_retries,
-                response_timeout,
-                connection_timeout,
-            )
-            .await?;
+            let mut con = Self::new_connection(client, retry_strategy, &connection_config).await?;
             con.set_push_manager(pmc).await;
             Ok(con)
         }

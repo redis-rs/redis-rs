@@ -6,7 +6,7 @@ use std::{
 
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue,
+    ConnectionConfig, ErrorKind, FromRedisValue,
 };
 
 use {
@@ -35,11 +35,7 @@ pub struct MockConnection {
 
 #[cfg(feature = "cluster-async")]
 impl cluster_async::Connect for MockConnection {
-    fn connect<'a, T>(
-        info: T,
-        _response_timeout: Duration,
-        _connection_timeout: Duration,
-    ) -> RedisFuture<'a, Self>
+    fn connect<'a, T>(info: T, _connection_config: &ConnectionConfig) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
     {

@@ -400,6 +400,10 @@ impl TestClusterContext {
     pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
         self.client.get_async_connection().await.unwrap()
     }
+    #[cfg(all(feature = "cluster-async", feature = "cache"))]
+    pub async fn async_connection_with_cache(&self) -> redis::cluster_async::ClusterConnection {
+        self.client.get_async_connection_with_cache().await.unwrap()
+    }
 
     #[cfg(feature = "cluster-async")]
     pub async fn async_generic_connection<
