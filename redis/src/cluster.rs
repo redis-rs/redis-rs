@@ -45,6 +45,7 @@ use crate::cluster_pipeline::UNROUTABLE_ERROR;
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
+use crate::cluster_topology::parse_slots;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -55,7 +56,7 @@ use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Route, RoutingInfo, Slot, SlotMap, SLOT_SIZE},
+    cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
 use rand::{seq::IteratorRandom, thread_rng, Rng};
 
@@ -939,73 +940,6 @@ fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     (addr, con)
 }
 
-// Parse slot data from raw redis value.
-pub(crate) fn parse_slots(raw_slot_resp: Value, tls: Option<TlsMode>) -> RedisResult<Vec<Slot>> {
-    // Parse response.
-    let mut result = Vec::with_capacity(2);
-
-    if let Value::Array(items) = raw_slot_resp {
-        let mut iter = items.into_iter();
-        while let Some(Value::Array(item)) = iter.next() {
-            if item.len() < 3 {
-                continue;
-            }
-
-            let start = if let Value::Int(start) = item[0] {
-                start as u16
-            } else {
-                continue;
-            };
-
-            let end = if let Value::Int(end) = item[1] {
-                end as u16
-            } else {
-                continue;
-            };
-
-            let mut nodes: Vec<String> = item
-                .into_iter()
-                .skip(2)
-                .filter_map(|node| {
-                    if let Value::Array(node) = node {
-                        if node.len() < 2 {
-                            return None;
-                        }
-
-                        let ip = if let Value::BulkString(ref ip) = node[0] {
-                            String::from_utf8_lossy(ip)
-                        } else {
-                            return None;
-                        };
-                        if ip.is_empty() {
-                            return None;
-                        }
-
-                        let port = if let Value::Int(port) = node[1] {
-                            port as u16
-                        } else {
-                            return None;
-                        };
-                        // This is only "stringifying" IP addresses, so `TLS parameters` are not required
-                        Some(get_connection_addr(ip.into_owned(), port, tls, None).to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if nodes.is_empty() {
-                continue;
-            }
-
-            let replicas = nodes.split_off(1);
-            result.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
-        }
-    }
-
-    Ok(result)
-}
-
 // The node string passed to this function will always be in the format host:port as it is either:
 // - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
 // - Returned from redis via the ASK/MOVED response
@@ -1040,7 +974,7 @@ pub(crate) fn get_connection_info(
     })
 }
 
-fn get_connection_addr(
+pub(crate) fn get_connection_addr(
     host: String,
     port: u16,
     tls: Option<TlsMode>,
