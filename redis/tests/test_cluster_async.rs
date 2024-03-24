@@ -552,6 +552,83 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_null_host_name() {
+        let name =
+            "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], _| {
+            if contains_slice(cmd, b"PING") {
+                Err(Ok(Value::SimpleString("OK".into())))
+            } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                Err(Ok(Value::Array(vec![Value::Array(vec![
+                    Value::Int(0),
+                    Value::Int(16383),
+                    Value::Array(vec![Value::Nil, Value::Int(6379)]),
+                ])])))
+            } else {
+                Err(Ok(Value::Nil))
+            }
+        });
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<_, Value>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Value::Nil));
+    }
+
+    #[test]
+    fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
+    ) {
+        let name = "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], _| {
+            if contains_slice(cmd, b"PING") {
+                Err(Ok(Value::SimpleString("OK".into())))
+            } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                Err(Ok(Value::Array(vec![
+                    Value::Array(vec![
+                        Value::Int(0),
+                        Value::Int(7000),
+                        Value::Array(vec![
+                            Value::BulkString(name.as_bytes().to_vec()),
+                            Value::Int(6379),
+                        ]),
+                    ]),
+                    Value::Array(vec![
+                        Value::Int(7001),
+                        Value::Int(16383),
+                        Value::Array(vec![
+                            Value::BulkString("?".as_bytes().to_vec()),
+                            Value::Int(6380),
+                        ]),
+                    ]),
+                ])))
+            } else {
+                Err(Ok(Value::Nil))
+            }
+        });
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<_, Value>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Value::Nil));
+    }
+
+    #[test]
     fn test_async_cluster_retries() {
         let name = "tryagain";
 
