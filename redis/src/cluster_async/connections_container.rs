@@ -8,8 +8,6 @@ use crate::cluster_routing::{Route, SlotAddr};
 use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
 use crate::cluster_topology::TopologyHash;
 
-type IdentifierType = ArcStr;
-
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ClusterNode<Connection> {
     pub user_connection: Connection,
@@ -51,11 +49,6 @@ pub(crate) enum ConnectionType {
     PreferManagement,
 }
 
-/// This opaque type allows us to change the way that the connections are organized
-/// internally without refactoring the calling code.
-#[derive(Clone, Hash, Eq, PartialEq, Debug)]
-pub(crate) struct Identifier(IdentifierType);
-
 pub(crate) struct ConnectionsMap<Connection>(pub(crate) HashMap<ArcStr, ClusterNode<Connection>>);
 
 impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
@@ -71,7 +64,7 @@ impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
 }
 
 pub(crate) struct ConnectionsContainer<Connection> {
-    connection_map: HashMap<Identifier, ClusterNode<Connection>>,
+    connection_map: HashMap<ArcStr, ClusterNode<Connection>>,
     slot_map: SlotMap,
     read_from_replica_strategy: ReadFromReplicaStrategy,
     topology_hash: TopologyHash,
@@ -88,7 +81,7 @@ impl<Connection> Default for ConnectionsContainer<Connection> {
     }
 }
 
-pub(crate) type ConnectionAndIdentifier<Connection> = (Identifier, Connection);
+pub(crate) type ConnectionAndAddress<Connection> = (ArcStr, Connection);
 
 impl<Connection> ConnectionsContainer<Connection>
 where
@@ -101,30 +94,26 @@ where
         topology_hash: TopologyHash,
     ) -> Self {
         Self {
-            connection_map: connection_map
-                .0
-                .into_iter()
-                .map(|(address, node)| (Identifier(address), node))
-                .collect(),
+            connection_map: connection_map.0,
             slot_map,
             read_from_replica_strategy,
             topology_hash,
         }
     }
 
-    /// Returns true if the identifier represents a known primary node.
-    pub(crate) fn is_primary(&self, identifier: &Identifier) -> bool {
-        self.connection_for_identifier(identifier).is_some()
+    /// Returns true if the address represents a known primary node.
+    pub(crate) fn is_primary(&self, address: &ArcStr) -> bool {
+        self.connection_for_address(address).is_some()
             && self
                 .slot_map
                 .values()
-                .any(|slot_addrs| slot_addrs.primary == identifier.0)
+                .any(|slot_addrs| slot_addrs.primary.as_str() == address)
     }
 
     fn round_robin_read_from_replica(
         &self,
         slot_map_value: &SlotMapValue,
-    ) -> Option<ConnectionAndIdentifier<Connection>> {
+    ) -> Option<ConnectionAndAddress<Connection>> {
         let addrs = &slot_map_value.addrs;
         let initial_index = slot_map_value
             .latest_used_replica
@@ -150,7 +139,7 @@ where
         }
     }
 
-    fn lookup_route(&self, route: &Route) -> Option<ConnectionAndIdentifier<Connection>> {
+    fn lookup_route(&self, route: &Route) -> Option<ConnectionAndAddress<Connection>> {
         let slot_map_value = self.slot_map.slot_value_for_route(route)?;
         let addrs = &slot_map_value.addrs;
         if addrs.replicas.is_empty() {
@@ -174,7 +163,7 @@ where
     pub(crate) fn connection_for_route(
         &self,
         route: &Route,
-    ) -> Option<ConnectionAndIdentifier<Connection>> {
+    ) -> Option<ConnectionAndAddress<Connection>> {
         self.lookup_route(route).or_else(|| {
             if route.slot_addr() != SlotAddr::Master {
                 self.lookup_route(&Route::new(route.slot(), SlotAddr::Master))
@@ -186,65 +175,46 @@ where
 
     pub(crate) fn all_node_connections(
         &self,
-    ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
+    ) -> impl Iterator<Item = ConnectionAndAddress<Connection>> + '_ {
         self.connection_map
             .iter()
-            .map(move |(identifier, node)| (identifier.clone(), node.user_connection.clone()))
+            .map(move |(address, node)| (address.clone(), node.user_connection.clone()))
     }
 
     pub(crate) fn all_primary_connections(
         &self,
-    ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
+    ) -> impl Iterator<Item = ConnectionAndAddress<Connection>> + '_ {
         self.slot_map
             .addresses_for_all_primaries()
             .into_iter()
             .flat_map(|addr| self.connection_for_address(addr))
     }
 
-    fn node_for_identifier(&self, identifier: &Identifier) -> Option<ClusterNode<Connection>> {
-        let node = self.connection_map.get(identifier)?;
-        Some(node.clone())
-    }
-
     pub(crate) fn node_for_address(&self, address: &str) -> Option<ClusterNode<Connection>> {
-        let identifier = Identifier(address.into());
-        let node = self.node_for_identifier(&identifier)?;
-        Some(node.clone())
-    }
-
-    pub(crate) fn connection_for_identifier(&self, identifier: &Identifier) -> Option<Connection> {
-        let node = self.connection_map.get(identifier)?;
-        Some(node.user_connection.clone())
+        self.connection_map.get(address).cloned()
     }
 
     pub(crate) fn connection_for_address(
         &self,
         address: &str,
-    ) -> Option<ConnectionAndIdentifier<Connection>> {
-        let identifier = Identifier(address.into());
-        let connection = self.connection_for_identifier(&identifier)?;
-        Some((identifier, connection))
-    }
-
-    pub(crate) fn address_for_identifier<'a, 'b: 'a>(
-        &'a self,
-        identifier: &'a Identifier,
-    ) -> Option<ArcStr> {
-        Some(identifier.0.clone())
+    ) -> Option<ConnectionAndAddress<Connection>> {
+        self.connection_map
+            .get_key_value(address)
+            .map(|(address, conn)| (address.clone(), conn.user_connection.clone()))
     }
 
     pub(crate) fn random_connections(
         &self,
         amount: usize,
         conn_type: ConnectionType,
-    ) -> impl Iterator<Item = ConnectionAndIdentifier<Connection>> + '_ {
+    ) -> impl Iterator<Item = ConnectionAndAddress<Connection>> + '_ {
         self.connection_map
             .iter()
             .choose_multiple(&mut rand::thread_rng(), amount)
             .into_iter()
-            .map(move |(identifier, node)| {
+            .map(move |(address, node)| {
                 let conn = node.get_connection(&conn_type);
-                (identifier.clone(), conn)
+                (address.clone(), conn)
             })
     }
 
@@ -252,17 +222,14 @@ where
         &mut self,
         address: impl Into<ArcStr>,
         node: ClusterNode<Connection>,
-    ) -> Identifier {
-        let identifier = Identifier(address.into());
-        self.connection_map.insert(identifier.clone(), node);
-        identifier
+    ) -> ArcStr {
+        let address = address.into();
+        self.connection_map.insert(address.clone(), node);
+        address
     }
 
-    pub(crate) fn remove_node(
-        &mut self,
-        identifier: &Identifier,
-    ) -> Option<ClusterNode<Connection>> {
-        self.connection_map.remove(identifier)
+    pub(crate) fn remove_node(&mut self, address: &ArcStr) -> Option<ClusterNode<Connection>> {
+        self.connection_map.remove(address)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -298,9 +265,9 @@ mod tests {
             }
         }
     }
-    fn remove_nodes(container: &mut ConnectionsContainer<usize>, identifiers: &[&str]) {
-        for identifier in identifiers {
-            container.remove_node(&Identifier((*identifier).into()));
+    fn remove_nodes(container: &mut ConnectionsContainer<usize>, addresss: &[&str]) {
+        for address in addresss {
+            container.remove_node(&(*address).into());
         }
     }
 
@@ -319,7 +286,7 @@ mod tests {
     }
 
     fn one_of(
-        connection: Option<ConnectionAndIdentifier<usize>>,
+        connection: Option<ConnectionAndAddress<usize>>,
         expected_connections: &[usize],
     ) -> bool {
         let found = connection.unwrap().1;
@@ -364,27 +331,27 @@ mod tests {
         );
         let mut connection_map = HashMap::new();
         connection_map.insert(
-            Identifier("primary1".into()),
+            "primary1".into(),
             create_cluster_node(1, use_management_connections),
         );
         connection_map.insert(
-            Identifier("primary2".into()),
+            "primary2".into(),
             create_cluster_node(2, use_management_connections),
         );
         connection_map.insert(
-            Identifier("primary3".into()),
+            "primary3".into(),
             create_cluster_node(3, use_management_connections),
         );
         connection_map.insert(
-            Identifier("replica2-1".into()),
+            "replica2-1".into(),
             create_cluster_node(21, use_management_connections),
         );
         connection_map.insert(
-            Identifier("replica3-1".into()),
+            "replica3-1".into(),
             create_cluster_node(31, use_management_connections),
         );
         connection_map.insert(
-            Identifier("replica3-2".into()),
+            "replica3-2".into(),
             create_cluster_node(32, use_management_connections),
         );
 
@@ -511,7 +478,7 @@ mod tests {
     #[test]
     fn get_replica_connection_for_replica_route_if_some_but_not_all_replicas_were_removed() {
         let mut container = create_container();
-        container.remove_node(&Identifier("replica3-2".into()));
+        container.remove_node(&"replica3-2".into());
 
         assert_eq!(
             31,
@@ -590,31 +557,21 @@ mod tests {
     #[test]
     fn get_connection_by_address_returns_none_if_connection_was_removed() {
         let mut container = create_container();
-        container.remove_node(&Identifier("primary1".into()));
+        container.remove_node(&"primary1".into());
 
         assert!(container.connection_for_address("primary1").is_none());
     }
 
     #[test]
-    fn get_connection_by_identifier_returns_none_if_connection_was_removed() {
-        let mut container = create_container();
-        let identifier = Identifier("primary1".into());
-        container.remove_node(&identifier.clone());
-
-        assert!(container.connection_for_identifier(&identifier).is_none());
-    }
-
-    #[test]
     fn get_connection_by_address_returns_added_connection() {
         let mut container = create_container();
-        let identifier = container.replace_or_add_connection_for_address(
+        let address = container.replace_or_add_connection_for_address(
             "foobar",
             ClusterNode::new_only_with_user_conn(4),
         );
 
-        assert_eq!(4, container.connection_for_identifier(&identifier).unwrap());
         assert_eq!(
-            (identifier, 4),
+            (address, 4),
             container.connection_for_address("foobar").unwrap()
         );
     }
@@ -651,7 +608,7 @@ mod tests {
     fn get_random_connections_returns_added_connection() {
         let mut container = create_container();
         remove_all_connections(&mut container);
-        let identifier = container.replace_or_add_connection_for_address(
+        let address = container.replace_or_add_connection_for_address(
             "foobar",
             ClusterNode::new_only_with_user_conn(4),
         );
@@ -659,7 +616,7 @@ mod tests {
             .random_connections(1, ConnectionType::User)
             .collect();
 
-        assert_eq!(vec![(identifier, 4)], random_connections);
+        assert_eq!(vec![(address, 4)], random_connections);
     }
 
     #[test]
@@ -718,7 +675,7 @@ mod tests {
     #[test]
     fn get_all_user_connections_does_not_return_removed_connection() {
         let mut container = create_container();
-        container.remove_node(&Identifier("primary1".into()));
+        container.remove_node(&"primary1".into());
 
         let mut connections: Vec<_> = container
             .all_node_connections()
@@ -745,7 +702,7 @@ mod tests {
     #[test]
     fn get_all_primaries_does_not_return_removed_connection() {
         let mut container = create_container();
-        container.remove_node(&Identifier("primary1".into()));
+        container.remove_node(&"primary1".into());
 
         let mut connections: Vec<_> = container
             .all_primary_connections()
@@ -762,7 +719,7 @@ mod tests {
 
         assert_eq!(container.len(), 6);
 
-        container.remove_node(&Identifier("primary1".into()));
+        container.remove_node(&"primary1".into());
         assert_eq!(container.len(), 5);
 
         container.replace_or_add_connection_for_address(
@@ -779,7 +736,7 @@ mod tests {
 
         assert_eq!(container.len(), 6);
 
-        container.remove_node(&Identifier("foobar".into()));
+        container.remove_node(&"foobar".into());
         assert_eq!(container.len(), 6);
 
         container.replace_or_add_connection_for_address(
@@ -793,24 +750,11 @@ mod tests {
     fn remove_node_returns_connection_if_it_exists() {
         let mut container = create_container();
 
-        let connection = container.remove_node(&Identifier("primary1".into()));
+        let connection = container.remove_node(&"primary1".into());
         assert_eq!(connection, Some(ClusterNode::new_only_with_user_conn(1)));
 
-        let non_connection = container.remove_node(&Identifier("foobar".into()));
+        let non_connection = container.remove_node(&"foobar".into());
         assert_eq!(non_connection, None);
-    }
-
-    #[test]
-    fn address_for_identifier_returns_address_if_it_existed_in_the_past() {
-        let mut container = create_container();
-
-        let address = container.address_for_identifier(&Identifier("primary1".into()));
-        assert_eq!(address, Some("primary1".into()));
-
-        container.remove_node(&Identifier("primary1".into()));
-
-        let address = container.address_for_identifier(&Identifier("primary1".into()));
-        assert_eq!(address, Some("primary1".into()));
     }
 
     #[test]
@@ -818,17 +762,17 @@ mod tests {
         let mut container = create_container();
 
         assert!(!container.is_empty());
-        container.remove_node(&Identifier("primary1".into()));
+        container.remove_node(&"primary1".into());
         assert!(!container.is_empty());
-        container.remove_node(&Identifier("primary2".into()));
-        container.remove_node(&Identifier("primary3".into()));
-        assert!(!container.is_empty());
-
-        container.remove_node(&Identifier("replica2-1".into()));
-        container.remove_node(&Identifier("replica3-1".into()));
+        container.remove_node(&"primary2".into());
+        container.remove_node(&"primary3".into());
         assert!(!container.is_empty());
 
-        container.remove_node(&Identifier("replica3-2".into()));
+        container.remove_node(&"replica2-1".into());
+        container.remove_node(&"replica3-1".into());
+        assert!(!container.is_empty());
+
+        container.remove_node(&"replica3-2".into());
         assert!(container.is_empty());
     }
 
@@ -836,22 +780,22 @@ mod tests {
     fn is_primary_returns_true_for_known_primary() {
         let container = create_container();
 
-        assert!(container.is_primary(&Identifier("primary1".into())));
+        assert!(container.is_primary(&"primary1".into()));
     }
 
     #[test]
     fn is_primary_returns_false_for_known_replica() {
         let container = create_container();
 
-        assert!(!container.is_primary(&Identifier("replica2-1".into())));
+        assert!(!container.is_primary(&"replica2-1".into()));
     }
 
     #[test]
     fn is_primary_returns_false_for_removed_node() {
         let mut container = create_container();
-        let identifier = Identifier("primary1".into());
-        container.remove_node(&identifier);
+        let address = "primary1".into();
+        container.remove_node(&address);
 
-        assert!(!container.is_primary(&identifier));
+        assert!(!container.is_primary(&address));
     }
 }
