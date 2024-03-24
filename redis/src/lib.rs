@@ -522,6 +522,9 @@ pub use crate::commands::JsonAsyncCommands;
 pub mod geo;
 
 #[cfg(feature = "cluster")]
+mod cluster_topology;
+
+#[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster;
 
