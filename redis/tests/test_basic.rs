@@ -640,6 +640,9 @@ fn test_pubsub() {
 
     // Connection for subscriber api
     let mut pubsub_con = ctx.connection();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    // Only useful when RESP3 is enabled
+    pubsub_con.get_push_manager().replace_sender(tx.clone());
 
     // Barrier is used to make test thread wait to publish
     // until after the pubsub thread has subscribed.
@@ -667,6 +670,40 @@ fn test_pubsub() {
     assert_eq!(con.publish("foo", 23), Ok(1));
 
     thread.join().expect("Something went wrong");
+    if ctx.protocol == ProtocolVersion::RESP3 {
+        // We expect all push messages to be here, since sync connection won't read in background
+        // we can't receive push messages without requesting some command
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Subscribe,
+                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+            ),
+            (kind, data)
+        );
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Message,
+                vec![
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("42".as_bytes().to_vec())
+                ]
+            ),
+            (kind, data)
+        );
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Message,
+                vec![
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("23".as_bytes().to_vec())
+                ]
+            ),
+            (kind, data)
+        );
+    }
 }
 
 #[test]
@@ -674,6 +711,9 @@ fn test_pubsub_unsubscribe() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    // Only useful when RESP3 is enabled
+    con.get_push_manager().replace_sender(tx.clone());
     {
         let mut pubsub = con.as_pubsub();
         pubsub.subscribe("foo").unwrap();
@@ -688,6 +728,33 @@ fn test_pubsub_unsubscribe() {
     let _: redis::Value = con.set("foo", "bar").unwrap();
     let value: String = con.get("foo").unwrap();
     assert_eq!(&value[..], "bar");
+
+    if ctx.protocol == ProtocolVersion::RESP3 {
+        // Since UNSUBSCRIBE and PUNSUBSCRIBE may give channel names in different orders, there is this weird test.
+        let expected_values = vec![
+            (PushKind::Subscribe, "foo".to_string()),
+            (PushKind::Subscribe, "bar".to_string()),
+            (PushKind::Subscribe, "baz".to_string()),
+            (PushKind::PSubscribe, "foo*".to_string()),
+            (PushKind::PSubscribe, "bar*".to_string()),
+            (PushKind::PSubscribe, "baz*".to_string()),
+            (PushKind::Unsubscribe, "foo".to_string()),
+            (PushKind::Unsubscribe, "bar".to_string()),
+            (PushKind::Unsubscribe, "baz".to_string()),
+            (PushKind::PUnsubscribe, "foo*".to_string()),
+            (PushKind::PUnsubscribe, "bar*".to_string()),
+            (PushKind::PUnsubscribe, "baz*".to_string()),
+        ];
+        let mut received_values = vec![];
+        for _ in &expected_values {
+            let PushInfo { kind, data } = rx.try_recv().unwrap();
+            let channel_name: String = redis::from_redis_value(data.first().unwrap()).unwrap();
+            received_values.push((kind, channel_name));
+        }
+        for val in expected_values {
+            assert!(received_values.contains(&val))
+        }
+    }
 }
 
 #[test]
