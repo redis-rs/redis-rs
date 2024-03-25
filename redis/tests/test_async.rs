@@ -802,7 +802,8 @@ mod basic_async {
                 let channel_name = "phonewave".to_string();
                 conn.get_push_manager().replace_sender(tx.clone());
                 conn.subscribe(channel_name.clone()).await?;
-                rx.recv().await.unwrap(); //PASS SUBSCRIBE
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Subscribe);
 
                 let mut publish_conn = ctx.async_connection().await?;
                 for i in 0..pub_count {
@@ -810,34 +811,49 @@ mod basic_async {
                         .publish(channel_name.clone(), format!("banana {i}"))
                         .await?;
                 }
-                for _ in 0..pub_count {
-                    rx.recv().await.unwrap();
+                for i in 0..pub_count {
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Message);
+                    assert_eq!(
+                        push.data,
+                        vec![
+                            Value::BulkString("phonewave".as_bytes().to_vec()),
+                            Value::BulkString(format!("banana {i}").into_bytes())
+                        ]
+                    );
                 }
                 assert!(rx.try_recv().is_err());
 
-                {
-                    //Lets test if unsubscribing from individual channel subscription works
-                    publish_conn
-                        .publish(channel_name.clone(), "banana!")
-                        .await?;
-                    rx.recv().await.unwrap();
-                }
-                {
-                    //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
-                    conn.unsubscribe(channel_name.clone()).await?;
-                    rx.recv().await.unwrap(); //PASS UNSUBSCRIBE
-                    publish_conn
-                        .publish(channel_name.clone(), "banana!")
-                        .await?;
-                    //Let's wait for 100ms to make sure there is nothing in channel.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    assert!(rx.try_recv().is_err());
-                }
+                //Lets test if unsubscribing from individual channel subscription works
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Message);
+                assert_eq!(
+                    push.data,
+                    vec![
+                        Value::BulkString("phonewave".as_bytes().to_vec()),
+                        Value::BulkString("banana!".as_bytes().to_vec())
+                    ]
+                );
+
+                //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
+                conn.unsubscribe(channel_name.clone()).await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Unsubscribe);
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                //Let's wait for 100ms to make sure there is nothing in channel.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert!(rx.try_recv().is_err());
 
                 Ok::<_, RedisError>(())
             })
             .unwrap();
         }
+
         #[test]
         fn push_manager_disconnection() {
             use redis::RedisError;
