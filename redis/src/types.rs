@@ -1976,70 +1976,81 @@ macro_rules! forwarded_impl {
 forwarded_impl!((T), Box<T>, Box::new);
 forwarded_impl!((T), std::sync::Arc<T>, std::sync::Arc::new);
 
-impl<T: FromRedisValue> FromRedisValue for Vec<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        match v {
-            // All binary data except u8 will try to parse into a single element vector.
-            // u8 has its own implementation of from_byte_vec.
-            Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
-                Some(x) => Ok(x),
-                None => invalid_type_error!(
-                    v,
-                    format!("Conversion to {} failed.", std::any::type_name::<Self>())
-                ),
-            },
-            Value::Array(items) => FromRedisValue::from_redis_values(items),
-            Value::Set(ref items) => FromRedisValue::from_redis_values(items),
-            Value::Map(ref items) => {
-                let mut n: Vec<T> = vec![];
-                for item in items {
-                    match FromRedisValue::from_redis_value(&Value::Map(vec![item.clone()])) {
-                        Ok(v) => {
-                            n.push(v);
+/// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
+///
+/// The implementation parses the value into a vec, and then passes the value through `$convert`.
+/// If `$convert` is ommited, it defaults to `Into::into`.
+macro_rules! from_vec_from_redis_value {
+    (<$T:ident> $Type:ty) => {
+        from_vec_from_redis_value!(<$T> $Type; Into::into);
+    };
+
+    (<$T:ident> $Type:ty; $convert:expr) => {
+        impl<$T: FromRedisValue> FromRedisValue for $Type {
+            fn from_redis_value(v: &Value) -> RedisResult<$Type> {
+                match v {
+                    // All binary data except u8 will try to parse into a single element vector.
+                    // u8 has its own implementation of from_byte_vec.
+                    Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                        Some(x) => Ok($convert(x)),
+                        None => invalid_type_error!(
+                            v,
+                            format!("Conversion to {} failed.", std::any::type_name::<$Type>())
+                        ),
+                    },
+                    Value::Array(items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Set(ref items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Map(ref items) => {
+                        let mut n: Vec<T> = vec![];
+                        for item in items {
+                            match FromRedisValue::from_redis_value(&Value::Map(vec![item.clone()])) {
+                                Ok(v) => {
+                                    n.push(v);
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
                         }
-                        Err(e) => {
-                            return Err(e);
-                        }
+                        Ok($convert(n))
                     }
+                    Value::Nil => Ok($convert(Vec::new())),
+                    _ => invalid_type_error!(v, "Response type not vector compatible."),
                 }
-                Ok(n)
             }
-            Value::Nil => Ok(Vec::new()),
-            _ => invalid_type_error!(v, "Response type not vector compatible."),
-        }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
-        match v {
-            // Binary data is parsed into a single-element vector, except
-            // for the element type `u8`, which directly consumes the entire
-            // array of bytes.
-            Value::BulkString(bytes) => FromRedisValue::from_owned_byte_vec(bytes),
-            Value::Array(items) => FromRedisValue::from_owned_redis_values(items),
-            Value::Set(items) => FromRedisValue::from_owned_redis_values(items),
-            Value::Map(items) => {
-                let mut n: Vec<T> = vec![];
-                for item in items {
-                    match FromRedisValue::from_owned_redis_value(Value::Map(vec![item])) {
-                        Ok(v) => {
-                            n.push(v);
+            fn from_owned_redis_value(v: Value) -> RedisResult<$Type> {
+                match v {
+                    // Binary data is parsed into a single-element vector, except
+                    // for the element type `u8`, which directly consumes the entire
+                    // array of bytes.
+                    Value::BulkString(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
+                    Value::Array(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::Set(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::Map(items) => {
+                        let mut n: Vec<T> = vec![];
+                        for item in items {
+                            match FromRedisValue::from_owned_redis_value(Value::Map(vec![item])) {
+                                Ok(v) => {
+                                    n.push(v);
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
                         }
-                        Err(e) => {
-                            return Err(e);
-                        }
+                        Ok($convert(n))
                     }
+                    Value::Nil => Ok($convert(Vec::new())),
+                    _ => invalid_type_error!(v, "Response type not vector compatible."),
                 }
-                Ok(n)
             }
-            Value::Nil => Ok(Self::new()),
-            _ => invalid_type_error!(v, "Response type not vector compatible."),
         }
-    }
+    };
 }
 
-forwarded_impl!((T), Box<[T]>, Vec::into_boxed_slice);
-forwarded_impl! {
-    (T), std::sync::Arc<[T]>, |v: Vec<T>| std::sync::Arc::from(v)
-}
+from_vec_from_redis_value!(<T> Vec<T>);
+from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
+from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
     for std::collections::HashMap<K, V, S>
