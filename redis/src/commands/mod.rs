@@ -1879,9 +1879,8 @@ implement_commands! {
     // script commands
 
     /// Adds a prepared script command to the pipeline.
-    ///
-    /// ```
-    #[cfg_attr(feature = "feature", doc = r##"
+    #[cfg_attr(feature = "script", doc = r##"
+
 # Examples:
 
 ```rust,no_run
@@ -1894,7 +1893,7 @@ let script = redis::Script::new(r"
 let (a, b): (isize, isize) = redis::pipe()
     .script(script.arg(1).arg(2))
     .script(script.arg(2).arg(3))
-    .invoke(&mut con)?;
+    .query(&mut con)?;
 
 assert_eq!(a, 3);
 assert_eq!(b, 5);

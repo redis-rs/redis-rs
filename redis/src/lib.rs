@@ -327,14 +327,16 @@ let script = redis::Script::new(r"
 let (a, b): (isize, isize) = redis::pipe()
     .script(script.arg(1).arg(2))
     .script(script.arg(2).arg(3))
-    .invoke(&mut con)?;
+    .query(&mut con)?;
 
 assert_eq!(a, 3);
 assert_eq!(b, 5);
 # Ok(()) }
 ```
 
-Note: if the pipeline fails due to a missing script, it is not automatically loaded and retried.
+Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
+it will not automatically be loaded and retried.  The script can be loaded using the 
+[`load`](ScriptInvocation::load) operation.
 "##
 )]
 //!

@@ -1,5 +1,4 @@
-#![allow(clippy::let_unit_value)]
-
+#![cfg(feature = "script")]
 use redis::ErrorKind;
 
 use crate::support::*;
@@ -7,7 +6,6 @@ use crate::support::*;
 mod support;
 
 #[test]
-#[cfg(feature = "script")]
 fn test_script() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -25,7 +23,6 @@ fn test_script() {
 }
 
 #[test]
-#[cfg(feature = "script")]
 fn test_script_load() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -38,8 +35,7 @@ fn test_script_load() {
 }
 
 #[test]
-#[cfg(feature = "script")]
-fn test_script_pipeline_no_autoload() {
+fn test_script_that_is_not_loaded_fails_on_pipeline_invocation() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
@@ -49,7 +45,6 @@ fn test_script_pipeline_no_autoload() {
 }
 
 #[test]
-#[cfg(feature = "script")]
 fn test_script_pipeline() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
