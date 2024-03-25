@@ -1553,10 +1553,11 @@ mod basic {
     #[test]
     fn test_push_manager() {
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
-            return;
-        }
-        let mut con = ctx.connection();
+        let mut connection_info = ctx.server.connection_info();
+        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let client = redis::Client::open(connection_info).unwrap();
+
+        let mut con = client.get_connection().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         con.get_push_manager().replace_sender(tx);
         let _ = cmd("CLIENT")
@@ -1608,10 +1609,11 @@ mod basic {
     #[test]
     fn test_push_manager_disconnection() {
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
-            return;
-        }
-        let mut con = ctx.connection();
+        let mut connection_info = ctx.server.connection_info();
+        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let client = redis::Client::open(connection_info).unwrap();
+
+        let mut con = client.get_connection().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         con.get_push_manager().replace_sender(tx.clone());
 

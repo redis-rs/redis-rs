@@ -821,11 +821,12 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
-                return;
-            }
+            let mut connection_info = ctx.server.connection_info();
+            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let client = redis::Client::open(connection_info).unwrap();
+
             block_on_all(async move {
-                let mut conn = ctx.multiplexed_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let pub_count = 10;
                 let channel_name = "phonewave".to_string();
@@ -872,11 +873,12 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
-                return;
-            }
+            let mut connection_info = ctx.server.connection_info();
+            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let client = redis::Client::open(connection_info).unwrap();
+
             block_on_all(async move {
-                let mut conn = ctx.multiplexed_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 conn.get_push_manager().replace_sender(tx.clone());
 
@@ -1077,14 +1079,12 @@ mod basic_async {
         use redis::ProtocolVersion;
 
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
-            return;
-        }
+        let mut connection_info = ctx.server.connection_info();
+        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let client = redis::Client::open(connection_info).unwrap();
 
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
-                .await
-                .unwrap();
+            let mut manager = redis::aio::ConnectionManager::new(client).await.unwrap();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             manager.get_push_manager().replace_sender(tx.clone());
             manager
