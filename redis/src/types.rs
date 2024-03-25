@@ -1502,6 +1502,10 @@ deref_to_write_redis_args_impl! {
     <T: ?Sized> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
 }
 
+deref_to_write_redis_args_impl! {
+    <T: ?Sized> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
+}
+
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
@@ -1975,6 +1979,7 @@ macro_rules! pointer_from_redis_value_impl {
 
 pointer_from_redis_value_impl!(T, Box<T>, Box::new);
 pointer_from_redis_value_impl!(T, std::sync::Arc<T>, std::sync::Arc::new);
+pointer_from_redis_value_impl!(T, std::rc::Rc<T>, std::rc::Rc::new);
 
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
