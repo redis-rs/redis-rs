@@ -1460,7 +1460,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
-macro_rules! deref_impl {
+macro_rules! deref_to_write_redis_args_impl {
     (
         $(#[$attr:meta])*
         <$($desc:tt)+
@@ -1486,19 +1486,19 @@ macro_rules! deref_impl {
     };
 }
 
-deref_impl! {
+deref_to_write_redis_args_impl! {
     <'a, T: ?Sized> ToRedisArgs for &'a T where T: ToRedisArgs
 }
 
-deref_impl! {
+deref_to_write_redis_args_impl! {
     <'a, T: ?Sized> ToRedisArgs for &'a mut T where T: ToRedisArgs
 }
 
-deref_impl! {
+deref_to_write_redis_args_impl! {
     <T: ?Sized> ToRedisArgs for Box<T> where T: ToRedisArgs
 }
 
-deref_impl! {
+deref_to_write_redis_args_impl! {
     <T: ?Sized> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
 }
 
@@ -1954,10 +1954,10 @@ impl FromRedisValue for String {
     }
 }
 
-macro_rules! forwarded_impl {
+macro_rules! pointer_from_redis_value_impl {
     (
         $(#[$attr:meta])*
-        ($id:ident), $ty:ty, $func:expr
+        $id:ident, $ty:ty, $func:expr
     ) => {
         $(#[$attr])*
         impl<$id: ?Sized + FromRedisValue> FromRedisValue for $ty {
@@ -1973,8 +1973,8 @@ macro_rules! forwarded_impl {
     }
 }
 
-forwarded_impl!((T), Box<T>, Box::new);
-forwarded_impl!((T), std::sync::Arc<T>, std::sync::Arc::new);
+pointer_from_redis_value_impl!(T, Box<T>, Box::new);
+pointer_from_redis_value_impl!(T, std::sync::Arc<T>, std::sync::Arc::new);
 
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
