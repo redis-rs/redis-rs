@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use redis::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
 mod support;
@@ -18,10 +18,12 @@ fn test_is_single_arg() {
     assert!(nestvec.is_single_arg());
     assert!(bytes.is_single_arg());
     assert!(Arc::new(sslice).is_single_arg());
+    assert!(Rc::new(nestslice).is_single_arg());
 
     assert!(!twobytesslice.is_single_arg());
     assert!(!twobytesvec.is_single_arg());
     assert!(!Arc::new(twobytesslice).is_single_arg());
+    assert!(!Rc::new(twobytesslice).is_single_arg());
 }
 
 /// The `FromRedisValue` trait provides two methods for parsing:
@@ -121,6 +123,19 @@ fn test_parse_arc() {
         // works with optional
         let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
         assert_eq!(v, Ok(Arc::new(Some(simple_string_exp))));
+    }
+}
+
+#[test]
+fn test_parse_rc() {
+    for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+        let simple_string_exp = "Simple string".to_string();
+        let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+        assert_eq!(v, Ok(Rc::new(simple_string_exp.clone())));
+
+        // works with optional
+        let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+        assert_eq!(v, Ok(Rc::new(Some(simple_string_exp))));
     }
 }
 
@@ -489,12 +504,14 @@ fn test_deref_types_to_redis_args() {
     assert_eq!(Arc::new(number).to_redis_args(), expected_result);
     assert_eq!(Arc::new(&number).to_redis_args(), expected_result);
     assert_eq!(Box::new(number).to_redis_args(), expected_result);
+    assert_eq!(Rc::new(&number).to_redis_args(), expected_result);
 
     let array = vec![1, 2, 3];
     let expected_array = array.to_redis_args();
     assert_eq!(Arc::new(array.clone()).to_redis_args(), expected_array);
     assert_eq!(Arc::new(&array).to_redis_args(), expected_array);
     assert_eq!(Box::new(array.clone()).to_redis_args(), expected_array);
+    assert_eq!(Rc::new(array.clone()).to_redis_args(), expected_array);
 
     let map = [("k1", "v1"), ("k2", "v2")]
         .into_iter()
@@ -502,6 +519,7 @@ fn test_deref_types_to_redis_args() {
     let expected_map = map.to_redis_args();
     assert_eq!(Arc::new(map.clone()).to_redis_args(), expected_map);
     assert_eq!(Box::new(map.clone()).to_redis_args(), expected_map);
+    assert_eq!(Rc::new(&number).to_redis_args(), expected_map);
 }
 
 #[test]
