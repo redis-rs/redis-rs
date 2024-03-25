@@ -310,7 +310,7 @@ impl Client {
     ///
     /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
-    /// The multiplexer will return a timeout error on any request that takes longer then [response_timeout].
+    /// The multiplexer will return a timeout error on any request that takes longer then `response_timeout``.
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
     pub async fn create_multiplexed_async_std_connection_with_response_timeout(
@@ -645,7 +645,7 @@ impl Client {
     ///
     ///     println!(">>> connection info: {connection_info:?}");
     ///
-    ///     let mut con = client.get_async_connection().await?;
+    ///     let mut con = client.get_multiplexed_async_connection().await?;
     ///
     ///     con.set("key1", b"foo").await?;
     ///

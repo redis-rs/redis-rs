@@ -56,13 +56,18 @@
 //! * `aio`: enables async IO support (enabled by default)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
+//! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
+//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `cluster-async`: enables async redis cluster support (optional)
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
-//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (optional)
+//! * `tcp_nodelay`: enables the no-delay flag on  communication sockets (optional)
+//! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
+//! * `uuid`: enables type conversion to UUID (optional)
+//! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -324,7 +329,7 @@ assert_eq!(result, 3);
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][].
+asynchronous interface based on [`futures`][] and [`tokio`][], or [`async-std`][].
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
@@ -337,7 +342,7 @@ use redis::AsyncCommands;
 # #[tokio::main]
 # async fn main() -> redis::RedisResult<()> {
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let mut con = client.get_async_connection().await?;
+let mut con = client.get_multiplexed_async_connection().await?;
 
 con.set("key1", b"foo").await?;
 
@@ -355,6 +360,58 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
+//! [`async-std`]:https://async.rs/
+#![cfg_attr(
+    feature = "sentinel",
+    doc = r##"
+# Sentinel
+Sentinel types allow users to connect to Redis sentinels and find primaries and replicas.
+
+```rust,no_run
+use redis::{ Commands, RedisConnectionInfo };
+use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+
+let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+let mut sentinel = SentinelClient::build(
+    nodes,
+    String::from("primary1"),
+    Some(SentinelNodeConnectionInfo {
+        tls_mode: Some(redis::TlsMode::Insecure),
+        redis_connection_info: None,
+    }),
+    redis::sentinel::SentinelServerType::Master,
+)
+.unwrap();
+
+let primary = sentinel.get_connection().unwrap();
+```
+
+An async API also exists:
+
+```rust,no_run
+use futures::prelude::*;
+use redis::{ Commands, RedisConnectionInfo };
+use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+
+# #[tokio::main]
+# async fn main() -> redis::RedisResult<()> {
+let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+let mut sentinel = SentinelClient::build(
+    nodes,
+    String::from("primary1"),
+    Some(SentinelNodeConnectionInfo {
+        tls_mode: Some(redis::TlsMode::Insecure),
+        redis_connection_info: None,
+    }),
+    redis::sentinel::SentinelServerType::Master,
+)
+.unwrap();
+
+let primary = sentinel.get_async_connection().await.unwrap();
+# Ok(()) }
+"##
+)]
+//!
 
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
