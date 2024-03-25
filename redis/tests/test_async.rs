@@ -569,37 +569,7 @@ mod basic_async {
         let ctx = TestContext::new();
 
         let mut conn_to_kill = ctx.async_connection().await.unwrap();
-        cmd("CLIENT")
-            .arg("SETNAME")
-            .arg("to-kill")
-            .query_async::<_, ()>(&mut conn_to_kill)
-            .await
-            .unwrap();
-
-        let client_list: String = cmd("CLIENT")
-            .arg("LIST")
-            .query_async(&mut conn_to_kill)
-            .await
-            .unwrap();
-
-        eprintln!("{client_list}");
-        let client_to_kill = client_list
-            .split('\n')
-            .find(|line| line.contains("to-kill"))
-            .expect("line")
-            .split(' ')
-            .nth(0)
-            .expect("id")
-            .split('=')
-            .nth(1)
-            .expect("id value");
-
-        let mut killer_conn = ctx.async_connection().await.unwrap();
-        let () = cmd("CLIENT")
-            .arg("KILL")
-            .arg("ID")
-            .arg(client_to_kill)
-            .query_async(&mut killer_conn)
+        kill_client_async(&mut conn_to_kill, &ctx.client)
             .await
             .unwrap();
         let mut killed_client = conn_to_kill;
@@ -611,7 +581,7 @@ mod basic_async {
                 Err(err) => break err,
             }
         };
-        assert_eq!(err.kind(), ErrorKind::IoError); // Shouldn't this be IoError?
+        assert_eq!(err.kind(), ErrorKind::IoError);
     }
 
     #[tokio::test]

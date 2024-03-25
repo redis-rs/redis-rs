@@ -884,3 +884,25 @@ pub fn build_simple_pipeline_for_invalidation() -> Pipeline {
         .ignore();
     pipe
 }
+
+#[cfg(feature = "aio")]
+pub async fn kill_client_async(
+    conn_to_kill: &mut impl aio::ConnectionLike,
+    client: &redis::Client,
+) -> RedisResult<()> {
+    let info: String = cmd("CLIENT").arg("INFO").query_async(conn_to_kill).await?;
+    let id = info.split_once(' ').unwrap().0;
+    assert!(id.contains("id="));
+    let client_to_kill_id = id.split_once("id=").unwrap().1;
+
+    let mut killer_conn = client.get_multiplexed_async_connection().await.unwrap();
+    let () = cmd("CLIENT")
+        .arg("KILL")
+        .arg("ID")
+        .arg(client_to_kill_id)
+        .query_async(&mut killer_conn)
+        .await
+        .unwrap();
+
+    Ok(())
+}
