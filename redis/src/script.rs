@@ -206,9 +206,22 @@ impl<'a> ScriptInvocation<'a> {
         Ok(hash)
     }
 
-    fn load_cmd(&self) -> Cmd {
+    /// Returns a command to load the script.
+    pub fn load_cmd(&self) -> Cmd {
         let mut cmd = cmd("SCRIPT");
         cmd.arg("LOAD").arg(self.script.code.as_bytes());
+        cmd
+    }
+
+    /// Returns a command to evalute the command.
+    pub fn eval_cmd(&self) -> Cmd {
+        let args_len = 3 + self.keys.len() + self.args.len();
+        let mut cmd = Cmd::with_capacity(args_len, self.estimate_buflen());
+        cmd.arg("EVALSHA")
+            .arg(self.script.hash.as_bytes())
+            .arg(self.keys.len())
+            .arg(&*self.keys)
+            .arg(&*self.args);
         cmd
     }
 
@@ -221,17 +234,6 @@ impl<'a> ScriptInvocation<'a> {
             + 7 /* "EVALSHA".len() */
             + self.script.hash.len()
             + 4 /* Slots reserved for the length of keys. */
-    }
-
-    fn eval_cmd(&self) -> Cmd {
-        let args_len = 3 + self.keys.len() + self.args.len();
-        let mut cmd = Cmd::with_capacity(args_len, self.estimate_buflen());
-        cmd.arg("EVALSHA")
-            .arg(self.script.hash.as_bytes())
-            .arg(self.keys.len())
-            .arg(&*self.keys)
-            .arg(&*self.args);
-        cmd
     }
 }
 
