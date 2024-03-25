@@ -13,6 +13,8 @@ use std::{
 
 #[cfg(feature = "aio")]
 use futures::Future;
+#[cfg(feature = "aio")]
+use redis::{aio, cmd, RedisResult};
 use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 
 #[cfg(feature = "tls-rustls")]
@@ -43,7 +45,7 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 #[cfg(feature = "aio")]
 pub fn block_on_all<F, V>(f: F) -> F::Output
 where
-    F: Future<Output = redis::RedisResult<V>>,
+    F: Future<Output = RedisResult<V>>,
 {
     use std::panic;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -508,19 +510,19 @@ impl TestContext {
     }
 
     #[cfg(feature = "aio")]
-    pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+    pub async fn async_connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_connection().await
     }
 
     #[cfg(feature = "aio")]
-    pub async fn async_pubsub(&self) -> redis::RedisResult<redis::aio::PubSub> {
+    pub async fn async_pubsub(&self) -> RedisResult<redis::aio::PubSub> {
         self.client.get_async_pubsub().await
     }
 
     #[cfg(feature = "async-std-comp")]
     pub async fn async_connection_async_std(
         &self,
-    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+    ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_std_connection().await
     }
 
@@ -531,21 +533,21 @@ impl TestContext {
     #[cfg(feature = "tokio-comp")]
     pub async fn multiplexed_async_connection(
         &self,
-    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+    ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.multiplexed_async_connection_tokio().await
     }
 
     #[cfg(feature = "tokio-comp")]
     pub async fn multiplexed_async_connection_tokio(
         &self,
-    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+    ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_tokio_connection().await
     }
 
     #[cfg(feature = "async-std-comp")]
     pub async fn multiplexed_async_connection_async_std(
         &self,
-    ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
+    ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_std_connection().await
     }
 
@@ -802,7 +804,7 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     tls_file_params: &Option<TlsFilePaths>,
     mtls_enabled: bool,
-) -> redis::RedisResult<redis::Client> {
+) -> RedisResult<redis::Client> {
     if mtls_enabled && tls_file_params.is_some() {
         redis::Client::build_with_tls(
             connection_info,
