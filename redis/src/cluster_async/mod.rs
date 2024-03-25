@@ -736,6 +736,14 @@ where
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
+        if receivers.is_empty() {
+            return Err((
+                ErrorKind::ClusterConnectionNotFound,
+                "No nodes found for multi-node operation",
+            )
+                .into());
+        }
+
         let extract_result = |response| match response {
             Response::Single(value) => value,
             Response::Multiple(_) => unreachable!(),
@@ -755,7 +763,15 @@ where
             Some(ResponsePolicy::AllSucceeded) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
-                    .map(|mut results| results.pop().unwrap()) // unwrap is safe, since at least one function succeeded
+                    .and_then(|mut results| {
+                        results.pop().ok_or(
+                            (
+                                ErrorKind::ClusterConnectionNotFound,
+                                "No results received for multi-node operation",
+                            )
+                                .into(),
+                        )
+                    })
             }
             Some(ResponsePolicy::OneSucceeded) => future::select_ok(
                 receivers
