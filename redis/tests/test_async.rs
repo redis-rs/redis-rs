@@ -825,9 +825,8 @@ mod basic_async {
 
                 conn.set("A", "1").await?;
                 assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
-                drop(ctx);
-                let x: RedisResult<()> = conn.set("A", "1").await;
-                assert!(x.is_err());
+                kill_client_async(&mut conn, &ctx.client).await.unwrap();
+
                 assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
 
                 Ok::<_, RedisError>(())
@@ -873,31 +872,6 @@ mod basic_async {
         .unwrap()
     }
 
-    #[cfg(feature = "connection-manager")]
-    async fn wait_for_server_to_become_ready(client: redis::Client) {
-        let millisecond = std::time::Duration::from_millis(1);
-        let mut retries = 0;
-        loop {
-            match client.get_multiplexed_async_connection().await {
-                Err(err) => {
-                    if err.is_connection_refusal() {
-                        tokio::time::sleep(millisecond).await;
-                        retries += 1;
-                        if retries > 100000 {
-                            panic!("Tried to connect too many times, last error: {err}");
-                        }
-                    } else {
-                        panic!("Could not connect: {err}");
-                    }
-                }
-                Ok(mut con) => {
-                    let _: RedisResult<()> = redis::cmd("FLUSHDB").query_async(&mut con).await;
-                    break;
-                }
-            }
-        }
-    }
-
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay() {
@@ -914,11 +888,9 @@ mod basic_async {
             let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
                 .await
                 .unwrap();
-            let server = ctx.server;
-            let addr = server.client_addr().clone();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             manager.get_push_manager().replace_sender(tx.clone());
-            drop(server);
+            kill_client_async(&mut manager, &ctx.client).await.unwrap();
 
             let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
             if ctx.protocol != ProtocolVersion::RESP2 {
@@ -926,12 +898,9 @@ mod basic_async {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-            let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
-            wait_for_server_to_become_ready(ctx.client.clone()).await;
-
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
             assert_eq!(result, redis::Value::Okay);
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
             Ok(())
         })
         .unwrap();
