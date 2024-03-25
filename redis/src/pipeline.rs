@@ -293,16 +293,6 @@ macro_rules! implement_pipeline_commands {
                 self.ignored_commands.clear();
             }
 
-            /// Adds a prepared script command to the pipeline.
-            ///
-            /// Shorthand for `add_command(invocation.eval_cmd())`.
-            #[inline]
-            #[cfg(feature = "script")]
-            pub fn script(&mut self, invocation: crate::ScriptInvocation<'_>) -> &mut Self {
-                self.add_command(invocation.eval_cmd());
-                self
-            }
-
             #[inline]
             fn get_last_command(&mut self) -> &mut Cmd {
                 let idx = match self.commands.len() {

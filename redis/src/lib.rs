@@ -299,8 +299,7 @@
 # Scripts
 
 Lua scripts are supported through the `Script` type in a convenient
-way (it does not support pipelining currently).  It will automatically
-load the script if it does not exist and invoke it.
+way.  It will automatically load the script if it does not exist and invoke it.
 
 Example:
 
@@ -311,10 +310,31 @@ Example:
 let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
-let result : isize = script.arg(1).arg(2).invoke(&mut con)?;
+let result: isize = script.arg(1).arg(2).invoke(&mut con)?;
 assert_eq!(result, 3);
 # Ok(()) }
 ```
+
+Scripts can also be pipelined:
+
+```rust,no_run
+# fn do_something() -> redis::RedisResult<()> {
+# let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+# let mut con = client.get_connection().unwrap();
+let script = redis::Script::new(r"
+    return tonumber(ARGV[1]) + tonumber(ARGV[2]);
+");
+let (a, b): (isize, isize) = redis::pipe()
+    .script(script.arg(1).arg(2))
+    .script(script.arg(2).arg(3))
+    .invoke(&mut con)?;
+
+assert_eq!(a, 3);
+assert_eq!(b, 5);
+# Ok(()) }
+```
+
+Note: if the pipeline fails due to a missing script, it is not automatically loaded and retried.
 "##
 )]
 //!
