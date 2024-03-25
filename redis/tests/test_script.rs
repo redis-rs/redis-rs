@@ -43,8 +43,6 @@ fn test_script_pipeline_no_autoload() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    redis::cmd("SCRIPT").arg("FLUSH").execute(&mut con);
-
     let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
     let r: Result<(), _> = redis::pipe().script(script.arg(1).arg(2)).query(&mut con);
     assert_eq!(r.unwrap_err().kind(), ErrorKind::NoScriptError);
