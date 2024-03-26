@@ -519,7 +519,7 @@ fn test_deref_types_to_redis_args() {
     let expected_map = map.to_redis_args();
     assert_eq!(Arc::new(map.clone()).to_redis_args(), expected_map);
     assert_eq!(Box::new(map.clone()).to_redis_args(), expected_map);
-    assert_eq!(Rc::new(&number).to_redis_args(), expected_map);
+    assert_eq!(Rc::new(map).to_redis_args(), expected_map);
 }
 
 #[test]
