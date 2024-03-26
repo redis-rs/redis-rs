@@ -83,7 +83,7 @@ bigdecimal = { version = "0.4.2", optional = true }
 num-bigint = "0.4.4"
 
 # Optional aHash support
-ahash = { version = "0.8.6", optional = true }
+ahash = { version = "0.8.11", optional = true }
 
 log = { version = "0.4", optional = true }
 
