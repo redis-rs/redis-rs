@@ -40,7 +40,7 @@ fn test_script_that_is_not_loaded_fails_on_pipeline_invocation() {
     let mut con = ctx.connection();
 
     let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
-    let r: Result<(), _> = redis::pipe().script(script.arg(1).arg(2)).query(&mut con);
+    let r: Result<(), _> = redis::pipe().invoke_script(script.arg(1).arg(2)).query(&mut con);
     assert_eq!(r.unwrap_err().kind(), ErrorKind::NoScriptError);
 }
 
@@ -53,8 +53,8 @@ fn test_script_pipeline() {
     script.prepare_invoke().load(&mut con).unwrap();
 
     let (a, b): (isize, isize) = redis::pipe()
-        .script(script.arg(1).arg(2))
-        .script(script.arg(2).arg(3))
+        .invoke_script(script.arg(1).arg(2))
+        .invoke_script(script.arg(2).arg(3))
         .query(&mut con)
         .unwrap();
 

@@ -1891,8 +1891,8 @@ let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
 let (a, b): (isize, isize) = redis::pipe()
-    .script(script.arg(1).arg(2))
-    .script(script.arg(2).arg(3))
+    .invoke_script(script.arg(1).arg(2))
+    .invoke_script(script.arg(2).arg(3))
     .query(&mut con)?;
 
 assert_eq!(a, 3);
@@ -1902,7 +1902,7 @@ assert_eq!(b, 5);
 "##)]
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
-    fn script<>(invocation: &'a crate::ScriptInvocation<'a>) {
+    fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) {
         &mut invocation.eval_cmd()
     }
 }

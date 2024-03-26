@@ -325,8 +325,8 @@ let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
 let (a, b): (isize, isize) = redis::pipe()
-    .script(script.arg(1).arg(2))
-    .script(script.arg(2).arg(3))
+    .invoke_script(script.arg(1).arg(2))
+    .invoke_script(script.arg(2).arg(3))
     .query(&mut con)?;
 
 assert_eq!(a, 3);
@@ -335,7 +335,7 @@ assert_eq!(b, 5);
 ```
 
 Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-it will not automatically be loaded and retried.  The script can be loaded using the 
+it will not automatically be loaded and retried. The script can be loaded using the 
 [`load`](ScriptInvocation::load) operation.
 "##
 )]
