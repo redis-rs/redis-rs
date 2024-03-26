@@ -395,6 +395,81 @@ impl RoutingInfo {
                 )))
             }
 
+            // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
+            // TODO - double check these, in order to find better ways to route some of them.
+            b"ACL DRYRUN"
+            | b"ACL GENPASS"
+            | b"ACL GETUSER"
+            | b"ACL HELP"
+            | b"ACL LIST"
+            | b"ACL LOG"
+            | b"ACL USERS"
+            | b"ACL WHOAMI"
+            | b"AUTH"
+            | b"TIME"
+            | b"PUBSUB CHANNELS"
+            | b"PUBSUB NUMPAT"
+            | b"PUBSUB NUMSUB"
+            | b"PUBSUB SHARDCHANNELS"
+            | b"BGSAVE"
+            | b"WAITAOF"
+            | b"SAVE"
+            | b"LASTSAVE"
+            | b"CLIENT TRACKINGINFO"
+            | b"CLIENT PAUSE"
+            | b"CLIENT UNPAUSE"
+            | b"CLIENT UNBLOCK"
+            | b"CLIENT ID"
+            | b"CLIENT REPLY"
+            | b"CLIENT GETNAME"
+            | b"CLIENT GETREDIR"
+            | b"CLIENT INFO"
+            | b"CLIENT KILL"
+            | b"CLUSTER INFO"
+            | b"CLUSTER MEET"
+            | b"CLUSTER MYSHARDID"
+            | b"CLUSTER NODES"
+            | b"CLUSTER REPLICAS"
+            | b"CLUSTER RESET"
+            | b"CLUSTER SET-CONFIG-EPOCH"
+            | b"CLUSTER SLOTS"
+            | b"CLUSTER SHARDS"
+            | b"CLUSTER COUNT-FAILURE-REPORTS"
+            | b"CLUSTER KEYSLOT"
+            | b"COMMAND"
+            | b"COMMAND COUNT"
+            | b"COMMAND LIST"
+            | b"COMMAND GETKEYS"
+            | b"CONFIG GET"
+            | b"DEBUG"
+            | b"ECHO"
+            | b"READONLY"
+            | b"READWRITE"
+            | b"TFUNCTION LOAD"
+            | b"TFUNCTION DELETE"
+            | b"TFUNCTION LIST"
+            | b"TFCALL"
+            | b"TFCALLASYNC"
+            | b"MODULE LIST"
+            | b"MODULE LOAD"
+            | b"MODULE UNLOAD"
+            | b"MODULE LOADEX" => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+
+            b"CLUSTER COUNTKEYSINSLOT"
+            | b"CLUSTER GETKEYSINSLOT"
+            | b"CLUSTER SETSLOT"
+            | b"CLUSTER DELSLOTS"
+            | b"CLUSTER DELSLOTSRANGE" => r
+                .arg_idx(2)
+                .and_then(|arg| std::str::from_utf8(arg).ok())
+                .and_then(|slot| slot.parse::<u16>().ok())
+                .map(|slot| {
+                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+                        slot,
+                        SlotAddr::Master,
+                    )))
+                }),
+
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
             b"MSET" => multi_shard(r, cmd, 1, true),
             // TODO - special handling - b"SCAN"

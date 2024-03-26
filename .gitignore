@@ -2,3 +2,4 @@ build
 lib
 target
 .rust
+.vscode
