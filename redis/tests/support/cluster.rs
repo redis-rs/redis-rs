@@ -370,7 +370,6 @@ impl TestClusterContext {
             .collect();
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
             .use_protocol(use_protocol());
-        builder = builder.use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
         if mtls_enabled {
