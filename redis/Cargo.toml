@@ -78,11 +78,11 @@ tokio-native-tls = { version = "0.3", optional = true }
 async-native-tls = { version = "0.4", optional = true }
 
 # Only needed for rustls
-rustls = { version = "0.22", optional = true }
+rustls = { version = "0.23", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 rustls-native-certs = { version = "0.7", optional = true }
-tokio-rustls = { version = "0.25", optional = true }
-futures-rustls = { version = "0.25", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+futures-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
 rustls-pki-types = { version = "1", optional = true }
 
@@ -114,7 +114,7 @@ cluster = ["crc16", "rand", "derivative"]
 script = ["sha1_smol"]
 tls-native-tls = ["native-tls"]
 tls-rustls = ["rustls", "rustls-native-certs", "rustls-pemfile", "rustls-pki-types"]
-tls-rustls-insecure = ["tls-rustls"]
+tls-rustls-insecure = ["tls-rustls", "rustls/ring"]
 tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std", "backoff-std-async"]
 async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]

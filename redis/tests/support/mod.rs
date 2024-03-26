@@ -246,6 +246,13 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
+        #[cfg(feature = "rustls")]
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .unwrap();
+        }
+
         let mut redis_cmd = process::Command::new("redis-server");
 
         if let Some(config_path) = config_file {
