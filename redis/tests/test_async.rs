@@ -524,37 +524,7 @@ mod basic_async {
         let ctx = TestContext::new();
 
         let mut conn_to_kill = ctx.async_connection().await.unwrap();
-        cmd("CLIENT")
-            .arg("SETNAME")
-            .arg("to-kill")
-            .query_async::<_, ()>(&mut conn_to_kill)
-            .await
-            .unwrap();
-
-        let client_list: String = cmd("CLIENT")
-            .arg("LIST")
-            .query_async(&mut conn_to_kill)
-            .await
-            .unwrap();
-
-        eprintln!("{client_list}");
-        let client_to_kill = client_list
-            .split('\n')
-            .find(|line| line.contains("to-kill"))
-            .expect("line")
-            .split(' ')
-            .nth(0)
-            .expect("id")
-            .split('=')
-            .nth(1)
-            .expect("id value");
-
-        let mut killer_conn = ctx.async_connection().await.unwrap();
-        let () = cmd("CLIENT")
-            .arg("KILL")
-            .arg("ID")
-            .arg(client_to_kill)
-            .query_async(&mut killer_conn)
+        kill_client_async(&mut conn_to_kill, &ctx.client)
             .await
             .unwrap();
         let mut killed_client = conn_to_kill;
@@ -566,7 +536,7 @@ mod basic_async {
                 Err(err) => break err,
             }
         };
-        assert_eq!(err.kind(), ErrorKind::IoError); // Shouldn't this be IoError?
+        assert_eq!(err.kind(), ErrorKind::IoError);
     }
 
     #[tokio::test]
@@ -776,17 +746,19 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
-                return;
-            }
+            let mut connection_info = ctx.server.connection_info();
+            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let client = redis::Client::open(connection_info).unwrap();
+
             block_on_all(async move {
-                let mut conn = ctx.multiplexed_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let pub_count = 10;
                 let channel_name = "phonewave".to_string();
                 conn.get_push_manager().replace_sender(tx.clone());
                 conn.subscribe(channel_name.clone()).await?;
-                rx.recv().await.unwrap(); //PASS SUBSCRIBE
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Subscribe);
 
                 let mut publish_conn = ctx.async_connection().await?;
                 for i in 0..pub_count {
@@ -794,52 +766,67 @@ mod basic_async {
                         .publish(channel_name.clone(), format!("banana {i}"))
                         .await?;
                 }
-                for _ in 0..pub_count {
-                    rx.recv().await.unwrap();
+                for i in 0..pub_count {
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Message);
+                    assert_eq!(
+                        push.data,
+                        vec![
+                            Value::BulkString("phonewave".as_bytes().to_vec()),
+                            Value::BulkString(format!("banana {i}").into_bytes())
+                        ]
+                    );
                 }
                 assert!(rx.try_recv().is_err());
 
-                {
-                    //Lets test if unsubscribing from individual channel subscription works
-                    publish_conn
-                        .publish(channel_name.clone(), "banana!")
-                        .await?;
-                    rx.recv().await.unwrap();
-                }
-                {
-                    //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
-                    conn.unsubscribe(channel_name.clone()).await?;
-                    rx.recv().await.unwrap(); //PASS UNSUBSCRIBE
-                    publish_conn
-                        .publish(channel_name.clone(), "banana!")
-                        .await?;
-                    //Let's wait for 100ms to make sure there is nothing in channel.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    assert!(rx.try_recv().is_err());
-                }
+                //Lets test if unsubscribing from individual channel subscription works
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Message);
+                assert_eq!(
+                    push.data,
+                    vec![
+                        Value::BulkString("phonewave".as_bytes().to_vec()),
+                        Value::BulkString("banana!".as_bytes().to_vec())
+                    ]
+                );
+
+                //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
+                conn.unsubscribe(channel_name.clone()).await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Unsubscribe);
+                publish_conn
+                    .publish(channel_name.clone(), "banana!")
+                    .await?;
+                //Let's wait for 100ms to make sure there is nothing in channel.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                assert!(rx.try_recv().is_err());
 
                 Ok::<_, RedisError>(())
             })
             .unwrap();
         }
+
         #[test]
         fn push_manager_disconnection() {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
-                return;
-            }
+            let mut connection_info = ctx.server.connection_info();
+            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let client = redis::Client::open(connection_info).unwrap();
+
             block_on_all(async move {
-                let mut conn = ctx.multiplexed_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 conn.get_push_manager().replace_sender(tx.clone());
 
                 conn.set("A", "1").await?;
                 assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
-                drop(ctx);
-                let x: RedisResult<()> = conn.set("A", "1").await;
-                assert!(x.is_err());
+                kill_client_async(&mut conn, &ctx.client).await.unwrap();
+
                 assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
 
                 Ok::<_, RedisError>(())
@@ -885,31 +872,6 @@ mod basic_async {
         .unwrap()
     }
 
-    #[cfg(feature = "connection-manager")]
-    async fn wait_for_server_to_become_ready(client: redis::Client) {
-        let millisecond = std::time::Duration::from_millis(1);
-        let mut retries = 0;
-        loop {
-            match client.get_multiplexed_async_connection().await {
-                Err(err) => {
-                    if err.is_connection_refusal() {
-                        tokio::time::sleep(millisecond).await;
-                        retries += 1;
-                        if retries > 100000 {
-                            panic!("Tried to connect too many times, last error: {err}");
-                        }
-                    } else {
-                        panic!("Could not connect: {err}");
-                    }
-                }
-                Ok(mut con) => {
-                    let _: RedisResult<()> = redis::cmd("FLUSHDB").query_async(&mut con).await;
-                    break;
-                }
-            }
-        }
-    }
-
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay() {
@@ -926,11 +888,9 @@ mod basic_async {
             let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
                 .await
                 .unwrap();
-            let server = ctx.server;
-            let addr = server.client_addr().clone();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             manager.get_push_manager().replace_sender(tx.clone());
-            drop(server);
+            kill_client_async(&mut manager, &ctx.client).await.unwrap();
 
             let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
             if ctx.protocol != ProtocolVersion::RESP2 {
@@ -938,12 +898,9 @@ mod basic_async {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-            let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
-            wait_for_server_to_become_ready(ctx.client.clone()).await;
-
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
             assert_eq!(result, redis::Value::Okay);
+            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
             Ok(())
         })
         .unwrap();
@@ -1018,14 +975,12 @@ mod basic_async {
         use redis::ProtocolVersion;
 
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
-            return;
-        }
+        let mut connection_info = ctx.server.connection_info();
+        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let client = redis::Client::open(connection_info).unwrap();
 
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
-                .await
-                .unwrap();
+            let mut manager = redis::aio::ConnectionManager::new(client).await.unwrap();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             manager.get_push_manager().replace_sender(tx.clone());
             manager
