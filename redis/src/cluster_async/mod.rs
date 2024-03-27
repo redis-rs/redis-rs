@@ -687,7 +687,11 @@ where
         let mut result = Ok(());
         for (_, conn) in connections.iter_mut() {
             let mut conn = conn.clone().await;
-            let value = match conn.req_packed_command(&slot_cmd()).await {
+            let value = match conn
+                .req_packed_command(&slot_cmd())
+                .await
+                .and_then(|value| value.extract_error())
+            {
                 Ok(value) => value,
                 Err(err) => {
                     result = Err(err);
@@ -925,6 +929,7 @@ where
             Ok((addr, mut conn)) => conn
                 .req_packed_command(&cmd)
                 .await
+                .and_then(|value| value.extract_error())
                 .map(Response::Single)
                 .map_err(|err| (addr.into(), err)),
             Err(err) => Err((OperationTarget::NotFound, err)),
@@ -941,6 +946,7 @@ where
             Ok((addr, mut conn)) => conn
                 .req_packed_commands(&pipeline, offset, count)
                 .await
+                .and_then(Value::extract_error_vec)
                 .map(Response::Multiple)
                 .map_err(|err| (OperationTarget::Node { address: addr }, err)),
             Err(err) => Err((OperationTarget::NotFound, err)),
@@ -1052,7 +1058,10 @@ where
             None => connect_check_and_add(core.clone(), addr.clone()).await?,
         };
         if asking {
-            let _ = conn.req_packed_command(&crate::cmd::cmd("ASKING")).await;
+            let _ = conn
+                .req_packed_command(&crate::cmd::cmd("ASKING"))
+                .await
+                .and_then(|value| value.extract_error());
         }
 
         Ok((addr, conn))

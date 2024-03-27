@@ -429,7 +429,7 @@ mod basic {
             .ignore()
             .get("y")
             .query::<()>(&mut con);
-        assert!(res.is_err() && res.unwrap_err().kind() == ErrorKind::ReadOnly);
+        assert_eq!(res.unwrap_err().kind(), ErrorKind::ReadOnly);
 
         // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
         let res = redis::cmd("GET")
@@ -1554,5 +1554,19 @@ mod basic {
         let x: RedisResult<()> = con.set("A", "1");
         assert!(x.is_err());
         assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
+    }
+
+    #[test]
+    fn test_select_db() {
+        let ctx = TestContext::new();
+        let mut connection_info = ctx.client.get_connection_info().clone();
+        connection_info.redis.db = 5;
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut connection = client.get_connection().unwrap();
+        let info: String = redis::cmd("CLIENT")
+            .arg("info")
+            .query(&mut connection)
+            .unwrap();
+        assert!(info.contains("db=5"));
     }
 }

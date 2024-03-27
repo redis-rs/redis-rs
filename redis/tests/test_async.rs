@@ -7,7 +7,8 @@ mod basic_async {
     use futures::{prelude::*, StreamExt};
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult, Value,
+        cmd, pipe, AsyncCommands, ErrorKind, ProtocolVersion, PushInfo, PushKind, RedisResult,
+        Value,
     };
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -633,8 +634,6 @@ mod basic_async {
     mod pub_sub {
         use std::time::Duration;
 
-        use redis::ProtocolVersion;
-
         use super::*;
 
         #[test]
@@ -913,8 +912,6 @@ mod basic_async {
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay() {
-        use redis::ProtocolVersion;
-
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -1015,8 +1012,6 @@ mod basic_async {
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_push_manager_cm() {
-        use redis::ProtocolVersion;
-
         let ctx = TestContext::new();
         if ctx.protocol == ProtocolVersion::RESP2 {
             return;
@@ -1061,6 +1056,27 @@ mod basic_async {
                 (kind, data)
             );
             assert_eq!(TryRecvError::Empty, new_rx.try_recv().err().unwrap());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_select_db() {
+        let ctx = TestContext::new();
+        let mut connection_info = ctx.client.get_connection_info().clone();
+        connection_info.redis.db = 5;
+        let client = redis::Client::open(connection_info).unwrap();
+        block_on_all(async move {
+            let mut connection = client.get_multiplexed_async_connection().await.unwrap();
+
+            let info: String = redis::cmd("CLIENT")
+                .arg("info")
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            assert!(info.contains("db=5"));
+
             Ok(())
         })
         .unwrap();

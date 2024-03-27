@@ -4,8 +4,8 @@ use std::{
 };
 
 use crate::types::{
-    ErrorKind, InternalValue, PushKind, RedisError, RedisResult, ServerError, ServerErrorKind,
-    Value, VerbatimFormat,
+    ErrorKind, PushKind, RedisError, RedisResult, ServerError, ServerErrorKind, Value,
+    VerbatimFormat,
 };
 
 use combine::{
@@ -68,7 +68,7 @@ pub fn get_push_kind(kind: String) -> PushKind {
 
 fn value<'a, I>(
     count: Option<usize>,
-) -> impl combine::Parser<I, Output = InternalValue, PartialState = AnySendSyncPartialState>
+) -> impl combine::Parser<I, Output = Value, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
@@ -97,9 +97,9 @@ where
                 let simple_string = || {
                     line().map(|line| {
                         if line == "OK" {
-                            InternalValue::Okay
+                            Value::Okay
                         } else {
-                            InternalValue::SimpleString(line.into())
+                            Value::SimpleString(line.into())
                         }
                     })
                 };
@@ -117,10 +117,10 @@ where
                 let bulk_string = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::produce(|| InternalValue::Nil).left()
+                            combine::produce(|| Value::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| InternalValue::BulkString(bs.to_vec()))
+                                .map(|bs: &[u8]| Value::BulkString(bs.to_vec()))
                                 .skip(crlf())
                                 .right()
                         }
@@ -137,11 +137,11 @@ where
                 let array = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| InternalValue::Nil).left()
+                            combine::produce(|| Value::Nil).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(InternalValue::Array)
+                                .map(Value::Array)
                                 .right()
                         }
                     })
@@ -152,7 +152,7 @@ where
                     int().then_partial(move |&mut kv_length| {
                         let length = kv_length as usize * 2;
                         combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: Vec<InternalValue>| {
+                            move |result: Vec<Value>| {
                                 let mut it = result.into_iter();
                                 let mut x = vec![];
                                 for _ in 0..kv_length {
@@ -160,7 +160,7 @@ where
                                         x.push((k, v))
                                     }
                                 }
-                                InternalValue::Map(x)
+                                Value::Map(x)
                             },
                         )
                     })
@@ -170,7 +170,7 @@ where
                         // + 1 is for data!
                         let length = kv_length as usize * 2 + 1;
                         combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: Vec<InternalValue>| {
+                            move |result: Vec<Value>| {
                                 let mut it = result.into_iter();
                                 let mut attributes = vec![];
                                 for _ in 0..kv_length {
@@ -178,7 +178,7 @@ where
                                         attributes.push((k, v))
                                     }
                                 }
-                                InternalValue::Attribute {
+                                Value::Attribute {
                                     data: Box::new(it.next().unwrap()),
                                     attributes,
                                 }
@@ -189,11 +189,11 @@ where
                 let set = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| InternalValue::Nil).left()
+                            combine::produce(|| Value::Nil).left()
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(InternalValue::Set)
+                                .map(Value::Set)
                                 .right()
                         }
                     })
@@ -201,7 +201,7 @@ where
                 let push = || {
                     int().then_partial(move |&mut length| {
                         if length <= 0 {
-                            combine::produce(|| InternalValue::Push {
+                            combine::produce(|| Value::Push {
                                 kind: PushKind::Other("".to_string()),
                                 data: vec![],
                             })
@@ -209,18 +209,18 @@ where
                         } else {
                             let length = length as usize;
                             combine::count_min_max(length, length, value(Some(count + 1)))
-                                .and_then(|result: Vec<InternalValue>| {
+                                .and_then(|result: Vec<Value>| {
                                     let mut it = result.into_iter();
-                                    let first = it.next().unwrap_or(InternalValue::Nil);
-                                    if let InternalValue::BulkString(kind) = first {
+                                    let first = it.next().unwrap_or(Value::Nil);
+                                    if let Value::BulkString(kind) = first {
                                         let push_kind = String::from_utf8(kind)
                                             .map_err(StreamErrorFor::<I>::other)?;
-                                        Ok(InternalValue::Push {
+                                        Ok(Value::Push {
                                             kind: get_push_kind(push_kind),
                                             data: it.collect(),
                                         })
-                                    } else if let InternalValue::SimpleString(kind) = first {
-                                        Ok(InternalValue::Push {
+                                    } else if let Value::SimpleString(kind) = first {
+                                        Ok(Value::Push {
                                             kind: get_push_kind(kind),
                                             data: it.collect(),
                                         })
@@ -234,7 +234,7 @@ where
                         }
                     })
                 };
-                let null = || line().map(|_| InternalValue::Nil);
+                let null = || line().map(|_| Value::Nil);
                 let double = || {
                     line().and_then(|line| {
                         line.trim()
@@ -260,7 +260,7 @@ where
                                 "mkd" => VerbatimFormat::Markdown,
                                 x => VerbatimFormat::Unknown(x.to_string()),
                             };
-                            Ok(InternalValue::VerbatimString {
+                            Ok(Value::VerbatimString {
                                 format,
                                 text: text.to_string(),
                             })
@@ -282,19 +282,19 @@ where
                 };
                 combine::dispatch!(b;
                     b'+' => simple_string(),
-                    b':' => int().map(InternalValue::Int),
+                    b':' => int().map(Value::Int),
                     b'$' => bulk_string(),
                     b'*' => array(),
                     b'%' => map(),
                     b'|' => attribute(),
                     b'~' => set(),
-                    b'-' => error().map(InternalValue::ServerError),
+                    b'-' => error().map(Value::ServerError),
                     b'_' => null(),
-                    b',' => double().map(InternalValue::Double),
-                    b'#' => boolean().map(InternalValue::Boolean),
-                    b'!' => blob_error().map(InternalValue::ServerError),
+                    b',' => double().map(Value::Double),
+                    b'#' => boolean().map(Value::Boolean),
+                    b'!' => blob_error().map(Value::ServerError),
                     b'=' => verbatim(),
-                    b'(' => big_number().map(InternalValue::BigNumber),
+                    b'(' => big_number().map(Value::BigNumber),
                     b'>' => push(),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
@@ -343,7 +343,7 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result.try_into())),
+                Some(result) => Ok(Some(Ok(result))),
                 None => Ok(None),
             }
         }
@@ -396,7 +396,7 @@ mod aio_support {
                     }
                 }
             }),
-            Ok(result) => result.try_into(),
+            Ok(result) => Ok(result),
         }
     }
 }
@@ -454,7 +454,7 @@ impl Parser {
                     }
                 }
             }),
-            Ok(result) => result.try_into(),
+            Ok(result) => Ok(result),
         }
     }
 }
@@ -470,8 +470,6 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::make_extension_error;
-
     use super::*;
 
     #[cfg(feature = "aio")]
@@ -500,12 +498,15 @@ mod tests {
         let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
 
         assert_eq!(
-            result,
-            Err(RedisError::from((
-                ErrorKind::BusyLoadingError,
-                "An error was signalled by the server",
-                "server is loading".to_string()
-            )))
+            result.unwrap(),
+            Value::Array(vec![
+                Value::Okay,
+                Value::ServerError(ServerError::KnownError {
+                    kind: ServerErrorKind::BusyLoadingError,
+                    detail: Some("server is loading".to_string())
+                }),
+                Value::Okay
+            ])
         );
 
         let mut bytes = bytes::BytesMut::from(b"+OK\r\n".as_slice());
@@ -523,12 +524,15 @@ mod tests {
         let result = parse_redis_value(bytes);
 
         assert_eq!(
-            result,
-            Err(RedisError::from((
-                ErrorKind::BusyLoadingError,
-                "An error was signalled by the server",
-                "server is loading".to_string()
-            )))
+            result.unwrap(),
+            Value::Array(vec![
+                Value::Okay,
+                Value::ServerError(ServerError::KnownError {
+                    kind: ServerErrorKind::BusyLoadingError,
+                    detail: Some("server is loading".to_string())
+                }),
+                Value::Okay
+            ])
         );
 
         let result = parse_redis_value(b"+OK\r\n").unwrap();
@@ -601,11 +605,11 @@ mod tests {
     fn decode_resp3_blob_error() {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
         assert_eq!(
-            val.err(),
-            Some(make_extension_error(
-                "SYNTAX".to_string(),
-                Some("invalid syntax".to_string())
-            ))
+            val.unwrap(),
+            Value::ServerError(ServerError::ExtensionError {
+                code: "SYNTAX".to_string(),
+                detail: Some("invalid syntax".to_string())
+            })
         )
     }
 
