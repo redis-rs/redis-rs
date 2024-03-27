@@ -642,7 +642,7 @@ fn test_pubsub() {
     let mut pubsub_con = ctx.connection();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     // Only useful when RESP3 is enabled
-    pubsub_con.get_push_manager().replace_sender(tx.clone());
+    pubsub_con.get_push_manager().replace_sender(tx);
 
     // Barrier is used to make test thread wait to publish
     // until after the pubsub thread has subscribed.
@@ -713,7 +713,7 @@ fn test_pubsub_unsubscribe() {
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     // Only useful when RESP3 is enabled
-    con.get_push_manager().replace_sender(tx.clone());
+    con.get_push_manager().replace_sender(tx);
     {
         let mut pubsub = con.as_pubsub();
         pubsub.subscribe("foo").unwrap();
@@ -1556,7 +1556,7 @@ fn test_push_manager() {
     }
     let mut con = ctx.connection();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    con.get_push_manager().replace_sender(tx.clone());
+    con.get_push_manager().replace_sender(tx);
     let _ = cmd("CLIENT")
         .arg("TRACKING")
         .arg("ON")
