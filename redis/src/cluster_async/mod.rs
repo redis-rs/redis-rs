@@ -32,12 +32,13 @@ use std::{
 
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd},
+    cluster::{get_connection_info, slot_cmd},
     cluster_client::{ClusterParams, RetryParams},
     cluster_routing::{
         self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
     },
+    cluster_topology::parse_slots,
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -685,7 +686,7 @@ where
         let mut connections = mem::take(&mut write_guard.0);
         let slots = &mut write_guard.1;
         let mut result = Ok(());
-        for (_, conn) in connections.iter_mut() {
+        for (addr, conn) in connections.iter_mut() {
             let mut conn = conn.clone().await;
             let value = match conn.req_packed_command(&slot_cmd()).await {
                 Ok(value) => value,
@@ -694,8 +695,12 @@ where
                     continue;
                 }
             };
-            match parse_slots(value, inner.cluster_params.tls)
-                .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+            match parse_slots(
+                value,
+                inner.cluster_params.tls,
+                addr.rsplit_once(':').unwrap().0,
+            )
+            .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
             {
                 Ok(_) => {
                     result = Ok(());
