@@ -1460,17 +1460,50 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
-impl<T: ToRedisArgs> ToRedisArgs for &T {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        (*self).write_redis_args(out)
-    }
+macro_rules! deref_to_write_redis_args_impl {
+    (
+        $(#[$attr:meta])*
+        <$($desc:tt)+
+    ) => {
+        $(#[$attr])*
+        impl <$($desc)+ {
+            #[inline]
+            fn write_redis_args<W>(&self, out: &mut W)
+                where
+                W: ?Sized + RedisWrite,
+            {
+                (**self).write_redis_args(out)
+            }
 
-    fn is_single_arg(&self) -> bool {
-        (*self).is_single_arg()
-    }
+            fn is_single_arg(&self) -> bool {
+                (**self).is_single_arg()
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                (**self).describe_numeric_behavior()
+            }
+        }
+    };
+}
+
+deref_to_write_redis_args_impl! {
+    <'a, T: ?Sized> ToRedisArgs for &'a T where T: ToRedisArgs
+}
+
+deref_to_write_redis_args_impl! {
+    <'a, T: ?Sized> ToRedisArgs for &'a mut T where T: ToRedisArgs
+}
+
+deref_to_write_redis_args_impl! {
+    <T: ?Sized> ToRedisArgs for Box<T> where T: ToRedisArgs
+}
+
+deref_to_write_redis_args_impl! {
+    <T: ?Sized> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
+}
+
+deref_to_write_redis_args_impl! {
+    <T: ?Sized> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
 }
 
 /// @note: Redis cannot store empty sets so the application has to
@@ -1626,7 +1659,7 @@ fn vec_to_array<T, const N: usize>(items: Vec<T>, original_value: &Value) -> Red
     }
 }
 
-impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
+impl<T: ?Sized + FromRedisValue, const N: usize> FromRedisValue for [T; N] {
     fn from_redis_value(value: &Value) -> RedisResult<[T; N]> {
         match *value {
             Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
@@ -1895,7 +1928,7 @@ impl FromRedisValue for CString {
 }
 
 impl FromRedisValue for String {
-    fn from_redis_value(v: &Value) -> RedisResult<String> {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
         let v = get_inner_value(v);
         match *v {
             Value::BulkString(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
@@ -1911,10 +1944,10 @@ impl FromRedisValue for String {
         }
     }
 
-    fn from_owned_redis_value(v: Value) -> RedisResult<String> {
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
         let v = get_owned_inner_value(v);
         match v {
-            Value::BulkString(bytes) => Ok(String::from_utf8(bytes)?),
+            Value::BulkString(bytes) => Ok(Self::from_utf8(bytes)?),
             Value::Okay => Ok("OK".to_string()),
             Value::SimpleString(val) => Ok(val),
             Value::VerbatimString { format: _, text } => Ok(text),
@@ -1924,6 +1957,29 @@ impl FromRedisValue for String {
         }
     }
 }
+
+macro_rules! pointer_from_redis_value_impl {
+    (
+        $(#[$attr:meta])*
+        $id:ident, $ty:ty, $func:expr
+    ) => {
+        $(#[$attr])*
+        impl<$id: ?Sized + FromRedisValue> FromRedisValue for $ty {
+            fn from_redis_value(v: &Value) -> RedisResult<Self>
+            {
+                FromRedisValue::from_redis_value(v).map($func)
+            }
+
+            fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+                FromRedisValue::from_owned_redis_value(v).map($func)
+            }
+        }
+    }
+}
+
+pointer_from_redis_value_impl!(T, Box<T>, Box::new);
+pointer_from_redis_value_impl!(T, std::sync::Arc<T>, std::sync::Arc::new);
+pointer_from_redis_value_impl!(T, std::rc::Rc<T>, std::rc::Rc::new);
 
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
