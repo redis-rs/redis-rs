@@ -21,8 +21,20 @@
 //!     return rv;
 //! }
 //! ```
+use crate::types::HashMap;
+use crate::{
+    aio::{ConnectionLike, MultiplexedConnection},
+    cluster::{get_connection_info, parse_slots, slot_cmd},
+    cluster_client::{ClusterParams, RetryParams},
+    cluster_connections_map::ConnectionsMap,
+    cluster_routing::{
+        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+    },
+    cluster_slotmap::{Route, Slot, SlotAddr, SlotMap},
+    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
+    Value,
+};
 use std::{
-    collections::HashMap,
     fmt, io, mem,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -30,24 +42,11 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    aio::{ConnectionLike, MultiplexedConnection},
-    cluster::{get_connection_info, parse_slots, slot_cmd},
-    cluster_client::{ClusterParams, RetryParams},
-    cluster_routing::{
-        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
-        SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
-    },
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
-    Value,
-};
-
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
 use pin_project_lite::pin_project;
-use rand::{seq::IteratorRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 /// This represents an async Redis Cluster connection. It stores the
@@ -150,10 +149,10 @@ where
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
+type ConnectionMap<C> = HashMap<Arc<str>, ConnectionFuture<C>>;
 
 struct InnerCore<C> {
-    conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
+    conn_lock: RwLock<ConnectionsMap<ConnectionFuture<C>>>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
@@ -200,7 +199,7 @@ enum InternalSingleNodeRouting<C> {
     SpecificNode(Route),
     ByAddress(String),
     Connection {
-        identifier: String,
+        identifier: Arc<str>,
         conn: ConnectionFuture<C>,
     },
     Redirect {
@@ -292,14 +291,14 @@ enum Response {
 }
 
 enum OperationTarget {
-    Node { address: String },
+    Node { address: Arc<str> },
     NotFound,
     FanOut,
 }
 type OperationResult = Result<Response, (OperationTarget, RedisError)>;
 
-impl From<String> for OperationTarget {
-    fn from(address: String) -> Self {
+impl From<Arc<str>> for OperationTarget {
+    fn from(address: Arc<str>) -> Self {
         OperationTarget::Node { address }
     }
 }
@@ -427,7 +426,7 @@ enum Next<C> {
     },
     Reconnect {
         request: PendingRequest<C>,
-        target: String,
+        target: Arc<str>,
     },
     RefreshSlots {
         request: PendingRequest<C>,
@@ -576,8 +575,10 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<Self> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let slotmap = SlotMap::new(cluster_params.read_from_replicas);
+        let connections_map = ConnectionsMap::new(slotmap, connections);
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
+            conn_lock: RwLock::new(connections_map),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
@@ -615,7 +616,7 @@ where
             .fold(
                 HashMap::with_capacity(initial_nodes.len()),
                 |mut connections: ConnectionMap<C>, conn| async move {
-                    connections.extend(conn);
+                    connections.extend(conn.map(|(addr, conn)| (Arc::from(addr), conn)));
                     connections
                 },
             )
@@ -643,10 +644,8 @@ where
                     }
                 };
             let mut write_lock = inner.conn_lock.write().await;
-            *write_lock = (
-                connection_map,
-                SlotMap::new(inner.cluster_params.read_from_replicas),
-            );
+            let read_from_replica = inner.cluster_params.read_from_replicas;
+            *write_lock = ConnectionsMap::new(SlotMap::new(read_from_replica), connection_map);
             drop(write_lock);
             if let Err(err) = Self::refresh_slots(inner.clone()).await {
                 warn!("Can't refresh slots with initial nodes: `{err}`");
@@ -654,39 +653,42 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
+    fn refresh_connections(&mut self, addrs: Vec<Arc<str>>) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
-            let mut connections = stream::iter(addrs)
-                .fold(
-                    mem::take(&mut write_guard.0),
-                    |mut connections, addr| async {
-                        let conn = Self::get_or_create_conn(
-                            &addr,
-                            connections.remove(&addr),
-                            &inner.cluster_params,
-                        )
-                        .await;
-                        if let Ok(conn) = conn {
-                            connections.insert(addr, async { conn }.boxed().shared());
-                        }
-                        connections
-                    },
-                )
+
+            stream::iter(addrs)
+                .fold(&mut *write_guard, |connections, addr| async {
+                    let conn = Self::get_or_create_conn(
+                        &addr,
+                        connections.remove_connection(&addr),
+                        &inner.cluster_params,
+                    )
+                    .await;
+                    if let Ok(conn) = conn {
+                        connections.replace_or_add_connection_for_address(
+                            addr,
+                            async { conn }.boxed().shared(),
+                        );
+                    }
+                    connections
+                })
                 .await;
-            write_guard.0 = mem::take(&mut connections);
         }
     }
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(inner: Arc<InnerCore<C>>) -> RedisResult<()> {
         let mut write_guard = inner.conn_lock.write().await;
-        let mut connections = mem::take(&mut write_guard.0);
-        let slots = &mut write_guard.1;
-        let mut result = Ok(());
-        for (_, conn) in connections.iter_mut() {
-            let mut conn = conn.clone().await;
+        let mut connections = mem::take(&mut *write_guard);
+        let mut result = Ok(SlotMap::default());
+        for (_, conn) in connections.all_nodes() {
+            let mut conn = match conn {
+                Some(conn) => conn.clone().await,
+                // TODO - do we want to try and reconnect here?
+                None => continue,
+            };
             let value = match conn.req_packed_command(&slot_cmd()).await {
                 Ok(value) => value,
                 Err(err) => {
@@ -695,51 +697,45 @@ where
                 }
             };
             match parse_slots(value, inner.cluster_params.tls)
-                .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
+                .map(|v: Vec<Slot>| SlotMap::from_slots(v, inner.cluster_params.read_from_replicas))
             {
-                Ok(_) => {
-                    result = Ok(());
+                Ok(slot_map) => {
+                    result = Ok(slot_map);
                     break;
                 }
                 Err(err) => result = Err(err),
             }
         }
-        result?;
+        let new_slots = result?;
 
-        let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
+        let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
         let nodes_len = nodes.len();
         let addresses_and_connections_iter = nodes
             .into_iter()
-            .map(|addr| (addr, connections.remove(addr)));
+            .map(|addr| (addr.clone(), connections.remove_connection(addr)));
 
-        write_guard.0 = stream::iter(addresses_and_connections_iter)
+        let new_connections = stream::iter(addresses_and_connections_iter)
             .fold(
                 HashMap::with_capacity(nodes_len),
                 |mut connections, (addr, connection)| async {
                     let conn =
-                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                        Self::get_or_create_conn(&addr, connection, &inner.cluster_params).await;
                     if let Ok(conn) = conn {
-                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        connections.insert(addr, async { conn }.boxed().shared());
                     }
                     connections
                 },
             )
             .await;
+        *write_guard = ConnectionsMap::new(new_slots, new_connections);
 
-        Ok(())
-    }
-
-    fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
-        slot_map.clear();
-        slot_map.fill_slots(slots_data);
-        trace!("{:?}", slot_map);
         Ok(())
     }
 
     async fn aggregate_results(
-        receivers: Vec<(String, oneshot::Receiver<RedisResult<Response>>)>,
+        receivers: Vec<(Arc<str>, oneshot::Receiver<RedisResult<Response>>)>,
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
@@ -813,7 +809,7 @@ where
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
                     let result = convert_result(receiver.await)?;
-                    Ok((Value::BulkString(addr.into_bytes()), result))
+                    Ok((Value::BulkString(addr.as_bytes().to_vec()), result))
                 }))
                 .await
                 .map(Value::Map)
@@ -828,7 +824,7 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
         let read_guard = core.conn_lock.read().await;
-        if read_guard.0.is_empty() {
+        if read_guard.is_empty() {
             return OperationResult::Err((
                 OperationTarget::FanOut,
                 (
@@ -839,57 +835,57 @@ where
             ));
         }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
-                read_guard.0.get(addr).cloned().map(|conn| {
-                    let (sender, receiver) = oneshot::channel();
-                    let addr = addr.to_string();
-                    (
-                        (addr.clone(), receiver),
-                        PendingRequest {
-                            retry: 0,
-                            sender,
-                            info: RequestInfo {
-                                cmd: CmdArg::Cmd {
-                                    cmd,
-                                    routing: InternalSingleNodeRouting::Connection {
-                                        identifier: addr,
-                                        conn,
-                                    }
-                                    .into(),
-                                },
+            let to_request = |cmd, addr: Arc<str>, conn| {
+                let (sender, receiver) = oneshot::channel();
+                (
+                    (addr.clone(), receiver),
+                    PendingRequest {
+                        retry: 0,
+                        sender,
+                        info: RequestInfo {
+                            cmd: CmdArg::Cmd {
+                                cmd,
+                                routing: InternalSingleNodeRouting::Connection {
+                                    identifier: addr,
+                                    conn,
+                                }
+                                .into(),
                             },
                         },
-                    )
-                })
+                    },
+                )
             };
-            let slot_map = &read_guard.1;
+            let connections_map = &read_guard;
 
             // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
             // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
             match routing {
-                MultipleNodeRoutingInfo::AllNodes => slot_map
-                    .addresses_for_all_nodes()
-                    .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                MultipleNodeRoutingInfo::AllNodes => connections_map
+                    .all_nodes()
+                    .filter_map(|(addr, conn)| {
+                        conn.map(|conn| to_request(cmd.clone(), addr.clone(), conn.clone()))
+                    })
                     .unzip(),
-                MultipleNodeRoutingInfo::AllMasters => slot_map
-                    .addresses_for_all_primaries()
-                    .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                MultipleNodeRoutingInfo::AllMasters => connections_map
+                    .all_primaries()
+                    .filter_map(|(addr, conn)| {
+                        conn.map(|conn| to_request(cmd.clone(), addr.clone(), conn.clone()))
+                    })
                     .unzip(),
-                MultipleNodeRoutingInfo::MultiSlot(routes) => slot_map
-                    .addresses_for_multi_slot(routes)
-                    .enumerate()
-                    .filter_map(|(index, addr_opt)| {
-                        addr_opt.and_then(|addr| {
-                            let (_, indices) = routes.get(index).unwrap();
-                            let cmd =
-                                Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
-                                    cmd.as_ref(),
-                                    indices.iter(),
-                                ));
-                            to_request((addr, cmd))
-                        })
+                MultipleNodeRoutingInfo::MultiSlot(routes) => routes
+                    .iter()
+                    .filter_map(|(route, indices)| {
+                        connections_map
+                            .connection_for_route(route)
+                            .map(|(addr, conn)| {
+                                let new_cmd = Arc::new(
+                                    crate::cluster_routing::command_for_multi_slot_indices(
+                                        cmd.as_ref(),
+                                        indices.iter(),
+                                    ),
+                                );
+                                to_request(new_cmd, addr, conn.clone())
+                            })
                     })
                     .unzip(),
             }
@@ -935,14 +931,14 @@ where
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = RedisResult<(String, C)>>,
+        conn: impl Future<Output = RedisResult<(Arc<str>, C)>>,
     ) -> OperationResult {
         match conn.await {
-            Ok((addr, mut conn)) => conn
+            Ok((address, mut conn)) => conn
                 .req_packed_commands(&pipeline, offset, count)
                 .await
                 .map(Response::Multiple)
-                .map_err(|err| (OperationTarget::Node { address: addr }, err)),
+                .map_err(|err| (OperationTarget::Node { address }, err)),
             Err(err) => Err((OperationTarget::NotFound, err)),
         }
     }
@@ -970,15 +966,18 @@ where
     async fn get_connection(
         route: InternalSingleNodeRouting<C>,
         core: Core<C>,
-    ) -> RedisResult<(String, C)> {
+    ) -> RedisResult<(Arc<str>, C)> {
         let read_guard = core.conn_lock.read().await;
 
         let conn = match route {
             InternalSingleNodeRouting::Random => None,
-            InternalSingleNodeRouting::SpecificNode(route) => read_guard
-                .1
-                .slot_addr_for_route(&route)
-                .map(|addr| addr.to_string()),
+            InternalSingleNodeRouting::SpecificNode(route) => {
+                if let Some((addr, conn)) = read_guard.connection_for_route(&route) {
+                    return Ok((addr, conn.clone().await));
+                } else {
+                    read_guard.address_for_route(&route)
+                }
+            }
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn.await));
             }
@@ -988,8 +987,8 @@ where
                 return Self::get_redirected_connection(redirect, core).await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
-                if let Some(conn) = read_guard.0.get(&address).cloned() {
-                    return Ok((address, conn.await));
+                if let Some(conn) = read_guard.connection_for_address(&address).cloned() {
+                    return Ok((address.into(), conn.await));
                 } else {
                     return Err((
                         ErrorKind::ClientError,
@@ -1001,7 +1000,7 @@ where
             }
         }
         .map(|addr| {
-            let conn = read_guard.0.get(&addr).cloned();
+            let conn = read_guard.connection_for_address(&addr).cloned();
             (addr, conn)
         });
         drop(read_guard);
@@ -1015,38 +1014,39 @@ where
             None => None,
         };
 
-        let (addr, conn) = match addr_conn_option {
-            Some(tuple) => tuple,
+        match addr_conn_option {
+            Some(tuple) => Ok(tuple),
             None => {
                 let read_guard = core.conn_lock.read().await;
-                if let Some((random_addr, random_conn_future)) =
-                    get_random_connection(&read_guard.0)
-                {
-                    drop(read_guard);
-                    (random_addr, random_conn_future.await)
-                } else {
-                    return Err(
-                        (ErrorKind::ClusterConnectionNotFound, "No connections found").into(),
-                    );
+                let option = read_guard
+                    .random_connections(1)
+                    .next()
+                    .map(|(addr, conn)| (addr, conn.clone()));
+                match option {
+                    Some((random_addr, random_conn_future)) => {
+                        Ok((random_addr, random_conn_future.await))
+                    }
+                    None => {
+                        Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
+                    }
                 }
             }
-        };
-
-        Ok((addr, conn))
+        }
     }
 
     async fn get_redirected_connection(
         redirect: Redirect,
         core: Core<C>,
-    ) -> RedisResult<(String, C)> {
+    ) -> RedisResult<(Arc<str>, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
             Redirect::Moved(addr) => addr,
             Redirect::Ask(addr) => addr,
         };
         let read_guard = core.conn_lock.read().await;
-        let conn = read_guard.0.get(&addr).cloned();
+        let conn = read_guard.connection_for_address(&addr).cloned();
         drop(read_guard);
+        let addr: Arc<str> = Arc::from(addr);
         let mut conn = match conn {
             Some(conn) => conn.await,
             None => connect_check_and_add(core.clone(), addr.clone()).await?,
@@ -1210,7 +1210,7 @@ where
 enum PollFlushAction {
     None,
     RebuildSlots,
-    Reconnect(Vec<String>),
+    Reconnect(Vec<Arc<str>>),
     ReconnectFromInitialConnections,
 }
 
@@ -1390,7 +1390,7 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_check_and_add<C>(core: Core<C>, addr: String) -> RedisResult<C>
+async fn connect_check_and_add<C>(core: Core<C>, addr: Arc<str>) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + Clone + 'static,
 {
@@ -1400,8 +1400,7 @@ where
             core.conn_lock
                 .write()
                 .await
-                .0
-                .insert(addr, async { conn_clone }.boxed().shared());
+                .replace_or_add_connection_for_address(addr, async { conn_clone }.boxed().shared());
             Ok(conn)
         }
         Err(err) => Err(err),
@@ -1435,25 +1434,11 @@ where
     Ok(())
 }
 
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, ConnectionFuture<C>)>
-where
-    C: Clone,
-{
-    connections
-        .keys()
-        .choose(&mut thread_rng())
-        .and_then(|addr| {
-            connections
-                .get(addr)
-                .map(|conn| (addr.clone(), conn.clone()))
-        })
-}
-
 #[cfg(test)]
 mod pipeline_routing_tests {
     use super::route_for_pipeline;
     use crate::{
-        cluster_routing::{Route, SlotAddr},
+        cluster_slotmap::{Route, SlotAddr},
         cmd,
     };
 
