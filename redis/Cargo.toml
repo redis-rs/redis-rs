@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.25.0"
+version = "0.25.2"
 keywords = ["redis", "database"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -47,7 +47,7 @@ fast-math = { version = "0.1.1", optional = true }
 dispose = { version = "0.5.0", optional = true }
 
 # Only needed for the connection manager
-arc-swap = { version = "1.1.0" }
+arc-swap = { version = "1.7.1" }
 futures = { version = "0.3.3", optional = true }
 tokio-retry = { version = "0.3.0", optional = true }
 
@@ -60,7 +60,7 @@ rand = { version = "0.8", optional = true }
 derivative = { version = "2.2.0", optional = true }
 
 # Only needed for async_std support
-async-std = { version = "1.8.0", optional = true}
+async-std = { version = "1.8.0", optional = true }
 async-trait = { version = "0.1.24", optional = true }
 # To avoid conflicts, backoff-std-async.version != backoff-tokio.version so we could run tests with --all-features
 backoff-std-async = { package = "backoff", version = "0.3.0", optional = true, features = ["async-std"] }
@@ -92,7 +92,7 @@ bigdecimal = { version = "0.4.2", optional = true }
 num-bigint = "0.4.4"
 
 # Optional aHash support
-ahash = { version = "0.8.6", optional = true }
+ahash = { version = "0.8.11", optional = true }
 
 tracing = "0.1"
 arcstr = "1.1.5"

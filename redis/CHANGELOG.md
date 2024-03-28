@@ -1,3 +1,14 @@
+### 0.25.2 (2024-03-15)
+
+* MultiplexedConnection: Separate response handling for pipeline. ([#1078](https://github.com/redis-rs/redis-rs/pull/1078))
+
+### 0.25.1 (2024-03-12)
+
+* Fix small disambiguity in examples ([#1072](https://github.com/redis-rs/redis-rs/pull/1072) @sunhuachuang)
+* Upgrade to socket2 0.5 ([#1073](https://github.com/redis-rs/redis-rs/pull/1073) @djc)
+* Avoid library dependency on futures-time ([#1074](https://github.com/redis-rs/redis-rs/pull/1074) @djc)
+
+
 ### 0.25.0 (2024-03-08)
 
 #### Features

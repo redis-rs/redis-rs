@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, 0.x.x ]
+    branches: [ main, 0.*.x ]
   pull_request:
-    branches: [ main, 0.x.x ]
+    branches: [ main, 0.*.x ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,7 +31,7 @@ jobs:
 
     - name: Cache redis
       id: cache-redis
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/redis-cli
@@ -40,7 +40,7 @@ jobs:
 
     - name: Cache RedisJSON
       id: cache-redisjson
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           /tmp/librejson.so
@@ -149,7 +149,7 @@ jobs:
 
     - name: Cache redis
       id: cache-redis
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/redis-cli

@@ -567,8 +567,6 @@ mod tests {
 
         let val = parse_redis_value(b",-inf\r\n").unwrap();
         assert_eq!(val, Value::Double(-f64::INFINITY));
-        let val = parse_redis_value(b",-inf\r\n").unwrap();
-        assert_eq!(val, Value::Double(f64::NEG_INFINITY));
         let val = parse_redis_value(b",inf\r\n").unwrap();
         assert_eq!(val, Value::Double(f64::INFINITY));
     }

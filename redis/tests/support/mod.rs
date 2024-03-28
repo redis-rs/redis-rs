@@ -1,8 +1,5 @@
 #![allow(dead_code)]
 
-#[cfg(feature = "aio")]
-use futures::Future;
-use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 use std::path::Path;
 use std::{
     env, fs, io, net::SocketAddr, net::TcpListener, path::PathBuf, process, thread::sleep,
@@ -13,6 +10,10 @@ use std::{
     fs::File,
     io::{BufReader, Read},
 };
+
+#[cfg(feature = "aio")]
+use futures::Future;
+use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
 
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
