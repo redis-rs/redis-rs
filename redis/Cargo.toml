@@ -75,7 +75,7 @@ rustls-pki-types = { version = "1", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.82", optional = true }
-serde_json = { version = "1.0.82", optional = true }
+serde_json = { version = "1.0.115", optional = true }
 
 # Only needed for bignum Support
 rust_decimal = { version = "1.33.1", optional = true }
