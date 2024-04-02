@@ -3,8 +3,10 @@ use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{PushSender, RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, AsyncConnectionConfig, ConnectionInfo, ProtocolVersion, PushInfo, ToRedisArgs};
+use crate::types::{
+    closed_connection_error, PushInfo, PushSender, RedisError, RedisFuture, RedisResult, Value,
+};
+use crate::{cmd, AsyncConnectionConfig, ConnectionInfo, ProtocolVersion, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -19,7 +21,6 @@ use pin_project_lite::pin_project;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
-use std::io;
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;
@@ -520,9 +521,7 @@ impl MultiplexedConnection {
         self.pipeline
             .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
-            .map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            })
+            .map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -542,9 +541,7 @@ impl MultiplexedConnection {
                 self.response_timeout,
             )
             .await
-            .map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            });
+            .map_err(|err| err.unwrap_or_else(closed_connection_error));
 
         let value = result?;
         match value {

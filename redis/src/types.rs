@@ -2563,3 +2563,9 @@ pub struct PushInfo {
 }
 
 pub(crate) type PushSender = mpsc::UnboundedSender<PushInfo>;
+
+// A consistent error value for connections closed without a reason.
+#[cfg(feature = "aio")]
+pub(crate) fn closed_connection_error() -> RedisError {
+    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}
