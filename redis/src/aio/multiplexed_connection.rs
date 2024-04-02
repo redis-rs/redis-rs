@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind, ToRedisArgs};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -135,26 +135,30 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
-        let mut skip_value = false;
-        if let Ok(res) = &result {
-            if let Value::Push { kind, data: _data } = res {
-                self_.push_manager.load().try_send_raw(res);
-                if !kind.has_reply() {
-                    // If it's not true then push kind is converted to reply of a command
-                    skip_value = true;
-                }
+        let result = match result {
+            // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating
+            Ok(Value::Push { kind, data }) if !kind.has_reply() => {
+                self_
+                    .push_manager
+                    .load()
+                    .try_send_raw(Value::Push { kind, data });
+                return;
             }
-        }
+            // If this push message is a reply to a query, we'll clone it to the push manager and continue with sending the reply
+            Ok(Value::Push { kind, data }) if kind.has_reply() => {
+                self_.push_manager.load().try_send_raw(Value::Push {
+                    kind: kind.clone(),
+                    data: data.clone(),
+                });
+                Ok(Value::Push { kind, data })
+            }
+            _ => result,
+        };
 
         let mut entry = match self_.in_flight.pop_front() {
             Some(entry) => entry,
             None => return,
         };
-
-        if skip_value {
-            self_.in_flight.push_front(entry);
-            return;
-        }
 
         match &mut entry.response_aggregate {
             ResponseAggregate::SingleCommand => {
