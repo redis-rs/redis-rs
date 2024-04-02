@@ -18,7 +18,6 @@ use crate::{from_owned_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::vec::IntoIter;
 
 use crate::commands::resp3_hello;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -1549,17 +1548,7 @@ impl Msg {
         let channel;
 
         if let Value::Push { kind, data } = value {
-            let mut iter: IntoIter<Value> = data.into_iter();
-            if kind == PushKind::Message || kind == PushKind::SMessage {
-                channel = iter.next()?;
-                payload = iter.next()?;
-            } else if kind == PushKind::PMessage {
-                pattern = Some(iter.next()?);
-                channel = iter.next()?;
-                payload = iter.next()?;
-            } else {
-                return None;
-            }
+            return Self::from_push_info(PushInfo { kind, data });
         } else {
             let raw_msg: Vec<Value> = from_owned_redis_value(value).ok()?;
             let mut iter = raw_msg.into_iter();
@@ -1583,12 +1572,12 @@ impl Msg {
     }
 
     /// Tries to convert provided [`PushInfo`] into [`Msg`].
-    pub fn from_push_info(push_info: &PushInfo) -> Option<Self> {
+    pub fn from_push_info(push_info: PushInfo) -> Option<Self> {
         let mut pattern = None;
         let payload;
         let channel;
 
-        let mut iter = push_info.data.iter().cloned();
+        let mut iter = push_info.data.into_iter();
         if push_info.kind == PushKind::Message || push_info.kind == PushKind::SMessage {
             channel = iter.next()?;
             payload = iter.next()?;
