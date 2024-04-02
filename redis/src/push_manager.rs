@@ -21,33 +21,38 @@ impl PushManager {
     /// It checks if value's type is Push
     /// then invokes `try_send_raw` method
     pub(crate) fn try_send(&self, value: &RedisResult<Value>) {
-        if let Ok(value) = &value {
-            self.try_send_raw(value);
+        if let Ok(Value::Push { kind, data }) = value {
+            self.try_send_push_info(|| PushInfo {
+                kind: kind.clone(),
+                data: data.clone(),
+            })
         }
     }
 
     /// It checks if value's type is Push and there is a provided sender
     /// then creates PushInfo and invokes `send` method of sender
-    pub(crate) fn try_send_raw(&self, value: &Value) {
+    #[cfg(feature = "aio")]
+    pub(crate) fn try_send_raw(&self, value: Value) {
         if let Value::Push { kind, data } = value {
-            let guard = self.sender.load();
-            if let Some(sender) = guard.as_ref() {
-                let push_info = PushInfo {
-                    kind: kind.clone(),
-                    data: data.clone(),
-                };
-                if sender.send(push_info).is_err() {
-                    self.sender.compare_and_swap(guard, Arc::new(None));
-                }
-            }
+            self.try_send_push_info(|| PushInfo { kind, data })
         }
     }
 
     pub(crate) fn try_send_disconnect(&self) {
-        self.try_send_raw(&Value::Push {
+        self.try_send_push_info(|| PushInfo {
             kind: PushKind::Disconnection,
             data: vec![],
         })
+    }
+
+    // this takes a closure, since in some situations creating the `PushInfo` involves a clone which we want to avoid if unnecessary.
+    fn try_send_push_info(&self, push_info_fn: impl FnOnce() -> PushInfo) {
+        let guard = self.sender.load();
+        if let Some(sender) = guard.as_ref() {
+            if sender.send(push_info_fn()).is_err() {
+                self.sender.compare_and_swap(guard, Arc::new(None));
+            }
+        }
     }
 
     /// Replace mpsc channel of `PushManager` with provided sender.
@@ -108,17 +113,17 @@ mod tests {
     fn test_push_manager_without_sender() {
         let push_manager = PushManager::new();
 
-        push_manager.try_send(&Ok(Value::Push {
+        push_manager.try_send_push_info(|| PushInfo {
             kind: PushKind::Message,
             data: vec![Value::BulkString("hello".to_string().into_bytes())],
-        })); // nothing happens!
+        }); // nothing happens!
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         push_manager.replace_sender(tx);
-        push_manager.try_send(&Ok(Value::Push {
+        push_manager.try_send_push_info(|| PushInfo {
             kind: PushKind::Message,
             data: vec![Value::BulkString("hello2".to_string().into_bytes())],
-        }));
+        });
 
         assert_eq!(
             rx.try_recv().unwrap().data,
