@@ -42,6 +42,14 @@ impl PushManager {
             }
         }
     }
+
+    pub(crate) fn try_send_disconnect(&self) {
+        self.try_send_raw(&Value::Push {
+            kind: PushKind::Disconnection,
+            data: vec![],
+        })
+    }
+
     /// Replace mpsc channel of `PushManager` with provided sender.
     pub fn replace_sender(&self, sender: mpsc::UnboundedSender<PushInfo>) {
         self.sender.store(Arc::new(Some(sender)));

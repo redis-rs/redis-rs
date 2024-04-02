@@ -1245,10 +1245,7 @@ impl Connection {
             };
             if shutdown {
                 // Notify the PushManager that the connection was lost
-                self.push_manager.try_send_raw(&Value::Push {
-                    kind: PushKind::Disconnection,
-                    data: vec![],
-                });
+                self.push_manager.try_send_disconnect();
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
@@ -1286,10 +1283,7 @@ impl Connection {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
-                    self.push_manager.try_send_raw(&Value::Push {
-                        kind: PushKind::Disconnection,
-                        data: vec![],
-                    });
+                    self.push_manager.try_send_disconnect();
                 }
             }
         }
