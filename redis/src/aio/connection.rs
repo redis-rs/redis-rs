@@ -364,7 +364,7 @@ where
     pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
         ValueCodec::default()
             .framed(&mut self.0.con)
-            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?.ok()?) }))
+            .filter_map(|msg| Box::pin(async move { Msg::from_owned_value(msg.ok()?.ok()?) }))
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions consuming it.
@@ -376,7 +376,7 @@ where
     pub fn into_on_message(self) -> impl Stream<Item = Msg> {
         ValueCodec::default()
             .framed(self.0.con)
-            .filter_map(|msg| Box::pin(async move { Msg::from_value(&msg.ok()?.ok()?) }))
+            .filter_map(|msg| Box::pin(async move { Msg::from_owned_value(msg.ok()?.ok()?) }))
     }
 
     /// Exits from `PubSub` mode and converts [`PubSub`] into [`Connection`].
