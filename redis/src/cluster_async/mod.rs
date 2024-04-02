@@ -87,6 +87,7 @@ use crate::{
         Slot, SlotMap,
     },
     cluster_topology::parse_slots,
+    types::closed_connection_error,
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -186,11 +187,11 @@ where
                 sender,
             })
             .await
-            .map_err(|_| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))?;
+            .map_err(|_| closed_connection_error())?;
 
         receiver
             .await
-            .unwrap_or_else(|_| Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))))
+            .unwrap_or_else(|_| Err(closed_connection_error()))
             .map(|response| match response {
                 Response::Multiple(values) => values,
                 Response::Single(_) => unreachable!(),
