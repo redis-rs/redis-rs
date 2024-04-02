@@ -2565,3 +2565,9 @@ pub struct PushInfo {
 pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
+
+// A consistent error value for connections closed without a reason.
+#[cfg(feature = "aio")]
+pub(crate) fn closed_connection_error() -> RedisError {
+    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}
