@@ -1470,7 +1470,7 @@ impl<'a> PubSub<'a> {
         }
         let mut response = cmd.query(self.con)?;
         loop {
-            if let Some(msg) = Msg::from_value(&response) {
+            if let Some(msg) = Msg::from_owned_value(response) {
                 self.waiting_messages.push_back(msg);
             } else {
                 return Ok(());
@@ -1510,7 +1510,7 @@ impl<'a> PubSub<'a> {
             return Ok(msg);
         }
         loop {
-            if let Some(msg) = Msg::from_value(&self.con.recv_response()?) {
+            if let Some(msg) = Msg::from_owned_value(self.con.recv_response()?) {
                 return Ok(msg);
             } else {
                 continue;
@@ -1538,18 +1538,22 @@ impl<'a> Drop for PubSub<'a> {
 /// connection.  It only contains actual message data.
 impl Msg {
     /// Tries to convert provided [`Value`] into [`Msg`].
-    #[allow(clippy::unnecessary_to_owned)]
     pub fn from_value(value: &Value) -> Option<Self> {
+        Self::from_owned_value(value.clone())
+    }
+
+    /// Tries to convert provided [`Value`] into [`Msg`].
+    pub fn from_owned_value(value: Value) -> Option<Self> {
         let mut pattern = None;
         let payload;
         let channel;
 
         if let Value::Push { kind, data } = value {
-            let mut iter: IntoIter<Value> = data.to_vec().into_iter();
-            if kind == &PushKind::Message || kind == &PushKind::SMessage {
+            let mut iter: IntoIter<Value> = data.into_iter();
+            if kind == PushKind::Message || kind == PushKind::SMessage {
                 channel = iter.next()?;
                 payload = iter.next()?;
-            } else if kind == &PushKind::PMessage {
+            } else if kind == PushKind::PMessage {
                 pattern = Some(iter.next()?);
                 channel = iter.next()?;
                 payload = iter.next()?;
@@ -1557,7 +1561,7 @@ impl Msg {
                 return None;
             }
         } else {
-            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
+            let raw_msg: Vec<Value> = from_owned_redis_value(value).ok()?;
             let mut iter = raw_msg.into_iter();
             let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
             if msg_type == "message" {
