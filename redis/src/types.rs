@@ -2497,3 +2497,9 @@ pub enum ProtocolVersion {
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP3.md>
     RESP3,
 }
+
+// A consistent error value for connections closed without a reason.
+#[cfg(feature = "aio")]
+pub(crate) fn closed_connection_error() -> RedisError {
+    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}
