@@ -469,10 +469,7 @@ impl MultiplexedConnection {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
-                    self.push_manager.try_send_raw(&Value::Push {
-                        kind: PushKind::Disconnection,
-                        data: vec![],
-                    });
+                    self.push_manager.try_send_disconnect();
                 }
             }
         }
@@ -504,10 +501,7 @@ impl MultiplexedConnection {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
-                    self.push_manager.try_send_raw(&Value::Push {
-                        kind: PushKind::Disconnection,
-                        data: vec![],
-                    });
+                    self.push_manager.try_send_disconnect();
                 }
             }
         }
