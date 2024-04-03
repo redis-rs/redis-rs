@@ -34,6 +34,59 @@ impl ToRedisArgs for StreamMaxlen {
     }
 }
 
+/// Builder options for [`xadd_options`] command.
+///
+/// [`xadd_options`]: ../trait.Commands.html#method.xadd_options
+///
+#[derive(Default, Debug)]
+pub struct StreamAddOptions {
+    /// Set MAXLEN <threshold> cmd arg.
+    max_len: Option<StreamMaxlen>,
+    /// Set MINID <String> cmd arg.
+    min_id: Option<String>,
+    /// Set NOMKSTREAM cmd arg.
+    no_mk_stream: bool,
+}
+
+impl StreamAddOptions {
+    /// Set MAXLEN <threshold> cmd arg.
+    pub fn max_len(mut self, threshold: StreamMaxlen) -> Self {
+        self.max_len = Some(threshold);
+        self
+    }
+
+    /// Set MINID <threshold> cmd arg.
+    pub fn min_id(mut self, threshold: String) -> Self {
+        self.min_id = Some(threshold);
+        self
+    }
+
+    /// Set NOMKSTREAM cmd arg.
+    pub fn with_no_mk_stream(mut self) -> Self {
+        self.no_mk_stream = true;
+        self
+    }
+}
+
+impl ToRedisArgs for StreamAddOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref threshold) = self.max_len {
+            threshold.write_redis_args(out);
+        }
+        if let Some(ref threshold) = self.min_id {
+            out.write_arg(b"MINID");
+            out.write_arg(b"=");
+            out.write_arg(threshold.as_bytes());
+        }
+        if self.no_mk_stream {
+            out.write_arg(b"NOMKSTREAM");
+        }
+    }
+}
+
 /// Builder options for [`xclaim_options`] command.
 ///
 /// [`xclaim_options`]: ../trait.Commands.html#method.xclaim_options
