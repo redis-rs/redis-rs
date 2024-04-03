@@ -72,6 +72,34 @@ fn port_in_use(addr: &str) -> bool {
     socket.connect(&socket_addr.into()).is_ok()
 }
 
+pub struct RedisClusterConfiguration {
+    pub nodes: u16,
+    pub replicas: u16,
+    pub modules: Vec<Module>,
+    pub mtls_enabled: bool,
+}
+
+impl RedisClusterConfiguration {
+    pub fn single_replica_config() -> Self {
+        Self {
+            nodes: 6,
+            replicas: 1,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for RedisClusterConfiguration {
+    fn default() -> Self {
+        Self {
+            nodes: 3,
+            replicas: 0,
+            modules: vec![],
+            mtls_enabled: false,
+        }
+    }
+}
+
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
@@ -87,21 +115,14 @@ impl RedisCluster {
         "world"
     }
 
-    pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
-        RedisCluster::with_modules(nodes, replicas, &[], false)
-    }
+    pub fn new(configuration: RedisClusterConfiguration) -> RedisCluster {
+        let RedisClusterConfiguration {
+            nodes,
+            replicas,
+            modules,
+            mtls_enabled,
+        } = configuration;
 
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_mtls(nodes: u16, replicas: u16) -> RedisCluster {
-        RedisCluster::with_modules(nodes, replicas, &[], true)
-    }
-
-    pub fn with_modules(
-        nodes: u16,
-        replicas: u16,
-        modules: &[Module],
-        mtls_enabled: bool,
-    ) -> RedisCluster {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -132,7 +153,7 @@ impl RedisCluster {
                 None,
                 tls_paths.clone(),
                 mtls_enabled,
-                modules,
+                &modules,
                 |cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
@@ -345,25 +366,40 @@ pub struct TestClusterContext {
 }
 
 impl TestClusterContext {
-    pub fn new(nodes: u16, replicas: u16) -> TestClusterContext {
-        Self::new_with_cluster_client_builder(nodes, replicas, identity, false)
+    pub fn new() -> TestClusterContext {
+        Self::new_with_config(RedisClusterConfiguration::default())
     }
 
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_mtls(nodes: u16, replicas: u16) -> TestClusterContext {
-        Self::new_with_cluster_client_builder(nodes, replicas, identity, true)
+    pub fn new_with_mtls() -> TestClusterContext {
+        Self::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                mtls_enabled: true,
+                ..Default::default()
+            },
+            identity,
+        )
     }
 
-    pub fn new_with_cluster_client_builder<F>(
-        nodes: u16,
-        replicas: u16,
+    pub fn new_with_config(cluster_config: RedisClusterConfiguration) -> TestClusterContext {
+        Self::new_with_config_and_builder(cluster_config, identity)
+    }
+
+    pub fn new_with_cluster_client_builder<F>(initializer: F) -> TestClusterContext
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
+        Self::new_with_config_and_builder(RedisClusterConfiguration::default(), initializer)
+    }
+
+    pub fn new_with_config_and_builder<F>(
+        cluster_config: RedisClusterConfiguration,
         initializer: F,
-        mtls_enabled: bool,
     ) -> TestClusterContext
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
-        let cluster = RedisCluster::new(nodes, replicas);
+        let mtls_enabled = cluster_config.mtls_enabled;
+        let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
             .map(RedisServer::connection_info)
