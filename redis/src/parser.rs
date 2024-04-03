@@ -17,7 +17,10 @@ use combine::{
         combinator::{any_send_sync_partial_state, AnySendSyncPartialState},
         range::{recognize, take},
     },
-    stream::{PointerOffset, RangeStream, StreamErrorFor},
+    stream::{
+        decoder::{self, Decoder},
+        PointerOffset, RangeStream, StreamErrorFor,
+    },
     unexpected_any, ParseError, Parser as _,
 };
 use num_bigint::BigInt;
@@ -315,6 +318,26 @@ where
     ))
 }
 
+// a macro is needed because of lifetime shenanigans with `decoder`.
+macro_rules! to_redis_err {
+    ($err: expr, $decoder: expr) => {
+        match $err {
+            decoder::Error::Io { error, .. } => error.into(),
+            decoder::Error::Parse(err) => {
+                if err.is_unexpected_end_of_input() {
+                    RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
+                } else {
+                    let err = err
+                        .map_range(|range| format!("{range:?}"))
+                        .map_position(|pos| pos.translate_position($decoder.buffer()))
+                        .to_string();
+                    RedisError::from((ErrorKind::ParseError, "parse error", err))
+                }
+            }
+        }
+    };
+}
+
 #[cfg(feature = "aio")]
 mod aio_support {
     use super::*;
@@ -391,20 +414,7 @@ mod aio_support {
             combine::stream::easy::Stream::from(input)
         });
         match result {
-            Err(err) => Err(match err {
-                combine::stream::decoder::Error::Io { error, .. } => error.into(),
-                combine::stream::decoder::Error::Parse(err) => {
-                    if err.is_unexpected_end_of_input() {
-                        RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
-                    } else {
-                        let err = err
-                            .map_range(|range| format!("{range:?}"))
-                            .map_position(|pos| pos.translate_position(decoder.buffer()))
-                            .to_string();
-                        RedisError::from((ErrorKind::ParseError, "parse error", err))
-                    }
-                }
-            }),
+            Err(err) => Err(to_redis_err!(err, decoder)),
             Ok(result) => Ok(result),
         }
     }
@@ -416,7 +426,7 @@ pub use self::aio_support::*;
 
 /// The internal redis response parser.
 pub struct Parser {
-    decoder: combine::stream::decoder::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+    decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
 }
 
 impl Default for Parser {
@@ -436,7 +446,7 @@ impl Parser {
     /// to be terminated.
     pub fn new() -> Parser {
         Parser {
-            decoder: combine::stream::decoder::Decoder::new(),
+            decoder: Decoder::new(),
         }
     }
 
@@ -449,20 +459,7 @@ impl Parser {
             combine::stream::easy::Stream::from(input)
         });
         match result {
-            Err(err) => Err(match err {
-                combine::stream::decoder::Error::Io { error, .. } => error.into(),
-                combine::stream::decoder::Error::Parse(err) => {
-                    if err.is_unexpected_end_of_input() {
-                        RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
-                    } else {
-                        let err = err
-                            .map_range(|range| format!("{range:?}"))
-                            .map_position(|pos| pos.translate_position(decoder.buffer()))
-                            .to_string();
-                        RedisError::from((ErrorKind::ParseError, "parse error", err))
-                    }
-                }
-            }),
+            Err(err) => Err(to_redis_err!(err, decoder)),
             Ok(result) => Ok(result),
         }
     }
