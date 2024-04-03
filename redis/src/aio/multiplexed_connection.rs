@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -551,7 +551,7 @@ impl ConnectionLike for MultiplexedConnection {
 }
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
-    pub async fn subscribe(&mut self, channel_name: String) -> RedisResult<()> {
+    pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
@@ -559,13 +559,13 @@ impl MultiplexedConnection {
             )));
         }
         let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name.clone());
+        cmd.arg(channel_name);
         cmd.query_async(self).await?;
         Ok(())
     }
 
     /// Unsubscribes from channel.
-    pub async fn unsubscribe(&mut self, channel_name: String) -> RedisResult<()> {
+    pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
@@ -579,7 +579,7 @@ impl MultiplexedConnection {
     }
 
     /// Subscribes to a new channel with pattern.
-    pub async fn psubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+    pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
@@ -587,13 +587,13 @@ impl MultiplexedConnection {
             )));
         }
         let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern.clone());
+        cmd.arg(channel_pattern);
         cmd.query_async(self).await?;
         Ok(())
     }
 
     /// Unsubscribes from channel pattern.
-    pub async fn punsubscribe(&mut self, channel_pattern: String) -> RedisResult<()> {
+    pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         if self.protocol == ProtocolVersion::RESP2 {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
