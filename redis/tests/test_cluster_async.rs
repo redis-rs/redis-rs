@@ -1746,6 +1746,16 @@ mod cluster_async {
             TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
 
         block_on_all(async move {
+            let ports: Vec<_> = cluster
+                .nodes
+                .iter()
+                .map(|info| match info.addr {
+                    redis::ConnectionAddr::Tcp(_, port) => port,
+                    redis::ConnectionAddr::TcpTls { port, .. } => port,
+                    redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+                })
+                .collect();
+
             let mut connection = cluster.async_connection().await;
             drop(cluster);
             for _ in 0..5 {
@@ -1762,9 +1772,13 @@ mod cluster_async {
                 // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
                 assert!(result.is_err());
 
-                let _cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                    builder.retries(2)
-                });
+                let _cluster = TestClusterContext::new_with_config_and_builder(
+                    RedisClusterConfiguration {
+                        ports: ports.clone(),
+                        ..Default::default()
+                    },
+                    |builder| builder.retries(2),
+                );
 
                 let result = connection.req_packed_command(&cmd).await.unwrap();
                 assert_eq!(result, Value::SimpleString("PONG".to_string()));
