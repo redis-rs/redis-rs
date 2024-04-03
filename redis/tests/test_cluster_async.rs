@@ -685,7 +685,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_ask_redirect() {
-        let name = "node";
+        let name = "test_async_cluster_ask_redirect";
         let completed = Arc::new(AtomicI32::new(0));
         let MockEnv {
             async_connection: mut connection,
@@ -703,7 +703,9 @@ mod cluster_async {
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     match port {
                         6379 => match count {
-                            0 => Err(parse_redis_value(b"-ASK 14000 node:6380\r\n")),
+                            0 => Err(parse_redis_value(
+                                b"-ASK 14000 test_async_cluster_ask_redirect:6380\r\n",
+                            )),
                             _ => panic!("Node should not be called now"),
                         },
                         6380 => match count {
@@ -734,7 +736,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_ask_save_new_connection() {
-        let name = "node";
+        let name = "test_async_cluster_ask_save_new_connection";
         let ping_attempts = Arc::new(AtomicI32::new(0));
         let ping_attempts_clone = ping_attempts.clone();
         let MockEnv {
@@ -749,7 +751,9 @@ mod cluster_async {
                 move |cmd: &[u8], port| {
                     if port != 6391 {
                         respond_startup_two_nodes(name, cmd)?;
-                        return Err(parse_redis_value(b"-ASK 14000 node:6391\r\n"));
+                        return Err(parse_redis_value(
+                            b"-ASK 14000 test_async_cluster_ask_save_new_connection:6391\r\n",
+                        ));
                     }
 
                     if contains_slice(cmd, b"PING") {
@@ -817,7 +821,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_ask_redirect_even_if_original_call_had_no_route() {
-        let name = "node";
+        let name = "test_async_cluster_ask_redirect_even_if_original_call_had_no_route";
         let completed = Arc::new(AtomicI32::new(0));
         let MockEnv {
             async_connection: mut connection,
@@ -834,7 +838,7 @@ mod cluster_async {
                     // other node (i.e., not doing a full slot rebuild)
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
-                        return Err(parse_redis_value(b"-ASK 14000 node:6380\r\n"));
+                        return Err(parse_redis_value(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n"));
                     }
                     match port {
                         6380 => match count {
@@ -922,7 +926,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_replica_read() {
-        let name = "node";
+        let name = "test_async_cluster_replica_read";
 
         // requests should route to replica
         let MockEnv {
@@ -981,11 +985,11 @@ mod cluster_async {
     }
 
     fn test_async_cluster_fan_out(
+        name: &'static str,
         command: &'static str,
         expected_ports: Vec<u16>,
         slots_config: Option<Vec<MockSlotRange>>,
     ) {
-        let name = "node";
         let found_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
         let ports_clone = found_ports.clone();
         let mut cmd = Cmd::new();
@@ -1026,17 +1030,28 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_fan_out_to_all_primaries() {
-        test_async_cluster_fan_out("FLUSHALL", vec![6379, 6381], None);
+        test_async_cluster_fan_out(
+            "test_async_cluster_fan_out_to_all_primaries",
+            "FLUSHALL",
+            vec![6379, 6381],
+            None,
+        );
     }
 
     #[test]
     fn test_async_cluster_fan_out_to_all_nodes() {
-        test_async_cluster_fan_out("CONFIG SET", vec![6379, 6380, 6381, 6382], None);
+        test_async_cluster_fan_out(
+            "test_async_cluster_fan_out_to_all_nodes",
+            "CONFIG SET",
+            vec![6379, 6380, 6381, 6382],
+            None,
+        );
     }
 
     #[test]
     fn test_async_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available() {
         test_async_cluster_fan_out(
+            "test_async_cluster_fan_out_once_to_each_primary_when_no_replicas_are_available",
             "CONFIG SET",
             vec![6379, 6381],
             Some(vec![
@@ -1057,6 +1072,7 @@ mod cluster_async {
     #[test]
     fn test_async_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges() {
         test_async_cluster_fan_out(
+            "test_async_cluster_fan_out_once_even_if_primary_has_multiple_slot_ranges",
             "CONFIG SET",
             vec![6379, 6380, 6381, 6382],
             Some(vec![
