@@ -752,7 +752,7 @@ mod basic_async {
         fn pub_sub_conn_reuse() {
             let ctx = TestContext::new();
             block_on_all(async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+                let mut pubsub_conn = ctx.deprecated_async_connection().await?.into_pubsub();
                 pubsub_conn.subscribe("phonewave").await?;
                 pubsub_conn.psubscribe("*").await?;
 
