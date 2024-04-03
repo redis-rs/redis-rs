@@ -17,6 +17,7 @@ use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
+use super::get_random_available_port;
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
 
@@ -77,6 +78,7 @@ pub struct RedisClusterConfiguration {
     pub replicas: u16,
     pub modules: Vec<Module>,
     pub mtls_enabled: bool,
+    pub ports: Vec<u16>,
 }
 
 impl RedisClusterConfiguration {
@@ -96,6 +98,7 @@ impl Default for RedisClusterConfiguration {
             replicas: 0,
             modules: vec![],
             mtls_enabled: false,
+            ports: vec![],
         }
     }
 }
@@ -121,12 +124,15 @@ impl RedisCluster {
             replicas,
             modules,
             mtls_enabled,
+            mut ports,
         } = configuration;
 
+        if ports.is_empty() {
+            ports = (0..nodes).map(|_| get_random_available_port()).collect();
+        }
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
-        let start_port = 7000;
         let mut tls_paths = None;
 
         let mut is_tls = false;
@@ -145,9 +151,7 @@ impl RedisCluster {
 
         let max_attempts = 5;
 
-        for node in 0..nodes {
-            let port = start_port + node;
-
+        for port in ports {
             servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
                 None,
