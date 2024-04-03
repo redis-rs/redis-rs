@@ -15,7 +15,7 @@ use futures_util::{
     future::{Future, FutureExt},
     ready,
     sink::Sink,
-    stream::{self, Stream, StreamExt, TryStreamExt as _},
+    stream::{self, Stream, StreamExt},
 };
 use pin_project_lite::pin_project;
 use std::collections::VecDeque;
@@ -465,9 +465,7 @@ impl MultiplexedConnection {
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
         let redis_connection_info = &connection_info.redis;
-        let codec = ValueCodec::default()
-            .framed(stream)
-            .and_then(|msg| async move { msg });
+        let codec = ValueCodec::default().framed(stream);
         let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let pm = PushManager::default();
