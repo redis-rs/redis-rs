@@ -62,8 +62,8 @@ struct InFlight {
 }
 
 // A single message sent through the pipeline
-struct PipelineMessage<S> {
-    input: S,
+struct PipelineMessage {
+    input: Vec<u8>,
     output: PipelineOutput,
     // If `None`, this is a single request, not a pipeline of multiple requests.
     pipeline_response_count: Option<usize>,
@@ -73,13 +73,13 @@ struct PipelineMessage<S> {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
-struct Pipeline<SinkItem> {
-    sender: mpsc::Sender<PipelineMessage<SinkItem>>,
+struct Pipeline {
+    sender: mpsc::Sender<PipelineMessage>,
 
     push_manager: Arc<ArcSwap<PushManager>>,
 }
 
-impl<SinkItem> Clone for Pipeline<SinkItem> {
+impl Clone for Pipeline {
     fn clone(&self) -> Self {
         Pipeline {
             sender: self.sender.clone(),
@@ -88,10 +88,7 @@ impl<SinkItem> Clone for Pipeline<SinkItem> {
     }
 }
 
-impl<SinkItem> Debug for Pipeline<SinkItem>
-where
-    SinkItem: Debug,
-{
+impl Debug for Pipeline {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Pipeline").field(&self.sender).finish()
     }
@@ -111,9 +108,9 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new<SinkItem>(sink_stream: T, push_manager: Arc<ArcSwap<PushManager>>) -> Self
+    fn new(sink_stream: T, push_manager: Arc<ArcSwap<PushManager>>) -> Self
     where
-        T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
         PipelineSink {
             sink_stream,
@@ -201,9 +198,9 @@ where
     }
 }
 
-impl<SinkItem, T> Sink<PipelineMessage<SinkItem>> for PipelineSink<T>
+impl<T> Sink<PipelineMessage> for PipelineSink<T>
 where
-    T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
 {
     type Error = ();
 
@@ -227,7 +224,7 @@ where
             input,
             output,
             pipeline_response_count,
-        }: PipelineMessage<SinkItem>,
+        }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
@@ -292,13 +289,10 @@ where
     }
 }
 
-impl<SinkItem> Pipeline<SinkItem>
-where
-    SinkItem: Send + 'static,
-{
+impl Pipeline {
     fn new<T>(sink_stream: T) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<SinkItem, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
         T: Send + 'static,
         T::Item: Send,
         T::Error: Send,
@@ -308,7 +302,7 @@ where
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
         let push_manager: Arc<ArcSwap<PushManager>> =
             Arc::new(ArcSwap::new(Arc::new(PushManager::default())));
-        let sink = PipelineSink::new::<SinkItem>(sink_stream, push_manager.clone());
+        let sink = PipelineSink::new(sink_stream, push_manager.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
@@ -325,7 +319,7 @@ where
     // `None` means that the stream was out of items causing that poll loop to shut down.
     async fn send_single(
         &mut self,
-        item: SinkItem,
+        item: Vec<u8>,
         timeout: Option<Duration>,
     ) -> Result<Value, Option<RedisError>> {
         self.send_recv(item, None, timeout).await
@@ -333,7 +327,7 @@ where
 
     async fn send_recv(
         &mut self,
-        input: SinkItem,
+        input: Vec<u8>,
         // If `None`, this is a single request, not a pipeline of multiple requests.
         pipeline_response_count: Option<usize>,
         timeout: Option<Duration>,
@@ -372,7 +366,7 @@ where
 /// on the same underlying connection (tcp/unix socket).
 #[derive(Clone)]
 pub struct MultiplexedConnection {
-    pipeline: Pipeline<Vec<u8>>,
+    pipeline: Pipeline,
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
