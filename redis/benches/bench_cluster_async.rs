@@ -76,7 +76,8 @@ fn bench_cluster_async(
 }
 
 fn bench_cluster_setup(c: &mut Criterion) {
-    let cluster = TestClusterContext::new(6, 1);
+    let cluster =
+        TestClusterContext::new_with_config(RedisClusterConfiguration::single_replica_config());
     cluster.wait_for_cluster_up();
     let runtime = current_thread_runtime();
     let mut con = runtime.block_on(cluster.async_connection(None));

@@ -39,7 +39,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_basic_cmd() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -61,7 +61,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_basic_eval() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -80,7 +80,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_basic_script() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -99,7 +99,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_route_flush_to_specific_node() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -134,7 +134,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_route_flush_to_node_by_address() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -174,7 +174,11 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_route_info_to_nodes() {
-        let cluster = TestClusterContext::new(12, 1);
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            nodes: 12,
+            replicas: 1,
+            ..Default::default()
+        });
 
         let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
             if let Value::Map(values) = res {
@@ -257,7 +261,7 @@ mod cluster_async {
             return;
         }
         block_on_all(async move {
-            let cluster = TestClusterContext::new(3, 0);
+            let cluster = TestClusterContext::new();
 
             let mut connection = cluster.async_connection(None).await;
 
@@ -292,7 +296,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_basic_pipe() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -311,7 +315,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_multi_shard_commands() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -330,7 +334,15 @@ mod cluster_async {
     #[test]
     fn test_async_cluster_basic_failover() {
         block_on_all(async move {
-            test_failover(&TestClusterContext::new(6, 1), 10, 123, false).await;
+            test_failover(
+                &TestClusterContext::new_with_config(
+                    RedisClusterConfiguration::single_replica_config(),
+                ),
+                10,
+                123,
+                false,
+            )
+            .await;
             Ok::<_, RedisError>(())
         })
         .unwrap()
@@ -518,7 +530,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_error_in_inner_connection() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all(async move {
             let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
@@ -543,7 +555,7 @@ mod cluster_async {
     #[test]
     #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
     fn test_async_cluster_async_std_basic_cmd() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         block_on_all_using_async_std(async {
             let mut connection = cluster.async_connection(None).await;
@@ -2026,16 +2038,11 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_with_username_and_password() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| {
-                builder
-                    .username(RedisCluster::username().to_string())
-                    .password(RedisCluster::password().to_string())
-            },
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        });
         cluster.disable_default_user();
 
         block_on_all(async move {
@@ -2275,12 +2282,8 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_handle_complete_server_disconnect_without_panicking() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.retries(2),
-            false,
-        );
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
             drop(cluster);
@@ -2303,12 +2306,8 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_reconnect_after_complete_server_disconnect() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.retries(2),
-            false,
-        );
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -2327,12 +2326,9 @@ mod cluster_async {
                 // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
                 assert!(result.is_err());
 
-                let _cluster = TestClusterContext::new_with_cluster_client_builder(
-                    3,
-                    0,
-                    |builder| builder.retries(2),
-                    false,
-                );
+                let _cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                    builder.retries(2)
+                });
 
                 let result = connection.req_packed_command(&cmd).await.unwrap();
                 assert_eq!(result, Value::SimpleString("PONG".to_string()));
@@ -3034,11 +3030,13 @@ mod cluster_async {
         // Since we are not executing key-based commands, we won't encounter MOVED errors that trigger a slot refresh.
         // Consequently, we anticipate that only the periodic topology check will detect this change and trigger topology refresh.
         // If successful, the node to which we route the CLUSTER NODES command should be the newly promoted node with a different node ID.
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            6,
-            1,
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                nodes: 6,
+                replicas: 1,
+                ..Default::default()
+            },
             |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
-            false,
         );
 
         block_on_all(async move {
@@ -3096,12 +3094,9 @@ mod cluster_async {
         // This test aims to verify that the management connections used for periodic checks are reconnected, in case that they get killed.
         // In order to test this, we choose a single node, kill all connections to it which aren't user connections, and then wait until new
         // connections are created.
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.periodic_topology_checks(Duration::from_millis(10))
+        });
 
         block_on_all(async move {
             let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
@@ -3141,12 +3136,9 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_with_client_name() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.client_name(RedisCluster::client_name().to_string()),
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.client_name(RedisCluster::client_name().to_string())
+        });
 
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
@@ -3677,7 +3669,7 @@ mod cluster_async {
 
         #[test]
         fn test_async_cluster_basic_cmd_with_mtls() {
-            let cluster = TestClusterContext::new_with_mtls(3, 0);
+            let cluster = TestClusterContext::new_with_mtls();
             block_on_all(async move {
                 let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
                 let mut connection = client.get_async_connection(None).await.unwrap();
@@ -3699,7 +3691,7 @@ mod cluster_async {
 
         #[test]
         fn test_async_cluster_should_not_connect_without_mtls_enabled() {
-            let cluster = TestClusterContext::new_with_mtls(3, 0);
+            let cluster = TestClusterContext::new_with_mtls();
             block_on_all(async move {
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_async_connection(None).await;

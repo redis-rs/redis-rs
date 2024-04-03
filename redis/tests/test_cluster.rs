@@ -17,7 +17,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_basics() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut con = cluster.connection();
 
         redis::cmd("SET")
@@ -36,16 +36,11 @@ mod cluster {
 
     #[test]
     fn test_cluster_with_username_and_password() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| {
-                builder
-                    .username(RedisCluster::username().to_string())
-                    .password(RedisCluster::password().to_string())
-            },
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password(RedisCluster::password().to_string())
+        });
         cluster.disable_default_user();
 
         let mut con = cluster.connection();
@@ -66,26 +61,19 @@ mod cluster {
 
     #[test]
     fn test_cluster_with_bad_password() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| {
-                builder
-                    .username(RedisCluster::username().to_string())
-                    .password("not the right password".to_string())
-            },
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder
+                .username(RedisCluster::username().to_string())
+                .password("not the right password".to_string())
+        });
         assert!(cluster.client.get_connection(None).is_err());
     }
 
     #[test]
     fn test_cluster_read_from_replicas() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            6,
-            1,
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration::single_replica_config(),
             |builder| builder.read_from_replicas(),
-            false,
         );
         let mut con = cluster.connection();
 
@@ -107,7 +95,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_eval() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut con = cluster.connection();
 
         let rv = redis::cmd("EVAL")
@@ -131,7 +119,7 @@ mod cluster {
         if use_protocol() == ProtocolVersion::RESP2 {
             return;
         }
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.connection();
 
@@ -160,7 +148,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_multi_shard_commands() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.connection();
 
@@ -175,7 +163,7 @@ mod cluster {
     #[test]
     #[cfg(feature = "script")]
     fn test_cluster_script() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut con = cluster.connection();
 
         let script = redis::Script::new(
@@ -192,7 +180,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_pipeline() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -209,7 +197,7 @@ mod cluster {
     #[test]
     fn test_cluster_pipeline_multiple_keys() {
         use redis::FromRedisValue;
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -245,7 +233,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_pipeline_invalid_command() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -359,7 +347,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_pipeline_command_ordering() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -385,7 +373,7 @@ mod cluster {
     #[test]
     #[ignore] // Flaky
     fn test_cluster_pipeline_ordering_with_improper_command() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -975,12 +963,9 @@ mod cluster {
 
     #[test]
     fn test_cluster_with_client_name() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.client_name(RedisCluster::client_name().to_string()),
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.client_name(RedisCluster::client_name().to_string())
+        });
         let mut con = cluster.connection();
         let client_info: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
 
@@ -1047,7 +1032,7 @@ mod cluster {
 
         #[test]
         fn test_cluster_basics_with_mtls() {
-            let cluster = TestClusterContext::new_with_mtls(3, 0);
+            let cluster = TestClusterContext::new_with_mtls();
 
             let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
             let mut con = client.get_connection(None).unwrap();
@@ -1068,7 +1053,7 @@ mod cluster {
 
         #[test]
         fn test_cluster_should_not_connect_without_mtls() {
-            let cluster = TestClusterContext::new_with_mtls(3, 0);
+            let cluster = TestClusterContext::new_with_mtls();
 
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_connection(None);

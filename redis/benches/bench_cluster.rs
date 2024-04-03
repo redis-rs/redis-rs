@@ -77,7 +77,8 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
 }
 
 fn bench_cluster_setup(c: &mut Criterion) {
-    let cluster = TestClusterContext::new(6, 1);
+    let cluster =
+        TestClusterContext::new_with_config(RedisClusterConfiguration::single_replica_config());
     cluster.wait_for_cluster_up();
 
     let mut con = cluster.connection();
@@ -87,11 +88,9 @@ fn bench_cluster_setup(c: &mut Criterion) {
 
 #[allow(dead_code)]
 fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
-    let cluster = TestClusterContext::new_with_cluster_client_builder(
-        6,
-        1,
+    let cluster = TestClusterContext::new_with_config_and_builder(
+        RedisClusterConfiguration::single_replica_config(),
         |builder| builder.read_from_replicas(),
-        false,
     );
     cluster.wait_for_cluster_up();
 
