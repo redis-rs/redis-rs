@@ -198,8 +198,10 @@ impl RedisCluster {
 
                         match process.try_wait() {
                             Ok(Some(status)) => {
+                                let stdout = process.stdout;
+                                let stderr = process.stderr;
                                 let err =
-                                    format!("redis server creation failed with status {status:?}");
+                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout:?}`.\nstderr: `{stderr:?}`");
                                 if cur_attempts == max_attempts {
                                     panic!("{err}");
                                 }
@@ -207,7 +209,8 @@ impl RedisCluster {
                                 cur_attempts += 1;
                             }
                             Ok(None) => {
-                                let max_attempts = 20;
+                                // wait for 10 seconds for the server to be available.
+                                let max_attempts = 200;
                                 let mut cur_attempts = 0;
                                 loop {
                                     if cur_attempts == max_attempts {
