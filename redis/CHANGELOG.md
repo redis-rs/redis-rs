@@ -1,3 +1,7 @@
+### 0.25.3 (2024-04-04)
+
+* Handle empty results in multi-node operations ([#1099](https://github.com/redis-rs/redis-rs/pull/1099))
+
 ### 0.25.2 (2024-03-15)
 
 * MultiplexedConnection: Separate response handling for pipeline. ([#1078](https://github.com/redis-rs/redis-rs/pull/1078))
