@@ -361,7 +361,11 @@ where
             },
             None => match receiver.await {
                 Ok(result) => result.map_err(Some),
-                Err(_) => Err(None),
+                Err(_) => {
+                    // The `sender` was dropped which likely means that the stream part
+                    // failed for one reason or another
+                    Err(None)
+                }
             },
         }
     }
