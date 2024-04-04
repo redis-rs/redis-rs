@@ -326,7 +326,7 @@ where
     async fn send_single(
         &mut self,
         item: SinkItem,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<Value, Option<RedisError>> {
         self.send_recv(item, None, timeout).await
     }
@@ -336,7 +336,7 @@ where
         input: SinkItem,
         // If `None`, this is a single request, not a pipeline of multiple requests.
         pipeline_response_count: Option<usize>,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
 
@@ -348,14 +348,21 @@ where
             })
             .await
             .map_err(|_| None)?;
-        match Runtime::locate().timeout(timeout, receiver).await {
-            Ok(Ok(result)) => result.map_err(Some),
-            Ok(Err(_)) => {
-                // The `sender` was dropped which likely means that the stream part
-                // failed for one reason or another
-                Err(None)
-            }
-            Err(elapsed) => Err(Some(elapsed.into())),
+
+        match timeout {
+            Some(timeout) => match Runtime::locate().timeout(timeout, receiver).await {
+                Ok(Ok(result)) => result.map_err(Some),
+                Ok(Err(_)) => {
+                    // The `sender` was dropped which likely means that the stream part
+                    // failed for one reason or another
+                    Err(None)
+                }
+                Err(elapsed) => Err(Some(elapsed.into())),
+            },
+            None => match receiver.await {
+                Ok(result) => result.map_err(Some),
+                Err(_) => Err(None),
+            },
         }
     }
 
@@ -371,7 +378,7 @@ where
 pub struct MultiplexedConnection {
     pipeline: Pipeline<Vec<u8>>,
     db: i64,
-    response_timeout: Duration,
+    response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
     push_manager: PushManager,
 }
@@ -395,7 +402,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        Self::new_with_response_timeout(connection_info, stream, std::time::Duration::MAX).await
+        Self::new_with_response_timeout(connection_info, stream, None).await
     }
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
@@ -403,7 +410,7 @@ impl MultiplexedConnection {
     pub async fn new_with_response_timeout<C>(
         connection_info: &ConnectionInfo,
         stream: C,
-        response_timeout: std::time::Duration,
+        response_timeout: Option<std::time::Duration>,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
@@ -455,7 +462,7 @@ impl MultiplexedConnection {
 
     /// Sets the time that the multiplexer will wait for responses on operations before failing.
     pub fn set_response_timeout(&mut self, timeout: std::time::Duration) {
-        self.response_timeout = timeout;
+        self.response_timeout = Some(timeout);
     }
 
     /// Sends an already encoded (packed) command into the TCP socket and
