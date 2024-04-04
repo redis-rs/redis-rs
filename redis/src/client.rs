@@ -158,9 +158,9 @@ impl Client {
             rt @ Runtime::Tokio => {
                 rt.timeout(
                     connection_timeout,
-                    self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                    self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(Some(
                         response_timeout,
-                    ),
+                    )),
                 )
                 .await
             }
@@ -169,7 +169,7 @@ impl Client {
                 rt.timeout(
                     connection_timeout,
                     self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                        response_timeout,
+                        Some(response_timeout),
                     ),
                 )
                 .await
@@ -197,9 +197,9 @@ impl Client {
         let result = Runtime::locate()
             .timeout(
                 connection_timeout,
-                self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(Some(
                     response_timeout,
-                ),
+                )),
             )
             .await;
 
@@ -241,7 +241,7 @@ impl Client {
             .timeout(
                 connection_timeout,
                 self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                    response_timeout,
+                    Some(response_timeout),
                 ),
             )
             .await;
@@ -284,8 +284,10 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(response_timeout)
-            .await
+        self.create_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(Some(
+            response_timeout,
+        ))
+        .await
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
@@ -320,9 +322,9 @@ impl Client {
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
     )> {
-        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+        self.create_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(Some(
             response_timeout,
-        )
+        ))
         .await
     }
 
@@ -539,7 +541,7 @@ impl Client {
 
     async fn get_multiplexed_async_connection_inner<T>(
         &self,
-        response_timeout: std::time::Duration,
+        response_timeout: Option<std::time::Duration>,
     ) -> RedisResult<crate::aio::MultiplexedConnection>
     where
         T: crate::aio::RedisRuntime,
@@ -553,7 +555,7 @@ impl Client {
 
     async fn create_multiplexed_async_connection_inner<T>(
         &self,
-        response_timeout: std::time::Duration,
+        response_timeout: Option<std::time::Duration>,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
         impl std::future::Future<Output = ()>,
