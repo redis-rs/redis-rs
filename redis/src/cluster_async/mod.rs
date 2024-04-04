@@ -1211,15 +1211,19 @@ where
         conn_option: Option<ConnectionFuture<C>>,
         params: &ClusterParams,
     ) -> RedisResult<C> {
-        if let Some(conn) = conn_option {
-            let mut conn = conn.await;
-            match check_connection(&mut conn).await {
-                Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+        const DEFAULT_CONNECTION_TIMEOUT: u64 = 250;
+        run_with_timeout(Duration::from_millis(DEFAULT_CONNECTION_TIMEOUT), async {
+            if let Some(conn) = conn_option {
+                let mut conn = conn.await;
+                match check_connection(&mut conn).await {
+                    Ok(_) => Ok(conn),
+                    Err(_) => connect_and_check(addr, params.clone()).await,
+                }
+            } else {
+                connect_and_check(addr, params.clone()).await
             }
-        } else {
-            connect_and_check(addr, params.clone()).await
-        }
+        })
+        .await
     }
 }
 
@@ -1547,4 +1551,21 @@ mod pipeline_routing_tests {
             Ok(Some(Route::new(12182, SlotAddr::Master)))
         );
     }
+}
+
+async fn run_with_timeout<T>(
+    timeout: Duration,
+    future: impl futures::Future<Output = RedisResult<T>> + Send,
+) -> RedisResult<T> {
+    #[cfg(feature = "tokio-comp")]
+    return tokio::time::timeout(timeout, future)
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut).into())
+        .and_then(|res| res);
+
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    return async_std::future::timeout(timeout, future)
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut).into())
+        .and_then(|res| res);
 }
