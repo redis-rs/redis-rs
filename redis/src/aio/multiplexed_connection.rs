@@ -351,23 +351,15 @@ where
 
         match timeout {
             Some(timeout) => match Runtime::locate().timeout(timeout, receiver).await {
-                Ok(Ok(result)) => result.map_err(Some),
-                Ok(Err(_)) => {
-                    // The `sender` was dropped which likely means that the stream part
-                    // failed for one reason or another
-                    Err(None)
-                }
-                Err(elapsed) => Err(Some(elapsed.into())),
+                Ok(res) => res,
+                Err(elapsed) => Ok(Err(elapsed.into())),
             },
-            None => match receiver.await {
-                Ok(result) => result.map_err(Some),
-                Err(_) => {
-                    // The `sender` was dropped which likely means that the stream part
-                    // failed for one reason or another
-                    Err(None)
-                }
-            },
+            None => receiver.await,
         }
+        // The `sender` was dropped which likely means that the stream part
+        // failed for one reason or another
+        .map_err(|_| None)
+        .and_then(|res| res.map_err(Some))
     }
 
     /// Sets `PushManager` of Pipeline
