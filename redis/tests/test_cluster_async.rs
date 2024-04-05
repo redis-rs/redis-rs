@@ -163,8 +163,8 @@ mod cluster_async {
     #[test]
     fn test_async_cluster_route_info_to_nodes() {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            nodes: 12,
-            replicas: 1,
+            num_nodes: 12,
+            num_replicas: 1,
             ..Default::default()
         });
 

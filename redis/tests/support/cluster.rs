@@ -74,8 +74,8 @@ fn port_in_use(addr: &str) -> bool {
 }
 
 pub struct RedisClusterConfiguration {
-    pub nodes: u16,
-    pub replicas: u16,
+    pub num_nodes: u16,
+    pub num_replicas: u16,
     pub modules: Vec<Module>,
     pub mtls_enabled: bool,
     pub ports: Vec<u16>,
@@ -84,8 +84,8 @@ pub struct RedisClusterConfiguration {
 impl RedisClusterConfiguration {
     pub fn single_replica_config() -> Self {
         Self {
-            nodes: 6,
-            replicas: 1,
+            num_nodes: 6,
+            num_replicas: 1,
             ..Default::default()
         }
     }
@@ -94,8 +94,8 @@ impl RedisClusterConfiguration {
 impl Default for RedisClusterConfiguration {
     fn default() -> Self {
         Self {
-            nodes: 3,
-            replicas: 0,
+            num_nodes: 3,
+            num_replicas: 0,
             modules: vec![],
             mtls_enabled: false,
             ports: vec![],
@@ -120,8 +120,8 @@ impl RedisCluster {
 
     pub fn new(configuration: RedisClusterConfiguration) -> RedisCluster {
         let RedisClusterConfiguration {
-            nodes,
-            replicas,
+            num_nodes: nodes,
+            num_replicas: replicas,
             modules,
             mtls_enabled,
             mut ports,
