@@ -29,6 +29,9 @@ use crate::connection::TlsConnParams;
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
 pub mod tokio;
 
+mod pubsub;
+pub use pubsub::PubSub;
+
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
