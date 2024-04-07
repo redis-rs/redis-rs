@@ -84,7 +84,6 @@ where
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
-    /// If `routing` is [None], the request will be sent to a random node.
     pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
