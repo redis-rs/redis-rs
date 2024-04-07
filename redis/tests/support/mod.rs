@@ -264,8 +264,8 @@ impl RedisServer {
         }
 
         redis_cmd
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null());
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped());
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -652,8 +652,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("-out")
             .arg(name)
             .arg(&format!("{size}"))
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
             .spawn()
             .expect("failed to spawn openssl")
             .wait()
@@ -681,8 +681,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg("/O=Redis Test/CN=Certificate Authority")
         .arg("-out")
         .arg(&ca_crt)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
         .spawn()
         .expect("failed to spawn openssl")
         .wait()
@@ -708,7 +708,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg("-key")
         .arg(&redis_key)
         .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
+        .stderr(process::Stdio::piped())
         .spawn()
         .expect("failed to spawn openssl");
 
@@ -731,8 +731,8 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .arg("-out")
         .arg(&redis_crt)
         .stdin(key_cmd.stdout.take().expect("should have stdout"))
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
         .spawn()
         .expect("failed to spawn openssl")
         .wait()

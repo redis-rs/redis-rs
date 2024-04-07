@@ -3,6 +3,7 @@
 
 use std::convert::identity;
 use std::env;
+use std::io::Read;
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
@@ -198,10 +199,18 @@ impl RedisCluster {
 
                         match process.try_wait() {
                             Ok(Some(status)) => {
-                                let stdout = process.stdout;
-                                let stderr = process.stderr;
+                                let stdout = process.stdout.map_or(String::new(), |mut out|{
+                                    let mut str = String::new();
+                                    out.read_to_string(&mut str).unwrap();
+                                    str
+                                });
+                                let stderr = process.stderr.map_or(String::new(), |mut out|{
+                                    let mut str = String::new();
+                                    out.read_to_string(&mut str).unwrap();
+                                    str
+                                });
                                 let err =
-                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout:?}`.\nstderr: `{stderr:?}`");
+                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout}`.\nstderr: `{stderr}`");
                                 if cur_attempts == max_attempts {
                                     panic!("{err}");
                                 }
@@ -234,7 +243,7 @@ impl RedisCluster {
         }
 
         let mut cmd = process::Command::new("redis-cli");
-        cmd.stdout(process::Stdio::null())
+        cmd.stdout(process::Stdio::piped())
             .arg("--cluster")
             .arg("create")
             .args(&addrs);
