@@ -129,8 +129,15 @@ impl RedisCluster {
         } = configuration;
 
         if ports.is_empty() {
-            ports = (0..nodes).map(|_| get_random_available_port()).collect();
+            // We use a hashset in order to be sure that we have the right number
+            // of unique ports.
+            let mut hash = std::collections::HashSet::new();
+            while hash.len() < nodes as usize {
+                hash.insert(get_random_available_port());
+            }
+            ports = hash.into_iter().collect();
         }
+
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
