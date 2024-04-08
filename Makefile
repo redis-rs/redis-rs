@@ -91,6 +91,6 @@ lint:
 fuzz:
 	cd afl/parser/ && \
 	cargo afl build --bin fuzz-target && \
-	cargo afl fuzz -i in -o out target/debug/fuzz-target
+	cargo afl fuzz -i in -o out ../../target/debug/fuzz-target
 
 .PHONY: build test bench docs upload-docs style-check lint fuzz
