@@ -5,7 +5,7 @@ test:
 	@echo "===================================================================="
 	@echo "Build all features with lock file"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" cargo build --locked --all-features
+	@RUSTFLAGS="-D warnings" cargo build --locked --all-features -p redis -p redis-test
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
