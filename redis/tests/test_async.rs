@@ -694,6 +694,30 @@ mod basic_async {
         }
 
         #[test]
+        fn pub_sub_subscription_to_multiple_channels() {
+            use redis::RedisError;
+
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let mut pubsub_conn = ctx.async_pubsub().await?;
+                pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                let mut pubsub_stream = pubsub_conn.on_message();
+                let mut publish_conn = ctx.async_connection().await?;
+                publish_conn.publish("phonewave", "banana").await?;
+
+                let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+                assert_eq!("banana".to_string(), msg_payload);
+
+                publish_conn.publish("foo", "foobar").await?;
+                let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+                assert_eq!("foobar".to_string(), msg_payload);
+
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+        }
+
+        #[test]
         fn pub_sub_unsubscription() {
             const SUBSCRIPTION_KEY: &str = "phonewave-pub-sub-unsubscription";
 
@@ -856,6 +880,36 @@ mod basic_async {
                 assert_eq!(list, vec!["value".to_owned()]);
 
                 Ok::<_, RedisError>(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn multiplexed_pub_sub_subscribe_on_multiple_channels() {
+            let ctx = TestContext::new();
+            if ctx.protocol == ProtocolVersion::RESP2 {
+                return;
+            }
+            block_on_all(async move {
+                let mut conn = ctx.multiplexed_async_connection().await?;
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                conn.get_push_manager().replace_sender(tx.clone());
+                conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                let mut publish_conn = ctx.async_connection().await?;
+
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+
+                publish_conn.publish("foo", "foobar").await?;
+
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Message);
+
+                Ok(())
             })
             .unwrap();
         }
