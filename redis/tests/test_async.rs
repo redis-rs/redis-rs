@@ -686,7 +686,7 @@ mod basic_async {
                 let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
                 assert_eq!("banana".to_string(), msg_payload);
 
-                Ok::<_, RedisError>(())
+                Ok(())
             })
             .unwrap();
         }
@@ -710,7 +710,62 @@ mod basic_async {
                 let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
                 assert_eq!(subscription_count, 0);
 
-                Ok::<_, RedisError>(())
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn can_receive_messages_while_sending_requests_from_split_pub_sub() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+                let mut publish_conn = ctx.async_connection().await?;
+                let spawned_read = tokio::spawn(async move { stream.next().await });
+
+                sink.subscribe("phonewave").await?;
+                publish_conn.publish("phonewave", "banana").await?;
+
+                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+
+                assert_eq!("banana".to_string(), message);
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn can_receive_messages_from_split_pub_sub_after_sink_was_dropped() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+                let mut publish_conn = ctx.async_connection().await?;
+                let spawned_read = tokio::spawn(async move { stream.next().await });
+
+                sink.subscribe("phonewave").await?;
+                drop(sink);
+                publish_conn.publish("phonewave", "banana").await?;
+
+                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+
+                assert_eq!("banana".to_string(), message);
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn cannot_subscribe_on_split_pub_sub_after_stream_was_dropped() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+                drop(stream);
+
+                assert!(sink.subscribe("phonewave").await.is_err());
+
+                Ok(())
             })
             .unwrap();
         }

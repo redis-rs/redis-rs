@@ -34,13 +34,13 @@ struct PipelineMessage {
 }
 
 /// A sender to an async task passing the messages to a a `Stream + Sink`.
-struct Pipeline {
+pub struct PubSubSink {
     sender: mpsc::Sender<PipelineMessage>,
 }
 
-impl Clone for Pipeline {
+impl Clone for PubSubSink {
     fn clone(&self) -> Self {
-        Pipeline {
+        PubSubSink {
             sender: self.sender.clone(),
         }
     }
@@ -76,6 +76,11 @@ where
     // Read messages from the stream and handle them.
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
+            let self_ = self.as_mut().project();
+            if self_.sender.is_closed() {
+                return Poll::Ready(Err(()));
+            }
+
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
                 // The redis response stream is not going to produce any more items so we `Err`
@@ -202,13 +207,22 @@ where
             ready!(self.as_mut().poll_flush(cx))?;
         }
         let this = self.as_mut().project();
-        this.sink_stream.poll_close(cx).map_err(|err| {
-            let _ = self.handle_message(Err(err));
-        })
+
+        if this.sender.is_closed() {
+            return Poll::Ready(Ok(()));
+        }
+
+        match ready!(this.sink_stream.poll_next(cx)) {
+            Some(result) => {
+                let _ = self.handle_message(result);
+                Poll::Pending
+            }
+            None => Poll::Ready(Ok(())),
+        }
     }
 }
 
-impl Pipeline {
+impl PubSubSink {
     fn new<T>(
         sink_stream: T,
         messages_sender: UnboundedSender<Msg>,
@@ -226,7 +240,7 @@ impl Pipeline {
             .map(Ok)
             .forward(sink)
             .map(|_| ());
-        (Pipeline { sender }, f)
+        (PubSubSink { sender }, f)
     }
 
     async fn send_recv(&mut self, input: Vec<u8>) -> Result<(), RedisError> {
@@ -244,12 +258,39 @@ impl Pipeline {
             Err(_) => Err(closed_connection_error()),
         }
     }
+
+    /// Subscribes to a new channel.
+    pub async fn subscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name);
+        self.send_recv(cmd.get_packed_command()).await
+    }
+
+    /// Unsubscribes from channel.
+    pub async fn unsubscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        self.send_recv(cmd.get_packed_command()).await
+    }
+
+    /// Subscribes to a new channel with pattern.
+    pub async fn psubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        self.send_recv(cmd.get_packed_command()).await
+    }
+
+    /// Unsubscribes from channel pattern.
+    pub async fn punsubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        self.send_recv(cmd.get_packed_command()).await
+    }
 }
 
-/// A connection object which can be cloned, allowing requests to be be sent concurrently
-/// on the same underlying connection (tcp/unix socket).
+/// A connection dedicated to pubsub messages.
 pub struct PubSub {
-    pipeline: Pipeline,
+    sink: PubSubSink,
     receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
 }
 
@@ -328,38 +369,30 @@ impl PubSub {
         let mut codec = ValueCodec::default().framed(stream);
         setup_connection(&mut codec, redis_connection_info).await?;
         let (sender, receiver) = unbounded_channel();
-        let (pipeline, driver) = Pipeline::new(codec, sender);
+        let (sink, driver) = PubSubSink::new(codec, sender);
         let driver = boxed(driver);
-        let con = PubSub { pipeline, receiver };
+        let con = PubSub { sink, receiver };
         Ok((con, driver))
     }
 
     /// Subscribes to a new channel.
     pub async fn subscribe(&mut self, channel_name: &str) -> RedisResult<()> {
-        let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name);
-        self.pipeline.send_recv(cmd.get_packed_command()).await
+        self.sink.subscribe(channel_name).await
     }
 
     /// Unsubscribes from channel.
     pub async fn unsubscribe(&mut self, channel_name: &str) -> RedisResult<()> {
-        let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(channel_name);
-        self.pipeline.send_recv(cmd.get_packed_command()).await
+        self.sink.unsubscribe(channel_name).await
     }
 
     /// Subscribes to a new channel with pattern.
     pub async fn psubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
-        let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        self.pipeline.send_recv(cmd.get_packed_command()).await
+        self.sink.psubscribe(channel_pattern).await
     }
 
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
-        let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        self.pipeline.send_recv(cmd.get_packed_command()).await
+        self.sink.punsubscribe(channel_pattern).await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
@@ -378,5 +411,13 @@ impl PubSub {
     /// than the [`PubSub`].
     pub fn into_on_message(mut self) -> impl Stream<Item = Msg> {
         stream::poll_fn(move |cx| self.receiver.poll_recv(cx))
+    }
+
+    /// Splits the PubSub into separate sink and stream components, so that subscriptions could be updated through the `Sink` while concurrently waiting for new messages on the `Stream`.
+    pub fn split(mut self) -> (PubSubSink, impl Stream<Item = Msg>) {
+        (
+            self.sink,
+            stream::poll_fn(move |cx| self.receiver.poll_recv(cx)),
+        )
     }
 }
