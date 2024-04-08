@@ -18,7 +18,7 @@ use combine::{
         range::{recognize, take},
     },
     stream::{PointerOffset, RangeStream, StreamErrorFor},
-    ParseError, Parser as _,
+    unexpected_any, ParseError, Parser as _,
 };
 use num_bigint::BigInt;
 
@@ -150,40 +150,51 @@ where
                 let error = || line().map(err_parser);
                 let map = || {
                     int().then_partial(move |&mut kv_length| {
-                        let length = kv_length as usize * 2;
-                        combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: Vec<InternalValue>| {
-                                let mut it = result.into_iter();
-                                let mut x = vec![];
-                                for _ in 0..kv_length {
-                                    if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                        x.push((k, v))
-                                    }
-                                }
-                                InternalValue::Map(x)
-                            },
-                        )
+                        match (kv_length as usize).checked_mul(2) {
+                            Some(length) => {
+                                combine::count_min_max(length, length, value(Some(count + 1)))
+                                    .map(move |result: Vec<InternalValue>| {
+                                        let mut it = result.into_iter();
+                                        let mut x = vec![];
+                                        for _ in 0..kv_length {
+                                            if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                                                x.push((k, v))
+                                            }
+                                        }
+                                        InternalValue::Map(x)
+                                    })
+                                    .left()
+                            }
+                            None => unexpected_any("Key-value length is too large").right(),
+                        }
                     })
                 };
                 let attribute = || {
                     int().then_partial(move |&mut kv_length| {
-                        // + 1 is for data!
-                        let length = kv_length as usize * 2 + 1;
-                        combine::count_min_max(length, length, value(Some(count + 1))).map(
-                            move |result: Vec<InternalValue>| {
-                                let mut it = result.into_iter();
-                                let mut attributes = vec![];
-                                for _ in 0..kv_length {
-                                    if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                        attributes.push((k, v))
-                                    }
-                                }
-                                InternalValue::Attribute {
-                                    data: Box::new(it.next().unwrap()),
-                                    attributes,
-                                }
-                            },
-                        )
+                        match (kv_length as usize).checked_mul(2) {
+                            Some(length) => {
+                                // + 1 is for data!
+                                let length = length + 1;
+                                combine::count_min_max(length, length, value(Some(count + 1)))
+                                    .map(move |result: Vec<InternalValue>| {
+                                        let mut it = result.into_iter();
+                                        let mut attributes = vec![];
+                                        for _ in 0..kv_length {
+                                            if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                                                attributes.push((k, v))
+                                            }
+                                        }
+                                        InternalValue::Attribute {
+                                            data: Box::new(it.next().unwrap()),
+                                            attributes,
+                                        }
+                                    })
+                                    .left()
+                            }
+                            None => {
+                                unexpected_any("Attribute key-value length is too large").right()
+                            }
+                        }
                     })
                 };
                 let set = || {
