@@ -4,7 +4,7 @@ use crate::connection::{
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, Msg, RedisConnectionInfo};
+use crate::{cmd, ConnectionInfo, Msg, RedisConnectionInfo, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -260,28 +260,28 @@ impl PubSubSink {
     }
 
     /// Subscribes to a new channel.
-    pub async fn subscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+    pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name);
         self.send_recv(cmd.get_packed_command()).await
     }
 
     /// Unsubscribes from channel.
-    pub async fn unsubscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+    pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel_name);
         self.send_recv(cmd.get_packed_command()).await
     }
 
     /// Subscribes to a new channel with pattern.
-    pub async fn psubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+    pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern);
         self.send_recv(cmd.get_packed_command()).await
     }
 
     /// Unsubscribes from channel pattern.
-    pub async fn punsubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+    pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         self.send_recv(cmd.get_packed_command()).await
@@ -376,22 +376,22 @@ impl PubSub {
     }
 
     /// Subscribes to a new channel.
-    pub async fn subscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+    pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.subscribe(channel_name).await
     }
 
     /// Unsubscribes from channel.
-    pub async fn unsubscribe(&mut self, channel_name: &str) -> RedisResult<()> {
+    pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.unsubscribe(channel_name).await
     }
 
     /// Subscribes to a new channel with pattern.
-    pub async fn psubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+    pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.psubscribe(channel_pattern).await
     }
 
     /// Unsubscribes from channel pattern.
-    pub async fn punsubscribe(&mut self, channel_pattern: &str) -> RedisResult<()> {
+    pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.punsubscribe(channel_pattern).await
     }
 
