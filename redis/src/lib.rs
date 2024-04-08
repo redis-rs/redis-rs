@@ -510,9 +510,11 @@ pub mod acl;
 pub mod aio;
 
 #[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 pub use crate::commands::JsonCommands;
 
 #[cfg(all(feature = "json", feature = "aio"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
 pub use crate::commands::JsonAsyncCommands;
 
 #[cfg(feature = "geospatial")]
@@ -524,13 +526,16 @@ pub mod geo;
 pub mod cluster;
 
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 mod cluster_client;
 
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 mod cluster_pipeline;
 
 /// Routing information for cluster commands.
 #[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster_routing;
 
 #[cfg(feature = "r2d2")]
@@ -542,15 +547,18 @@ mod r2d2;
 pub mod streams;
 
 #[cfg(feature = "cluster-async")]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "cluster", feature = "aio"))))]
 pub mod cluster_async;
 
 #[cfg(feature = "sentinel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
 #[cfg(feature = "tls-rustls")]
 mod tls;
 
 #[cfg(feature = "tls-rustls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
 mod client;
