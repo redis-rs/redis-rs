@@ -111,14 +111,14 @@ jobs:
 
     - name: Check features
       run: |
-        cargo check --benches --all-features
-        cargo check --no-default-features --features tokio-comp
+        cargo check -p redis --benches --all-features
+        cargo check -p redis --no-default-features --features tokio-comp
         # Remove dev-dependencies so they do not enable features accidentally
         # https://github.com/rust-lang/cargo/issues/4664
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-        cargo check --all-features
+        cargo check -p redis --all-features
 
-        cargo check --no-default-features --features async-std-comp
+        cargo check -p redis --no-default-features --features async-std-comp
 
   lint:
     runs-on: ubuntu-latest
@@ -181,8 +181,8 @@ jobs:
     - name: Benchmark
       run: |
         cargo install critcmp
-        cargo bench --all-features -- --measurement-time 15 --save-baseline changes
+        cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
         git fetch
         git checkout ${{ github.base_ref }} 
-        cargo bench --all-features -- --measurement-time 15 --save-baseline base
+        cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
