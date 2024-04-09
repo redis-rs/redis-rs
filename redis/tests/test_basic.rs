@@ -642,6 +642,9 @@ mod basic {
 
         // Connection for subscriber api
         let mut pubsub_con = ctx.connection();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // Only useful when RESP3 is enabled
+        pubsub_con.get_push_manager().replace_sender(tx);
 
         // Barrier is used to make test thread wait to publish
         // until after the pubsub thread has subscribed.
@@ -669,6 +672,40 @@ mod basic {
         assert_eq!(con.publish("foo", 23), Ok(1));
 
         thread.join().expect("Something went wrong");
+        if ctx.protocol == ProtocolVersion::RESP3 {
+            // We expect all push messages to be here, since sync connection won't read in background
+            // we can't receive push messages without requesting some command
+            let PushInfo { kind, data } = rx.try_recv().unwrap();
+            assert_eq!(
+                (
+                    PushKind::Subscribe,
+                    vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                ),
+                (kind, data)
+            );
+            let PushInfo { kind, data } = rx.try_recv().unwrap();
+            assert_eq!(
+                (
+                    PushKind::Message,
+                    vec![
+                        Value::BulkString("foo".as_bytes().to_vec()),
+                        Value::BulkString("42".as_bytes().to_vec())
+                    ]
+                ),
+                (kind, data)
+            );
+            let PushInfo { kind, data } = rx.try_recv().unwrap();
+            assert_eq!(
+                (
+                    PushKind::Message,
+                    vec![
+                        Value::BulkString("foo".as_bytes().to_vec()),
+                        Value::BulkString("23".as_bytes().to_vec())
+                    ]
+                ),
+                (kind, data)
+            );
+        }
     }
 
     #[test]
@@ -676,6 +713,9 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // Only useful when RESP3 is enabled
+        con.get_push_manager().replace_sender(tx);
         {
             let mut pubsub = con.as_pubsub();
             pubsub.subscribe("foo").unwrap();
@@ -690,6 +730,33 @@ mod basic {
         let _: redis::Value = con.set("foo", "bar").unwrap();
         let value: String = con.get("foo").unwrap();
         assert_eq!(&value[..], "bar");
+
+        if ctx.protocol == ProtocolVersion::RESP3 {
+            // Since UNSUBSCRIBE and PUNSUBSCRIBE may give channel names in different orders, there is this weird test.
+            let expected_values = vec![
+                (PushKind::Subscribe, "foo".to_string()),
+                (PushKind::Subscribe, "bar".to_string()),
+                (PushKind::Subscribe, "baz".to_string()),
+                (PushKind::PSubscribe, "foo*".to_string()),
+                (PushKind::PSubscribe, "bar*".to_string()),
+                (PushKind::PSubscribe, "baz*".to_string()),
+                (PushKind::Unsubscribe, "foo".to_string()),
+                (PushKind::Unsubscribe, "bar".to_string()),
+                (PushKind::Unsubscribe, "baz".to_string()),
+                (PushKind::PUnsubscribe, "foo*".to_string()),
+                (PushKind::PUnsubscribe, "bar*".to_string()),
+                (PushKind::PUnsubscribe, "baz*".to_string()),
+            ];
+            let mut received_values = vec![];
+            for _ in &expected_values {
+                let PushInfo { kind, data } = rx.try_recv().unwrap();
+                let channel_name: String = redis::from_redis_value(data.first().unwrap()).unwrap();
+                received_values.push((kind, channel_name));
+            }
+            for val in expected_values {
+                assert!(received_values.contains(&val))
+            }
+        }
     }
 
     #[test]
@@ -1491,7 +1558,7 @@ mod basic {
         }
         let mut con = ctx.connection();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager().replace_sender(tx.clone());
+        con.get_push_manager().replace_sender(tx);
         let _ = cmd("CLIENT")
             .arg("TRACKING")
             .arg("ON")
@@ -1554,5 +1621,68 @@ mod basic {
         let x: RedisResult<()> = con.set("A", "1");
         assert!(x.is_err());
         assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
+    }
+
+    #[test]
+    fn test_raw_pubsub_with_push_manager() {
+        // Tests PubSub usage with raw connection.
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        let mut con = ctx.connection();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut pubsub_con = ctx.connection();
+        pubsub_con.get_push_manager().replace_sender(tx);
+
+        {
+            // `set_no_response` is used because in RESP3
+            // SUBSCRIPE/PSUBSCRIBE and UNSUBSCRIBE/PUNSUBSCRIBE commands doesn't return any reply only push messages
+            redis::cmd("SUBSCRIBE")
+                .arg("foo")
+                .set_no_response(true)
+                .execute(&mut pubsub_con);
+        }
+        // We are using different redis connection to send PubSub message but it's okay to re-use the same connection.
+        redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
+        // We can also call the command directly
+        assert_eq!(con.publish("foo", 23), Ok(1));
+
+        // In sync connection it can't receive push messages from socket without requesting some command
+        redis::cmd("PING").execute(&mut pubsub_con);
+
+        // We have received verification from Redis that it's subscribed to channel.
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Subscribe,
+                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+            ),
+            (kind, data)
+        );
+
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Message,
+                vec![
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("42".as_bytes().to_vec())
+                ]
+            ),
+            (kind, data)
+        );
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Message,
+                vec![
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("23".as_bytes().to_vec())
+                ]
+            ),
+            (kind, data)
+        );
     }
 }
