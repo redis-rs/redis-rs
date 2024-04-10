@@ -11,13 +11,11 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, PushKind, RedisError, RedisResult, ToRedisArgs,
-    Value,
+    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
+    ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
-#[cfg(unix)]
-use crate::types::HashMap;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::vec::IntoIter;
