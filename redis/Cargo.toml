@@ -165,6 +165,10 @@ required-features = ["cluster-async"]
 [[test]]
 name = "test_bignum"
 
+[[test]]
+name = "test_script"
+required-features = ["script"]
+
 [[bench]]
 name = "bench_basic"
 harness = false

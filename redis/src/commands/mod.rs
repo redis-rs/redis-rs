@@ -1862,7 +1862,6 @@ implement_commands! {
             .arg(count)
     }
 
-
     /// Trim a stream `key` to a MAXLEN count.
     ///
     /// ```text
@@ -1875,6 +1874,36 @@ implement_commands! {
         maxlen: streams::StreamMaxlen
     ) {
         cmd("XTRIM").arg(key).arg(maxlen)
+    }
+
+    // script commands
+
+    /// Adds a prepared script command to the pipeline.
+    #[cfg_attr(feature = "script", doc = r##"
+
+# Examples:
+
+```rust,no_run
+# fn do_something() -> redis::RedisResult<()> {
+# let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+# let mut con = client.get_connection().unwrap();
+let script = redis::Script::new(r"
+    return tonumber(ARGV[1]) + tonumber(ARGV[2]);
+");
+let (a, b): (isize, isize) = redis::pipe()
+    .invoke_script(script.arg(1).arg(2))
+    .invoke_script(script.arg(2).arg(3))
+    .query(&mut con)?;
+
+assert_eq!(a, 3);
+assert_eq!(b, 5);
+# Ok(()) }
+```
+"##)]
+    #[cfg(feature = "script")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
+    fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) {
+        &mut invocation.eval_cmd()
     }
 }
 
