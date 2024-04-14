@@ -168,3 +168,17 @@ pub use connection_manager::*;
 mod runtime;
 use crate::commands::resp3_hello;
 pub(super) use runtime::*;
+
+macro_rules! check_resp3 {
+    ($protocol: expr) => {
+        use crate::types::ProtocolVersion;
+        if $protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+    };
+}
+
+pub(crate) use check_resp3;
