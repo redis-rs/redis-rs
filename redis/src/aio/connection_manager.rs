@@ -1,10 +1,10 @@
 use super::RedisFuture;
-use crate::cmd::Cmd;
-use crate::push_manager::PushManager;
-use crate::types::{RedisError, RedisResult, Value};
 use crate::{
-    aio::{ConnectionLike, MultiplexedConnection, Runtime},
-    Client,
+    aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
+    cmd,
+    push_manager::PushManager,
+    types::{RedisError, RedisResult, Value},
+    Client, Cmd, ToRedisArgs,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
@@ -384,6 +384,44 @@ impl ConnectionManager {
             .await;
         reconnect_if_dropped!(self, &result, guard);
         result
+    }
+
+    /// Subscribes to a new channel.
+    /// It should be noted that the subscription will be removed on a disconnect and must be re-subscribed.
+    pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.client.connection_info.redis.protocol);
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel.
+    pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.client.connection_info.redis.protocol);
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Subscribes to a new channel with pattern.
+    /// It should be noted that the subscription will be removed on a disconnect and must be re-subscribed.
+    pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.client.connection_info.redis.protocol);
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel pattern.
+    pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.client.connection_info.redis.protocol);
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.exec_async(self).await?;
+        Ok(())
     }
 
     /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
