@@ -878,6 +878,27 @@ mod basic_async {
         }
 
         #[test]
+        fn pub_sub_requires_resp3() {
+            let ctx = TestContext::new();
+            if ctx.protocol != ProtocolVersion::RESP2 {
+                return;
+            }
+            block_on_all(async move {
+                let mut conn = ctx.multiplexed_async_connection().await?;
+
+                let res = conn.subscribe("foo").await;
+
+                assert_eq!(
+                    res.unwrap_err().kind(),
+                    redis::ErrorKind::InvalidClientConfig
+                );
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
         fn push_manager_disconnection() {
             use redis::RedisError;
 

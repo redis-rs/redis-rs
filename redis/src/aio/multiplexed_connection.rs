@@ -1,5 +1,5 @@
 use super::{ConnectionLike, Runtime};
-use crate::aio::setup_connection;
+use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -585,15 +585,11 @@ impl ConnectionLike for MultiplexedConnection {
         self.db
     }
 }
+
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
-        if self.protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                "RESP3 is required for this command",
-            )));
-        }
+        check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
@@ -602,12 +598,7 @@ impl MultiplexedConnection {
 
     /// Unsubscribes from channel.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
-        if self.protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                "RESP3 is required for this command",
-            )));
-        }
+        check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
@@ -616,12 +607,7 @@ impl MultiplexedConnection {
 
     /// Subscribes to a new channel with pattern.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
-        if self.protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                "RESP3 is required for this command",
-            )));
-        }
+        check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
@@ -630,12 +616,7 @@ impl MultiplexedConnection {
 
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
-        if self.protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                "RESP3 is required for this command",
-            )));
-        }
+        check_resp3!(self.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
