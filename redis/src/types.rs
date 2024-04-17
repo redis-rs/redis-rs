@@ -34,13 +34,13 @@ macro_rules! invalid_type_error_inner {
 /// Helper enum that is used to define expiry time
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
-    EX(usize),
+    EX(u64),
     /// PX milliseconds -- Set the specified expire time, in milliseconds.
-    PX(usize),
+    PX(u64),
     /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
-    EXAT(usize),
+    EXAT(u64),
     /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
-    PXAT(usize),
+    PXAT(u64),
     /// PERSIST -- Remove the time to live associated with the key.
     PERSIST,
 }
@@ -49,13 +49,13 @@ pub enum Expiry {
 #[derive(Clone, Copy)]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
-    EX(usize),
+    EX(u64),
     /// PX milliseconds -- Set the specified expire time, in milliseconds.
-    PX(usize),
+    PX(u64),
     /// EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
-    EXAT(usize),
+    EXAT(u64),
     /// PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
-    PXAT(usize),
+    PXAT(u64),
     /// KEEPTTL -- Retain the time to live associated with the key.
     KEEPTTL,
 }
