@@ -4,7 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod basic {
-    use redis::{cmd, ProtocolVersion, PushInfo};
+    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
         PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
@@ -43,6 +43,41 @@ mod basic {
             redis::cmd("MGET").arg(&["key1", "key2"]).query(&mut con),
             Ok(("foo".to_string(), b"bar".to_vec()))
         );
+    }
+
+    #[test]
+    fn test_can_authenticate_with_username_and_password() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let username = "foo";
+        let password = "bar";
+
+        // adds a "foo" user with "GET permissions"
+        let mut set_user_cmd = redis::Cmd::new();
+        set_user_cmd
+            .arg("ACL")
+            .arg("SETUSER")
+            .arg(username)
+            .arg("on")
+            .arg("+acl")
+            .arg(format!(">{password}"));
+        assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
+
+        let mut conn = redis::Client::open(ConnectionInfo {
+            addr: ctx.server.client_addr().clone(),
+            redis: RedisConnectionInfo {
+                username: Some(username.to_string()),
+                password: Some(password.to_string()),
+                ..Default::default()
+            },
+        })
+        .unwrap()
+        .get_connection()
+        .unwrap();
+
+        let result: String = cmd("ACL").arg("whoami").query(&mut conn).unwrap();
+        assert_eq!(result, username)
     }
 
     #[test]

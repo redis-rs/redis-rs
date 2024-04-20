@@ -7,7 +7,8 @@ mod basic_async {
     use futures::{prelude::*, StreamExt};
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ErrorKind, PushInfo, PushKind, RedisResult, Value,
+        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushInfo, PushKind,
+        RedisConnectionInfo, RedisResult, Value,
     };
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -35,6 +36,50 @@ mod basic_async {
             assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
             result
         }))
+        .unwrap();
+    }
+
+    #[test]
+    fn test_can_authenticate_with_username_and_password() {
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut con = ctx.async_connection().await.unwrap();
+
+            let username = "foo";
+            let password = "bar";
+
+            // adds a "foo" user with "GET permissions"
+            let mut set_user_cmd = redis::Cmd::new();
+            set_user_cmd
+                .arg("ACL")
+                .arg("SETUSER")
+                .arg(username)
+                .arg("on")
+                .arg("+acl")
+                .arg(format!(">{password}"));
+            assert_eq!(con.req_packed_command(&set_user_cmd).await, Ok(Value::Okay));
+
+            let mut conn = redis::Client::open(ConnectionInfo {
+                addr: ctx.server.client_addr().clone(),
+                redis: RedisConnectionInfo {
+                    username: Some(username.to_string()),
+                    password: Some(password.to_string()),
+                    ..Default::default()
+                },
+            })
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+
+            let result: String = cmd("ACL")
+                .arg("whoami")
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+            assert_eq!(result, username);
+            Ok(())
+        })
         .unwrap();
     }
 
