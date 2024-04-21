@@ -584,6 +584,22 @@ impl Cmd {
     }
 }
 
+impl fmt::Debug for Cmd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let res = self
+            .args_iter()
+            .map(|arg| {
+                let bytes = match arg {
+                    Arg::Cursor => b"<scan_cursor>",
+                    Arg::Simple(val) => val,
+                };
+                std::str::from_utf8(bytes).unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        f.debug_struct("Cmd").field("args", &res).finish()
+    }
+}
+
 /// Shortcut function to creating a command with a single argument.
 ///
 /// The first argument of a redis command is always the name of the command
