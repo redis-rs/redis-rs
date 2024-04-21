@@ -472,9 +472,25 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
 }
 
 impl RoutingInfo {
-    /// Returns true if the `cmd`` should be routed to all nodes.
+    /// Returns true if the `cmd` should be routed to all nodes.
     pub fn is_all_nodes(cmd: &[u8]) -> bool {
         matches!(base_routing(cmd), RouteBy::AllNodes)
+    }
+
+    /// Returns true if the `cmd` is a key-based command.
+    pub fn is_key_based_cmd(cmd: &[u8]) -> bool {
+        match base_routing(cmd) {
+            RouteBy::FirstKey
+            | RouteBy::SecondArg
+            | RouteBy::ThirdArgAfterKeyCount
+            | RouteBy::SecondArgSlot
+            | RouteBy::StreamsIndex
+            | RouteBy::MultiShardNoValues
+            | RouteBy::MultiShardWithValues => true,
+            RouteBy::AllNodes | RouteBy::AllPrimaries | RouteBy::Random | RouteBy::Undefined => {
+                false
+            }
+        }
     }
 
     /// Returns the routing info for `r`.
