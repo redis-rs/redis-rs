@@ -98,16 +98,6 @@ geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
-tls-native-tls = ["native-tls"]
-tls-rustls = ["rustls", "rustls-native-certs", "rustls-pemfile", "rustls-pki-types"]
-tls-rustls-insecure = ["tls-rustls"]
-tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
-async-std-comp = ["aio", "async-std"]
-async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
-async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
-tokio-comp = ["aio", "tokio/net"]
-tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
-tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
 connection-manager = ["futures", "aio", "tokio-retry"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]
@@ -120,9 +110,39 @@ num-bigint = []
 uuid = ["dep:uuid"]
 disable-client-setinfo = []
 
+# tls related features
+# At most one should be needed
+tls-native-tls = ["native-tls"]
+tls-rustls-native-certs = ["tls-rustls-core", "rustls-native-certs"]
+tls-rustls-webpki-roots = ["tls-rustls-core", "webpki-roots"]
+
+# async-std related features
+# At most one should be needed
+async-std-comp = ["aio", "async-std"]
+async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
+async-std-rustls-native-certs-comp = ["async-std-rustls-core", "tls-rustls-native-certs"]
+async-std-rustls-webpki-roots-comp = ["async-std-rustls-core", "tls-rustls-webpki-roots"]
+
+# tokio related features
+# At most one should be needed
+tokio-comp = ["aio", "tokio/net"]
+tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
+tokio-rustls-native-certs-comp = ["tokio-rustls-core", "tls-rustls-native-certs"]
+tokio-rustls-webpki-roots-comp = ["tokio-rustls-core", "tls-rustls-webpki-roots"]
+
+# Can be combined with any other feature that enables rustls
+tls-rustls-insecure = ["tls-rustls-core"]
+# mostly meant for internal use
+tls-rustls-core = ["rustls", "rustls-pemfile", "rustls-pki-types"]
+async-std-rustls-core = ["tls-rustls-core", "async-std-comp", "futures-rustls"]
+tokio-rustls-core = ["tls-rustls-core", "tokio-comp", "tokio-rustls"]
+
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
 async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
+tls-rustls = ["tls-rustls-native-certs"] # use "tls-rustls-native-certs" instead
+async-std-rustls-comp = ["async-std-rustls-native-certs-comp"] # use "async-std-rustls-native-certs-comp" instead
+tokio-rustls-comp = ["tokio-rustls-native-certs-comp"] # use "tokio-rustls-native-certs-comp" instead
 
 [dev-dependencies]
 rand = "0.8"
