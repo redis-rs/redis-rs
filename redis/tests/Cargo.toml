@@ -1,0 +1,16 @@
+[package]
+name = "redis-test-utils"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+bench = false
+path = "support/mod.rs"
+
+[dependencies]
+redis = { version = "0.25.3", path = "../../redis" }
+socket2 = "0.5"
+rand = "0.8"
+tempfile = "=3.6.0"
+tokio = "1"
