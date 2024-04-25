@@ -442,6 +442,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"DEBUG"
         | b"ECHO"
         | b"LASTSAVE"
+        | b"LOLWUT"
         | b"MODULE LIST"
         | b"MODULE LOAD"
         | b"MODULE LOADEX"
