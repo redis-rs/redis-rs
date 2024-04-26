@@ -66,6 +66,42 @@ impl Client {
     }
 }
 
+/// Options for creation of async connection
+pub struct AsyncConnectionConfig {
+    /// Maximum time to wait for a response from the server
+    response_timeout: Option<std::time::Duration>,
+    /// Maximum time to wait for a connection to be established
+    connection_timeout: Option<std::time::Duration>,
+}
+
+impl AsyncConnectionConfig {
+    /// Creates a new instance of the options with nothing set
+    pub fn new() -> Self {
+        Self {
+            response_timeout: None,
+            connection_timeout: None,
+        }
+    }
+
+    /// Sets the connection timeout
+    pub fn with_connection_timeout(mut self, connection_timeout: std::time::Duration) -> Self {
+        self.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Sets the response timeout
+    pub fn with_response_timeout(mut self, response_timeout: std::time::Duration) -> Self {
+        self.response_timeout = Some(response_timeout);
+        self
+    }
+}
+
+impl Default for AsyncConnectionConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// To enable async support you need to chose one of the supported runtimes and active its
 /// corresponding feature: `tokio-comp` or `async-std-comp`
 #[cfg(feature = "aio")]
@@ -135,18 +171,8 @@ impl Client {
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        match Runtime::locate() {
-            #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => {
-                self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(None)
-                    .await
-            }
-            #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => {
-                self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(None)
-                    .await
-            }
-        }
+        self.get_multiplexed_async_connection_with_config(&AsyncConnectionConfig::new())
+            .await
     }
 
     /// Returns an async connection from the client.
@@ -160,26 +186,60 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
+        self.get_multiplexed_async_connection_with_config(
+            &AsyncConnectionConfig::new()
+                .with_connection_timeout(connection_timeout)
+                .with_response_timeout(response_timeout),
+        )
+        .await
+    }
+
+    /// Returns an async connection from the client.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
+    )]
+    pub async fn get_multiplexed_async_connection_with_config(
+        &self,
+        config: &AsyncConnectionConfig,
+    ) -> RedisResult<crate::aio::MultiplexedConnection> {
         let result = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             rt @ Runtime::Tokio => {
-                rt.timeout(
-                    connection_timeout,
-                    self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(Some(
-                        response_timeout,
-                    )),
-                )
-                .await
+                if let Some(connection_timeout) = config.connection_timeout {
+                    rt.timeout(
+                        connection_timeout,
+                        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                            config.response_timeout,
+                        ),
+                    )
+                    .await
+                } else {
+                    Ok(self
+                        .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
+                            config.response_timeout,
+                        )
+                        .await)
+                }
             }
             #[cfg(feature = "async-std-comp")]
             rt @ Runtime::AsyncStd => {
-                rt.timeout(
-                    connection_timeout,
-                    self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                        Some(response_timeout),
-                    ),
-                )
-                .await
+                if let Some(connection_timeout) = config.connection_timeout {
+                    rt.timeout(
+                        connection_timeout,
+                        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                            config.response_timeout,
+                        ),
+                    )
+                    .await
+                } else {
+                    Ok(self
+                        .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
+                            config.response_timeout,
+                        )
+                        .await)
+                }
             }
         };
 

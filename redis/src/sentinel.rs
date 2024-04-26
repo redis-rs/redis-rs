@@ -112,6 +112,7 @@ use rand::Rng;
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
 
+use crate::client::AsyncConnectionConfig;
 use crate::{
     connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ErrorKind,
     FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
@@ -766,7 +767,20 @@ impl SentinelClient {
     /// `SentinelClient::get_connection`.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&mut self) -> RedisResult<AsyncConnection> {
-        let client = self.async_get_client().await?;
-        client.get_multiplexed_async_connection().await
+        self.get_async_connection_with_config(&AsyncConnectionConfig::new())
+            .await
+    }
+
+    /// Returns an async connection from the client with options, using the same logic from
+    /// `SentinelClient::get_connection`.
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    pub async fn get_async_connection_with_config(
+        &mut self,
+        config: &AsyncConnectionConfig,
+    ) -> RedisResult<AsyncConnection> {
+        self.async_get_client()
+            .await?
+            .get_multiplexed_async_connection_with_config(config)
+            .await
     }
 }
