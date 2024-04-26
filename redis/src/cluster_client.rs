@@ -282,7 +282,10 @@ impl ClusterClientBuilder {
     /// If `root_cert` is not provided, then system root certificates are used instead.
     #[cfg(feature = "tls-rustls")]
     pub fn certs(mut self, certificates: TlsCertificates) -> ClusterClientBuilder {
-        self.builder_params.tls = Some(TlsMode::Secure);
+        if self.builder_params.tls.is_none() {
+            self.builder_params.tls = Some(TlsMode::Secure);
+        }
+
         self.builder_params.certs = Some(certificates);
         self
     }
