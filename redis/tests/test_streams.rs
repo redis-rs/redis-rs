@@ -443,6 +443,88 @@ fn test_xread_options_deleted_pel_entry() {
         result_deleted_entry.keys[0].ids[0].id
     );
 }
+
+#[test]
+fn test_xautoclaim() {
+    // Tests the following command....
+    // xautoclaim_options
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // xautoclaim test basic idea:
+    // 1. we need to test adding messages to a group
+    // 2. then xreadgroup needs to define a consumer and read pending
+    //    messages without acking them
+    // 3. then we need to sleep 5ms and call xautoclaim to claim message
+    //    past the idle time and read them from a different consumer
+
+    // create the group
+    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    assert!(result.is_ok());
+
+    // add some keys
+    xadd_keyrange(&mut con, "k1", 0, 10);
+
+    // read the pending items for this key & group
+    let reply: StreamReadReply = con
+        .xread_options(
+            &["k1"],
+            &[">"],
+            &StreamReadOptions::default().group("g1", "c1"),
+        )
+        .unwrap();
+    // verify we have 10 ids
+    assert_eq!(reply.keys[0].ids.len(), 10);
+
+    // save this StreamId for later
+    let claim = &reply.keys[0].ids[0];
+    let claim_1 = &reply.keys[0].ids[1];
+
+    // sleep for 5ms
+    sleep(Duration::from_millis(10));
+
+    // grab this id if > 4ms
+    let reply: StreamAutoClaimReply = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            4,
+            claim.id.clone(),
+            StreamAutoClaimOptions::default().count(2),
+        )
+        .unwrap();
+    assert_eq!(reply.claimed.len(), 2);
+    assert_eq!(reply.claimed[0].id, claim.id);
+    assert!(!reply.claimed[0].map.is_empty());
+    assert_eq!(reply.claimed[1].id, claim_1.id);
+    assert!(!reply.claimed[1].map.is_empty());
+
+    // sleep for 5ms
+    sleep(Duration::from_millis(5));
+
+    // let's test some of the xautoclaim_options
+    // call force on the same claim.id
+    let reply: StreamAutoClaimReply = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c3",
+            4,
+            claim.id.clone(),
+            StreamAutoClaimOptions::default().count(5).with_justid(),
+        )
+        .unwrap();
+
+    // we just claimed the first original 5 ids
+    // and only returned the ids
+    assert_eq!(reply.claimed.len(), 5);
+    assert_eq!(reply.claimed[0].id, claim.id);
+    assert!(reply.claimed[0].map.is_empty());
+    assert_eq!(reply.claimed[1].id, claim_1.id);
+    assert!(reply.claimed[1].map.is_empty());
+}
+
 #[test]
 fn test_xclaim() {
     // Tests the following commands....

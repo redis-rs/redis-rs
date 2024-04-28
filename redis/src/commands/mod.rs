@@ -1407,7 +1407,45 @@ implement_commands! {
             .arg(map)
     }
 
-
+    /// Perform a combined xpending and xclaim flow.
+    ///
+    /// ```no_run
+    /// use redis::{Connection,Commands,RedisResult};
+    /// use redis::streams::{StreamAutoClaimOptions, StreamAutoClaimReply};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamAutoClaimOptions::default();
+    /// let results : RedisResult<StreamAutoClaimReply> = con.xautoclaim_options("k1", "g1", "c1", 10, "0-0", opts);
+    /// ```
+    ///
+    /// ```text
+    /// XAUTOCLAIM <key> <group> <consumer> <min-idel-time> <start> [COUNT <count>] [JUSTID]
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xautoclaim_options<
+        K: ToRedisArgs,
+        G: ToRedisArgs,
+        C: ToRedisArgs,
+        MIT: ToRedisArgs,
+        S: ToRedisArgs
+    >(
+        key: K,
+        group: G,
+        consumer: C,
+        min_idle_time: MIT,
+        start: S,
+        options: streams::StreamAutoClaimOptions
+    ) {
+        cmd("XAUTOCLAIM")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+            .arg(min_idle_time)
+            .arg(start)
+            .arg(options)
+    }
 
     /// Claim pending, unacked messages, after some period of time,
     /// currently checked out by another consumer.

@@ -6,6 +6,16 @@ use crate::{
 
 use std::io::{Error, ErrorKind};
 
+macro_rules! invalid_type_error {
+    ($v:expr, $det:expr) => {{
+        fail!((
+            $crate::ErrorKind::TypeError,
+            "Response was of incompatible type",
+            format!("{:?} (response was {:?})", $det, $v)
+        ));
+    }};
+}
+
 // Stream Maxlen Enum
 
 /// Utility enum for passing `MAXLEN [= or ~] [COUNT]`
@@ -31,6 +41,46 @@ impl ToRedisArgs for StreamMaxlen {
         out.write_arg(b"MAXLEN");
         out.write_arg(ch.as_bytes());
         val.write_redis_args(out);
+    }
+}
+
+/// Builder options for [`xautoclaim_options`] command.
+///
+/// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
+///
+#[derive(Default, Debug)]
+pub struct StreamAutoClaimOptions {
+    count: Option<usize>,
+    justid: bool,
+}
+
+impl StreamAutoClaimOptions {
+    /// Sets the maximum number of elements to claim per stream.
+    pub fn count(mut self, n: usize) -> Self {
+        self.count = Some(n);
+        self
+    }
+
+    /// Set `JUSTID` cmd arg to true. Be advised: the response
+    /// type changes with this option.
+    pub fn with_justid(mut self) -> Self {
+        self.justid = true;
+        self
+    }
+}
+
+impl ToRedisArgs for StreamAutoClaimOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref count) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg(format!("{count}").as_bytes());
+        }
+        if self.justid {
+            out.write_arg(b"JUSTID");
+        }
     }
 }
 
@@ -206,6 +256,20 @@ impl ToRedisArgs for StreamReadOptions {
             }
         }
     }
+}
+
+/// Reply type used with the [`xautoclaim_options`] command.
+///
+/// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
+///
+#[derive(Default, Debug, Clone)]
+pub struct StreamAutoClaimReply {
+    /// The next stream id to use as the start argument for the next xautoclaim
+    pub next_stream_id: String,
+    /// The entries claimed for the consumer. When JUSTID is enabled the map in each entry is blank
+    pub claimed: Vec<StreamId>,
+    /// The list of stream ids that were removed due to no longer being in the stream
+    pub deleted_ids: Vec<String>,
 }
 
 /// Reply type used with [`xread`] or [`xread_options`] commands.
@@ -465,6 +529,60 @@ impl StreamId {
     }
 }
 
+type SACRows = Vec<HashMap<String, HashMap<String, Value>>>;
+
+impl FromRedisValue for StreamAutoClaimReply {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match *v {
+            Value::Array(ref items) => {
+                if let 2..=3 = items.len() {
+                    let deleted_ids = if let Some(o) = items.get(2) {
+                        from_redis_value(o)?
+                    } else {
+                        Vec::new()
+                    };
+
+                    let claimed: Vec<StreamId> = match &items[1] {
+                        // JUSTID response
+                        Value::Array(x)
+                            if matches!(x.first(), None | Some(Value::BulkString(_))) =>
+                        {
+                            let ids: Vec<String> = from_redis_value(&items[1])?;
+
+                            ids.into_iter()
+                                .map(|id| StreamId {
+                                    id,
+                                    ..Default::default()
+                                })
+                                .collect()
+                        }
+                        // full response
+                        Value::Array(x) if matches!(x.first(), Some(Value::Array(_))) => {
+                            let rows: SACRows = from_redis_value(&items[1])?;
+
+                            rows.into_iter()
+                                .flat_map(|id_row| {
+                                    id_row.into_iter().map(|(id, map)| StreamId { id, map })
+                                })
+                                .collect()
+                        }
+                        _ => invalid_type_error!("Incorrect type", &items[1]),
+                    };
+
+                    Ok(Self {
+                        next_stream_id: from_redis_value(&items[0])?,
+                        claimed,
+                        deleted_ids,
+                    })
+                } else {
+                    invalid_type_error!("Wrong number of entries in array response", v)
+                }
+            }
+            _ => invalid_type_error!("Not a array response", v),
+        }
+    }
+}
+
 type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
 impl FromRedisValue for StreamReadReply {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
@@ -666,5 +784,180 @@ impl FromRedisValue for StreamInfoGroupsReply {
             reply.groups.push(g);
         }
         Ok(reply)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod stream_auto_claim_options {
+        use super::*;
+        use crate::Value;
+
+        #[test]
+        fn short_response() {
+            let value = Value::Array(vec![Value::BulkString("1713465536578-0".into())]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_err());
+        }
+
+        #[test]
+        fn parses_none_claimed_response() {
+            let value = Value::Array(vec![
+                Value::BulkString("0-0".into()),
+                Value::Array(vec![]),
+                Value::Array(vec![]),
+            ]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_ok());
+
+            let reply = reply.unwrap();
+
+            assert_eq!(reply.next_stream_id.as_str(), "0-0");
+            assert_eq!(reply.claimed.len(), 0);
+            assert_eq!(reply.deleted_ids.len(), 0);
+        }
+
+        #[test]
+        fn parses_response() {
+            let value = Value::Array(vec![
+                Value::BulkString("1713465536578-0".into()),
+                Value::Array(vec![
+                    Value::Array(vec![
+                        Value::BulkString("1713465533411-0".into()),
+                        // Both RESP2 and RESP3 expose this map as an array of key/values
+                        Value::Array(vec![
+                            Value::BulkString("name".into()),
+                            Value::BulkString("test".into()),
+                            Value::BulkString("other".into()),
+                            Value::BulkString("whaterver".into()),
+                        ]),
+                    ]),
+                    Value::Array(vec![
+                        Value::BulkString("1713465536069-0".into()),
+                        Value::Array(vec![
+                            Value::BulkString("name".into()),
+                            Value::BulkString("another test".into()),
+                            Value::BulkString("other".into()),
+                            Value::BulkString("something".into()),
+                        ]),
+                    ]),
+                ]),
+                Value::Array(vec![Value::BulkString("123456789-0".into())]),
+            ]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_ok());
+
+            let reply = reply.unwrap();
+
+            assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
+            assert_eq!(reply.claimed.len(), 2);
+            assert_eq!(reply.claimed[0].id.as_str(), "1713465533411-0");
+            assert!(
+                matches!(reply.claimed[0].map.get("name"), Some(Value::BulkString(v)) if v == "test".as_bytes())
+            );
+            assert_eq!(reply.claimed[1].id.as_str(), "1713465536069-0");
+            assert_eq!(reply.deleted_ids.len(), 1);
+            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()))
+        }
+
+        #[test]
+        fn parses_v6_response() {
+            let value = Value::Array(vec![
+                Value::BulkString("1713465536578-0".into()),
+                Value::Array(vec![
+                    Value::Array(vec![
+                        Value::BulkString("1713465533411-0".into()),
+                        Value::Array(vec![
+                            Value::BulkString("name".into()),
+                            Value::BulkString("test".into()),
+                            Value::BulkString("other".into()),
+                            Value::BulkString("whaterver".into()),
+                        ]),
+                    ]),
+                    Value::Array(vec![
+                        Value::BulkString("1713465536069-0".into()),
+                        Value::Array(vec![
+                            Value::BulkString("name".into()),
+                            Value::BulkString("another test".into()),
+                            Value::BulkString("other".into()),
+                            Value::BulkString("something".into()),
+                        ]),
+                    ]),
+                ]),
+                // V6 and lower lack the deleted_ids array
+            ]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_ok());
+
+            let reply = reply.unwrap();
+
+            assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
+            assert_eq!(reply.claimed.len(), 2);
+            let ids: Vec<_> = reply.claimed.iter().map(|e| e.id.as_str()).collect();
+            assert!(ids.contains(&"1713465533411-0"));
+            assert!(ids.contains(&"1713465536069-0"));
+            assert_eq!(reply.deleted_ids.len(), 0);
+        }
+
+        #[test]
+        fn parses_justid_response() {
+            let value = Value::Array(vec![
+                Value::BulkString("1713465536578-0".into()),
+                Value::Array(vec![
+                    Value::BulkString("1713465533411-0".into()),
+                    Value::BulkString("1713465536069-0".into()),
+                ]),
+                Value::Array(vec![Value::BulkString("123456789-0".into())]),
+            ]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_ok());
+
+            let reply = reply.unwrap();
+
+            assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
+            assert_eq!(reply.claimed.len(), 2);
+            let ids: Vec<_> = reply.claimed.iter().map(|e| e.id.as_str()).collect();
+            assert!(ids.contains(&"1713465533411-0"));
+            assert!(ids.contains(&"1713465536069-0"));
+            assert_eq!(reply.deleted_ids.len(), 1);
+            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()))
+        }
+
+        #[test]
+        fn parses_v6_justid_response() {
+            let value = Value::Array(vec![
+                Value::BulkString("1713465536578-0".into()),
+                Value::Array(vec![
+                    Value::BulkString("1713465533411-0".into()),
+                    Value::BulkString("1713465536069-0".into()),
+                ]),
+                // V6 and lower lack the deleted_ids array
+            ]);
+
+            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
+
+            assert!(reply.is_ok());
+
+            let reply = reply.unwrap();
+
+            assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
+            assert_eq!(reply.claimed.len(), 2);
+            let ids: Vec<_> = reply.claimed.iter().map(|e| e.id.as_str()).collect();
+            assert!(ids.contains(&"1713465533411-0"));
+            assert!(ids.contains(&"1713465536069-0"));
+            assert_eq!(reply.deleted_ids.len(), 0);
+        }
     }
 }
