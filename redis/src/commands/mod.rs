@@ -1441,6 +1441,28 @@ implement_commands! {
             .arg(id)
     }
 
+    /// This creates a `consumer` explicitly (vs implicit via XREADGROUP)
+    /// for given stream `key.
+    ///
+    /// The return value is either a 0 or a 1 for the number of consumers created
+    /// 0 means the consumer already exists
+    ///
+    /// ```text
+    /// XGROUP CREATECONSUMER <key> <groupname> <consumername>
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xgroup_createconsumer<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs>(
+        key: K,
+        group: G,
+        consumer: C
+    ) {
+        cmd("XGROUP")
+            .arg("CREATECONSUMER")
+            .arg(key)
+            .arg(group)
+            .arg(consumer)
+    }
 
     /// This is the alternate version for creating a consumer `group`
     /// which makes the stream if it doesn't exist.
