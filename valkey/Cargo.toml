@@ -1,0 +1,17 @@
+[package]
+name = "valkey"
+version = "0.0.2"
+edition = "2021"
+keywords = ["valkey", "database"]
+description = "Valkey driver for Rust."
+homepage = "https://github.com/redis-rs/redis-rs"
+repository = "https://github.com/redis-rs/redis-rs"
+documentation = "https://docs.rs/valkey"
+license = "BSD-3-Clause"
+rust-version = "1.65"
+readme = "README.md"
+
+[lib]
+bench = false
+
+[dependencies]
