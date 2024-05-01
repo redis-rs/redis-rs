@@ -195,6 +195,62 @@ fn test_xgroup_create() {
 }
 
 #[test]
+fn test_xgroup_createconsumer() {
+    // Tests the following command....
+    // xgroup_createconsumer
+
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    xadd(&mut con);
+
+    // key should exist
+    let reply: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    assert_eq!(&reply.first_entry.id, "1000-0");
+    assert_eq!(&reply.last_entry.id, "1000-1");
+    assert_eq!(&reply.last_generated_id, "1000-1");
+
+    // xgroup create (existing stream)
+    let result: RedisResult<String> = con.xgroup_create("k1", "g1", "$");
+    assert!(result.is_ok());
+
+    // xinfo groups (existing stream)
+    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k1");
+    assert!(result.is_ok());
+    let reply = result.unwrap();
+    assert_eq!(&reply.groups.len(), &1);
+    assert_eq!(&reply.groups[0].name, &"g1");
+
+    // xinfo consumers (consumer does not exist)
+    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    assert!(result.is_ok());
+    let reply = result.unwrap();
+    assert_eq!(&reply.consumers.len(), &0);
+
+    // xgroup_createconsumer
+    let result: RedisResult<i32> = con.xgroup_createconsumer("k1", "g1", "c1");
+    assert!(matches!(result, Ok(1)));
+
+    // xinfo consumers (consumer was created)
+    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    assert!(result.is_ok());
+    let reply = result.unwrap();
+    assert_eq!(&reply.consumers.len(), &1);
+    assert_eq!(&reply.consumers[0].name, &"c1");
+
+    // second call will not create consumer
+    let result: RedisResult<i32> = con.xgroup_createconsumer("k1", "g1", "c1");
+    assert!(matches!(result, Ok(0)));
+
+    // xinfo consumers (consumer still exists)
+    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    assert!(result.is_ok());
+    let reply = result.unwrap();
+    assert_eq!(&reply.consumers.len(), &1);
+    assert_eq!(&reply.consumers[0].name, &"c1");
+}
+
+#[test]
 fn test_assorted_2() {
     // Tests the following commands....
     // xadd
