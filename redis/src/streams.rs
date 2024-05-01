@@ -101,6 +101,8 @@ pub struct StreamClaimOptions {
     /// Set `JUSTID` cmd arg. Be advised: the response
     /// type changes with this option.
     justid: bool,
+    /// Set `LASTID <lastid>` cmd arg.
+    lastid: Option<String>,
 }
 
 impl StreamClaimOptions {
@@ -134,6 +136,12 @@ impl StreamClaimOptions {
         self.justid = true;
         self
     }
+
+    /// Set `LASTID <lastid>` cmd arg.
+    pub fn with_lastid(mut self, lastid: impl Into<String>) -> Self {
+        self.lastid = Some(lastid.into());
+        self
+    }
 }
 
 impl ToRedisArgs for StreamClaimOptions {
@@ -158,6 +166,10 @@ impl ToRedisArgs for StreamClaimOptions {
         }
         if self.justid {
             out.write_arg(b"JUSTID");
+        }
+        if let Some(ref lastid) = self.lastid {
+            out.write_arg(b"LASTID");
+            lastid.write_redis_args(out);
         }
     }
 }

@@ -1563,7 +1563,7 @@ implement_commands! {
     /// ```text
     /// XCLAIM <key> <group> <consumer> <min-idle-time> <ID-1> <ID-2>
     ///     [IDLE <milliseconds>] [TIME <mstime>] [RETRYCOUNT <count>]
-    ///     [FORCE] [JUSTID]
+    ///     [FORCE] [JUSTID] [LASTID <lastid>]
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]

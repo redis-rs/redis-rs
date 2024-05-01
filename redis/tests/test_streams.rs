@@ -575,7 +575,6 @@ fn test_xclaim() {
 
     // save this StreamId for later
     let claim = &reply.keys[0].ids[0];
-    let _claim_1 = &reply.keys[0].ids[1];
     let claim_justids = &reply.keys[0]
         .ids
         .iter()
@@ -642,6 +641,80 @@ fn test_xclaim() {
     // we just claimed the original 10 ids
     // and only returned the ids
     assert_eq!(claimed.len(), 10);
+}
+
+#[test]
+fn test_xclaim_last_id() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    assert!(result.is_ok());
+
+    // add some keys
+    xadd_keyrange(&mut con, "k1", 0, 10);
+
+    let reply: StreamReadReply = con
+        .xread_options(&["k1"], &["0"], &StreamReadOptions::default())
+        .unwrap();
+    // verify we have 10 ids
+    assert_eq!(reply.keys[0].ids.len(), 10);
+
+    let claim_early_id = &reply.keys[0].ids[3];
+    let claim_middle_id = &reply.keys[0].ids[5];
+    let claim_late_id = &reply.keys[0].ids[8];
+
+    // get read up to the middle record
+    let _: StreamReadReply = con
+        .xread_options(
+            &["k1"],
+            &[">"],
+            &StreamReadOptions::default().count(6).group("g1", "c1"),
+        )
+        .unwrap();
+
+    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    assert_eq!(info.groups[0].last_delivered_id, claim_middle_id.id.clone());
+
+    // sleep for 5ms
+    sleep(Duration::from_millis(5));
+
+    let _: Vec<String> = con
+        .xclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            4,
+            &[claim_middle_id.id.clone()],
+            StreamClaimOptions::default()
+                .with_justid()
+                .with_lastid(claim_early_id.id.as_str()),
+        )
+        .unwrap();
+
+    // lastid is kept at the 6th entry as the 4th entry is OLDER than the last_delivered_id
+    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    assert_eq!(info.groups[0].last_delivered_id, claim_middle_id.id.clone());
+
+    // sleep for 5ms
+    sleep(Duration::from_millis(5));
+
+    let _: Vec<String> = con
+        .xclaim_options(
+            "k1",
+            "g1",
+            "c1",
+            4,
+            &[claim_middle_id.id.clone()],
+            StreamClaimOptions::default()
+                .with_justid()
+                .with_lastid(claim_late_id.id.as_str()),
+        )
+        .unwrap();
+
+    // lastid is moved to the 8th entry as it is NEWER than the last_delivered_id
+    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    assert_eq!(info.groups[0].last_delivered_id, claim_late_id.id.clone());
 }
 
 #[test]
