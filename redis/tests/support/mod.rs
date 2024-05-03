@@ -396,7 +396,10 @@ pub struct TestContext {
 }
 
 pub(crate) fn is_tls_enabled() -> bool {
-    cfg!(all(feature = "tls-rustls-core", not(feature = "tls-native-tls")))
+    cfg!(all(
+        feature = "tls-rustls-core",
+        not(feature = "tls-native-tls")
+    ))
 }
 
 impl TestContext {
