@@ -215,7 +215,7 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
 /// the results in the final array.
 pub(crate) fn combine_and_sort_array_results<'a>(
     values: Vec<Value>,
-    sorting_order: impl Iterator<Item = &'a Vec<usize>> + ExactSizeIterator,
+    sorting_order: impl ExactSizeIterator<Item = &'a Vec<usize>>,
 ) -> RedisResult<Value> {
     let mut results = Vec::new();
     results.resize(

@@ -451,7 +451,7 @@ impl StreamId {
 
     /// Does the message contain a particular field?
     pub fn contains_key(&self, key: &str) -> bool {
-        self.map.get(key).is_some()
+        self.map.contains_key(key)
     }
 
     /// Returns how many field/value pairs exist in this message.
