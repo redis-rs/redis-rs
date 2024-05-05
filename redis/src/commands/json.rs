@@ -55,8 +55,6 @@ macro_rules! implement_json_commands {
         /// With RedisJSON commands, you have to note that all results will be wrapped
         /// in square brackets (or empty brackets if not found). If you want to deserialize it
         /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-        ///
-        /// ```
         pub trait JsonCommands : ConnectionLike + Sized {
             $(
                 $(#[$attr])*
