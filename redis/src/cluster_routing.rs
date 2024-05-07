@@ -72,7 +72,7 @@ pub enum RoutingInfo {
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
-    /// Route to the node that matches the [route]
+    /// Route to the node that matches the [Route]
     SpecificNode(Route),
 }
 
@@ -208,7 +208,7 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
 /// the results in the final array.
 pub(crate) fn combine_and_sort_array_results<'a>(
     values: Vec<Value>,
-    sorting_order: impl Iterator<Item = &'a Vec<usize>> + ExactSizeIterator,
+    sorting_order: impl ExactSizeIterator<Item = &'a Vec<usize>>,
 ) -> RedisResult<Value> {
     let mut results = Vec::new();
     results.resize(
