@@ -1,9 +1,10 @@
-// can't use rustfmt here because it screws up the file.
-#![cfg_attr(rustfmt, rustfmt_skip)]
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, NumericBehavior, RedisResult, ToRedisArgs, RedisWrite, Expiry, SetExpiry, ExistenceCheck};
+use crate::types::{
+    ExistenceCheck, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite, SetExpiry,
+    ToRedisArgs,
+};
 
 #[macro_use]
 mod macros;
@@ -1784,7 +1785,7 @@ implement_commands! {
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     ///
-    /// XREADGROUP [GROUP group-name consumer-name] [BLOCK <milliseconds>] [COUNT <count>] [NOACK] 
+    /// XREADGROUP [GROUP group-name consumer-name] [BLOCK <milliseconds>] [COUNT <count>] [NOACK]
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     /// ```
@@ -2163,13 +2164,13 @@ impl ToRedisArgs for SetOptions {
 }
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
-pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd{
+pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");
     if connection_info.password.is_some() {
-        let username:&str = match connection_info.username.as_ref() {
+        let username: &str = match connection_info.username.as_ref() {
             None => "default",
-            Some(username) => username
+            Some(username) => username,
         };
         hello_cmd
             .arg("AUTH")

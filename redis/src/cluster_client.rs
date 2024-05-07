@@ -170,13 +170,17 @@ impl ClusterClientBuilder {
 
         let mut cluster_params = ClusterParams::from(self.builder_params)?;
         let password = if cluster_params.password.is_none() {
-            cluster_params.password = first_node.redis.password.clone();
+            cluster_params
+                .password
+                .clone_from(&first_node.redis.password);
             &cluster_params.password
         } else {
             &None
         };
         let username = if cluster_params.username.is_none() {
-            cluster_params.username = first_node.redis.username.clone();
+            cluster_params
+                .username
+                .clone_from(&first_node.redis.username);
             &cluster_params.username
         } else {
             &None
