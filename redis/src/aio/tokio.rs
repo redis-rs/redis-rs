@@ -50,7 +50,7 @@ async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
         let socket2: socket2::Socket = std_socket.into();
         socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
         // TCP_USER_TIMEOUT configuration isn't supported across all operation systems
-        #[cfg(all(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
             // TODO: Replace this hardcoded timeout with a configurable timeout when https://github.com/redis-rs/redis-rs/issues/1147 is resolved
             const DFEAULT_USER_TCP_TIMEOUT: Duration = Duration::from_secs(5);
