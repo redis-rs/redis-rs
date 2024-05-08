@@ -49,9 +49,13 @@ async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
         let std_socket = socket.into_std()?;
         let socket2: socket2::Socket = std_socket.into();
         socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        // TODO: Replace this hardcoded timeout with a configurable timeout when https://github.com/redis-rs/redis-rs/issues/1147 is resolved
-        const DFEAULT_USER_TCP_TIMEOUT: Duration = Duration::from_secs(5);
-        socket2.set_tcp_user_timeout(Some(DFEAULT_USER_TCP_TIMEOUT))?;
+        // TCP_USER_TIMEOUT configuration isn't supported across all operation systems
+        #[cfg(all(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        {
+            // TODO: Replace this hardcoded timeout with a configurable timeout when https://github.com/redis-rs/redis-rs/issues/1147 is resolved
+            const DFEAULT_USER_TCP_TIMEOUT: Duration = Duration::from_secs(5);
+            socket2.set_tcp_user_timeout(Some(DFEAULT_USER_TCP_TIMEOUT))?;
+        }
         TcpStreamTokio::from_std(socket2.into())
     }
 
