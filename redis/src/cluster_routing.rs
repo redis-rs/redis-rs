@@ -345,6 +345,7 @@ enum RouteBy {
     MultiShardWithValues,
     Random,
     SecondArg,
+    SecondArgAfterKeyCount,
     SecondArgSlot,
     StreamsIndex,
     ThirdArgAfterKeyCount,
@@ -378,19 +379,22 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"SCRIPT EXISTS"
         | b"SCRIPT KILL"
         | b"WAIT"
-        | b"RANDOMKEY" => RouteBy::AllPrimaries,
+        | b"RANDOMKEY"
+        | b"WAITAOF" => RouteBy::AllPrimaries,
 
         b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => RouteBy::MultiShardNoValues,
         b"MSET" => RouteBy::MultiShardWithValues,
 
         // TODO - special handling - b"SCAN"
-        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => {
-            RouteBy::Undefined
-        }
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
 
-        b"EVALSHA" | b"EVAL" => RouteBy::ThirdArgAfterKeyCount,
+        b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
+        | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
 
-        b"XGROUP CREATE"
+        b"BITOP"
+        | b"MEMORY USAGE"
+        | b"PFDEBUG"
+        | b"XGROUP CREATE"
         | b"XGROUP CREATECONSUMER"
         | b"XGROUP DELCONSUMER"
         | b"XGROUP DESTROY"
@@ -402,6 +406,10 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"OBJECT FREQ"
         | b"OBJECT IDLETIME"
         | b"OBJECT REFCOUNT" => RouteBy::SecondArg,
+
+        b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
+            RouteBy::SecondArgAfterKeyCount
+        }
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
@@ -463,10 +471,10 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"TFUNCTION DELETE"
         | b"TFUNCTION LIST"
         | b"TFUNCTION LOAD"
-        | b"TIME"
-        | b"WAITAOF" => RouteBy::Random,
+        | b"TIME" => RouteBy::Random,
 
-        b"CLUSTER COUNTKEYSINSLOT"
+        b"CLUSTER ADDSLOTS"
+        | b"CLUSTER COUNTKEYSINSLOT"
         | b"CLUSTER DELSLOTS"
         | b"CLUSTER DELSLOTSRANGE"
         | b"CLUSTER GETKEYSINSLOT"
@@ -487,6 +495,7 @@ impl RoutingInfo {
         match base_routing(cmd) {
             RouteBy::FirstKey
             | RouteBy::SecondArg
+            | RouteBy::SecondArgAfterKeyCount
             | RouteBy::ThirdArgAfterKeyCount
             | RouteBy::SecondArgSlot
             | RouteBy::StreamsIndex
@@ -534,6 +543,18 @@ impl RoutingInfo {
             }
 
             RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+
+            RouteBy::SecondArgAfterKeyCount => {
+                let key_count = r
+                    .arg_idx(1)
+                    .and_then(|x| std::str::from_utf8(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())?;
+                if key_count == 0 {
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                } else {
+                    r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key))
+                }
+            }
 
             RouteBy::StreamsIndex => {
                 let streams_position = r.position(b"STREAMS")?;
@@ -978,8 +999,6 @@ mod tests {
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
-            cmd("MOVE"),
-            cmd("BITOP"),
         ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
