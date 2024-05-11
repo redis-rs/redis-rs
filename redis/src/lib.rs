@@ -53,7 +53,7 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
-//! * `aio`: enables async IO support (enabled by default)
+//! * `aio`: enables async IO support (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
@@ -62,7 +62,7 @@
 //! * `cluster-async`: enables async redis cluster support (optional)
 //! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
-//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (optional)
+//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
 //!
 //! ## Connection Parameters
 //!
