@@ -694,15 +694,18 @@ enum Next<C> {
         address: ArcStr,
     },
     Reconnect {
-        request: PendingRequest<C>,
+        // if not set, then a reconnect should happen without sending a request afterwards
+        request: Option<PendingRequest<C>>,
         target: ArcStr,
     },
     RefreshSlots {
-        request: PendingRequest<C>,
+        // if not set, then a slot refresh should happen without sending a request afterwards
+        request: Option<PendingRequest<C>>,
         sleep_duration: Option<Duration>,
     },
     ReconnectToInitialNodes {
-        request: PendingRequest<C>,
+        // if not set, then a reconnect should happen without sending a request afterwards
+        request: Option<PendingRequest<C>>,
     },
     Done,
 }
@@ -733,16 +736,39 @@ impl<C> Future for Request<C> {
             }
             Err((target, err)) => {
                 let request = this.request.as_mut().unwrap();
-
+                // TODO - would be nice if we didn't need to repeat this code twice, with & without retries.
                 if request.retry >= this.retry_params.number_of_retries {
+                    let next = if err.kind() == ErrorKind::ClusterConnectionNotFound {
+                        Next::ReconnectToInitialNodes { request: None }.into()
+                    } else if matches!(err.retry_method(), crate::types::RetryMethod::MovedRedirect)
+                        || matches!(target, OperationTarget::NotFound)
+                    {
+                        Next::RefreshSlots {
+                            request: None,
+                            sleep_duration: None,
+                        }
+                        .into()
+                    } else if matches!(err.retry_method(), crate::types::RetryMethod::Reconnect) {
+                        if let OperationTarget::Node { address } = target {
+                            Next::Reconnect {
+                                request: None,
+                                target: address,
+                            }
+                            .into()
+                        } else {
+                            Next::Done.into()
+                        }
+                    } else {
+                        Next::Done.into()
+                    };
                     self.respond(Err(err));
-                    return Next::Done.into();
+                    return next;
                 }
                 request.retry = request.retry.saturating_add(1);
 
                 if err.kind() == ErrorKind::ClusterConnectionNotFound {
                     return Next::ReconnectToInitialNodes {
-                        request: this.request.take().unwrap(),
+                        request: Some(this.request.take().unwrap()),
                     }
                     .into();
                 }
@@ -763,7 +789,7 @@ impl<C> Future for Request<C> {
                         let mut request = this.request.take().unwrap();
                         request.info.reset_routing();
                         return Next::RefreshSlots {
-                            request,
+                            request: Some(request),
                             sleep_duration: Some(sleep_duration),
                         }
                         .into();
@@ -787,7 +813,7 @@ impl<C> Future for Request<C> {
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string())),
                         );
                         Next::RefreshSlots {
-                            request,
+                            request: Some(request),
                             sleep_duration: None,
                         }
                         .into()
@@ -806,7 +832,7 @@ impl<C> Future for Request<C> {
                         request.info.reset_routing();
                         warn!("disconnected from {:?}", address);
                         Next::Reconnect {
-                            request,
+                            request: Some(request),
                             target: address,
                         }
                         .into()
@@ -1854,36 +1880,42 @@ where
                 } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future: RequestState<
-                        Pin<Box<dyn Future<Output = OperationResult> + Send>>,
-                    > = match sleep_duration {
-                        Some(sleep_duration) => RequestState::Sleep {
-                            sleep: boxed_sleep(sleep_duration),
-                        },
-                        None => RequestState::Future {
-                            future: Box::pin(Self::try_request(
-                                request.info.clone(),
-                                self.inner.clone(),
-                            )),
-                        },
-                    };
-                    self.in_flight_requests.push(Box::pin(Request {
-                        retry_params: self.inner.cluster_params.retry_params.clone(),
-                        request: Some(request),
-                        future,
-                    }));
+                    if let Some(request) = request {
+                        let future: RequestState<
+                            Pin<Box<dyn Future<Output = OperationResult> + Send>>,
+                        > = match sleep_duration {
+                            Some(sleep_duration) => RequestState::Sleep {
+                                sleep: boxed_sleep(sleep_duration),
+                            },
+                            None => RequestState::Future {
+                                future: Box::pin(Self::try_request(
+                                    request.info.clone(),
+                                    self.inner.clone(),
+                                )),
+                            },
+                        };
+                        self.in_flight_requests.push(Box::pin(Request {
+                            retry_params: self.inner.cluster_params.retry_params.clone(),
+                            request: Some(request),
+                            future,
+                        }));
+                    }
                 }
                 Next::Reconnect {
                     request, target, ..
                 } => {
                     poll_flush_action =
                         poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
-                    self.inner.pending_requests.lock().unwrap().push(request);
+                    if let Some(request) = request {
+                        self.inner.pending_requests.lock().unwrap().push(request);
+                    }
                 }
                 Next::ReconnectToInitialNodes { request } => {
                     poll_flush_action = poll_flush_action
                         .change_state(PollFlushAction::ReconnectFromInitialConnections);
-                    self.inner.pending_requests.lock().unwrap().push(request);
+                    if let Some(request) = request {
+                        self.inner.pending_requests.lock().unwrap().push(request);
+                    }
                 }
             }
         }
