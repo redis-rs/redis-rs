@@ -25,6 +25,13 @@ mod cluster_async {
 
     use crate::support::*;
 
+    fn broken_pipe_error() -> RedisError {
+        RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "mock-io-error",
+        ))
+    }
+
     #[test]
     fn test_async_cluster_basic_cmd() {
         let cluster = TestClusterContext::new();
@@ -765,6 +772,163 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_refresh_topology_even_with_zero_retries() {
+        let name = "test_async_cluster_refresh_topology_even_with_zero_retries";
+
+        let should_refresh = atomic::AtomicBool::new(false);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |cmd: &[u8], port| {
+                if !should_refresh.load(atomic::Ordering::SeqCst) {
+                    respond_startup(name, cmd)?;
+                }
+
+                if contains_slice(cmd, b"PING") {
+                    return Err(Ok(Value::SimpleString("OK".into())));
+                }
+
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    return Err(Ok(Value::Array(vec![
+                        Value::Array(vec![
+                            Value::Int(0),
+                            Value::Int(1),
+                            Value::Array(vec![
+                                Value::BulkString(name.as_bytes().to_vec()),
+                                Value::Int(6379),
+                            ]),
+                        ]),
+                        Value::Array(vec![
+                            Value::Int(2),
+                            Value::Int(16383),
+                            Value::Array(vec![
+                                Value::BulkString(name.as_bytes().to_vec()),
+                                Value::Int(6380),
+                            ]),
+                        ]),
+                    ])));
+                }
+
+                if contains_slice(cmd, b"GET") {
+                    let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
+                    match port {
+                        6380 => get_response,
+                        // Respond that the key exists on a node that does not yet have a connection:
+                        _ => {
+                            // Should not attempt to refresh slots more than once:
+                            assert!(!should_refresh.swap(true, Ordering::SeqCst));
+                            Err(parse_redis_value(
+                                format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
+                            ))
+                        }
+                    }
+                } else {
+                    panic!("unexpected command {cmd:?}")
+                }
+            },
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        // The user should receive an initial error, because there are no retries and the first request failed.
+        assert_eq!(
+            value,
+            Err(RedisError::from((
+                ErrorKind::Moved,
+                "An error was signalled by the server",
+                "test_async_cluster_refresh_topology_even_with_zero_retries:6380".to_string()
+            )))
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Some(123)));
+    }
+
+    #[test]
+    fn test_async_cluster_reconnect_even_with_zero_retries() {
+        let name = "test_async_cluster_reconnect_even_with_zero_retries";
+
+        let should_reconnect = atomic::AtomicBool::new(true);
+        let connection_count = Arc::new(atomic::AtomicU16::new(0));
+        let connection_count_clone = connection_count.clone();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |cmd: &[u8], port| {
+                match respond_startup(name, cmd) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        connection_count.fetch_add(1, Ordering::Relaxed);
+                        return Err(err);
+                    }
+                }
+
+                if contains_slice(cmd, b"ECHO") && port == 6379 {
+                    // Should not attempt to refresh slots more than once:
+                    if should_reconnect.swap(false, Ordering::SeqCst) {
+                        Err(Err(broken_pipe_error()))
+                    } else {
+                        Err(Ok(Value::BulkString(b"PONG".to_vec())))
+                    }
+                } else {
+                    panic!("unexpected command {cmd:?}")
+                }
+            },
+        );
+
+        // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
+        // If we add more nodes or more setup calls, this number should increase.
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
+
+        let value = runtime.block_on(connection.route_command(
+            &cmd("ECHO"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                host: name.to_string(),
+                port: 6379,
+            }),
+        ));
+
+        // The user should receive an initial error, because there are no retries and the first request failed.
+        assert_eq!(
+            value.unwrap_err().to_string(),
+            broken_pipe_error().to_string()
+        );
+
+        let value = runtime.block_on(connection.route_command(
+            &cmd("ECHO"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                host: name.to_string(),
+                port: 6379,
+            }),
+        ));
+
+        assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
+        // 5 - because of the 4 above, and then another PING for new connections.
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
     fn test_async_cluster_ask_redirect() {
         let name = "test_async_cluster_ask_redirect";
         let completed = Arc::new(AtomicI32::new(0));
@@ -866,10 +1030,7 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if port != 6379 && port != 6380 {
-                return Err(Err(RedisError::from(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "mock-io-error",
-                ))));
+                return Err(Err(broken_pipe_error()));
             }
             respond_startup_two_nodes(name, cmd)?;
             let count = completed.fetch_add(1, Ordering::SeqCst);
@@ -1932,10 +2093,7 @@ mod cluster_async {
                     if connect_attempt > 5 {
                         panic!("Too many pings!");
                     }
-                    Err(Err(RedisError::from(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "mock-io-error",
-                    ))))
+                    Err(Err(broken_pipe_error()))
                 } else {
                     respond_startup_two_nodes(name, cmd)?;
                     let past_get_attempts = get_attempts.fetch_add(1, Ordering::Relaxed);
@@ -1943,10 +2101,7 @@ mod cluster_async {
                     if past_get_attempts == 0 {
                         // Error once with io-error, ensure connection is reestablished w/out calling
                         // other node (i.e., not doing a full slot rebuild)
-                        Err(Err(RedisError::from(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "mock-io-error",
-                        ))))
+                        Err(Err(broken_pipe_error()))
                     } else {
                         Err(Ok(Value::BulkString(b"123".to_vec())))
                     }

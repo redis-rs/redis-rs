@@ -89,7 +89,7 @@ use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
 use rand::{seq::IteratorRandom, thread_rng};
-use request::{CmdArg, PendingRequest, Request, RequestState};
+use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -219,6 +219,7 @@ fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     return Box::pin(async_std::task::sleep(duration));
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) enum Response {
     Single(Value),
     Multiple(Vec<Value>),
@@ -263,25 +264,6 @@ impl fmt::Debug for ConnectionState {
             }
         )
     }
-}
-
-#[must_use]
-enum Next<C> {
-    Retry {
-        request: PendingRequest<C>,
-    },
-    Reconnect {
-        request: PendingRequest<C>,
-        target: String,
-    },
-    RefreshSlots {
-        request: PendingRequest<C>,
-        sleep_duration: Option<Duration>,
-    },
-    ReconnectToInitialNodes {
-        request: PendingRequest<C>,
-    },
-    Done,
 }
 
 impl<C> ClusterConnInner<C>
@@ -855,13 +837,16 @@ where
         drop(pending_requests_guard);
 
         loop {
-            let result = match Pin::new(&mut self.in_flight_requests).poll_next(cx) {
-                Poll::Ready(Some(result)) => result,
-                Poll::Ready(None) | Poll::Pending => break,
-            };
-            match result {
-                Next::Done => {}
-                Next::Retry { request } => {
+            let (request_handling, next) =
+                match Pin::new(&mut self.in_flight_requests).poll_next(cx) {
+                    Poll::Ready(Some(result)) => result,
+                    Poll::Ready(None) | Poll::Pending => break,
+                };
+            match request_handling {
+                Some(Retry::MoveToPending { request }) => {
+                    self.inner.pending_requests.lock().unwrap().push(request)
+                }
+                Some(Retry::Immediately { request }) => {
                     let future = Self::try_request(request.cmd.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
@@ -871,24 +856,12 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots {
+                Some(Retry::AfterSleep {
                     request,
                     sleep_duration,
-                } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::RebuildSlots);
-                    let future: RequestState<
-                        Pin<Box<dyn Future<Output = OperationResult> + Send>>,
-                    > = match sleep_duration {
-                        Some(sleep_duration) => RequestState::Sleep {
-                            sleep: boxed_sleep(sleep_duration),
-                        },
-                        None => RequestState::Future {
-                            future: Box::pin(Self::try_request(
-                                request.cmd.clone(),
-                                self.inner.clone(),
-                            )),
-                        },
+                }) => {
+                    let future = RequestState::Sleep {
+                        sleep: boxed_sleep(sleep_duration),
                     };
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
@@ -896,19 +869,9 @@ where
                         future,
                     }));
                 }
-                Next::Reconnect {
-                    request, target, ..
-                } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
-                    self.inner.pending_requests.lock().unwrap().push(request);
-                }
-                Next::ReconnectToInitialNodes { request } => {
-                    poll_flush_action = poll_flush_action
-                        .change_state(PollFlushAction::ReconnectFromInitialConnections);
-                    self.inner.pending_requests.lock().unwrap().push(request);
-                }
-            }
+                None => {}
+            };
+            poll_flush_action = poll_flush_action.change_state(next);
         }
 
         if !matches!(poll_flush_action, PollFlushAction::None) || self.in_flight_requests.is_empty()
@@ -951,6 +914,7 @@ where
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum PollFlushAction {
     None,
     RebuildSlots,
