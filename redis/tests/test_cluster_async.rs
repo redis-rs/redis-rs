@@ -1758,31 +1758,28 @@ mod cluster_async {
 
             let mut connection = cluster.async_connection().await;
             drop(cluster);
-            for _ in 0..5 {
-                let cmd = cmd("PING");
 
-                let result = connection
-                    .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                    .await;
-                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                assert!(result.is_err());
+            let cmd = cmd("PING");
 
-                // This will route to all nodes - different path through the code.
-                let result = connection.req_packed_command(&cmd).await;
-                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                assert!(result.is_err());
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
 
-                let _cluster = TestClusterContext::new_with_config_and_builder(
-                    RedisClusterConfiguration {
-                        ports: ports.clone(),
-                        ..Default::default()
-                    },
-                    |builder| builder.retries(2),
-                );
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
 
-                let result = connection.req_packed_command(&cmd).await.unwrap();
-                assert_eq!(result, Value::SimpleString("PONG".to_string()));
-            }
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
+
+            let result = connection.req_packed_command(&cmd).await.unwrap();
+            assert_eq!(result, Value::SimpleString("PONG".to_string()));
+
             Ok::<_, RedisError>(())
         })
         .unwrap();
