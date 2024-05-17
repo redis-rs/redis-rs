@@ -290,6 +290,7 @@ enum Response {
     Multiple(Vec<Value>),
 }
 
+#[derive(Debug)]
 enum OperationTarget {
     Node { address: String },
     NotFound,
@@ -421,135 +422,138 @@ pin_project! {
 
 #[must_use]
 enum Next<C> {
+    Done,
     Retry {
         request: PendingRequest<C>,
     },
-    Reconnect {
-        request: PendingRequest<C>,
-        target: String,
-    },
-    RefreshSlots {
+    RetryWithSleep {
         request: PendingRequest<C>,
         sleep_duration: Option<Duration>,
     },
-    ReconnectToInitialNodes {
+    RetryAfterFlush {
         request: PendingRequest<C>,
     },
-    Done,
 }
 
 impl<C> Future for Request<C> {
-    type Output = Next<C>;
+    type Output = (PollFlushAction, Next<C>);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
         if this.request.is_none() {
-            return Poll::Ready(Next::Done);
+            return Poll::Ready((PollFlushAction::None, Next::Done));
         }
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,
             RequestStateProj::Sleep { sleep } => {
                 ready!(sleep.poll(cx));
-                return Next::Retry {
-                    request: self.project().request.take().unwrap(),
-                }
-                .into();
+                return (
+                    PollFlushAction::None,
+                    Next::Retry {
+                        request: self.project().request.take().unwrap(),
+                    },
+                )
+                    .into();
             }
             _ => panic!("Request future must be Some"),
         };
-        match ready!(future.poll(cx)) {
+        let (target, err) = match ready!(future.poll(cx)) {
             Ok(item) => {
-                trace!("Ok");
                 self.respond(Ok(item));
-                Next::Done.into()
+                return (PollFlushAction::None, Next::Done).into();
             }
-            Err((target, err)) => {
-                trace!("Request error {}", err);
+            Err((target, err)) => (target, err),
+        };
+        trace!("Request error {}", err);
 
-                let request = this.request.as_mut().unwrap();
-                if request.retry >= this.retry_params.number_of_retries {
-                    self.respond(Err(err));
-                    return Next::Done.into();
-                }
-                request.retry = request.retry.saturating_add(1);
+        let request = this.request.as_mut().unwrap();
+        let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
 
-                if err.kind() == ErrorKind::ClusterConnectionNotFound {
-                    return Next::ReconnectToInitialNodes {
-                        request: this.request.take().unwrap(),
-                    }
-                    .into();
-                }
-
-                let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
-
-                let address = match target {
-                    OperationTarget::Node { address } => address,
-                    OperationTarget::FanOut => {
-                        // Fanout operation are retried per internal request, and don't need additional retries.
-                        self.respond(Err(err));
-                        return Next::Done.into();
-                    }
-                    OperationTarget::NotFound => {
-                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
-                        let mut request = this.request.take().unwrap();
-                        request.info.reset_redirect();
-                        return Next::RefreshSlots {
-                            request,
-                            sleep_duration: Some(sleep_duration),
-                        }
-                        .into();
-                    }
-                };
-
-                match err.retry_method() {
-                    crate::types::RetryMethod::AskRedirect => {
-                        let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
-                            err.redirect_node()
-                                .map(|(node, _slot)| Redirect::Ask(node.to_string())),
-                        );
-                        Next::Retry { request }.into()
-                    }
-                    crate::types::RetryMethod::MovedRedirect => {
-                        let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
-                            err.redirect_node()
-                                .map(|(node, _slot)| Redirect::Moved(node.to_string())),
-                        );
-                        Next::RefreshSlots {
-                            request,
-                            sleep_duration: None,
-                        }
-                        .into()
-                    }
-                    crate::types::RetryMethod::WaitAndRetry => {
-                        // Sleep and retry.
-                        this.future.set(RequestState::Sleep {
-                            sleep: boxed_sleep(sleep_duration),
-                        });
-                        self.poll(cx)
-                    }
-                    crate::types::RetryMethod::Reconnect => {
-                        let mut request = this.request.take().unwrap();
-                        // TODO should we reset the redirect here?
-                        request.info.reset_redirect();
-                        Next::Reconnect {
-                            request,
-                            target: address,
-                        }
-                    }
-                    .into(),
-                    crate::types::RetryMethod::RetryImmediately => Next::Retry {
-                        request: this.request.take().unwrap(),
-                    }
-                    .into(),
-                    crate::types::RetryMethod::NoRetry => {
-                        self.respond(Err(err));
-                        Next::Done.into()
-                    }
-                }
+        let (address, is_fan_out) = match target {
+            OperationTarget::Node { address } => (Some(address), false),
+            OperationTarget::FanOut => (None, true),
+            OperationTarget::NotFound => {
+                request.info.reset_redirect();
+                (None, false)
             }
+        };
+
+        let action = match err.cluster_recover_method() {
+            crate::types::ClusterRecoverMethod::None => PollFlushAction::None,
+            crate::types::ClusterRecoverMethod::RebuildSlots => PollFlushAction::RebuildSlots,
+            crate::types::ClusterRecoverMethod::Reconnect => address
+                .map(|a| PollFlushAction::Reconnect(vec![a]))
+                .unwrap_or(PollFlushAction::ReconnectFromInitialConnections),
+            crate::types::ClusterRecoverMethod::ReconnectFromInitialConnections => {
+                PollFlushAction::ReconnectFromInitialConnections
+            }
+        };
+
+        if request.retry >= this.retry_params.number_of_retries {
+            self.respond(Err(err));
+            return (action, Next::Done).into();
         }
+        request.retry = request.retry.saturating_add(1);
+
+        // If there are no connections, retry regardless:
+        if matches!(action, PollFlushAction::ReconnectFromInitialConnections) {
+            return (
+                action,
+                Next::RetryAfterFlush {
+                    request: this.request.take().unwrap(),
+                },
+            )
+                .into();
+        }
+
+        // Fanout operation are retried per internal request and don't need additional retries.
+        if is_fan_out {
+            self.respond(Err(err));
+            return (PollFlushAction::None, Next::Done).into();
+        }
+        let next = match err.retry_method() {
+            crate::types::RetryMethod::AskRedirect => {
+                let mut request = this.request.take().unwrap();
+                request.info.set_redirect(
+                    err.redirect_node()
+                        .map(|(node, _slot)| Redirect::Ask(node.to_string())),
+                );
+                Next::Retry { request }
+            }
+            crate::types::RetryMethod::MovedRedirect => {
+                let mut request = this.request.take().unwrap();
+                request.info.set_redirect(
+                    err.redirect_node()
+                        .map(|(node, _slot)| Redirect::Moved(node.to_string())),
+                );
+                Next::RetryWithSleep {
+                    request,
+                    sleep_duration: None,
+                }
+            }
+            crate::types::RetryMethod::WaitAndRetry => {
+                // Sleep and retry.
+                let request = this.request.take().unwrap();
+                Next::RetryWithSleep {
+                    request,
+                    sleep_duration: Some(sleep_duration),
+                }
+            }
+            crate::types::RetryMethod::Reconnect => {
+                let mut request = this.request.take().unwrap();
+                // TODO should we reset the redirect here?
+                request.info.reset_redirect();
+                Next::RetryAfterFlush { request }
+            }
+            crate::types::RetryMethod::RetryImmediately => Next::Retry {
+                request: this.request.take().unwrap(),
+            },
+            crate::types::RetryMethod::NoRetry => {
+                self.respond(Err(err));
+                Next::Done
+            }
+        };
+        (action, next).into()
     }
 }
 
@@ -1101,8 +1105,6 @@ where
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
-        let mut poll_flush_action = PollFlushAction::None;
-
         let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
         if !pending_requests_guard.is_empty() {
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
@@ -1125,12 +1127,16 @@ where
         }
         drop(pending_requests_guard);
 
+        let mut poll_flush_action = PollFlushAction::None;
         loop {
-            let result = match Pin::new(&mut self.in_flight_requests).poll_next(cx) {
-                Poll::Ready(Some(result)) => result,
+            let next = match Pin::new(&mut self.in_flight_requests).poll_next(cx) {
+                Poll::Ready(Some((action, next))) => {
+                    poll_flush_action = poll_flush_action.change_state(action);
+                    next
+                }
                 Poll::Ready(None) | Poll::Pending => break,
             };
-            match result {
+            match next {
                 Next::Done => {}
                 Next::Retry { request } => {
                     let future = Self::try_request(request.info.clone(), self.inner.clone());
@@ -1142,12 +1148,10 @@ where
                         },
                     }));
                 }
-                Next::RefreshSlots {
+                Next::RetryWithSleep {
                     request,
                     sleep_duration,
                 } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::RebuildSlots);
                     let future: RequestState<
                         Pin<Box<dyn Future<Output = OperationResult> + Send>>,
                     > = match sleep_duration {
@@ -1167,16 +1171,7 @@ where
                         future,
                     }));
                 }
-                Next::Reconnect {
-                    request, target, ..
-                } => {
-                    poll_flush_action =
-                        poll_flush_action.change_state(PollFlushAction::Reconnect(vec![target]));
-                    self.inner.pending_requests.lock().unwrap().push(request);
-                }
-                Next::ReconnectToInitialNodes { request } => {
-                    poll_flush_action = poll_flush_action
-                        .change_state(PollFlushAction::ReconnectFromInitialConnections);
+                Next::RetryAfterFlush { request } => {
                     self.inner.pending_requests.lock().unwrap().push(request);
                 }
             }
@@ -1222,6 +1217,7 @@ where
     }
 }
 
+#[derive(Debug)]
 enum PollFlushAction {
     None,
     RebuildSlots,
@@ -1283,7 +1279,6 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
 

@@ -804,6 +804,14 @@ pub(crate) enum RetryMethod {
     MovedRedirect,
 }
 
+#[cfg(feature = "cluster")]
+pub(crate) enum ClusterRecoverMethod {
+    None,
+    RebuildSlots,
+    Reconnect,
+    ReconnectFromInitialConnections,
+}
+
 /// Indicates a general failure in the library.
 impl RedisError {
     /// Returns the kind of the error.
@@ -1058,6 +1066,32 @@ impl RedisError {
                 },
                 _ => RetryMethod::RetryImmediately,
             },
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    pub(crate) fn cluster_recover_method(&self) -> ClusterRecoverMethod {
+        match self.kind() {
+            ErrorKind::Moved => ClusterRecoverMethod::RebuildSlots,
+            ErrorKind::ParseError => ClusterRecoverMethod::Reconnect,
+            ErrorKind::AuthenticationFailed => ClusterRecoverMethod::Reconnect,
+            ErrorKind::ClusterConnectionNotFound => {
+                ClusterRecoverMethod::ReconnectFromInitialConnections
+            }
+            ErrorKind::IoError => match &self.repr {
+                ErrorRepr::IoError(err) => match err.kind() {
+                    io::ErrorKind::ConnectionRefused => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::NotFound => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::ConnectionReset => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::ConnectionAborted => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::NotConnected => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::BrokenPipe => ClusterRecoverMethod::Reconnect,
+                    io::ErrorKind::UnexpectedEof => ClusterRecoverMethod::Reconnect,
+                    _ => ClusterRecoverMethod::None,
+                },
+                _ => ClusterRecoverMethod::None,
+            },
+            _ => ClusterRecoverMethod::None,
         }
     }
 }
