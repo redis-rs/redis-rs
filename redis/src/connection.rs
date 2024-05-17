@@ -21,29 +21,29 @@ use std::os::unix::net::UnixStream;
 use std::vec::IntoIter;
 
 use crate::commands::resp3_hello;
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
 use native_tls::{TlsConnector, TlsStream};
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use rustls::{RootCertStore, StreamOwned};
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use std::sync::Arc;
 
 use crate::push_manager::PushManager;
 use crate::PushInfo;
 
 #[cfg(all(
-    feature = "tls-rustls",
+    feature = "tls-rustls-native-certs",
     not(feature = "tls-native-tls"),
     not(feature = "tls-rustls-webpki-roots")
 ))]
 use rustls_native_certs::load_native_certs;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use crate::tls::TlsConnParams;
 
 // Non-exhaustive to prevent construction outside this crate
-#[cfg(not(feature = "tls-rustls"))]
+#[cfg(not(feature = "tls-rustls-core"))]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct TlsConnParams;
@@ -185,7 +185,7 @@ impl ConnectionAddr {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
             ConnectionAddr::TcpTls { .. } => {
-                cfg!(any(feature = "tls-native-tls", feature = "tls-rustls"))
+                cfg!(any(feature = "tls-native-tls", feature = "tls-rustls-core"))
             }
             ConnectionAddr::Unix(_) => cfg!(unix),
         }
@@ -318,7 +318,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
     let addr = if url.scheme() == "rediss" {
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-core"))]
         {
             match url.fragment() {
                 Some("insecure") => ConnectionAddr::TcpTls {
@@ -340,7 +340,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             }
         }
 
-        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
+        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls-core")))]
         fail!((
             ErrorKind::InvalidClientConfig,
             "can't connect with TLS, the feature is not enabled"
@@ -450,13 +450,13 @@ struct TcpConnection {
     open: bool,
 }
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
 struct TcpNativeTlsConnection {
     reader: TlsStream<TcpStream>,
     open: bool,
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 struct TcpRustlsConnection {
     reader: StreamOwned<rustls::ClientConnection, TcpStream>,
     open: bool,
@@ -470,9 +470,9 @@ struct UnixConnection {
 
 enum ActualConnection {
     Tcp(TcpConnection),
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
     TcpNativeTls(Box<TcpNativeTlsConnection>),
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-core")]
     TcpRustls(Box<TcpRustlsConnection>),
     #[cfg(unix)]
     Unix(UnixConnection),
@@ -600,7 +600,7 @@ impl ActualConnection {
                     open: true,
                 })
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ConnectionAddr::TcpTls {
                 ref host,
                 port,
@@ -660,7 +660,7 @@ impl ActualConnection {
                     open: true,
                 }))
             }
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ConnectionAddr::TcpTls {
                 ref host,
                 port,
@@ -709,7 +709,7 @@ impl ActualConnection {
 
                 ActualConnection::TcpRustls(Box::new(TcpRustlsConnection { reader, open: true }))
             }
-            #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
+            #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls-core")))]
             ConnectionAddr::TcpTls { .. } => {
                 fail!((
                     ErrorKind::InvalidClientConfig,
@@ -746,7 +746,7 @@ impl ActualConnection {
                     Ok(_) => Ok(Value::Okay),
                 }
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ActualConnection::TcpNativeTls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
@@ -759,7 +759,7 @@ impl ActualConnection {
                     Ok(_) => Ok(Value::Okay),
                 }
             }
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ActualConnection::TcpRustls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
@@ -793,12 +793,12 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_write_timeout(dur)?;
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
             }
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
@@ -816,12 +816,12 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_read_timeout(dur)?;
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
             }
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
@@ -837,9 +837,9 @@ impl ActualConnection {
     pub fn is_open(&self) -> bool {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => boxed_tls_connection.open,
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
@@ -847,7 +847,7 @@ impl ActualConnection {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 pub(crate) fn create_rustls_config(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
@@ -859,7 +859,7 @@ pub(crate) fn create_rustls_config(
     #[cfg(feature = "tls-rustls-webpki-roots")]
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     #[cfg(all(
-        feature = "tls-rustls",
+        feature = "tls-rustls-core",
         not(feature = "tls-native-tls"),
         not(feature = "tls-rustls-webpki-roots")
     ))]
@@ -1217,14 +1217,14 @@ impl Connection {
                 self.push_manager.try_send(&result);
                 result
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
                 self.push_manager.try_send(&result);
                 result
             }
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
@@ -1255,12 +1255,12 @@ impl Connection {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
                         connection.open = false;
                     }
-                    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+                    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
                     ActualConnection::TcpNativeTls(ref mut connection) => {
                         let _ = connection.reader.shutdown();
                         connection.open = false;
                     }
-                    #[cfg(feature = "tls-rustls")]
+                    #[cfg(feature = "tls-rustls-core")]
                     ActualConnection::TcpRustls(ref mut connection) => {
                         let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
                         connection.open = false;

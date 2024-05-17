@@ -19,7 +19,7 @@ use tempfile::TempDir;
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
 use super::get_random_available_port;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use super::{build_single_client, load_certs_from_file};
 
 use super::use_protocol;
@@ -319,11 +319,11 @@ impl RedisCluster {
                 conn_info.addr
             );
 
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             let client =
                 build_single_client(server.connection_info(), &self.tls_paths, _mtls_enabled)
                     .unwrap();
-            #[cfg(not(feature = "tls-rustls"))]
+            #[cfg(not(feature = "tls-rustls-core"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
@@ -430,7 +430,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
             .use_protocol(use_protocol());
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(feature = "tls-rustls-core")]
         if mtls_enabled {
             if let Some(tls_file_paths) = &cluster.tls_paths {
                 builder = builder.certs(load_certs_from_file(tls_file_paths));
@@ -490,14 +490,14 @@ impl TestClusterContext {
 
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(feature = "tls-rustls-core")]
             let client = build_single_client(
                 server.connection_info(),
                 &self.cluster.tls_paths,
                 self.mtls_enabled,
             )
             .unwrap();
-            #[cfg(not(feature = "tls-rustls"))]
+            #[cfg(not(feature = "tls-rustls-core"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();

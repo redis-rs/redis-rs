@@ -682,7 +682,7 @@ impl From<native_tls::Error> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 impl From<rustls::Error> for RedisError {
     fn from(err: rustls::Error) -> RedisError {
         RedisError {
@@ -695,7 +695,7 @@ impl From<rustls::Error> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 impl From<rustls_pki_types::InvalidDnsNameError> for RedisError {
     fn from(err: rustls_pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {

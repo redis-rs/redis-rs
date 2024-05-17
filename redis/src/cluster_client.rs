@@ -4,16 +4,16 @@ use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
 use std::time::Duration;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use crate::tls::TlsConnParams;
 
-#[cfg(not(feature = "tls-rustls"))]
+#[cfg(not(feature = "tls-rustls-core"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 
 /// Parameters specific to builder, so that
@@ -25,7 +25,7 @@ struct BuilderParams {
     username: Option<String>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-core")]
     certs: Option<TlsCertificates>,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
@@ -89,10 +89,10 @@ pub(crate) struct ClusterParams {
 
 impl ClusterParams {
     fn from(value: BuilderParams) -> RedisResult<Self> {
-        #[cfg(not(feature = "tls-rustls"))]
+        #[cfg(not(feature = "tls-rustls-core"))]
         let tls_params = None;
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(feature = "tls-rustls-core")]
         let tls_params = {
             let retrieved_tls_params = value.certs.clone().map(retrieve_tls_certificates);
 
@@ -263,7 +263,7 @@ impl ClusterClientBuilder {
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
-    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-core"))]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
         self.builder_params.tls = Some(tls);
         self
@@ -284,7 +284,7 @@ impl ClusterClientBuilder {
     ///
     /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-core")]
     pub fn certs(mut self, certificates: TlsCertificates) -> ClusterClientBuilder {
         if self.builder_params.tls.is_none() {
             self.builder_params.tls = Some(TlsMode::Secure);

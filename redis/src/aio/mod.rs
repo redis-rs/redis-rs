@@ -16,10 +16,10 @@ use std::pin::Pin;
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-core")]
 use crate::tls::TlsConnParams;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls-core")))]
 use crate::connection::TlsConnParams;
 
 /// Enables the tokio compatibility
@@ -34,7 +34,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
 
     // Performs a TCP TLS connection
-    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-core"))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,

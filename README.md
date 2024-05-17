@@ -85,19 +85,27 @@ redis = { version = "0.25.3", features = ["async-std-native-tls-comp"] }
 To use `rustls`:
 
 ```
-redis = { version = "0.25.3", features = ["tls-rustls"] }
+redis = { version = "0.25.3", features = ["tls-rustls-native-certs"] }
+# or
+redis = { version = "0.25.3", features = ["tls-rustls-webpki-roots"] }
 
 # if you use tokio
-redis = { version = "0.25.3", features = ["tokio-rustls-comp"] }
+redis = { version = "0.25.3", features = ["tokio-rustls-native-certs-comp"] }
+# or
+redis = { version = "0.25.3", features = ["tokio-rustls-webpki-roots-comp"] }
 
 # if you use async-std
-redis = { version = "0.25.3", features = ["async-std-rustls-comp"] }
+redis = { version = "0.25.3", features = ["async-std-rustls-native-certs-comp"] }
+# or
+redis = { version = "0.25.3", features = ["async-std-rustls-webpki-roots-comp"] }
 ```
 
-With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
+With `rustls`, you must choose between `native-certs` and `webpki-roots` variants of the tls features.
+The first ones rely on native root certificates (the one provided by your OS) while `webpki-roots` features use `webpki-roots` (Mozilla's root certificates) instead.
+
+With `rustls`, you can add the following feature flag on top of other feature flags to enable additional features:
 
 -   `tls-rustls-insecure`: Allow insecure TLS connections
--   `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 

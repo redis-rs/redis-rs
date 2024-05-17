@@ -449,7 +449,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             select_ok(socket_addrs.map(<T>::connect_tcp)).await?.0
         }
 
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-core"))]
         ConnectionAddr::TcpTls {
             ref host,
             port,
@@ -466,7 +466,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             .0
         }
 
-        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
+        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls-core")))]
         ConnectionAddr::TcpTls { .. } => {
             fail!((
                 ErrorKind::InvalidClientConfig,
