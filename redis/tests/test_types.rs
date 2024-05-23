@@ -3,7 +3,16 @@ mod support;
 mod types {
     use std::{rc::Rc, sync::Arc};
 
-    use redis::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs, Value};
+    use redis::{ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value};
+
+    #[test]
+    fn test_is_io_error() {
+        let err = RedisError::from((
+            ErrorKind::IoError,
+            "Multiplexed connection driver unexpectedly terminated",
+        ));
+        assert!(err.is_io_error());
+    }
 
     #[test]
     fn test_is_single_arg() {
