@@ -64,14 +64,18 @@ mod basic {
             .arg(format!(">{password}"));
         assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
 
-        let mut conn = redis::Client::open(ConnectionInfo {
-            addr: ctx.server.client_addr().clone(),
-            redis: RedisConnectionInfo {
-                username: Some(username.to_string()),
-                password: Some(password.to_string()),
-                ..Default::default()
+        let mut conn = redis::Client::open(
+            ConnectionInfo {
+                addr: ctx.server.client_addr().clone(),
+                redis: RedisConnectionInfo {
+                    username: Some(username.to_string()),
+                    password: Some(password.to_string()),
+                    ..Default::default()
+                },
+                retry_strategy: None,
             },
-        })
+            None,
+        )
         .unwrap()
         .get_connection()
         .unwrap();

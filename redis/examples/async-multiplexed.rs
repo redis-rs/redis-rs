@@ -31,7 +31,7 @@ async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {
 
 #[tokio::main]
 async fn main() {
-    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let client = redis::Client::open("redis://127.0.0.1/", None).unwrap();
 
     let con = client.get_multiplexed_tokio_connection().await.unwrap();
 

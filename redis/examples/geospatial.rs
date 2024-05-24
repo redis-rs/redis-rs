@@ -13,7 +13,7 @@ fn run() -> RedisResult<()> {
         Err(..) => "redis://127.0.0.1/".to_string(),
     };
 
-    let client = redis::Client::open(redis_url.as_str())?;
+    let client = redis::Client::open(redis_url.as_str(), None)?;
     let mut con = client.get_connection()?;
 
     // Add some members to the geospatial index.

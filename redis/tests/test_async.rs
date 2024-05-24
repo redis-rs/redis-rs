@@ -59,14 +59,18 @@ mod basic_async {
                 .arg(format!(">{password}"));
             assert_eq!(con.req_packed_command(&set_user_cmd).await, Ok(Value::Okay));
 
-            let mut conn = redis::Client::open(ConnectionInfo {
-                addr: ctx.server.client_addr().clone(),
-                redis: RedisConnectionInfo {
-                    username: Some(username.to_string()),
-                    password: Some(password.to_string()),
-                    ..Default::default()
+            let mut conn = redis::Client::open(
+                ConnectionInfo {
+                    addr: ctx.server.client_addr().clone(),
+                    redis: RedisConnectionInfo {
+                        username: Some(username.to_string()),
+                        password: Some(password.to_string()),
+                        ..Default::default()
+                    },
+                    retry_strategy: None,
                 },
-            })
+                None,
+            )
             .unwrap()
             .get_multiplexed_async_connection()
             .await
@@ -623,8 +627,9 @@ mod basic_async {
                 password: Some("asdcasc".to_string()),
                 ..Default::default()
             },
+            retry_strategy: None,
         };
-        let client = redis::Client::open(coninfo).unwrap();
+        let client = redis::Client::open(coninfo, None).unwrap();
 
         let err = client
             .get_multiplexed_tokio_connection()

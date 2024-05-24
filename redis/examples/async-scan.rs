@@ -3,7 +3,7 @@ use redis::{AsyncCommands, AsyncIter};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let client = redis::Client::open("redis://127.0.0.1/", None).unwrap();
     let mut con = client.get_multiplexed_async_connection().await?;
 
     con.set("async-key1", b"foo").await?;

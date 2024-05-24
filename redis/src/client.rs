@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    connection::{
+        connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, RetryStrategyInfo,
+    },
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
@@ -29,17 +31,24 @@ pub struct Client {
 /// Example usage::
 ///
 /// ```rust,no_run
-/// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// let client = redis::Client::open("redis://127.0.0.1/", None).unwrap();
 /// let con = client.get_connection().unwrap();
 /// ```
 impl Client {
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
-    pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
-        Ok(Client {
-            connection_info: params.into_connection_info()?,
-        })
+    pub fn open<T: IntoConnectionInfo>(
+        params: T,
+        retry_strategy_info: Option<RetryStrategyInfo>,
+    ) -> RedisResult<Client> {
+        let mut connection_info = params.into_connection_info()?;
+
+        if retry_strategy_info.is_some() {
+            connection_info.retry_strategy = retry_strategy_info
+        }
+
+        Ok(Client { connection_info })
     }
 
     /// Instructs the client to actually connect to redis and returns a
@@ -418,11 +427,13 @@ impl Client {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
     ) -> RedisResult<crate::aio::ConnectionManager> {
         self.get_connection_manager_with_backoff_and_timeouts(
             exponent_base,
             factor,
             number_of_retries,
+            max_delay,
             std::time::Duration::MAX,
             std::time::Duration::MAX,
         )
@@ -454,6 +465,7 @@ impl Client {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::ConnectionManager> {
@@ -462,6 +474,7 @@ impl Client {
             exponent_base,
             factor,
             number_of_retries,
+            max_delay,
             response_timeout,
             connection_timeout,
         )
@@ -492,6 +505,7 @@ impl Client {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::ConnectionManager> {
@@ -500,6 +514,7 @@ impl Client {
             exponent_base,
             factor,
             number_of_retries,
+            max_delay,
             response_timeout,
             connection_timeout,
         )
@@ -530,12 +545,14 @@ impl Client {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
     ) -> RedisResult<crate::aio::ConnectionManager> {
         crate::aio::ConnectionManager::new_with_backoff(
             self.clone(),
             exponent_base,
             factor,
             number_of_retries,
+            max_delay,
         )
         .await
     }
@@ -743,6 +760,6 @@ mod test {
 
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
-        assert!(Client::open(("fe80::cafe:beef%eno1", 6379)).is_ok());
+        assert!(Client::open(("fe80::cafe:beef%eno1", 6379), None).is_ok());
     }
 }

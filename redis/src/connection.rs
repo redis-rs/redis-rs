@@ -211,6 +211,9 @@ pub struct ConnectionInfo {
 
     /// A boxed connection address for where to connect to.
     pub redis: RedisConnectionInfo,
+
+    /// In case of reconnection issues, the manager will retry reconnection
+    pub retry_strategy: Option<RetryStrategyInfo>,
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
@@ -224,6 +227,21 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RetryStrategyInfo {
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    pub exponent_base: Option<u64>,
+    /// A multiplicative factor that will be applied to the retry delay.
+    ///
+    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    pub factor: Option<u64>,
+    /// number_of_retries times, with an exponentially increasing delay
+    pub number_of_retries: Option<usize>,
+    /// Apply a maximum delay. No retry delay will be longer than this `Duration`.
+    pub max_delay: Option<u64>,
 }
 
 impl FromStr for ConnectionInfo {
@@ -273,6 +291,7 @@ where
         Ok(ConnectionInfo {
             addr: ConnectionAddr::Tcp(self.0.into(), self.1),
             redis: RedisConnectionInfo::default(),
+            retry_strategy: None,
         })
     }
 }
@@ -390,6 +409,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 _ => ProtocolVersion::RESP2,
             },
         },
+        retry_strategy: None,
     })
 }
 
@@ -421,6 +441,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 _ => ProtocolVersion::RESP2,
             },
         },
+        retry_strategy: None,
     })
 }
 
@@ -1443,7 +1464,7 @@ where
 ///
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
-/// let client = redis::Client::open("redis://127.0.0.1/")?;
+/// let client = redis::Client::open("redis://127.0.0.1/", None)?;
 /// let mut con = client.get_connection()?;
 /// let mut pubsub = con.as_pubsub();
 /// pubsub.subscribe("channel_1")?;
@@ -1673,7 +1694,7 @@ impl Msg {
 /// ```rust,no_run
 /// use redis::Commands;
 /// # fn do_something() -> redis::RedisResult<()> {
-/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let client = redis::Client::open("redis://127.0.0.1/", None).unwrap();
 /// # let mut con = client.get_connection().unwrap();
 /// let key = "the_key";
 /// let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
@@ -1791,6 +1812,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    retry_strategy: None,
                 },
             ),
             (
@@ -1798,6 +1820,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
+                    retry_strategy: None,
                 },
             ),
             (
@@ -1810,6 +1833,7 @@ mod tests {
                         password: Some("#@<>$".to_string()),
                         ..Default::default()
                     },
+                    retry_strategy: None,
                 },
             ),
         ];
@@ -1877,6 +1901,7 @@ mod tests {
                         password: None,
                         protocol: ProtocolVersion::RESP2,
                     },
+                    retry_strategy: None,
                 },
             ),
             (
@@ -1887,6 +1912,7 @@ mod tests {
                         db: 1,
                         ..Default::default()
                     },
+                    retry_strategy: None,
                 },
             ),
             (
@@ -1902,6 +1928,7 @@ mod tests {
                         password: Some("#@<>$".to_string()),
                         ..Default::default()
                     },
+                    retry_strategy: None,
                 },
             ),
             (
@@ -1917,6 +1944,7 @@ mod tests {
                         password: Some("&?= *+".to_string()),
                         ..Default::default()
                     },
+                    retry_strategy: None,
                 },
             ),
         ];

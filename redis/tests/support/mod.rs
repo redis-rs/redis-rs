@@ -270,7 +270,9 @@ impl RedisServer {
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
+
         redis_cmd.arg("--logfile").arg(Self::log_file(&tempdir));
+
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -352,6 +354,7 @@ impl RedisServer {
                 protocol: use_protocol(),
                 ..Default::default()
             },
+            retry_strategy: None,
         }
     }
 
@@ -429,7 +432,7 @@ impl TestContext {
         let client =
             build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
         #[cfg(not(feature = "tls-rustls"))]
-        let client = redis::Client::open(server.connection_info()).unwrap();
+        let client = redis::Client::open(server.connection_info(), None).unwrap();
 
         let mut con;
 
@@ -470,7 +473,7 @@ impl TestContext {
         let client =
             build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
         #[cfg(not(feature = "tls-rustls"))]
-        let client = redis::Client::open(server.connection_info()).unwrap();
+        let client = redis::Client::open(server.connection_info(), None).unwrap();
 
         let mut con;
 

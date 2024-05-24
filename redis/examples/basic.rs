@@ -137,7 +137,7 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
 /// Runs all the examples and propagates errors up.
 fn do_redis_code(url: &str) -> redis::RedisResult<()> {
     // general connection handling
-    let client = redis::Client::open(url)?;
+    let client = redis::Client::open(url, None)?;
     let mut con = client.get_connection()?;
 
     // read some config and print it.

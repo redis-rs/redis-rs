@@ -1,9 +1,10 @@
 use super::RedisFuture;
 use crate::cmd::Cmd;
+use crate::connection::RetryStrategyInfo;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
 use crate::{
-    aio::{ConnectionLike, MultiplexedConnection, Runtime},
+    aio::{Connection::RetryStrategyInfo, ConnectionLike, MultiplexedConnection, Runtime},
     Client,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -101,13 +102,23 @@ impl ConnectionManager {
     /// This requires the `connection-manager` feature, which will also pull in
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
-        Self::new_with_backoff(
-            client,
-            Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
-        )
-        .await
+        let mut exponent_base: u64 = Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE;
+        let mut factor: u64 = Self::DEFAULT_CONNECTION_RETRY_FACTOR;
+        let mut number_of_retries: usize = Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE;
+        let mut max_delay: Option<u64> = None;
+
+        let mut retry_strategy_info: Option<RetryStrategyInfo> =
+            client.get_connection_info().clone().retry_strategy;
+        if let Some(retry_strategy_info) = retry_strategy_info {
+            exponent_base = retry_strategy_info.exponent_base.unwrap_or(exponent_base);
+            factor = retry_strategy_info.factor.unwrap_or(factor);
+            number_of_retries = retry_strategy_info
+                .number_of_retries
+                .unwrap_or(number_of_retries);
+            max_delay = retry_strategy_info.max_delay;
+        }
+
+        Self::new_with_backoff(client, exponent_base, factor, number_of_retries, max_delay).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -123,12 +134,14 @@ impl ConnectionManager {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
     ) -> RedisResult<Self> {
         Self::new_with_backoff_and_timeouts(
             client,
             exponent_base,
             factor,
             number_of_retries,
+            max_delay,
             std::time::Duration::MAX,
             std::time::Duration::MAX,
         )
@@ -151,13 +164,21 @@ impl ConnectionManager {
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
+        max_delay: Option<u64>,
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
-        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+
+        /// Apply a maximum delay. No retry delay will be longer than this `Duration`.
+        let mut retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+        if let Some(max_retry_delay) = max_delay {
+            retry_strategy =
+                retry_strategy.max_delay(std::time::Duration::from_millis(max_retry_delay));
+        }
+
         let mut connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),

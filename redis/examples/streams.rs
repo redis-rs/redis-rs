@@ -21,7 +21,7 @@ const SLOWNESSES: &[u8] = &[2, 3, 4];
 /// that demonstrates basic usage of both the XREAD and XREADGROUP
 /// commands.
 fn main() {
-    let client = redis::Client::open("redis://127.0.0.1/").expect("client");
+    let client = redis::Client::open("redis://127.0.0.1/", None).expect("client");
 
     println!("Demonstrating XADD followed by XREAD, single threaded\n");
 
