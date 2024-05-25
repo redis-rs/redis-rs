@@ -1,5 +1,6 @@
 use super::{ConnectionLike, Runtime};
 use crate::aio::setup_connection;
+use crate::aio::streams::{MsgStream, PushStream};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
@@ -606,5 +607,19 @@ impl MultiplexedConnection {
     /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
     pub fn get_push_manager(&self) -> PushManager {
         self.push_manager.clone()
+    }
+    /// Returns `PushStream` to easily operate over push messages.
+    /// This method creates new unbounded channel and replace `PushManager`'s sender with it.
+    /// Since it replaces old channel there can be only one PushStream that can receive `PushInfo`.
+    pub fn create_push_stream(&self) -> PushStream {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.push_manager.replace_sender(tx);
+        PushStream { rx }
+    }
+    /// Returns `MsgStream` by calling `create_push_stream` first.
+    /// Use this method if you are only interested in PubSub Message payloads.
+    /// Calling this method will replace old `PushManager`, `MsgStream` and `PushStream`.
+    pub fn create_msg_stream(&self) -> MsgStream {
+        self.create_push_stream().into()
     }
 }

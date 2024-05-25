@@ -159,6 +159,7 @@ where
 mod connection;
 pub use connection::*;
 mod multiplexed_connection;
+mod streams;
 pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
 mod connection_manager;
