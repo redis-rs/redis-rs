@@ -18,6 +18,62 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
+/// Options for Maximum connection waiting time
+#[derive(Clone, Debug, Default)]
+pub struct RetryStrategyInfo {
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    pub exponent_base: u64,
+    /// A multiplicative factor that will be applied to the retry delay.
+    ///
+    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    pub factor: u64,
+    /// number_of_retries times, with an exponentially increasing delay
+    pub number_of_retries: usize,
+    /// Apply a maximum delay. No retry delay will be longer than this 'duration' milliseconds.
+    pub max_delay: Option<u64>,
+}
+
+impl RetryStrategyInfo {
+    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
+    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+
+    /// Creates a new instance of the options with nothing set
+    pub fn new() -> Self {
+        Self {
+            exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+            factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            max_delay: None,
+        }
+    }
+
+    /// Sets the factor
+    pub fn factor(mut self, factor: u64) -> RetryStrategyInfo {
+        self.factor = factor;
+        self
+    }
+
+    /// Sets the max_delay
+    pub fn max_delay(mut self, duration: u64) -> RetryStrategyInfo {
+        self.max_delay = Some(duration);
+        self
+    }
+
+    /// Sets the exponent_base
+    pub fn exponent_base(mut self, duration: u64) -> RetryStrategyInfo {
+        self.exponent_base = duration;
+        self
+    }
+
+    /// Sets the number_of_retries
+    pub fn number_of_retries(mut self, duration: usize) -> RetryStrategyInfo {
+        self.number_of_retries = duration;
+        self
+    }
+}
+
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
 /// connection][multiplexed-connection] and automatically reconnects to the
 /// server when necessary.
@@ -92,20 +148,18 @@ macro_rules! reconnect_if_io_error {
 }
 
 impl ConnectionManager {
-    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
-    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
-
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
     /// This requires the `connection-manager` feature, which will also pull in
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
+        let retry_strategy_info = RetryStrategyInfo::new();
+
         Self::new_with_backoff(
             client,
-            Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            retry_strategy_info.exponent_base,
+            retry_strategy_info.factor,
+            retry_strategy_info.number_of_retries,
         )
         .await
     }
@@ -154,14 +208,52 @@ impl ConnectionManager {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
+        let retry_strategy_info = RetryStrategyInfo::new()
+            .exponent_base(exponent_base)
+            .factor(factor)
+            .number_of_retries(number_of_retries);
+
+        Self::new_with_backoff_and_timeouts_with_max_delay_retry(
+            client,
+            retry_strategy_info,
+            response_timeout,
+            connection_timeout,
+        )
+    }
+
+    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    ///
+    /// In case of reconnection issues, the manager will retry reconnection
+    /// number_of_retries times, with an exponentially increasing delay, calculated as
+    /// rand(0 .. factor * (exponent_base ^ current-try)).
+    ///
+    /// Apply a maximum delay. No retry delay will be longer than this `RetryStrategyInfo.max_delay` .
+    ///
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub async fn new_with_backoff_and_timeouts_with_max_delay(
+        client: Client,
+        retry_strategy_info: RetryStrategyInfo,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+    ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
-        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+
+        let mut retry_strategy = ExponentialBackoff::from_millis(retry_strategy_info.exponent_base)
+            .factor(retry_strategy_info.factor);
+        if let Some(max_delay) = retry_strategy_info.max_delay {
+            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
+        }
+
         let mut connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
-            number_of_retries,
+            retry_strategy_info.number_of_retries,
             response_timeout,
             connection_timeout,
         )
