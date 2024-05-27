@@ -831,6 +831,49 @@ fn test_connection_manager_reconnect_after_delay() {
     .unwrap();
 }
 
+#[test]
+#[cfg(feature = "connection-manager")]
+fn test_connection_manager_reconnect_after_delay_with_retry_delay() {
+    /// Factor set 10 seconds, but max retry delay set 500 millisecond
+    let retry_strategy_info = redis::aio::RetryStrategyInfo::new()
+        .factor(10000)
+        .max_delay(500);
+
+    let tempdir = tempfile::Builder::new()
+        .prefix("redis")
+        .tempdir()
+        .expect("failed to create tempdir");
+    let tls_files = build_keys_and_certs_for_tls(&tempdir);
+
+    let ctx = TestContext::with_tls(tls_files.clone(), false);
+    block_on_all(async move {
+        let mut manager =
+            redis::aio::ConnectionManager::new_with_backoff_and_timeouts_with_max_delay(
+                ctx.client.clone(),
+                retry_strategy_info.clone(),
+                std::time::Duration::MAX,
+                std::time::Duration::MAX,
+            )
+                .await
+                .unwrap();
+        let server = ctx.server;
+        let addr = server.client_addr().clone();
+        drop(server);
+
+        let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
+        wait_for_server_to_become_ready(ctx.client.clone()).await;
+
+        let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+        assert_eq!(result, redis::Value::Okay);
+        Ok(())
+    })
+        .unwrap();
+}
+
 #[cfg(feature = "tls-rustls")]
 mod mtls_test {
     use super::*;
