@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
-/// Options for Maximum connection waiting time
+/// Apply a maximum delay. No retry delay will be longer than this `max_delay`.
 #[derive(Clone, Debug, Default)]
 pub struct RetryStrategyInfo {
     /// The resulting duration is calculated by taking the base to the `n`-th power,

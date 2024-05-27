@@ -96,6 +96,12 @@ impl AsyncConnectionConfig {
     }
 }
 
+impl Default for AsyncConnectionConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// To enable async support you need to chose one of the supported runtimes and active its
 /// corresponding feature: `tokio-comp` or `async-std-comp`
 #[cfg(feature = "aio")]
