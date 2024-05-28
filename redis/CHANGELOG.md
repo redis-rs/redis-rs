@@ -1,3 +1,7 @@
+### 0.25.4 (2024-05-28)
+
+* Fix explicit IoError not being recognized ([#1191](https://github.com/redis-rs/redis-rs/pull/1191))
+
 ### 0.25.3 (2024-04-04)
 
 * Handle empty results in multi-node operations ([#1099](https://github.com/redis-rs/redis-rs/pull/1099))
