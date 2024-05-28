@@ -996,11 +996,11 @@ mod basic_async {
 
     #[test]
     #[cfg(feature = "connection-manager")]
-    fn test_connection_manager_reconnect_after_delay_with_max_delay() {
+    fn test_connection_manager_reconnect_new_with_config() {
         use redis::ProtocolVersion;
 
         /// Factor set 10 seconds, but max retry delay set 500 millisecond
-        let retry_strategy_info = redis::aio::RetryStrategyInfo::new()
+        let config = redis::aio::RetryStrategyInfo::new()
             .factor(10000)
             .max_delay(500);
 
@@ -1013,18 +1013,15 @@ mod basic_async {
         let ctx = TestContext::with_tls(tls_files.clone(), false);
         block_on_all(async move {
             let mut manager =
-                redis::aio::ConnectionManager::new_with_backoff_and_timeouts_with_max_delay(
+                redis::aio::ConnectionManager::new_with_backoff_and_timeouts_new_with_config(
                     ctx.client.clone(),
-                    retry_strategy_info.clone(),
-                    std::time::Duration::MAX,
-                    std::time::Duration::MAX,
+                    config,
                 )
                 .await
                 .unwrap();
             let server = ctx.server;
             let addr = server.client_addr().clone();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
             drop(server);
 
             let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
