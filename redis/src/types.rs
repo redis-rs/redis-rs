@@ -1984,7 +1984,7 @@ pointer_from_redis_value_impl!(T, std::rc::Rc<T>, std::rc::Rc::new);
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
 /// The implementation parses the value into a vec, and then passes the value through `$convert`.
-/// If `$convert` is ommited, it defaults to `Into::into`.
+/// If `$convert` is omitted, it defaults to `Into::into`.
 macro_rules! from_vec_from_redis_value {
     (<$T:ident> $Type:ty) => {
         from_vec_from_redis_value!(<$T> $Type; Into::into);

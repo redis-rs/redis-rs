@@ -184,7 +184,7 @@ implement_json_commands! {
         Ok::<_, RedisError>(cmd)
     }
 
-    /// Index array at `path`, returns first occurance of `value`
+    /// Index array at `path`, returns first occurrence of `value`
     fn json_arr_index<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
         let mut cmd = cmd("JSON.ARRINDEX");
 
@@ -213,7 +213,7 @@ implement_json_commands! {
 
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
     ///
-    /// `index` must be withing the array's range.
+    /// `index` must be within the array's range.
     fn json_arr_insert<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, index: i64, value: &'a V) {
         let mut cmd = cmd("JSON.ARRINSERT");
 

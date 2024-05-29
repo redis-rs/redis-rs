@@ -287,7 +287,7 @@ impl Default for Cmd {
 }
 
 /// A command acts as a builder interface to creating encoded redis
-/// requests.  This allows you to easiy assemble a packed command
+/// requests.  This allows you to easily assemble a packed command
 /// by chaining arguments together.
 ///
 /// Basic example:

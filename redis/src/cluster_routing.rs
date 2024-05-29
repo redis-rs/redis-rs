@@ -266,7 +266,7 @@ fn get_route(is_readonly: bool, key: &[u8]) -> Route {
 /// Takes the given `routable` and creates a multi-slot routing info.
 /// This is used for commands like MSET & MGET, where if the command's keys
 /// are hashed to multiple slots, the command should be split into sub-commands,
-/// each targetting a single slot. The results of these sub-commands are then
+/// each targeting a single slot. The results of these sub-commands are then
 /// usually reassembled using `combine_and_sort_array_results`. In order to do this,
 /// `MultipleNodeRoutingInfo::MultiSlot` contains the routes for each sub-command, and
 /// the indices in the final combined result for each result from the sub-command.

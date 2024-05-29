@@ -80,7 +80,7 @@ mod types {
 
     #[test]
     fn test_i32() {
-        // from hte book hitchhiker's guide to the galaxy
+        // from the book hitchhiker's guide to the galaxy
         let everything_num = 42i32;
         let everything_str_x = "42x";
 

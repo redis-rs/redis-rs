@@ -562,7 +562,7 @@ mod basic_async {
     }
 
     // Allowing `nth(0)` for similarity with the following `nth(1)`.
-    // Allowing `let ()` as `query_async` requries the type it converts the result to.
+    // Allowing `let ()` as `query_async` requires the type it converts the result to.
     #[allow(clippy::let_unit_value, clippy::iter_nth_zero)]
     #[tokio::test]
     async fn io_error_on_kill_issue_320() {
