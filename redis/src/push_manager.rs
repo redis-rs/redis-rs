@@ -156,7 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_push_manager_multi_threaded() {
-        // In this test we create 4 channels and send 1000 message, it switchs channels for each message we sent.
+        // In this test we create 4 channels and send 1000 message, it switches channels for each message we sent.
         // Then we check if all messages are received and sum of messages are equal to expected sum.
         // We also check if all channels are used.
         let push_manager = PushManager::new();

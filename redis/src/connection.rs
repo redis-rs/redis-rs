@@ -1079,7 +1079,7 @@ pub trait ConnectionLike {
 
     /// Returns the connection status.
     ///
-    /// The connection is open until any `read_response` call recieved an
+    /// The connection is open until any `read_response` call received an
     /// invalid response from the server (most likely a closed or dropped
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a

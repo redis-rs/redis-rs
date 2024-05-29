@@ -221,7 +221,7 @@ impl FromRedisValue for AclInfo {
             _ => {
                 return Err(not_convertible_error!(
                     v,
-                    "Expect a resposne from `ACL GETUSER`"
+                    "Expect a response from `ACL GETUSER`"
                 ))
             }
         };

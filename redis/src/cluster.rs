@@ -301,7 +301,7 @@ where
 
     /// Returns the connection status.
     ///
-    /// The connection is open until any `read_response` call recieved an
+    /// The connection is open until any `read_response` call received an
     /// invalid response from the server (most likely a closed or dropped
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
@@ -781,7 +781,7 @@ where
         self.refresh_slots()?;
 
         // Given that there are commands that need to be retried, it means something in the cluster
-        // topology changed. Execute each command seperately to take advantage of the existing
+        // topology changed. Execute each command separately to take advantage of the existing
         // retry logic that handles these cases.
         for retry_idx in to_retry {
             let cmd = &cmds[retry_idx];

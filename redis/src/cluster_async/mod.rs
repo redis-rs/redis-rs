@@ -1108,7 +1108,7 @@ where
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
             for request in pending_requests.drain(..) {
                 // Drop the request if noone is waiting for a response to free up resources for
-                // requests callers care about (load shedding). It will be ambigous whether the
+                // requests callers care about (load shedding). It will be ambiguous whether the
                 // request actually goes through regardless.
                 if request.sender.is_closed() {
                     continue;
