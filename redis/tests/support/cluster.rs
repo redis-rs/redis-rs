@@ -204,6 +204,8 @@ impl RedisCluster {
                         let mut process = cmd.spawn().unwrap();
                         sleep(Duration::from_millis(50));
 
+                        let log_file_index = cmd.get_args().position(|arg|arg == "--logfile").unwrap() + 1;
+                        let log_file_path = cmd.get_args().nth(log_file_index).unwrap();
                         match process.try_wait() {
                             Ok(Some(status)) => {
                                 let stdout = process.stdout.map_or(String::new(), |mut out|{
@@ -216,8 +218,10 @@ impl RedisCluster {
                                     out.read_to_string(&mut str).unwrap();
                                     str
                                 });
+
+                                let log_file_contents = std::fs::read_to_string(log_file_path).unwrap();
                                 let err =
-                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout}`.\nstderr: `{stderr}`");
+                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout}`.\nstderr: `{stderr}`\nlog file: {log_file_contents}");
                                 if cur_attempts == max_attempts {
                                     panic!("{err}");
                                 }
@@ -230,7 +234,8 @@ impl RedisCluster {
                                 let mut cur_attempts = 0;
                                 loop {
                                     if cur_attempts == max_attempts {
-                                        panic!("redis server creation failed: Port {port} closed")
+                                        let log_file_contents = std::fs::read_to_string(log_file_path).unwrap();
+                                        panic!("redis server creation failed: Port {port} closed. {log_file_contents}")
                                     }
                                     if port_in_use(&addr) {
                                         return process;
