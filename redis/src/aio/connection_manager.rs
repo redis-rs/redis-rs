@@ -20,7 +20,7 @@ use tokio_retry::Retry;
 
 /// Apply a maximum delay. No retry delay will be longer than this `max_delay`.
 #[derive(Clone, Debug, Default)]
-pub struct ConnectionConfigInfo {
+pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
     exponent_base: u64,
@@ -38,7 +38,7 @@ pub struct ConnectionConfigInfo {
     connection_timeout: std::time::Duration,
 }
 
-impl ConnectionConfigInfo {
+impl ConnectionManagerConfig {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
     const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
@@ -58,37 +58,37 @@ impl ConnectionConfigInfo {
     }
 
     /// Sets the factor
-    pub fn factor(mut self, factor: u64) -> ConnectionConfigInfo {
+    pub fn factor(mut self, factor: u64) -> ConnectionManagerConfig {
         self.factor = factor;
         self
     }
 
     /// Sets the max_delay
-    pub fn max_delay(mut self, duration: u64) -> ConnectionConfigInfo {
-        self.max_delay = Some(duration);
+    pub fn max_delay(mut self, time: u64) -> ConnectionManagerConfig {
+        self.max_delay = Some(time);
         self
     }
 
     /// Sets the exponent_base
-    pub fn exponent_base(mut self, duration: u64) -> ConnectionConfigInfo {
-        self.exponent_base = duration;
+    pub fn exponent_base(mut self, base: u64) -> ConnectionManagerConfig {
+        self.exponent_base = base;
         self
     }
 
     /// Sets the number_of_retries
-    pub fn number_of_retries(mut self, amount: usize) -> ConnectionConfigInfo {
+    pub fn number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
         self.number_of_retries = amount;
         self
     }
 
     /// Sets the response_timeout
-    pub fn response_timeout(mut self, duration: std::time::Duration) -> ConnectionConfigInfo {
+    pub fn response_timeout(mut self, duration: std::time::Duration) -> ConnectionManagerConfig {
         self.response_timeout = duration;
         self
     }
 
     /// Sets the response_timeout
-    pub fn connection_timeout(mut self, duration: std::time::Duration) -> ConnectionConfigInfo {
+    pub fn connection_timeout(mut self, duration: std::time::Duration) -> ConnectionManagerConfig {
         self.connection_timeout = duration;
         self
     }
@@ -173,15 +173,9 @@ impl ConnectionManager {
     /// This requires the `connection-manager` feature, which will also pull in
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
-        let config = ConnectionConfigInfo::new();
+        let config = ConnectionManagerConfig::new();
 
-        Self::new_with_backoff(
-            client,
-            config.exponent_base,
-            config.factor,
-            config.number_of_retries,
-        )
-        .await
+        Self::new_with_config(client, config).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -228,14 +222,14 @@ impl ConnectionManager {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
-        let config = ConnectionConfigInfo::new()
+        let config = ConnectionManagerConfig::new()
             .exponent_base(exponent_base)
             .factor(factor)
             .number_of_retries(number_of_retries)
             .response_timeout(response_timeout)
             .connection_timeout(connection_timeout);
 
-        Self::new_with_backoff_and_timeouts_new_with_config(client, config).await
+        Self::new_with_config(client, config).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -247,14 +241,13 @@ impl ConnectionManager {
     /// number_of_retries times, with an exponentially increasing delay, calculated as
     /// rand(0 .. factor * (exponent_base ^ current-try)).
     ///
-    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionConfigInfo
-    ///.max_delay` .
+    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
     ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub async fn new_with_backoff_and_timeouts_new_with_config(
+    pub async fn new_with_config(
         client: Client,
-        config: ConnectionConfigInfo,
+        config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
