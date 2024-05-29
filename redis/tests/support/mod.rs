@@ -143,7 +143,8 @@ pub enum Module {
 
 pub struct RedisServer {
     pub process: process::Child,
-    pub(crate) tempdir: tempfile::TempDir,
+    tempdir: tempfile::TempDir,
+    log_file: PathBuf,
     pub(crate) addr: redis::ConnectionAddr,
     pub(crate) tls_paths: Option<TlsFilePaths>,
 }
@@ -174,6 +175,10 @@ impl RedisServer {
     #[cfg(feature = "tls-rustls")]
     pub fn new_with_mtls() -> RedisServer {
         RedisServer::with_modules(&[], true)
+    }
+
+    pub fn log_file_contents(&self) -> String {
+        std::fs::read_to_string(self.log_file.clone()).unwrap()
     }
 
     pub fn get_addr(port: u16) -> ConnectionAddr {
@@ -279,7 +284,8 @@ impl RedisServer {
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
-        redis_cmd.arg("--logfile").arg(Self::log_file(&tempdir));
+        let log_file = Self::log_file(&tempdir);
+        redis_cmd.arg("--logfile").arg(log_file.clone());
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -290,6 +296,7 @@ impl RedisServer {
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
+                    log_file,
                     tempdir,
                     addr,
                     tls_paths: None,
@@ -329,6 +336,7 @@ impl RedisServer {
 
                 RedisServer {
                     process: spawner(&mut redis_cmd),
+                    log_file,
                     tempdir,
                     addr,
                     tls_paths: Some(tls_paths),
@@ -342,6 +350,7 @@ impl RedisServer {
                     .arg(path);
                 RedisServer {
                     process: spawner(&mut redis_cmd),
+                    log_file,
                     tempdir,
                     addr,
                     tls_paths: None,
@@ -446,15 +455,27 @@ impl TestContext {
     }
 
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
+        Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
+    }
+
+    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
+        Self::with_modules_and_tls(modules, mtls_enabled, None)
+    }
+
+    fn with_modules_and_tls(
+        modules: &[Module],
+        mtls_enabled: bool,
+        tls_files: Option<TlsFilePaths>,
+    ) -> Self {
         let redis_port = get_random_available_port();
         let addr: ConnectionAddr = RedisServer::get_addr(redis_port);
 
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
-            Some(tls_files),
+            tls_files,
             mtls_enabled,
-            &[],
+            modules,
             |cmd| {
                 cmd.spawn()
                     .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
@@ -467,25 +488,36 @@ impl TestContext {
         #[cfg(not(feature = "tls-rustls"))]
         let client = redis::Client::open(server.connection_info()).unwrap();
 
-        Self::connect_with_retries(&client);
+        let mut con;
 
-        TestContext {
-            server,
-            client,
-            protocol: use_protocol(),
+        let millisecond = Duration::from_millis(1);
+        let mut retries = 0;
+        loop {
+            match client.get_connection() {
+                Err(err) => {
+                    if err.is_connection_refusal() {
+                        sleep(millisecond);
+                        retries += 1;
+                        if retries > 100000 {
+                            panic!(
+                                "Tried to connect too many times, last error: {err}, logfile: {}",
+                                server.log_file_contents()
+                            );
+                        }
+                    } else {
+                        panic!(
+                            "Could not connect: {err}, logfile: {}",
+                            server.log_file_contents()
+                        );
+                    }
+                }
+                Ok(x) => {
+                    con = x;
+                    break;
+                }
+            }
         }
-    }
-
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
-        let server = RedisServer::with_modules(modules, mtls_enabled);
-
-        #[cfg(feature = "tls-rustls")]
-        let client =
-            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
-        #[cfg(not(feature = "tls-rustls"))]
-        let client = redis::Client::open(server.connection_info()).unwrap();
-
-        Self::connect_with_retries(&client);
+        redis::cmd("FLUSHDB").execute(&mut con);
 
         TestContext {
             server,
