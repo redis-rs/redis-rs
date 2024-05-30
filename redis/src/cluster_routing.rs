@@ -453,6 +453,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"CONFIG GET"
         | b"DEBUG"
         | b"ECHO"
+        | b"FUNCTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
         | b"MODULE LIST"
