@@ -1786,6 +1786,49 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+
+        block_on_all(async move {
+            let ports: Vec<_> = cluster
+                .nodes
+                .iter()
+                .map(|info| match info.addr {
+                    redis::ConnectionAddr::Tcp(_, port) => port,
+                    redis::ConnectionAddr::TcpTls { port, .. } => port,
+                    redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+                })
+                .collect();
+
+            let mut connection = cluster.async_connection().await;
+            drop(cluster);
+
+            // recreate cluster
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
+
+            let cmd = cmd("PING");
+            // explicitly route to all primaries and request all succeeded
+            let result = connection
+                .route_command(
+                    &cmd,
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllMasters,
+                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    )),
+                )
+                .await;
+            assert!(result.is_ok());
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn test_async_cluster_saves_reconnected_connection() {
         let name = "test_async_cluster_saves_reconnected_connection";
         let ping_attempts = Arc::new(AtomicI32::new(0));
