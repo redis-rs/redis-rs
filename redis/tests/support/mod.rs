@@ -390,13 +390,19 @@ impl RedisServer {
 /// process, so this must be used with care (since here we only use it for tests, it's
 /// mostly okay).
 pub fn get_random_available_port() -> u16 {
-    let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-    socket.set_reuse_address(true).unwrap();
-    socket.bind(addr).unwrap();
-    socket.listen(1).unwrap();
-    let listener = TcpListener::from(socket);
-    listener.local_addr().unwrap().port()
+    for _ in 0..10000 {
+        let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        socket.set_reuse_address(true).unwrap();
+        socket.bind(addr).unwrap();
+        socket.listen(1).unwrap();
+        let listener = TcpListener::from(socket);
+        let port = listener.local_addr().unwrap().port();
+        if port < 55535 {
+            return port;
+        }
+    }
+    panic!("Couldn't get a valid port");
 }
 
 impl Drop for RedisServer {
