@@ -24,6 +24,7 @@ use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
+use super::get_random_available_port;
 #[cfg(feature = "tls-rustls")]
 use super::{build_single_client, load_certs_from_file};
 
@@ -80,6 +81,36 @@ fn port_in_use(addr: &str) -> bool {
     socket.connect(&socket_addr.into()).is_ok()
 }
 
+pub struct RedisClusterConfiguration {
+    pub nodes: u16,
+    pub replicas: u16,
+    pub modules: Vec<Module>,
+    pub mtls_enabled: bool,
+    pub ports: Vec<u16>,
+}
+
+impl RedisClusterConfiguration {
+    pub fn single_replica_config() -> Self {
+        Self {
+            nodes: 6,
+            replicas: 1,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for RedisClusterConfiguration {
+    fn default() -> Self {
+        Self {
+            nodes: 3,
+            replicas: 0,
+            modules: vec![],
+            mtls_enabled: false,
+            ports: vec![],
+        }
+    }
+}
+
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
@@ -98,26 +129,21 @@ impl RedisCluster {
     pub fn client_name() -> &'static str {
         "test_cluster_client"
     }
+    pub fn new(configuration: RedisClusterConfiguration) -> RedisCluster {
+        let RedisClusterConfiguration {
+            nodes,
+            replicas,
+            modules,
+            mtls_enabled,
+            mut ports,
+        } = configuration;
 
-    pub fn new(nodes: u16, replicas: u16) -> RedisCluster {
-        RedisCluster::with_modules(nodes, replicas, &[], false)
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_mtls(nodes: u16, replicas: u16) -> RedisCluster {
-        RedisCluster::with_modules(nodes, replicas, &[], true)
-    }
-
-    pub fn with_modules(
-        nodes: u16,
-        replicas: u16,
-        modules: &[Module],
-        mtls_enabled: bool,
-    ) -> RedisCluster {
+        if ports.is_empty() {
+            ports = (0..nodes).map(|_| get_random_available_port()).collect();
+        }
         let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
-        let start_port = 7000;
         let mut tls_paths = None;
 
         let mut is_tls = false;
@@ -136,9 +162,7 @@ impl RedisCluster {
 
         let max_attempts = 5;
 
-        for node in 0..nodes {
-            let port = start_port + node;
-
+        for port in ports {
             servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
                 None,

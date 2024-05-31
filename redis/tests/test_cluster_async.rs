@@ -3325,6 +3325,118 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_handle_complete_server_disconnect_without_panicking() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
+        block_on_all(async move {
+            let mut connection = cluster.async_connection().await;
+            drop(cluster);
+            for _ in 0..5 {
+                let cmd = cmd("PING");
+                let result = connection
+                    .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                    .await;
+                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+                assert!(result.is_err());
+                // This will route to all nodes - different path through the code.
+                let result = connection.req_packed_command(&cmd).await;
+                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+                assert!(result.is_err());
+            }
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_reconnect_after_complete_server_disconnect() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
+
+        block_on_all(async move {
+            let ports: Vec<_> = cluster
+                .nodes
+                .iter()
+                .map(|info| match info.addr {
+                    redis::ConnectionAddr::Tcp(_, port) => port,
+                    redis::ConnectionAddr::TcpTls { port, .. } => port,
+                    redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+                })
+                .collect();
+
+            let mut connection = cluster.async_connection().await;
+            drop(cluster);
+
+            let cmd = cmd("PING");
+
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
+
+            let result = connection.req_packed_command(&cmd).await.unwrap();
+            assert_eq!(result, Value::SimpleString("PONG".to_string()));
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+
+        block_on_all(async move {
+            let ports: Vec<_> = cluster
+                .nodes
+                .iter()
+                .map(|info| match info.addr {
+                    redis::ConnectionAddr::Tcp(_, port) => port,
+                    redis::ConnectionAddr::TcpTls { port, .. } => port,
+                    redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+                })
+                .collect();
+
+            let mut connection = cluster.async_connection().await;
+            drop(cluster);
+
+            // recreate cluster
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
+
+            let cmd = cmd("PING");
+            // explicitly route to all primaries and request all succeeded
+            let result = connection
+                .route_command(
+                    &cmd,
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllMasters,
+                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    )),
+                )
+                .await;
+            assert!(result.is_ok());
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn test_async_cluster_saves_reconnected_connection() {
         let name = "test_async_cluster_saves_reconnected_connection";
         let ping_attempts = Arc::new(AtomicI32::new(0));
@@ -3401,12 +3513,9 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_periodic_checks_use_management_connection() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.periodic_topology_checks(Duration::from_millis(10))
+        });
 
         block_on_all(async move {
         let mut connection = cluster.async_connection(None).await;
@@ -3498,12 +3607,9 @@ mod cluster_async {
         // This test will check two aspects:
         // 1. Ensuring that after a disconnection in the management connection, a new management connection is established.
         // 2. Confirming that a failure in the management connection does not impact the user connection, which should remain intact.
-        let cluster = TestClusterContext::new_with_cluster_client_builder(
-            3,
-            0,
-            |builder| builder.periodic_topology_checks(Duration::from_millis(10)),
-            false,
-        );
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.periodic_topology_checks(Duration::from_millis(10))
+        });
         block_on_all(async move {
         let mut connection = cluster.async_connection(None).await;
         let _client_list = "".to_string();
