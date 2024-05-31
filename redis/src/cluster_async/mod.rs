@@ -364,26 +364,31 @@ impl<C> RequestInfo<C> {
         }
     }
 
-    fn reset_redirect(&mut self) {
-        match &mut self.cmd {
-            CmdArg::Cmd { routing, .. } => {
-                if let InternalRoutingInfo::SingleNode(InternalSingleNodeRouting::Redirect {
-                    previous_routing,
-                    ..
-                }) = routing
-                {
-                    let previous_routing = std::mem::take(previous_routing.as_mut());
-                    *routing = previous_routing.into();
-                }
-            }
-            CmdArg::Pipeline { route, .. } => {
-                if let InternalSingleNodeRouting::Redirect {
+    fn reset_routing(&mut self) {
+        let fix_route = |route: &mut InternalSingleNodeRouting<C>| {
+            match route {
+                InternalSingleNodeRouting::Redirect {
                     previous_routing, ..
-                } = route
-                {
+                } => {
                     let previous_routing = std::mem::take(previous_routing.as_mut());
                     *route = previous_routing;
                 }
+                // If a specific connection is specified, then reconnecting without resetting the routing
+                // will mean that the request is still routed to the old connection.
+                InternalSingleNodeRouting::Connection { identifier, .. } => {
+                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
+                }
+                _ => {}
+            }
+        };
+        match &mut self.cmd {
+            CmdArg::Cmd { routing, .. } => {
+                if let InternalRoutingInfo::SingleNode(route) = routing {
+                    fix_route(route);
+                }
+            }
+            CmdArg::Pipeline { route, .. } => {
+                fix_route(route);
             }
         }
     }
@@ -492,7 +497,7 @@ impl<C> Future for Request<C> {
                     OperationTarget::NotFound => {
                         // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
-                        request.info.reset_redirect();
+                        request.info.reset_routing();
                         return Next::RefreshSlots {
                             request,
                             sleep_duration: Some(sleep_duration),
@@ -532,7 +537,7 @@ impl<C> Future for Request<C> {
                     crate::types::RetryMethod::Reconnect => {
                         let mut request = this.request.take().unwrap();
                         // TODO should we reset the redirect here?
-                        request.info.reset_redirect();
+                        request.info.reset_routing();
                         Next::Reconnect {
                             request,
                             target: address,
