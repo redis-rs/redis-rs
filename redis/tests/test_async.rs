@@ -960,45 +960,6 @@ mod basic_async {
     fn test_connection_manager_reconnect_after_delay() {
         use redis::ProtocolVersion;
 
-        let tempdir = tempfile::Builder::new()
-            .prefix("redis")
-            .tempdir()
-            .expect("failed to create tempdir");
-        let tls_files = build_keys_and_certs_for_tls(&tempdir);
-
-        let ctx = TestContext::with_tls(tls_files.clone(), false);
-        block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
-                .await
-                .unwrap();
-            let server = ctx.server;
-            let addr = server.client_addr().clone();
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
-            drop(server);
-
-            let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
-            if ctx.protocol != ProtocolVersion::RESP2 {
-                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
-            wait_for_server_to_become_ready(ctx.client.clone()).await;
-
-            let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
-            assert_eq!(result, redis::Value::Okay);
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "connection-manager")]
-    fn test_connection_manager_reconnect_new_with_config() {
-        use redis::ProtocolVersion;
-
         /// Factor set 10 seconds, but max retry delay set 500 millisecond
         let config = redis::aio::ConnectionManagerConfig::new()
             .factor(10000)
@@ -1018,17 +979,21 @@ mod basic_async {
                     .unwrap();
             let server = ctx.server;
             let addr = server.client_addr().clone();
-
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            manager.get_push_manager().replace_sender(tx.clone());
             drop(server);
 
-            // one call is ignored because it's required to trigger the connection manager's reconnect.
-            let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
-
+            let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+            if ctx.protocol != ProtocolVersion::RESP2 {
+                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+            }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
             let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
             wait_for_server_to_become_ready(ctx.client.clone()).await;
-            let result: redis::Value = manager.set("foo", "bar").await.unwrap();
 
+            let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+            assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
             assert_eq!(result, redis::Value::Okay);
             Ok(())
         })
