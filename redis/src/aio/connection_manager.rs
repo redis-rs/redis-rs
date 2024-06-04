@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
-/// Apply a maximum delay. No retry delay will be longer than this `max_delay`.
+/// ConnectionManager is the configuration for reconnect mechanism and request timing
 #[derive(Clone, Debug, Default)]
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
@@ -30,7 +30,7 @@ pub struct ConnectionManagerConfig {
     factor: u64,
     /// number_of_retries times, with an exponentially increasing delay
     number_of_retries: usize,
-    /// Apply a maximum delay. No retry delay will be longer than this 'duration' milliseconds.
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
     max_delay: Option<u64>,
     /// The new connection will timeout operations after `response_timeout` has passed.
     response_timeout: std::time::Duration,
@@ -57,38 +57,47 @@ impl ConnectionManagerConfig {
         }
     }
 
-    /// Sets the factor
-    pub fn factor(mut self, factor: u64) -> ConnectionManagerConfig {
+    /// A multiplicative factor that will be applied to the retry delay.
+    ///
+    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    pub fn set_factor(mut self, factor: u64) -> ConnectionManagerConfig {
         self.factor = factor;
         self
     }
 
-    /// Sets the max_delay
-    pub fn max_delay(mut self, time: u64) -> ConnectionManagerConfig {
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
+    pub fn set_max_delay(mut self, time: u64) -> ConnectionManagerConfig {
         self.max_delay = Some(time);
         self
     }
 
-    /// Sets the exponent_base
-    pub fn exponent_base(mut self, base: u64) -> ConnectionManagerConfig {
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    pub fn set_exponent_base(mut self, base: u64) -> ConnectionManagerConfig {
         self.exponent_base = base;
         self
     }
 
-    /// Sets the number_of_retries
-    pub fn number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
+    /// number_of_retries times, with an exponentially increasing delay
+    pub fn set_number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
         self.number_of_retries = amount;
         self
     }
 
-    /// Sets the response_timeout
-    pub fn response_timeout(mut self, duration: std::time::Duration) -> ConnectionManagerConfig {
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    pub fn set_response_timeout(
+        mut self,
+        duration: std::time::Duration,
+    ) -> ConnectionManagerConfig {
         self.response_timeout = duration;
         self
     }
 
-    /// Sets the response_timeout
-    pub fn connection_timeout(mut self, duration: std::time::Duration) -> ConnectionManagerConfig {
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub fn set_connection_timeout(
+        mut self,
+        duration: std::time::Duration,
+    ) -> ConnectionManagerConfig {
         self.connection_timeout = duration;
         self
     }
@@ -223,11 +232,11 @@ impl ConnectionManager {
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
         let config = ConnectionManagerConfig::new()
-            .exponent_base(exponent_base)
-            .factor(factor)
-            .number_of_retries(number_of_retries)
-            .response_timeout(response_timeout)
-            .connection_timeout(connection_timeout);
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries)
+            .set_response_timeout(response_timeout)
+            .set_connection_timeout(connection_timeout);
 
         Self::new_with_config(client, config).await
     }

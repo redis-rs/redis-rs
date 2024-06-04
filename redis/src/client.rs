@@ -594,11 +594,11 @@ impl Client {
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::ConnectionManager> {
         let config = crate::aio::ConnectionManagerConfig::new()
-            .exponent_base(exponent_base)
-            .factor(factor)
-            .number_of_retries(number_of_retries)
-            .response_timeout(response_timeout)
-            .connection_timeout(connection_timeout);
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries)
+            .set_response_timeout(response_timeout)
+            .set_connection_timeout(connection_timeout);
 
         crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
