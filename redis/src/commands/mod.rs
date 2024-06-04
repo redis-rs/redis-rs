@@ -1420,7 +1420,7 @@ implement_commands! {
     /// ```
     ///
     /// ```text
-    /// XAUTOCLAIM <key> <group> <consumer> <min-idel-time> <start> [COUNT <count>] [JUSTID]
+    /// XAUTOCLAIM <key> <group> <consumer> <min-idle-time> <start> [COUNT <count>] [JUSTID]
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]

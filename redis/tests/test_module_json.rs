@@ -255,7 +255,7 @@ fn test_module_json_clear() {
     assert_eq!(
         checking_value,
         // i found it changes the order?
-        // its not reallt a problem if you're just deserializing it anyway but still
+        // its not really a problem if you're just deserializing it anyway but still
         // kinda weird
         Ok("[{\"arr\":[],\"bool\":true,\"float\":0,\"int\":0,\"obj\":{},\"str\":\"foo\"}]".into())
     );

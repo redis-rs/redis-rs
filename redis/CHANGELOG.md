@@ -45,7 +45,7 @@
 * Fix lint errors from new Rust version ([#1016](https://github.com/redis-rs/redis-rs/pull/1016))
 * Fix warnings that appear only with native-TLS ([#1018](https://github.com/redis-rs/redis-rs/pull/1018))
 * Hide the req_packed_commands from docs ([#1020](https://github.com/redis-rs/redis-rs/pull/1020))
-* Fix documentaion error ([#1022](https://github.com/redis-rs/redis-rs/pull/1022) @rcl-viveksharma)
+* Fix documentation error ([#1022](https://github.com/redis-rs/redis-rs/pull/1022) @rcl-viveksharma)
 * Fixes minor grammar mistake in json.rs file ([#1026](https://github.com/redis-rs/redis-rs/pull/1026) @RScrusoe)
 * Enable ignored pipe test ([#1027](https://github.com/redis-rs/redis-rs/pull/1027))
 * Fix names of existing async cluster tests ([#1028](https://github.com/redis-rs/redis-rs/pull/1028))
@@ -190,7 +190,7 @@ Though async Redis Cluster functionality for the time being has been kept as clo
 `redis-cluster-async` should note the following changes:
 * Retries, while still configurable, can no longer be set to `None`/infinite retries
 * Routing and slot parsing logic has been removed and merged with existing `redis-rs` functionality
-* The client has been removed and superceded by common `ClusterClient`
+* The client has been removed and superseded by common `ClusterClient`
 * Renamed `Connection` to `ClusterConnection`
 * Added support for reading from replicas
 * Added support for insecure TLS
@@ -249,7 +249,7 @@ contributors for making this release happen.
 *   Use async-std name resolution when necessary ([#701](https://github.com/redis-rs/redis-rs/pull/701) @UgnilJoZ) 
 *   Add Script::invoke_async method ([#711](https://github.com/redis-rs/redis-rs/pull/711) @r-bk)
 *   Cluster Refactorings ([#717](https://github.com/redis-rs/redis-rs/pull/717), [#716](https://github.com/redis-rs/redis-rs/pull/716), [#709](https://github.com/redis-rs/redis-rs/pull/709), [#707](https://github.com/redis-rs/redis-rs/pull/707), [#706](https://github.com/redis-rs/redis-rs/pull/706) @0xWOF, @utkarshgupta137)
-*   Fix intermitent test failure ([#714](https://github.com/redis-rs/redis-rs/pull/714) @0xWOF, @utkarshgupta137)
+*   Fix intermittent test failure ([#714](https://github.com/redis-rs/redis-rs/pull/714) @0xWOF, @utkarshgupta137)
 *   Doc changes ([#705](https://github.com/redis-rs/redis-rs/pull/705) @0xWOF, @utkarshgupta137)
 *   Lint fixes ([#704](https://github.com/redis-rs/redis-rs/pull/704) @0xWOF)
 
@@ -497,7 +497,7 @@ New:
 
 ```rust
 let mut parser = Parser::new();
-let result = parser.pase_value(bytes);
+let result = parser.parse_value(bytes);
 ```
 
 ## [0.15.1](https://github.com/mitsuhiko/redis-rs/compare/0.15.0...0.15.1) - 2020-01-15
