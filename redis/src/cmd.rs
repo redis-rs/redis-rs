@@ -324,7 +324,7 @@ impl Cmd {
         }
     }
 
-    /// Creates a new empty command, with at least the requested capcity.
+    /// Creates a new empty command, with at least the requested capacity.
     pub fn with_capacity(arg_count: usize, size_of_data: usize) -> Cmd {
         Cmd {
             data: Vec::with_capacity(size_of_data),
