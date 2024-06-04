@@ -587,11 +587,7 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
     pub async fn get_connection_manager_with_config(
         &self,
-        exponent_base: u64,
-        factor: u64,
-        number_of_retries: usize,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
+        config: crate::aio::ConnectionManagerConfig,
     ) -> RedisResult<crate::aio::ConnectionManager> {
         let config = crate::aio::ConnectionManagerConfig::new()
             .set_exponent_base(exponent_base)
