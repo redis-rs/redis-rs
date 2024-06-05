@@ -960,7 +960,6 @@ mod basic_async {
     fn test_connection_manager_reconnect_after_delay() {
         use redis::ProtocolVersion;
 
-        /// Factor set 10 seconds, but max retry delay set 500 millisecond
         let config = redis::aio::ConnectionManagerConfig::new()
             .set_factor(10000)
             .set_max_delay(500);
