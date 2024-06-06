@@ -102,7 +102,6 @@ impl ConnectionManagerConfig {
         self
     }
 }
-
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
 /// connection][multiplexed-connection] and automatically reconnects to the
 /// server when necessary.
