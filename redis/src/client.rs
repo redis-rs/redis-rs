@@ -252,7 +252,7 @@ impl Client {
 
     /// Returns an async multiplexed connection from the client.
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
@@ -279,7 +279,7 @@ impl Client {
 
     /// Returns an async multiplexed connection from the client.
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
@@ -292,7 +292,7 @@ impl Client {
 
     /// Returns an async multiplexed connection from the client.
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
@@ -319,7 +319,7 @@ impl Client {
 
     /// Returns an async multiplexed connection from the client.
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
@@ -333,7 +333,7 @@ impl Client {
     /// Returns an async multiplexed connection from the client and a future which must be polled
     /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     /// The multiplexer will return a timeout error on any request that takes longer then `response_timeout`.
     #[cfg(feature = "tokio-comp")]
@@ -354,7 +354,7 @@ impl Client {
     /// Returns an async multiplexed connection from the client and a future which must be polled
     /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
@@ -371,7 +371,7 @@ impl Client {
     /// Returns an async multiplexed connection from the client and a future which must be polled
     /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     /// The multiplexer will return a timeout error on any request that takes longer then `response_timeout`.
     #[cfg(feature = "async-std-comp")]
@@ -392,7 +392,7 @@ impl Client {
     /// Returns an async multiplexed connection from the client and a future which must be polled
     /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
     ///
-    /// A multiplexed connection can be cloned, allowing requests to be be sent concurrently
+    /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     #[cfg(feature = "async-std-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
@@ -418,7 +418,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
@@ -442,7 +442,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
@@ -465,7 +465,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
@@ -501,7 +501,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
@@ -540,7 +540,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
@@ -578,7 +578,7 @@ impl Client {
     /// refer to the [`ConnectionManager`][connection-manager] docs for
     /// detailed reconnecting behavior.
     ///
-    /// A connection manager can be cloned, allowing requests to be be sent concurrently
+    /// A connection manager can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
     ///
     /// [connection-manager]: aio/struct.ConnectionManager.html
