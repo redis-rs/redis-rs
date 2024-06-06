@@ -2,6 +2,7 @@ use super::RedisFuture;
 use crate::cmd::Cmd;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
+use crate::AsyncConnectionConfig;
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     Client,
@@ -298,11 +299,11 @@ impl ConnectionManager {
         connection_timeout: std::time::Duration,
     ) -> RedisResult<MultiplexedConnection> {
         let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
+        let config = AsyncConnectionConfig::new()
+            .set_connection_timeout(connection_timeout)
+            .set_response_timeout(response_timeout);
         Retry::spawn(retry_strategy, || {
-            client.get_multiplexed_async_connection_with_timeouts(
-                response_timeout,
-                connection_timeout,
-            )
+            client.get_multiplexed_async_connection_with_config(&config)
         })
         .await
     }
