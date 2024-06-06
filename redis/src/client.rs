@@ -84,13 +84,13 @@ impl AsyncConnectionConfig {
     }
 
     /// Sets the connection timeout
-    pub fn with_connection_timeout(mut self, connection_timeout: std::time::Duration) -> Self {
+    pub fn set_connection_timeout(mut self, connection_timeout: std::time::Duration) -> Self {
         self.connection_timeout = Some(connection_timeout);
         self
     }
 
     /// Sets the response timeout
-    pub fn with_response_timeout(mut self, response_timeout: std::time::Duration) -> Self {
+    pub fn set_response_timeout(mut self, response_timeout: std::time::Duration) -> Self {
         self.response_timeout = Some(response_timeout);
         self
     }
@@ -181,6 +181,7 @@ impl Client {
         docsrs,
         doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
     )]
+    #[deprecated(note = "Use `get_multiplexed_async_connection_with_config` instead")]
     pub async fn get_multiplexed_async_connection_with_timeouts(
         &self,
         response_timeout: std::time::Duration,
@@ -188,8 +189,8 @@ impl Client {
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
         self.get_multiplexed_async_connection_with_config(
             &AsyncConnectionConfig::new()
-                .with_connection_timeout(connection_timeout)
-                .with_response_timeout(response_timeout),
+                .set_connection_timeout(connection_timeout)
+                .set_response_timeout(response_timeout),
         )
         .await
     }
