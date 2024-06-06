@@ -1121,11 +1121,11 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
+            let config = crate::AsyncConnectionConfig::new()
+                .set_connection_timeout(connection_timeout)
+                .set_response_timeout(response_timeout);
             client
-                .get_multiplexed_async_connection_with_timeouts(
-                    response_timeout,
-                    connection_timeout,
-                )
+                .get_multiplexed_async_connection_with_config(&config)
                 .await
         }
         .boxed()

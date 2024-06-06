@@ -508,7 +508,7 @@ pub mod async_tests {
         .unwrap();
 
         let connection_options =
-            AsyncConnectionConfig::new().with_connection_timeout(std::time::Duration::from_secs(1));
+            AsyncConnectionConfig::new().set_connection_timeout(std::time::Duration::from_secs(1));
 
         block_on_all(async move {
             let mut master_con = master_client
@@ -562,7 +562,7 @@ pub mod async_tests {
         .unwrap();
 
         let connection_options =
-            AsyncConnectionConfig::new().with_response_timeout(std::time::Duration::from_secs(1));
+            AsyncConnectionConfig::new().set_response_timeout(std::time::Duration::from_secs(1));
 
         block_on_all(async move {
             let mut master_con = master_client
@@ -616,8 +616,8 @@ pub mod async_tests {
         .unwrap();
 
         let connection_options = AsyncConnectionConfig::new()
-            .with_connection_timeout(std::time::Duration::from_secs(1))
-            .with_response_timeout(std::time::Duration::from_secs(1));
+            .set_connection_timeout(std::time::Duration::from_secs(1))
+            .set_response_timeout(std::time::Duration::from_secs(1));
 
         block_on_all(async move {
             let mut master_con = master_client
