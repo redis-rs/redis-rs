@@ -32,16 +32,16 @@ pub struct ConnectionManagerConfig {
     number_of_retries: usize,
     /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
     max_delay: Option<u64>,
-    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// The new connection will time out operations after `response_timeout` has passed.
     response_timeout: std::time::Duration,
-    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    /// Each connection attempt to the server will time out after `connection_timeout`.
     connection_timeout: std::time::Duration,
 }
 
 impl ConnectionManagerConfig {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+    const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
     const DEFAULT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
     const DEFAULT_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
 
@@ -50,7 +50,7 @@ impl ConnectionManagerConfig {
         Self {
             exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
             factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
             max_delay: None,
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
@@ -84,7 +84,7 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// The new connection will time out operations after `response_timeout` has passed.
     pub fn set_response_timeout(
         mut self,
         duration: std::time::Duration,
@@ -93,7 +93,7 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    /// Each connection attempt to the server will time out after `connection_timeout`.
     pub fn set_connection_timeout(
         mut self,
         duration: std::time::Duration,
@@ -107,7 +107,7 @@ impl ConnectionManagerConfig {
 /// server when necessary.
 ///
 /// Like the [`MultiplexedConnection`][multiplexed-connection], this
-/// manager can be cloned, allowing requests to be be sent concurrently on
+/// manager can be cloned, allowing requests to be sent concurrently on
 /// the same underlying connection (tcp/unix socket).
 ///
 /// ## Behavior
@@ -220,8 +220,8 @@ impl ConnectionManager {
     /// number_of_retries times, with an exponentially increasing delay, calculated as
     /// rand(0 .. factor * (exponent_base ^ current-try)).
     ///
-    /// The new connection will timeout operations after `response_timeout` has passed.
-    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    /// The new connection will time out operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will time out after `connection_timeout`.
     pub async fn new_with_backoff_and_timeouts(
         client: Client,
         exponent_base: u64,
@@ -251,8 +251,8 @@ impl ConnectionManager {
     ///
     /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
     ///
-    /// The new connection will timeout operations after `response_timeout` has passed.
-    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    /// The new connection will time out operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will time out after `connection_timeout`.
     pub async fn new_with_config(
         client: Client,
         config: ConnectionManagerConfig,
