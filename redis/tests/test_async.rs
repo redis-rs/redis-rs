@@ -960,6 +960,10 @@ mod basic_async {
     fn test_connection_manager_reconnect_after_delay() {
         use redis::ProtocolVersion;
 
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_max_delay(500);
+
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -968,9 +972,10 @@ mod basic_async {
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
-                .await
-                .unwrap();
+            let mut manager =
+                redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
+                    .await
+                    .unwrap();
             let server = ctx.server;
             let addr = server.client_addr().clone();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -981,7 +986,7 @@ mod basic_async {
             if ctx.protocol != ProtocolVersion::RESP2 {
                 assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
             let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
             wait_for_server_to_become_ready(ctx.client.clone()).await;
