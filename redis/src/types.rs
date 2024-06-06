@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::default::Default;
 use std::error;
@@ -1406,6 +1407,23 @@ impl<'a> ToRedisArgs for &'a str {
         W: ?Sized + RedisWrite,
     {
         out.write_arg(self.as_bytes())
+    }
+}
+
+impl<'a, T> ToRedisArgs for Cow<'a, T>
+where
+    T: ToOwned + ?Sized,
+    &'a T: ToRedisArgs,
+    for<'b> &'b T::Owned: ToRedisArgs,
+{
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            Cow::Borrowed(inner) => inner.write_redis_args(out),
+            Cow::Owned(inner) => inner.write_redis_args(out),
+        }
     }
 }
 
