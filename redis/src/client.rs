@@ -472,21 +472,20 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
-    #[deprecated(note = "use get_connection_manager_with_backoff instead")]
+    #[deprecated(note = "Use `get_connection_manager_with_config` instead")]
     pub async fn get_tokio_connection_manager_with_backoff(
         &self,
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        self.get_connection_manager_with_backoff_and_timeouts(
-            exponent_base,
-            factor,
-            number_of_retries,
-            std::time::Duration::MAX,
-            std::time::Duration::MAX,
-        )
-        .await
+        use crate::aio::ConnectionManagerConfig;
+
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries);
+        crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -508,7 +507,7 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
-    #[deprecated(note = "use get_connection_manager_with_backoff_and_timeouts instead")]
+    #[deprecated(note = "Use `get_connection_manager_with_config` instead")]
     pub async fn get_tokio_connection_manager_with_backoff_and_timeouts(
         &self,
         exponent_base: u64,
@@ -517,15 +516,15 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        crate::aio::ConnectionManager::new_with_backoff_and_timeouts(
-            self.clone(),
-            exponent_base,
-            factor,
-            number_of_retries,
-            response_timeout,
-            connection_timeout,
-        )
-        .await
+        use crate::aio::ConnectionManagerConfig;
+
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_response_timeout(response_timeout)
+            .set_connection_timeout(connection_timeout)
+            .set_number_of_retries(number_of_retries);
+        crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -547,6 +546,7 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    #[deprecated(note = "Use `get_connection_manager_with_config` instead")]
     pub async fn get_connection_manager_with_backoff_and_timeouts(
         &self,
         exponent_base: u64,
@@ -555,15 +555,15 @@ impl Client {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        crate::aio::ConnectionManager::new_with_backoff_and_timeouts(
-            self.clone(),
-            exponent_base,
-            factor,
-            number_of_retries,
-            response_timeout,
-            connection_timeout,
-        )
-        .await
+        use crate::aio::ConnectionManagerConfig;
+
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_response_timeout(response_timeout)
+            .set_connection_timeout(connection_timeout)
+            .set_number_of_retries(number_of_retries);
+        crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -611,19 +611,20 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    #[deprecated(note = "Use `get_connection_manager_with_config` instead")]
     pub async fn get_connection_manager_with_backoff(
         &self,
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        crate::aio::ConnectionManager::new_with_backoff(
-            self.clone(),
-            exponent_base,
-            factor,
-            number_of_retries,
-        )
-        .await
+        use crate::aio::ConnectionManagerConfig;
+
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries);
+        crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
     async fn get_multiplexed_async_connection_inner<T>(
