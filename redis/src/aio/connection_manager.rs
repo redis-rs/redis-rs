@@ -271,7 +271,7 @@ impl ConnectionManager {
         let mut connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
-            config.number_of_retries.clone(),
+            config.number_of_retries,
             config.response_timeout,
             config.connection_timeout,
         )
