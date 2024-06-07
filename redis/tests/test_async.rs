@@ -3,6 +3,7 @@ mod support;
 #[cfg(test)]
 mod basic_async {
     use std::collections::HashMap;
+    use std::time::Duration;
 
     use futures::{prelude::*, StreamExt};
     use redis::{
@@ -11,6 +12,7 @@ mod basic_async {
         RedisConnectionInfo, RedisResult, Value,
     };
     use tokio::sync::mpsc::error::TryRecvError;
+    use tokio_retry::strategy::ExponentialBackoff;
 
     use crate::support::*;
 
@@ -959,7 +961,6 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay() {
         use redis::ProtocolVersion;
-
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -988,6 +989,40 @@ mod basic_async {
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
+            assert_eq!(result, redis::Value::Okay);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "connection-manager")]
+    fn test_new_connection_lazy_connect() {
+        let tempdir = tempfile::Builder::new()
+            .prefix("redis")
+            .tempdir()
+            .expect("failed to create tempdir");
+        let tls_files = build_keys_and_certs_for_tls(&tempdir);
+
+        let ctx = TestContext::with_tls(tls_files.clone(), false);
+        let retry_strategy = ExponentialBackoff::from_millis(2).factor(100);
+
+        block_on_all(async move {
+            let mut manager = redis::aio::ConnectionManager::new_with_lazy_connect(
+                ctx.client.clone(),
+                retry_strategy,
+                usize::MAX,
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                true,
+            )
+            .await
+            .unwrap();
+
+            let server = ctx.server;
+            let addr = server.client_addr().clone();
+
+            let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);
             Ok(())
         })

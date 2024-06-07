@@ -18,6 +18,18 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
+/// Policy defining how to combine multiple responses into one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ConnectionStatus {
+    Wait,
+    // Reconnecting,  // will use it in the future
+    // Connecting, // will use it in the future
+    Connect,
+    // Ready, // will use it in the future
+    // Close, // will use it in the future
+    // End, // will use it in the future
+}
+
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
 /// connection][multiplexed-connection] and automatically reconnects to the
 /// server when necessary.
@@ -51,7 +63,7 @@ pub struct ConnectionManager {
     ///
     /// The `ArcSwap` is required to be able to replace the connection
     /// without making the `ConnectionManager` mutable.
-    connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
+    connection: Option<Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>>,
 
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
@@ -59,6 +71,7 @@ pub struct ConnectionManager {
     response_timeout: std::time::Duration,
     connection_timeout: std::time::Duration,
     push_manager: PushManager,
+    connection_status: ConnectionStatus,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -66,6 +79,13 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 
 /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
+
+/// Handle a command result. If the connection was dropped, reconnect.
+macro_rules! connect_with_lazy_connect {
+    ($self:expr) => {
+        $self.new_connection_lazy_connect().await;
+    };
+}
 
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
@@ -95,6 +115,24 @@ impl ConnectionManager {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
     const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+
+    /// Set connection
+    pub fn set_connection(
+        &mut self,
+        connection: Option<Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>>,
+    ) -> ConnectionManager {
+        self.connection = connection;
+        self.clone()
+    }
+
+    /// Set connection
+    pub fn set_connection_status(
+        &mut self,
+        connection_status: ConnectionStatus,
+    ) -> ConnectionManager {
+        self.connection_status = connection_status;
+        self.clone()
+    }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
@@ -171,16 +209,89 @@ impl ConnectionManager {
         connection.set_push_manager(push_manager.clone()).await;
         Ok(Self {
             client,
-            connection: Arc::new(ArcSwap::from_pointee(
+            connection: Some(Arc::new(ArcSwap::from_pointee(
                 future::ok(connection).boxed().shared(),
-            )),
+            ))),
             runtime,
             number_of_retries,
             retry_strategy,
             response_timeout,
             connection_timeout,
             push_manager,
+            connection_status: ConnectionStatus::Connect,
         })
+    }
+
+    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    ///
+    /// In case of reconnection issues, the manager will retry reconnection
+    /// number_of_retries times, with an exponentially increasing delay, calculated as
+    /// rand(0 .. factor * (exponent_base ^ current-try)).
+    ///
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub async fn new_with_lazy_connect(
+        client: Client,
+        retry_strategy: ExponentialBackoff,
+        number_of_retries: usize,
+        response_timeout: std::time::Duration,
+        connection_timeout: std::time::Duration,
+        lazy_connect: bool,
+    ) -> RedisResult<Self> {
+        // Create a MultiplexedConnection and wait for it to be established
+        let push_manager = PushManager::default();
+        let runtime = Runtime::locate();
+        let mut connection = None;
+        let connection_status = if lazy_connect {
+            ConnectionStatus::Wait
+        } else {
+            ConnectionStatus::Connect
+        };
+        if !lazy_connect {
+            let mut conn = Self::new_connection(
+                client.clone(),
+                retry_strategy.clone(),
+                number_of_retries,
+                response_timeout,
+                connection_timeout,
+            )
+            .await?;
+            // Wrap the connection in an `ArcSwap` instance for fast atomic access
+            conn.set_push_manager(push_manager.clone()).await;
+            connection = Some(Arc::new(ArcSwap::from_pointee(
+                future::ok(conn).boxed().shared(),
+            )));
+        }
+
+        Ok(Self {
+            client,
+            connection,
+            runtime,
+            number_of_retries,
+            retry_strategy,
+            response_timeout,
+            connection_timeout,
+            push_manager,
+            connection_status,
+        })
+    }
+
+    async fn new_connection_lazy_connect(&mut self) {
+        let connect_manager = Self::new_with_lazy_connect(
+            self.client.clone(),
+            self.retry_strategy.clone(),
+            self.number_of_retries.clone(),
+            self.response_timeout.clone(),
+            self.connection_timeout.clone(),
+            false,
+        )
+        .await;
+
+        self.set_connection(connect_manager.unwrap().connection);
+        self.set_connection_status(ConnectionStatus::Connect);
     }
 
     async fn new_connection(
@@ -228,9 +339,8 @@ impl ConnectionManager {
 
         // Update the connection in the connection manager
         let new_connection_arc = Arc::new(new_connection.clone());
-        let prev = self
-            .connection
-            .compare_and_swap(&current, new_connection_arc);
+        let prev_connection = self.connection.clone().unwrap();
+        let prev = prev_connection.compare_and_swap(&current, new_connection_arc);
 
         // If the swap happened...
         if Arc::ptr_eq(&prev, &current) {
@@ -242,8 +352,14 @@ impl ConnectionManager {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        if self.connection_status == ConnectionStatus::Wait {
+            connect_with_lazy_connect!(self);
+            println!("---------------->>>Wait")
+        }
+
+        println!("---------------->>>Wait {:?}", self.connection_status);
         // Clone connection to avoid having to lock the ArcSwap in write mode
-        let guard = self.connection.load();
+        let guard = self.connection.clone().unwrap().load();
         let connection_result = (**guard)
             .clone()
             .await
@@ -263,8 +379,11 @@ impl ConnectionManager {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        if self.connection_status == ConnectionStatus::Wait {
+            connect_with_lazy_connect!(self);
+        }
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
-        let guard = self.connection.load();
+        let guard = self.connection.clone().unwrap().load();
         let connection_result = (**guard)
             .clone()
             .await
