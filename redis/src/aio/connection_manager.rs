@@ -340,32 +340,38 @@ impl ConnectionManager {
     /// number_of_retries times, with an exponentially increasing delay, calculated as
     /// rand(0 .. factor * (exponent_base ^ current-try)).
     ///
+    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
+    ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub async fn new_with_lazy_connect(
+    pub async fn new_with_config_and_lazy_connect(
         client: Client,
-        retry_strategy: ExponentialBackoff,
-        number_of_retries: usize,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
-        lazy_connect: bool,
+        mut retry_strategy: ExponentialBackoff,
+        config: ConnectionManagerConfig,
+        lazy_connect: bool
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
+
+        if let Some(max_delay) = config.max_delay {
+            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
+        }
+
         let mut connection = None;
         let connection_status = if lazy_connect {
             ConnectionStatus::Wait
         } else {
             ConnectionStatus::Connect
         };
+
         if !lazy_connect {
             let mut conn = Self::new_connection(
                 client.clone(),
                 retry_strategy.clone(),
-                number_of_retries,
-                response_timeout,
-                connection_timeout,
+                config.number_of_retries,
+                config.response_timeout,
+                config.connection_timeout,
             )
             .await?;
             // Wrap the connection in an `ArcSwap` instance for fast atomic access
@@ -379,22 +385,25 @@ impl ConnectionManager {
             client,
             connection,
             runtime,
-            number_of_retries,
+            number_of_retries: config.number_of_retries,
             retry_strategy,
-            response_timeout,
-            connection_timeout,
+            response_timeout: config.response_timeout,
+            connection_timeout: config.connection_timeout,
             push_manager,
             connection_status,
         })
     }
 
     async fn new_connection_lazy_connect(&mut self) {
-        let connect_manager = Self::new_with_lazy_connect(
+        let config = ConnectionManagerConfig::new()
+            .set_number_of_retries(self.number_of_retries)
+            .set_response_timeout(self.response_timeout)
+            .set_connection_timeout(self.connection_timeout);
+
+        let connect_manager = Self::new_with_config_and_lazy_connect(
             self.client.clone(),
             self.retry_strategy.clone(),
-            self.number_of_retries.clone(),
-            self.response_timeout.clone(),
-            self.connection_timeout.clone(),
+            config,
             false,
         )
         .await;

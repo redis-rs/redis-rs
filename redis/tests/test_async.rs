@@ -1013,6 +1013,11 @@ mod basic_async {
     #[test]
     #[cfg(feature = "connection-manager")]
     fn test_new_connection_lazy_connect() {
+        let exponent_base = 2;
+        let factor = 100;
+        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+        let config = redis::aio::ConnectionManagerConfig::new().set_exponent_base(exponent_base).set_factor(factor);
+
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -1020,15 +1025,13 @@ mod basic_async {
         let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
-        let retry_strategy = ExponentialBackoff::from_millis(2).factor(100);
+
 
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new_with_lazy_connect(
+            let mut manager = redis::aio::ConnectionManager::new_with_config_and_lazy_connect(
                 ctx.client.clone(),
                 retry_strategy,
-                usize::MAX,
-                Duration::from_secs(1),
-                Duration::from_secs(1),
+                config,
                 true,
             )
             .await
