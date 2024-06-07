@@ -540,6 +540,25 @@ mod types {
     }
 
     #[test]
+    fn test_cow_types_to_redis_args() {
+        use std::borrow::Cow;
+
+        let s = "key".to_string();
+        let expected_string = s.to_redis_args();
+        assert_eq!(Cow::Borrowed(s.as_str()).to_redis_args(), expected_string);
+        assert_eq!(Cow::<str>::Owned(s).to_redis_args(), expected_string);
+
+        let array = vec![0u8, 4, 2, 3, 1];
+        let expected_array = array.to_redis_args();
+
+        assert_eq!(
+            Cow::Borrowed(array.as_slice()).to_redis_args(),
+            expected_array
+        );
+        assert_eq!(Cow::<[u8]>::Owned(array).to_redis_args(), expected_array);
+    }
+
+    #[test]
     fn test_large_usize_array_to_redis_args_and_back() {
         use crate::support::encode_value;
 

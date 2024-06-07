@@ -961,6 +961,13 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay() {
         use redis::ProtocolVersion;
+
+        let max_delay_between_attempts = 50;
+
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_max_delay(max_delay_between_attempts);
+
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
@@ -969,23 +976,31 @@ mod basic_async {
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new(ctx.client.clone())
-                .await
-                .unwrap();
+            let mut manager =
+                redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
+                    .await
+                    .unwrap();
             let server = ctx.server;
             let addr = server.client_addr().clone();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             manager.get_push_manager().replace_sender(tx.clone());
             drop(server);
 
-            let _result: RedisResult<redis::Value> = manager.set("foo", "bar").await; // one call is ignored because it's required to trigger the connection manager's reconnect.
+            let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
+            // we expect a connection failure error.
+            assert!(result.unwrap_err().is_unrecoverable_error());
             if ctx.protocol != ProtocolVersion::RESP2 {
                 assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             let _new_server = RedisServer::new_with_addr_and_modules(addr.clone(), &[], false);
             wait_for_server_to_become_ready(ctx.client.clone()).await;
+
+            // we should perform at least 1 reconnect attempt in this time frame.
+            tokio::time::sleep(std::time::Duration::from_millis(
+                max_delay_between_attempts * 2,
+            ))
+            .await;
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);

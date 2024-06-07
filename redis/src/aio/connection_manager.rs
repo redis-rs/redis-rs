@@ -30,6 +30,90 @@ pub enum ConnectionStatus {
     // End, // will use it in the future
 }
 
+/// ConnectionManager is the configuration for reconnect mechanism and request timing
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionManagerConfig {
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    exponent_base: u64,
+    /// A multiplicative factor that will be applied to the retry delay.
+    ///
+    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    factor: u64,
+    /// number_of_retries times, with an exponentially increasing delay
+    number_of_retries: usize,
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
+    max_delay: Option<u64>,
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    response_timeout: std::time::Duration,
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    connection_timeout: std::time::Duration,
+}
+
+impl ConnectionManagerConfig {
+    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
+    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
+    const DEFAULT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
+    const DEFAULT_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
+
+    /// Creates a new instance of the options with nothing set
+    pub fn new() -> Self {
+        Self {
+            exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+            factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
+            max_delay: None,
+            response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
+            connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+        }
+    }
+
+    /// A multiplicative factor that will be applied to the retry delay.
+    ///
+    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    pub fn set_factor(mut self, factor: u64) -> ConnectionManagerConfig {
+        self.factor = factor;
+        self
+    }
+
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
+    pub fn set_max_delay(mut self, time: u64) -> ConnectionManagerConfig {
+        self.max_delay = Some(time);
+        self
+    }
+
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    pub fn set_exponent_base(mut self, base: u64) -> ConnectionManagerConfig {
+        self.exponent_base = base;
+        self
+    }
+
+    /// number_of_retries times, with an exponentially increasing delay
+    pub fn set_number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
+        self.number_of_retries = amount;
+        self
+    }
+
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    pub fn set_response_timeout(
+        mut self,
+        duration: std::time::Duration,
+    ) -> ConnectionManagerConfig {
+        self.response_timeout = duration;
+        self
+    }
+
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub fn set_connection_timeout(
+        mut self,
+        duration: std::time::Duration,
+    ) -> ConnectionManagerConfig {
+        self.connection_timeout = duration;
+        self
+    }
+}
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
 /// connection][multiplexed-connection] and automatically reconnects to the
 /// server when necessary.
@@ -112,10 +196,6 @@ macro_rules! reconnect_if_io_error {
 }
 
 impl ConnectionManager {
-    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
-    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIESE: usize = 6;
-
     /// Set connection
     pub fn set_connection(
         &mut self,
@@ -139,13 +219,9 @@ impl ConnectionManager {
     /// This requires the `connection-manager` feature, which will also pull in
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
-        Self::new_with_backoff(
-            client,
-            Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIESE,
-        )
-        .await
+        let config = ConnectionManagerConfig::new();
+
+        Self::new_with_config(client, config).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -192,16 +268,49 @@ impl ConnectionManager {
         response_timeout: std::time::Duration,
         connection_timeout: std::time::Duration,
     ) -> RedisResult<Self> {
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries)
+            .set_response_timeout(response_timeout)
+            .set_connection_timeout(connection_timeout);
+
+        Self::new_with_config(client, config).await
+    }
+
+    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    ///
+    /// In case of reconnection issues, the manager will retry reconnection
+    /// number_of_retries times, with an exponentially increasing delay, calculated as
+    /// rand(0 .. factor * (exponent_base ^ current-try)).
+    ///
+    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
+    ///
+    /// The new connection will timeout operations after `response_timeout` has passed.
+    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    pub async fn new_with_config(
+        client: Client,
+        config: ConnectionManagerConfig,
+    ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
-        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
+
+        let mut retry_strategy =
+            ExponentialBackoff::from_millis(config.exponent_base).factor(config.factor);
+        if let Some(max_delay) = config.max_delay {
+            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
+        }
+
         let mut connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
-            number_of_retries,
-            response_timeout,
-            connection_timeout,
+            config.number_of_retries,
+            config.response_timeout,
+            config.connection_timeout,
         )
         .await?;
 
@@ -213,10 +322,10 @@ impl ConnectionManager {
                 future::ok(connection).boxed().shared(),
             ))),
             runtime,
-            number_of_retries,
+            number_of_retries: config.number_of_retries,
             retry_strategy,
-            response_timeout,
-            connection_timeout,
+            response_timeout: config.response_timeout,
+            connection_timeout: config.connection_timeout,
             push_manager,
             connection_status: ConnectionStatus::Connect,
         })

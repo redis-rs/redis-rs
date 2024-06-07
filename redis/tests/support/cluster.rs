@@ -3,7 +3,6 @@
 
 use std::convert::identity;
 use std::env;
-use std::io::Read;
 use std::process;
 use std::thread::sleep;
 use std::time::Duration;
@@ -125,20 +124,17 @@ impl RedisCluster {
             num_replicas: replicas,
             modules,
             mtls_enabled,
-            mut ports,
+            ports,
         } = configuration;
 
-        if ports.is_empty() {
-            // We use a hashset in order to be sure that we have the right number
-            // of unique ports.
-            let mut hash = std::collections::HashSet::new();
-            while hash.len() < nodes as usize {
-                hash.insert(get_random_available_port());
-            }
-            ports = hash.into_iter().collect();
-        }
+        let optional_ports = if ports.is_empty() {
+            vec![None; nodes as usize]
+        } else {
+            assert!(ports.len() == nodes as usize);
+            ports.into_iter().map(Some).collect()
+        };
+        let mut chosen_ports = std::collections::HashSet::new();
 
-        let mut servers = vec![];
         let mut folders = vec![];
         let mut addrs = vec![];
         let mut tls_paths = None;
@@ -159,8 +155,8 @@ impl RedisCluster {
 
         let max_attempts = 5;
 
-        for port in ports {
-            servers.push(RedisServer::new_with_addr_tls_modules_and_spawner(
+        let mut make_server = |port| {
+            RedisServer::new_with_addr_tls_modules_and_spawner(
                 ClusterType::build_addr(port),
                 None,
                 tls_paths.clone(),
@@ -194,60 +190,74 @@ impl RedisCluster {
                             cmd.arg("--tls-replication").arg("yes");
                         }
                     }
-                    let addr = format!("127.0.0.1:{port}");
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    addrs.push(addr.clone());
+                    cmd.spawn().unwrap()
+                },
+            )
+        };
 
+        let verify_server = |server: &mut RedisServer| {
+            let process = &mut server.process;
+            match process.try_wait() {
+                Ok(Some(status)) => {
+                    let log_file_contents = server.log_file_contents();
+                    let err =
+                                    format!("redis server creation failed with status {status:?}.\nlog file: {log_file_contents}");
+                    Err(err)
+                }
+                Ok(None) => {
+                    // wait for 10 seconds for the server to be available.
+                    let max_attempts = 200;
                     let mut cur_attempts = 0;
                     loop {
-                        let mut process = cmd.spawn().unwrap();
-                        sleep(Duration::from_millis(50));
-
-                        match process.try_wait() {
-                            Ok(Some(status)) => {
-                                let stdout = process.stdout.map_or(String::new(), |mut out|{
-                                    let mut str = String::new();
-                                    out.read_to_string(&mut str).unwrap();
-                                    str
-                                });
-                                let stderr = process.stderr.map_or(String::new(), |mut out|{
-                                    let mut str = String::new();
-                                    out.read_to_string(&mut str).unwrap();
-                                    str
-                                });
-                                let err =
-                                    format!("redis server creation failed with status {status:?}.\nstdout: `{stdout}`.\nstderr: `{stderr}`");
-                                if cur_attempts == max_attempts {
-                                    panic!("{err}");
-                                }
-                                eprintln!("Retrying: {err}");
-                                cur_attempts += 1;
-                            }
-                            Ok(None) => {
-                                // wait for 10 seconds for the server to be available.
-                                let max_attempts = 200;
-                                let mut cur_attempts = 0;
-                                loop {
-                                    if cur_attempts == max_attempts {
-                                        panic!("redis server creation failed: Port {port} closed")
-                                    }
-                                    if port_in_use(&addr) {
-                                        return process;
-                                    }
-                                    eprintln!("Waiting for redis process to initialize");
-                                    sleep(Duration::from_millis(50));
-                                    cur_attempts += 1;
-                                }
-                            }
-                            Err(e) => {
-                                panic!("Unexpected error in redis server creation {e}");
-                            }
+                        if cur_attempts == max_attempts {
+                            let log_file_contents = server.log_file_contents();
+                            break Err(format!("redis server creation failed: Address {} closed. {log_file_contents}", server.addr));
+                        } else if port_in_use(&server.addr.to_string()) {
+                            break Ok(());
                         }
+                        eprintln!("Waiting for redis process to initialize");
+                        sleep(Duration::from_millis(50));
+                        cur_attempts += 1;
                     }
-                },
-            ));
-        }
+                }
+                Err(e) => {
+                    panic!("Unexpected error in redis server creation {e}");
+                }
+            }
+        };
+
+        let servers = optional_ports
+            .into_iter()
+            .map(|port_option| {
+                for _ in 0..5 {
+                    let port = match port_option {
+                        Some(port) => port,
+                        None => loop {
+                            let port = get_random_available_port();
+                            if chosen_ports.contains(&port) {
+                                continue;
+                            }
+                            chosen_ports.insert(port);
+                            break port;
+                        },
+                    };
+                    let mut server = make_server(port);
+                    sleep(Duration::from_millis(50));
+
+                    match verify_server(&mut server) {
+                        Ok(_) => {
+                            let addr = format!("127.0.0.1:{port}");
+                            addrs.push(addr.clone());
+                            return server;
+                        }
+                        Err(err) => eprintln!("{err}"),
+                    }
+                }
+                panic!("Exhausted retries");
+            })
+            .collect();
 
         let mut cmd = process::Command::new("redis-cli");
         cmd.stdout(process::Stdio::piped())
