@@ -378,11 +378,14 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"PING"
         | b"SCRIPT EXISTS"
         | b"SCRIPT KILL"
+        | b"UNWATCH"
         | b"WAIT"
         | b"RANDOMKEY"
         | b"WAITAOF" => RouteBy::AllPrimaries,
 
-        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => RouteBy::MultiShardNoValues,
+        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" | b"WATCH" => {
+            RouteBy::MultiShardNoValues
+        }
         b"MSET" => RouteBy::MultiShardWithValues,
 
         // TODO - special handling - b"SCAN"
