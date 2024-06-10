@@ -169,10 +169,10 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
 
-/// Handle a command result. If the connection was dropped, reconnect.
+/// Handle a command result. If the connection was lazy.
 macro_rules! connect_with_lazy_connect {
     ($self:expr) => {
-        $self.new_connection_lazy_connect().await;
+        $self.new_laze_connection().await;
     };
 }
 
@@ -201,24 +201,6 @@ macro_rules! reconnect_if_io_error {
 }
 
 impl ConnectionManager {
-    /// Set connection
-    pub fn set_connection(
-        &mut self,
-        connection: Option<Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>>,
-    ) -> ConnectionManager {
-        self.connection = connection;
-        self.clone()
-    }
-
-    /// Set status connection
-    pub fn set_connection_status(
-        &mut self,
-        connection_status: ConnectionStatus,
-    ) -> ConnectionManager {
-        self.connection_status = connection_status;
-        self.clone()
-    }
-
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
     /// This requires the `connection-manager` feature, which will also pull in
@@ -365,16 +347,19 @@ impl ConnectionManager {
         })
     }
 
-    async fn new_connection_lazy_connect(&mut self) {
+    /// Connect and set the connection.
+    async fn new_laze_connection(&mut self) {
         let config = ConnectionManagerConfig::new()
             .set_number_of_retries(self.config.number_of_retries)
             .set_response_timeout(self.config.response_timeout)
             .set_connection_timeout(self.config.connection_timeout);
 
         let connect_manager = Self::new_lazy_with_config(self.client.clone(), config, false).await;
+        self.connection = connect_manager.unwrap().connection;
+        self.connection_status = ConnectionStatus::Connected;
 
-        self.set_connection(connect_manager.unwrap().connection);
-        self.set_connection_status(ConnectionStatus::Connected);
+        // self.set_connection(connect_manager.unwrap().connection);
+        // self.set_connection_status(ConnectionStatus::Connected);
     }
 
     async fn new_connection(
