@@ -1035,7 +1035,6 @@ mod basic_async {
             .unwrap();
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-            println!("----------------------->>>>>>>>>>>>>>>>>>{:?}", result);
             assert_eq!(result, redis::Value::Okay);
             Ok(())
         })
