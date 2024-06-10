@@ -300,11 +300,7 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        Self::new_lazy_with_config(
-            client,
-            config,
-            false
-        ).await
+        Self::new_lazy_with_config(client, config, false).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -323,7 +319,7 @@ impl ConnectionManager {
     pub async fn new_lazy_with_config(
         client: Client,
         config: ConnectionManagerConfig,
-        lazy_connect: bool
+        lazy_connect: bool,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
@@ -375,12 +371,7 @@ impl ConnectionManager {
             .set_response_timeout(self.config.response_timeout)
             .set_connection_timeout(self.config.connection_timeout);
 
-        let connect_manager = Self::new_lazy_with_config(
-            self.client.clone(),
-            config,
-            false,
-        )
-        .await;
+        let connect_manager = Self::new_lazy_with_config(self.client.clone(), config, false).await;
 
         self.set_connection(connect_manager.unwrap().connection);
         self.set_connection_status(ConnectionStatus::Connected);
