@@ -3,7 +3,6 @@ mod support;
 #[cfg(test)]
 mod basic_async {
     use std::collections::HashMap;
-    use std::time::Duration;
 
     use futures::{prelude::*, StreamExt};
     use redis::{
@@ -12,7 +11,6 @@ mod basic_async {
         RedisConnectionInfo, RedisResult, Value,
     };
     use tokio::sync::mpsc::error::TryRecvError;
-    use tokio_retry::strategy::ExponentialBackoff;
 
     use crate::support::*;
 
@@ -1015,30 +1013,26 @@ mod basic_async {
     fn test_new_connection_lazy_connect() {
         let exponent_base = 2;
         let factor = 100;
-        let retry_strategy = ExponentialBackoff::from_millis(exponent_base).factor(factor);
-        let config = redis::aio::ConnectionManagerConfig::new().set_exponent_base(exponent_base).set_factor(factor);
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor);
 
-        let tempdir = tempfile::Builder::new()
+        let temp_dir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
-        let tls_files = build_keys_and_certs_for_tls(&tempdir);
+        let tls_files = build_keys_and_certs_for_tls(&temp_dir);
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
 
-
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new_with_config_and_lazy_connect(
+            let mut manager = redis::aio::ConnectionManager::new_lazy_with_config(
                 ctx.client.clone(),
-                retry_strategy,
                 config,
                 true,
             )
             .await
             .unwrap();
-
-            let server = ctx.server;
-            let addr = server.client_addr().clone();
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);

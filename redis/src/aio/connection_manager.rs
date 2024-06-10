@@ -18,16 +18,22 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
-/// Policy defining how to combine multiple responses into one.
+/// Manage status of connection:
+/// When lazy connect connection status is 'Wait'
+/// When the connect or reconnect method is called, the status will be "Connected".
+/// Other statuses is not defined
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConnectionStatus {
+    /// When lazy connect connection status is 'Wait'
     Wait,
+    // Connection is Reconnecting
     // Reconnecting,  // will use it in the future
+    // Connection is Connecting
     // Connecting, // will use it in the future
-    Connect,
-    // Ready, // will use it in the future
-    // Close, // will use it in the future
-    // End, // will use it in the future
+    /// When the connect or reconnect method is called, the status will be "Connected".
+    Connected,
+    // When the connection is destroyed or has an error
+    // Close,
 }
 
 /// ConnectionManager is the configuration for reconnect mechanism and request timing
@@ -149,13 +155,12 @@ pub struct ConnectionManager {
     /// without making the `ConnectionManager` mutable.
     connection: Option<Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>>,
 
+    config: ConnectionManagerConfig,
+
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
-    number_of_retries: usize,
-    response_timeout: std::time::Duration,
-    connection_timeout: std::time::Duration,
-    push_manager: PushManager,
     connection_status: ConnectionStatus,
+    push_manager: PushManager,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -205,7 +210,7 @@ impl ConnectionManager {
         self.clone()
     }
 
-    /// Set connection
+    /// Set status connection
     pub fn set_connection_status(
         &mut self,
         connection_status: ConnectionStatus,
@@ -295,40 +300,11 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        // Create a MultiplexedConnection and wait for it to be established
-        let push_manager = PushManager::default();
-        let runtime = Runtime::locate();
-
-        let mut retry_strategy =
-            ExponentialBackoff::from_millis(config.exponent_base).factor(config.factor);
-        if let Some(max_delay) = config.max_delay {
-            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
-        }
-
-        let mut connection = Self::new_connection(
-            client.clone(),
-            retry_strategy.clone(),
-            config.number_of_retries,
-            config.response_timeout,
-            config.connection_timeout,
-        )
-        .await?;
-
-        // Wrap the connection in an `ArcSwap` instance for fast atomic access
-        connection.set_push_manager(push_manager.clone()).await;
-        Ok(Self {
+        Self::new_lazy_with_config(
             client,
-            connection: Some(Arc::new(ArcSwap::from_pointee(
-                future::ok(connection).boxed().shared(),
-            ))),
-            runtime,
-            number_of_retries: config.number_of_retries,
-            retry_strategy,
-            response_timeout: config.response_timeout,
-            connection_timeout: config.connection_timeout,
-            push_manager,
-            connection_status: ConnectionStatus::Connect,
-        })
+            config,
+            false
+        ).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -344,9 +320,8 @@ impl ConnectionManager {
     ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub async fn new_with_config_and_lazy_connect(
+    pub async fn new_lazy_with_config(
         client: Client,
-        mut retry_strategy: ExponentialBackoff,
         config: ConnectionManagerConfig,
         lazy_connect: bool
     ) -> RedisResult<Self> {
@@ -354,6 +329,8 @@ impl ConnectionManager {
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
 
+        let mut retry_strategy =
+            ExponentialBackoff::from_millis(config.exponent_base).factor(config.factor);
         if let Some(max_delay) = config.max_delay {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
@@ -362,7 +339,7 @@ impl ConnectionManager {
         let connection_status = if lazy_connect {
             ConnectionStatus::Wait
         } else {
-            ConnectionStatus::Connect
+            ConnectionStatus::Connected
         };
 
         if !lazy_connect {
@@ -384,11 +361,9 @@ impl ConnectionManager {
         Ok(Self {
             client,
             connection,
+            config,
             runtime,
-            number_of_retries: config.number_of_retries,
             retry_strategy,
-            response_timeout: config.response_timeout,
-            connection_timeout: config.connection_timeout,
             push_manager,
             connection_status,
         })
@@ -396,20 +371,19 @@ impl ConnectionManager {
 
     async fn new_connection_lazy_connect(&mut self) {
         let config = ConnectionManagerConfig::new()
-            .set_number_of_retries(self.number_of_retries)
-            .set_response_timeout(self.response_timeout)
-            .set_connection_timeout(self.connection_timeout);
+            .set_number_of_retries(self.config.number_of_retries)
+            .set_response_timeout(self.config.response_timeout)
+            .set_connection_timeout(self.config.connection_timeout);
 
-        let connect_manager = Self::new_with_config_and_lazy_connect(
+        let connect_manager = Self::new_lazy_with_config(
             self.client.clone(),
-            self.retry_strategy.clone(),
             config,
             false,
         )
         .await;
 
         self.set_connection(connect_manager.unwrap().connection);
-        self.set_connection_status(ConnectionStatus::Connect);
+        self.set_connection_status(ConnectionStatus::Connected);
     }
 
     async fn new_connection(
@@ -436,9 +410,9 @@ impl ConnectionManager {
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
-        let number_of_retries = self.number_of_retries;
-        let response_timeout = self.response_timeout;
-        let connection_timeout = self.connection_timeout;
+        let number_of_retries = self.config.number_of_retries;
+        let response_timeout = self.config.response_timeout;
+        let connection_timeout = self.config.connection_timeout;
         let pmc = self.push_manager.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
             let mut con = Self::new_connection(
@@ -472,10 +446,8 @@ impl ConnectionManager {
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         if self.connection_status == ConnectionStatus::Wait {
             connect_with_lazy_connect!(self);
-            println!("---------------->>>Wait")
         }
 
-        println!("---------------->>>Wait {:?}", self.connection_status);
         // Clone connection to avoid having to lock the ArcSwap in write mode
         let guard = self.connection.clone().unwrap().load();
         let connection_result = (**guard)
