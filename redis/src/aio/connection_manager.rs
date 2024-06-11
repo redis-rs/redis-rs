@@ -170,9 +170,9 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
 
 /// Handle a command result. If the connection was lazy.
-macro_rules! connect_with_lazy_connect {
+macro_rules! create_new_connection_for_lazy_connect {
     ($self:expr) => {
-        $self.new_connection_lazy_connect().await;
+        $self.create_new_connection_for_lazy_connect().await;
     };
 }
 
@@ -355,7 +355,7 @@ impl ConnectionManager {
     }
 
     /// Connect and set the connection for connection manager
-    async fn new_connection_lazy_connect(&mut self) {
+    async fn create_new_connection_for_lazy_connect(&mut self) {
         let config = ConnectionManagerConfig::new()
             .set_number_of_retries(self.config.number_of_retries)
             .set_response_timeout(self.config.response_timeout)
@@ -426,7 +426,7 @@ impl ConnectionManager {
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         if self.connection_status == ConnectionStatus::Wait {
-            connect_with_lazy_connect!(self);
+            create_new_connection_for_lazy_connect!(self);
         }
 
         // Clone connection to avoid having to lock the ArcSwap in write mode
@@ -451,7 +451,7 @@ impl ConnectionManager {
         count: usize,
     ) -> RedisResult<Vec<Value>> {
         if self.connection_status == ConnectionStatus::Wait {
-            connect_with_lazy_connect!(self);
+            create_new_connection_for_lazy_connect!(self);
         }
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
         let guard = self.connection.clone().unwrap().load();
