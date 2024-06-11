@@ -1026,13 +1026,9 @@ mod basic_async {
         let ctx = TestContext::with_tls(tls_files.clone(), false);
 
         block_on_all(async move {
-            let mut manager = redis::aio::ConnectionManager::new_lazy_with_config(
-                ctx.client.clone(),
-                config,
-                true,
-            )
-            .await
-            .unwrap();
+            let mut manager =
+                redis::aio::ConnectionManager::new_lazy_with_config(ctx.client.clone(), config)
+                    .unwrap();
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);

@@ -615,7 +615,7 @@ impl Client {
         &self,
         config: crate::aio::ConnectionManagerConfig,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        crate::aio::ConnectionManager::new_lazy_with_config(self.clone(), config, true).await
+        crate::aio::ConnectionManager::new_lazy_with_config(self.clone(), config)
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
