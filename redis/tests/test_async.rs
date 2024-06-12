@@ -1027,7 +1027,7 @@ mod basic_async {
 
         block_on_all(async move {
             let mut manager =
-                redis::aio::ConnectionManager::new_with_config_lazy(ctx.client, config).unwrap();
+                redis::aio::ConnectionManager::new_with_config_lazy(ctx.client, config);
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);

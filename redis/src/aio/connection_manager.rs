@@ -257,7 +257,7 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        let mut connection_manager = Self::new_with_config_lazy(client, config).unwrap();
+        let mut connection_manager = Self::new_with_config_lazy(client, config);
 
         let guard = connection_manager.connection.load();
         let connection = (**guard).clone().await.unwrap();
@@ -281,10 +281,7 @@ impl ConnectionManager {
     ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub fn new_with_config_lazy(
-        client: Client,
-        config: ConnectionManagerConfig,
-    ) -> RedisResult<Self> {
+    pub fn new_with_config_lazy(client: Client, config: ConnectionManagerConfig) -> Self {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
@@ -309,14 +306,14 @@ impl ConnectionManager {
             Ok(connection)
         });
 
-        Ok(Self {
+        Self {
             client,
             connection: Arc::new(ArcSwap::from_pointee(connection.boxed().shared())),
             config,
             runtime,
             retry_strategy,
             push_manager: push_manager.clone(),
-        })
+        }
     }
 
     async fn new_connection(
