@@ -257,7 +257,7 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        let mut connection_manager = Self::new_with_config_lazy(client, config).await.unwrap();
+        let mut connection_manager = Self::new_with_config_lazy(client, config).unwrap();
 
         let guard = connection_manager.connection.load();
         let connection = (**guard).clone().await.unwrap();
@@ -281,7 +281,7 @@ impl ConnectionManager {
     ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub async fn new_with_config_lazy(
+    pub fn new_with_config_lazy(
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {

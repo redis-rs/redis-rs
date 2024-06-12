@@ -611,11 +611,11 @@ impl Client {
     /// [multiplexed-connection]: aio/struct.MultiplexedConnection.html
     #[cfg(feature = "connection-manager")]
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
-    pub async fn get_connection_manager_lazy_with_config(
+    pub fn get_connection_manager_lazy_with_config(
         &self,
         config: crate::aio::ConnectionManagerConfig,
     ) -> RedisResult<crate::aio::ConnectionManager> {
-        crate::aio::ConnectionManager::new_with_config_lazy(self.clone(), config).await
+        crate::aio::ConnectionManager::new_with_config_lazy(self.clone(), config)
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
