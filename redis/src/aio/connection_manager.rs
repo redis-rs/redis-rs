@@ -19,24 +19,6 @@ use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
-/// Manage status of connection:
-/// When lazy connect connection status is 'Wait'
-/// When the connect or reconnect method is called, the status will be "Connected".
-/// Other statuses is not defined
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ConnectionStatus {
-    /// When lazy connect connection status is 'Wait'
-    Wait,
-    // Connection is Reconnecting
-    // Reconnecting,  // will use it in the future
-    // Connection is Connecting
-    // Connecting, // will use it in the future
-    /// When the connect or reconnect method is called, the status will be "Connected".
-    Connected,
-    // When the connection is destroyed or has an error
-    // Close,
-}
-
 /// ConnectionManager is the configuration for reconnect mechanism and request timing
 #[derive(Clone, Debug, Default)]
 pub struct ConnectionManagerConfig {
@@ -160,7 +142,6 @@ pub struct ConnectionManager {
 
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
-    connection_status: ConnectionStatus,
     push_manager: PushManager,
 }
 
@@ -169,13 +150,6 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 
 /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
-
-/// Handle a command result. If the connection was lazy.
-macro_rules! create_new_connection_for_lazy_connect {
-    ($self:expr) => {
-        $self.create_new_connection_for_lazy_connect().await;
-    };
-}
 
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
@@ -292,8 +266,6 @@ impl ConnectionManager {
             future::ok(connection).boxed().shared(),
         ));
 
-        connection_manager.connection_status = ConnectionStatus::Connected;
-
         Ok(connection_manager)
     }
 
@@ -344,20 +316,7 @@ impl ConnectionManager {
             runtime,
             retry_strategy,
             push_manager: push_manager.clone(),
-            connection_status: ConnectionStatus::Wait,
         })
-    }
-
-    /// Connect and set the connection for connection manager
-    async fn create_new_connection_for_lazy_connect(&mut self) {
-        let guard = self.connection.load();
-        let connection = (**guard).clone().await.unwrap();
-
-        self.connection = Arc::new(ArcSwap::from_pointee(
-            future::ok(connection).boxed().shared(),
-        ));
-
-        self.connection_status = ConnectionStatus::Connected;
     }
 
     async fn new_connection(
@@ -419,10 +378,6 @@ impl ConnectionManager {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        if self.connection_status == ConnectionStatus::Wait {
-            create_new_connection_for_lazy_connect!(self);
-        }
-
         // Clone connection to avoid having to lock the ArcSwap in write mode
         let guard = self.connection.load();
         let connection_result = (**guard)
@@ -444,9 +399,6 @@ impl ConnectionManager {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        if self.connection_status == ConnectionStatus::Wait {
-            create_new_connection_for_lazy_connect!(self);
-        }
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
         let guard = self.connection.load();
         let connection_result = (**guard)
