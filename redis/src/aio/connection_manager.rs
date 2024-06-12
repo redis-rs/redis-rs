@@ -350,14 +350,13 @@ impl ConnectionManager {
 
     /// Connect and set the connection for connection manager
     async fn create_new_connection_for_lazy_connect(&mut self) {
-        let config = ConnectionManagerConfig::new()
-            .set_number_of_retries(self.config.number_of_retries)
-            .set_response_timeout(self.config.response_timeout)
-            .set_connection_timeout(self.config.connection_timeout);
+        let guard = self.connection.load();
+        let connection = (**guard).clone().await.unwrap();
 
-        let connect_manager = Self::new_with_config(self.client.clone(), config).await;
+        self.connection = Arc::new(ArcSwap::from_pointee(
+            future::ok(connection).boxed().shared(),
+        ));
 
-        self.connection = connect_manager.unwrap().connection;
         self.connection_status = ConnectionStatus::Connected;
     }
 
