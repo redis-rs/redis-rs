@@ -14,6 +14,7 @@ use futures::{
     FutureExt,
 };
 use futures_util::future::BoxFuture;
+use futures_util::TryFutureExt;
 use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
@@ -153,7 +154,7 @@ pub struct ConnectionManager {
     ///
     /// The `ArcSwap` is required to be able to replace the connection
     /// without making the `ConnectionManager` mutable.
-    connection: Option<Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>>,
+    connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
     config: ConnectionManagerConfig,
 
@@ -282,39 +283,18 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        // Create a MultiplexedConnection and wait for it to be established
-        let push_manager = PushManager::default();
-        let runtime = Runtime::locate();
+        let mut connection_manager = Self::new_with_config_lazy(client, config).await.unwrap();
 
-        let mut retry_strategy =
-            ExponentialBackoff::from_millis(config.exponent_base).factor(config.factor);
-        if let Some(max_delay) = config.max_delay {
-            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
-        }
+        let guard = connection_manager.connection.load();
+        let connection = (**guard).clone().await.unwrap();
 
-        let mut connection = Self::new_connection(
-            client.clone(),
-            retry_strategy.clone(),
-            config.number_of_retries,
-            config.response_timeout,
-            config.connection_timeout,
-        )
-        .await?;
+        connection_manager.connection = Arc::new(ArcSwap::from_pointee(
+            future::ok(connection).boxed().shared(),
+        ));
 
-        // Wrap the connection in an `ArcSwap` instance for fast atomic access
-        connection.set_push_manager(push_manager.clone()).await;
+        connection_manager.connection_status = ConnectionStatus::Connected;
 
-        Ok(Self {
-            client,
-            connection: Some(Arc::new(ArcSwap::from_pointee(
-                future::ok(connection).boxed().shared(),
-            ))),
-            config,
-            runtime,
-            retry_strategy,
-            push_manager,
-            connection_status: ConnectionStatus::Connected,
-        })
+        Ok(connection_manager)
     }
 
     /// Connect to the server however the connection has not actually been created.
@@ -329,7 +309,7 @@ impl ConnectionManager {
     ///
     /// The new connection will timeout operations after `response_timeout` has passed.
     /// Each connection attempt to the server will timeout after `connection_timeout`.
-    pub fn new_lazy_with_config(
+    pub async fn new_with_config_lazy(
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
@@ -343,13 +323,27 @@ impl ConnectionManager {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
 
+        let push_manager_cloned = push_manager.clone();
+        let connection = Self::new_connection(
+            client.clone(),
+            retry_strategy.clone(),
+            config.number_of_retries,
+            config.response_timeout,
+            config.connection_timeout,
+        )
+        .map_err(Arc::new)
+        .and_then(|mut connection| async {
+            connection.set_push_manager(push_manager_cloned).await;
+            Ok(connection)
+        });
+
         Ok(Self {
             client,
-            connection: None,
+            connection: Arc::new(ArcSwap::from_pointee(connection.boxed().shared())),
             config,
             runtime,
             retry_strategy,
-            push_manager,
+            push_manager: push_manager.clone(),
             connection_status: ConnectionStatus::Wait,
         })
     }
@@ -412,8 +406,9 @@ impl ConnectionManager {
 
         // Update the connection in the connection manager
         let new_connection_arc = Arc::new(new_connection.clone());
-        let prev_connection = self.connection.clone().unwrap();
-        let prev = prev_connection.compare_and_swap(&current, new_connection_arc);
+        let prev = self
+            .connection
+            .compare_and_swap(&current, new_connection_arc);
 
         // If the swap happened...
         if Arc::ptr_eq(&prev, &current) {
@@ -430,7 +425,7 @@ impl ConnectionManager {
         }
 
         // Clone connection to avoid having to lock the ArcSwap in write mode
-        let guard = self.connection.clone().unwrap().load();
+        let guard = self.connection.load();
         let connection_result = (**guard)
             .clone()
             .await
@@ -454,7 +449,7 @@ impl ConnectionManager {
             create_new_connection_for_lazy_connect!(self);
         }
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
-        let guard = self.connection.clone().unwrap().load();
+        let guard = self.connection.load();
         let connection_result = (**guard)
             .clone()
             .await
