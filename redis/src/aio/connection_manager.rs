@@ -139,7 +139,6 @@ pub struct ConnectionManager {
     connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
     config: ConnectionManagerConfig,
-    config: ConnectionManagerConfig,
 
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
