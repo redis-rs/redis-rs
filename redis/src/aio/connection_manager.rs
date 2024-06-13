@@ -260,7 +260,7 @@ impl ConnectionManager {
         let mut connection_manager = Self::new_with_config_lazy(client, config);
 
         let guard = connection_manager.connection.load();
-        (**guard).clone().await.and_then(|connection| {
+        let _ = (**guard).clone().await.and_then(|connection| {
             connection_manager.connection = Arc::new(ArcSwap::from_pointee(
                 future::ok(connection.clone()).boxed().shared(),
             ));
@@ -304,7 +304,7 @@ impl ConnectionManager {
         )
         .map_err(Arc::new)
         .and_then(|mut connection| async {
-            connection.set_push_manager(push_manager_cloned);
+            connection.set_push_manager(push_manager_cloned).await;
             Ok(connection)
         });
 
