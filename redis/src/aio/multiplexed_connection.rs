@@ -357,7 +357,7 @@ impl Pipeline {
     }
 
     /// Sets `PushManager` of Pipeline
-    async fn set_push_manager(&mut self, push_manager: PushManager) {
+    fn set_push_manager(&mut self, push_manager: PushManager) {
         self.push_manager.store(Arc::new(push_manager));
     }
 }
@@ -421,7 +421,7 @@ impl MultiplexedConnection {
         let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let pm = PushManager::default();
-        pipeline.set_push_manager(pm.clone()).await;
+        pipeline.set_push_manager(pm.clone());
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.redis.db,
@@ -522,9 +522,9 @@ impl MultiplexedConnection {
     }
 
     /// Sets `PushManager` of connection
-    pub async fn set_push_manager(&mut self, push_manager: PushManager) {
+    pub fn set_push_manager(&mut self, push_manager: PushManager) {
         self.push_manager = push_manager.clone();
-        self.pipeline.set_push_manager(push_manager).await;
+        self.pipeline.set_push_manager(push_manager);
     }
 }
 

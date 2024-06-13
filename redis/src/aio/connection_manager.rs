@@ -139,6 +139,7 @@ pub struct ConnectionManager {
     connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
     config: ConnectionManagerConfig,
+    config: ConnectionManagerConfig,
 
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
@@ -306,7 +307,7 @@ impl ConnectionManager {
         )
         .map_err(Arc::new)
         .and_then(|mut connection| async {
-            connection.set_push_manager(push_manager_cloned).await;
+            connection.set_push_manager(push_manager_cloned);
             Ok(connection)
         });
 
@@ -357,7 +358,7 @@ impl ConnectionManager {
                 connection_timeout,
             )
             .await?;
-            con.set_push_manager(pmc).await;
+            con.set_push_manager(pmc);
             Ok(con)
         }
         .boxed()
