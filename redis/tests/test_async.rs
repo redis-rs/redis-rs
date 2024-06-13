@@ -842,7 +842,7 @@ mod basic_async {
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let pub_count = 10;
                 let channel_name = "phonewave".to_string();
-                conn.get_push_manager().replace_sender(tx.clone());
+                conn.set_sender(tx);
                 conn.subscribe(channel_name.clone()).await?;
                 let push = rx.recv().await.unwrap();
                 assert_eq!(push.kind, PushKind::Subscribe);
@@ -925,7 +925,7 @@ mod basic_async {
             block_on_all(async move {
                 let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                conn.get_push_manager().replace_sender(tx.clone());
+                conn.set_sender(tx);
 
                 conn.set("A", "1").await?;
                 assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
@@ -996,7 +996,7 @@ mod basic_async {
                     .unwrap();
 
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
+            manager.set_sender(tx);
             kill_client_async(&mut manager, &ctx.client).await.unwrap();
 
             let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
@@ -1088,7 +1088,7 @@ mod basic_async {
         block_on_all(async move {
             let mut manager = redis::aio::ConnectionManager::new(client).await.unwrap();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
+            manager.set_sender(tx);
             manager
                 .send_packed_command(cmd("CLIENT").arg("TRACKING").arg("ON"))
                 .await
@@ -1107,7 +1107,7 @@ mod basic_async {
                 (kind, data)
             );
             let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(new_tx);
+            manager.set_sender(new_tx);
             drop(rx);
             let _: RedisResult<()> = pipe.query_async(&mut manager).await;
             let _: i32 = manager.get("key_1").await.unwrap();
