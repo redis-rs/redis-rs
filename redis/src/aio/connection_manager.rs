@@ -260,13 +260,15 @@ impl ConnectionManager {
         let mut connection_manager = Self::new_with_config_lazy(client, config);
 
         let guard = connection_manager.connection.load();
-        let _ = (**guard).clone().await.and_then(|connection| {
-            connection_manager.connection = Arc::new(ArcSwap::from_pointee(
-                future::ok(connection.clone()).boxed().shared(),
-            ));
-
-            Ok(connection)
-        });
+        let _ = (**guard)
+            .clone()
+            .await
+            .map_err(|e| e.clone_mostly("Reconnecting failed"))
+            .map(|connection| {
+                connection_manager.connection = Arc::new(ArcSwap::from_pointee(
+                    future::ok(connection.clone()).boxed().shared(),
+                ));
+            });
 
         Ok(connection_manager)
     }
