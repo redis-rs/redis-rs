@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, ProtocolVersion, ToRedisArgs};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -129,7 +129,7 @@ where
                     if let Err(err) = &result {
                         if err.is_unrecoverable_error() {
                             let self_ = self.as_mut().project();
-                            self_.push_manager.load().try_send_raw(&Value::Push {
+                            self_.push_manager.load().try_send_raw(Value::Push {
                                 kind: PushKind::Disconnection,
                                 data: vec![],
                             });
@@ -141,7 +141,7 @@ where
                 // to break out of the `forward` combinator and stop handling requests
                 None => {
                     let self_ = self.project();
-                    self_.push_manager.load().try_send_raw(&Value::Push {
+                    self_.push_manager.load().try_send_raw(Value::Push {
                         kind: PushKind::Disconnection,
                         data: vec![],
                     });
