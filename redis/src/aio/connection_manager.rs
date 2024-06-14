@@ -273,18 +273,9 @@ impl ConnectionManager {
         Ok(connection_manager)
     }
 
-    /// Connect to the server however the connection has not actually been created.
+    /// Lazy version of [`Self::new_with_config`]
     ///
-    /// When the first command is sent to the server, the actual connection is created
-    ///
-    /// In case of reconnection issues, the manager will retry reconnection
-    /// number_of_retries times, with an exponentially increasing delay, calculated as
-    /// rand(0 .. factor * (exponent_base ^ current-try)).
-    ///
-    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
-    ///
-    /// The new connection will timeout operations after `response_timeout` has passed.
-    /// Each connection attempt to the server will timeout after `connection_timeout`.
+    /// The connection establishment is deferred until the first usage of the connection.
     pub fn new_with_config_lazy(client: Client, config: ConnectionManagerConfig) -> Self {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();

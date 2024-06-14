@@ -1010,7 +1010,7 @@ mod basic_async {
 
     #[test]
     #[cfg(feature = "connection-manager")]
-    fn test_new_connection_lazy_connect() {
+    fn test_new_with_config_lazy() {
         let exponent_base = 2;
         let factor = 100;
         let config = redis::aio::ConnectionManagerConfig::new()
