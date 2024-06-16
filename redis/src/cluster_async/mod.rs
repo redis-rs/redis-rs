@@ -137,7 +137,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `scan_state_ref` - A reference to the scan state, For initiating new scan send ScanStateCursor::new(),
+    /// * `scan_state_cursor` - A reference to the scan state, For initiating new scan send ScanStateCursor::new(),
     /// for each iteration after the first use the returned RefCell.
     /// * `match_pattern` - An optional match pattern of wanted keys.
     /// * `count` - An optional count of keys wanted,
@@ -181,13 +181,13 @@ where
     /// ````
     pub async fn cluster_scan(
         &mut self,
-        scan_state_ref: ScanStateCursor,
+        scan_state_cursor: ScanStateCursor,
         match_pattern: Option<&str>,
         count: Option<usize>,
         object_type: Option<ObjectType>,
     ) -> RedisResult<(ScanStateCursor, Vec<Value>)> {
         let cluster_scan_args = ClusterScanArgs::new(
-            scan_state_ref,
+            scan_state_cursor,
             match_pattern.map(|s| s.to_string()),
             count,
             object_type,
