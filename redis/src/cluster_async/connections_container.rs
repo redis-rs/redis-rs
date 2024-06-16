@@ -65,7 +65,7 @@ impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
 
 pub(crate) struct ConnectionsContainer<Connection> {
     connection_map: HashMap<ArcStr, ClusterNode<Connection>>,
-    slot_map: SlotMap,
+    pub(crate) slot_map: SlotMap,
     read_from_replica_strategy: ReadFromReplicaStrategy,
     topology_hash: TopologyHash,
 }

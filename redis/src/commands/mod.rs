@@ -13,6 +13,15 @@ mod macros;
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 mod json;
 
+#[cfg(feature = "cluster-async")]
+pub use cluster_scan::ScanStateCursor;
+
+#[cfg(feature = "cluster-async")]
+pub(crate) mod cluster_scan;
+
+#[cfg(feature = "cluster-async")]
+pub use cluster_scan::ObjectType;
+
 #[cfg(feature = "json")]
 pub use json::JsonCommands;
 

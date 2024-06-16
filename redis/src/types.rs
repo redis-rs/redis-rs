@@ -143,6 +143,9 @@ pub enum ErrorKind {
     /// Redis Servers prior to v6.0.0 doesn't support RESP3.
     /// Try disabling resp3 option
     RESP3NotSupported,
+
+    /// Not all slots are covered by the cluster
+    NotAllSlotsCovered,
 }
 
 #[derive(PartialEq, Debug)]
@@ -877,6 +880,7 @@ impl RedisError {
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
+            ErrorKind::NotAllSlotsCovered => "not all slots are covered",
         }
     }
 
@@ -1061,6 +1065,7 @@ impl RedisError {
                 },
                 _ => RetryMethod::RetryImmediately,
             },
+            ErrorKind::NotAllSlotsCovered => RetryMethod::NoRetry,
         }
     }
 }

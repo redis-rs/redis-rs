@@ -8,7 +8,7 @@ use crate::cluster_routing::{Route, Slot, SlotAddr, SlotAddrs};
 
 #[derive(Debug)]
 pub(crate) struct SlotMapValue {
-    start: u16,
+    pub(crate) start: u16,
     pub(crate) addrs: SlotAddrs,
     pub(crate) latest_used_replica: AtomicUsize,
 }
@@ -32,8 +32,9 @@ pub(crate) enum ReadFromReplicaStrategy {
 
 #[derive(Debug, Default)]
 pub(crate) struct SlotMap {
-    slots: BTreeMap<u16, SlotMapValue>,
+    pub(crate) slots: BTreeMap<u16, SlotMapValue>,
     read_from_replica: ReadFromReplicaStrategy,
+    pub(crate) all_slots_covered: bool,
 }
 
 fn get_address_from_slot(
@@ -61,6 +62,7 @@ impl SlotMap {
         let mut this = Self {
             slots: BTreeMap::new(),
             read_from_replica,
+            all_slots_covered: true,
         };
         this.slots.extend(
             slots
@@ -124,6 +126,51 @@ impl SlotMap {
         routes
             .iter()
             .map(|(route, _)| self.slot_addr_for_route(route))
+    }
+
+    // Returns the slots that are assigned to the given address.
+    pub(crate) fn get_slots_of_node(&self, node_address: &str) -> Vec<u16> {
+        self.slots
+            .iter()
+            .filter_map(|(end, slot_value)| {
+                if slot_value.addrs.primary == node_address
+                    || slot_value
+                        .addrs
+                        .replicas
+                        .contains(&node_address.to_string())
+                {
+                    Some(slot_value.start..(*end + 1))
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect()
+    }
+
+    pub(crate) fn get_node_address_for_slot(
+        &self,
+        slot: u16,
+        slot_addr: SlotAddr,
+    ) -> Option<String> {
+        self.slots.range(slot..).next().and_then(|(_, slot_value)| {
+            if slot_value.start <= slot {
+                Some(
+                    get_address_from_slot(slot_value, self.read_from_replica, slot_addr)
+                        .to_string(),
+                )
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn set_all_slots_covered(&mut self, all_slots_covered: bool) {
+        self.all_slots_covered = all_slots_covered;
+    }
+
+    pub(crate) fn is_all_slots_covered(&self) -> bool {
+        self.all_slots_covered
     }
 }
 
@@ -360,6 +407,41 @@ mod tests {
         assert_eq!(
             addresses,
             vec!["replica4:6379", "replica5:6379", "replica6:6379"]
+        );
+    }
+
+    #[test]
+    fn test_get_slots_of_node() {
+        let slot_map = get_slot_map(ReadFromReplicaStrategy::AlwaysFromPrimary);
+        assert_eq!(
+            slot_map.get_slots_of_node("node1:6379"),
+            (1..1001).collect::<Vec<u16>>()
+        );
+        assert_eq!(
+            slot_map.get_slots_of_node("node2:6379"),
+            vec![1002..2001, 3001..4001]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<u16>>()
+        );
+        assert_eq!(
+            slot_map.get_slots_of_node("replica3:6379"),
+            vec![1002..2001, 3001..4001]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<u16>>()
+        );
+        assert_eq!(
+            slot_map.get_slots_of_node("replica4:6379"),
+            (2001..3001).collect::<Vec<u16>>()
+        );
+        assert_eq!(
+            slot_map.get_slots_of_node("replica5:6379"),
+            (2001..3001).collect::<Vec<u16>>()
+        );
+        assert_eq!(
+            slot_map.get_slots_of_node("replica6:6379"),
+            (2001..3001).collect::<Vec<u16>>()
         );
     }
 }

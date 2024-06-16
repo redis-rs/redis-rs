@@ -449,6 +449,12 @@ pub mod cluster;
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 mod cluster_slotmap;
 
+#[cfg(feature = "cluster-async")]
+pub use crate::commands::ScanStateCursor;
+
+#[cfg(feature = "cluster-async")]
+pub use crate::commands::ObjectType;
+
 #[cfg(feature = "cluster")]
 mod cluster_client;
 
