@@ -343,6 +343,220 @@ impl ScanState {
     }
 }
 
+// Implement the `ClusterInScan` trait for `InnerCore` of async cluster connection.
+#[async_trait]
+impl<C> ClusterInScan for Core<C>
+where
+    C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
+{
+    async fn get_address_by_slot(&self, slot: u16) -> RedisResult<String> {
+        let address = self
+            .get_address_from_slot(slot, SlotAddr::ReplicaRequired)
+            .await;
+        match address {
+            Some(addr) => Ok(addr),
+            None => {
+                if self.is_all_slots_covered().await {
+                    Err(RedisError::from((
+                        ErrorKind::IoError,
+                        "Failed to get connection to the node cover the slot, please check the cluster configuration ",
+                    )))
+                } else {
+                    Err(RedisError::from((
+                        ErrorKind::NotAllSlotsCovered,
+                        "All slots are not covered by the cluster, please check the cluster configuration ",
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn get_address_epoch(&self, address: &str) -> Result<u64, RedisError> {
+        self.as_ref().get_address_epoch(address).await
+    }
+    async fn get_slots_of_address(&self, address: &str) -> Vec<u16> {
+        self.as_ref().get_slots_of_address(address).await
+    }
+    // Refresh the topology of the cluster
+    async fn refresh_slots(&self) -> RedisResult<()> {
+        ClusterConnInner::refresh_slots_with_retries(self.to_owned()).await
+    }
+    async fn route_command(&self, cmd: &Cmd, address: &str) -> RedisResult<Value> {
+        let core = self.to_owned();
+        InnerCore::route_command_inner(core, cmd.clone(), address).await
+    }
+    async fn is_all_slots_covered(&self) -> bool {
+        self.all_slots_covered().await
+    }
+}
+
+/// Perform a cluster scan operation.
+/// This function performs a scan operation in a Redis cluster using the given `ClusterInScan` connection.
+/// It scans the cluster for keys based on the given `ClusterScanArgs` arguments.
+/// The function returns a tuple containing the new scan state cursor and the keys found in the scan operation.
+/// If the scan operation fails, an error is returned.
+///
+/// # Arguments
+/// * `core` - The connection to the Redis cluster.
+/// * `cluster_scan_args` - The arguments for the cluster scan operation.
+///
+/// # Returns
+/// A tuple containing the new scan state cursor and the keys found in the scan operation.
+/// If the scan operation fails, an error is returned.
+pub(crate) async fn cluster_scan<C>(
+    core: C,
+    cluster_scan_args: ClusterScanArgs,
+) -> RedisResult<(ScanStateCursor, Vec<Value>)>
+where
+    C: ClusterInScan,
+{
+    let ClusterScanArgs {
+        scan_state_cursor,
+        match_pattern,
+        count,
+        object_type,
+    } = cluster_scan_args;
+    // If scan_state is None, meaning we start a new scan
+    let mut scan_state;
+    match scan_state_cursor.get_state_from_wrraper() {
+        Some(state) => {
+            scan_state = state;
+        }
+        None => match ScanState::initiate_scan(&core).await {
+            Ok(state) => {
+                scan_state = state;
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        },
+    }
+    // Send the actuall scan command to the address in the scan_state
+    let scan_result = send_scan(
+        &scan_state,
+        &core,
+        match_pattern.clone(),
+        count,
+        object_type.clone(),
+    )
+    .await;
+    let (new_cursor, new_keys): (u64, Vec<Value>);
+    match scan_result {
+        Ok(scan_result) => (new_cursor, new_keys) = from_redis_value(&scan_result).unwrap(),
+        Err(_) => {
+            // If the scan command failed to route to the address we will try to get a new address to scan
+            let retry_result =
+                retry_scan(&scan_state, &core, match_pattern, count, object_type).await;
+            match retry_result {
+                Ok((Ok(scan_result), new_scan_state)) => {
+                    scan_state = new_scan_state;
+                    (new_cursor, new_keys) = from_redis_value(&scan_result).unwrap();
+                }
+                Ok((Err(err), _)) => return Err(err),
+                Err(err) => return Err(err),
+            }
+        }
+    };
+
+    // If the cursor is 0, meaning we finished scanning the address
+    // we will update the scan state to get the next address to scan
+    if new_cursor == 0 {
+        scan_state = match scan_state
+            .update_scan_state_and_get_next_address(&core)
+            .await
+        {
+            Ok(state) => state,
+
+            Err(err) => return Err(err),
+        }
+    };
+
+    // If the address is empty, meaning we finished scanning all the addresss
+    if scan_state.address_in_scan.is_empty() {
+        return Ok((ScanStateCursor::new(), new_keys));
+    }
+
+    scan_state = ScanState::create(
+        new_cursor,
+        scan_state.scanned_slots_map,
+        scan_state.address_in_scan,
+        scan_state.address_epoch,
+    );
+    Ok((ScanStateCursor::from_scan_state(&scan_state), new_keys))
+}
+
+// Send the scan command to the address in the scan_state
+async fn send_scan<C>(
+    scan_state: &ScanState,
+    core: &C,
+    match_pattern: Option<String>,
+    count: Option<usize>,
+    object_type: Option<ObjectType>,
+) -> RedisResult<Value>
+where
+    C: ClusterInScan,
+{
+    let mut scan_command = cmd("SCAN");
+    scan_command.arg(scan_state.cursor);
+    if let Some(match_pattern) = match_pattern {
+        scan_command.arg("MATCH").arg(match_pattern);
+    }
+    if let Some(count) = count {
+        scan_command.arg("COUNT").arg(count);
+    }
+    if let Some(object_type) = object_type {
+        scan_command.arg("TYPE").arg(object_type.to_string());
+    }
+    core.route_command(&scan_command, &scan_state.address_in_scan)
+        .await
+}
+
+// If the scan command faild to route to the address we will check we will first refresh the slots, we will check if all slts are coverd by cluster,
+// and if so we will try to get a new address to scan for handeling case of failover.
+// if all slots are not coverd by the cluster we will return an error indicating that the cluster is not well configured.
+// if all slots are coverd by cluster but we failed to get a new address to scan we will return an error indicating that we failed to get a new address to scan.
+// if we got a new address to scan but the scan command failed to route to the address we will return an error indicating that we failed to route the command.
+async fn retry_scan<C>(
+    scan_state: &ScanState,
+    core: &C,
+    match_pattern: Option<String>,
+    count: Option<usize>,
+    object_type: Option<ObjectType>,
+) -> RedisResult<(RedisResult<Value>, ScanState)>
+where
+    C: ClusterInScan,
+{
+    let refresh_result = core.refresh_slots().await;
+    match refresh_result {
+        Ok(_) => {
+            if !core.is_all_slots_covered().await {
+                return Err(RedisError::from((
+                        ErrorKind::NotAllSlotsCovered,
+                        "Not all slots are covered by the cluster, please check the cluster configuration",
+                    )));
+            }
+            let next_slot = scan_state
+                .get_next_slot(&scan_state.scanned_slots_map)
+                .unwrap();
+            let address = core.get_address_by_slot(next_slot).await;
+            match address {
+                Ok(new_address) => {
+                    let new_epoch = core.get_address_epoch(&new_address).await.unwrap_or(0);
+                    let scan_state =
+                        &ScanState::create(0, scan_state.scanned_slots_map, new_address, new_epoch);
+                    let res = (
+                        send_scan(scan_state, core, match_pattern, count, object_type).await,
+                        scan_state.clone(),
+                    );
+                    Ok(res)
+                }
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
