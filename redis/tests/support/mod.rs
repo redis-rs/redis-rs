@@ -143,8 +143,8 @@ pub enum Module {
 
 pub struct RedisServer {
     pub process: process::Child,
-    tempdir: tempfile::TempDir,
-    addr: redis::ConnectionAddr,
+    pub(crate) tempdir: tempfile::TempDir,
+    pub(crate) addr: redis::ConnectionAddr,
     pub(crate) tls_paths: Option<TlsFilePaths>,
 }
 
