@@ -97,7 +97,6 @@ pin_project! {
     #[project = RequestStateProj]
 
 pub(super) enum RequestState<F> {
-        None,
         Future {
             #[pin]
             future: F,
@@ -141,7 +140,6 @@ impl<C> Future for Request<C> {
                 }
                 .into();
             }
-            _ => panic!("Request future must be Some"),
         };
         match ready!(future.poll(cx)) {
             Ok(item) => {
