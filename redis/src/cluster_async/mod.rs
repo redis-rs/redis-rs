@@ -30,11 +30,12 @@ use std::{
     time::Duration,
 };
 
+mod request;
 mod routing;
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection},
     cluster::{get_connection_info, slot_cmd},
-    cluster_client::{ClusterParams, RetryParams},
+    cluster_client::ClusterParams,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
         Slot, SlotMap,
@@ -48,8 +49,8 @@ use crate::{
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
-use pin_project_lite::pin_project;
 use rand::{seq::IteratorRandom, thread_rng};
+use request::{CmdArg, PendingRequest, Request, RequestInfo, RequestState};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -171,20 +172,6 @@ struct ClusterConnInner<C> {
     refresh_error: Option<RedisError>,
 }
 
-#[derive(Clone)]
-enum CmdArg<C> {
-    Cmd {
-        cmd: Arc<Cmd>,
-        routing: InternalRoutingInfo<C>,
-    },
-    Pipeline {
-        pipeline: Arc<crate::Pipeline>,
-        offset: usize,
-        count: usize,
-        route: InternalSingleNodeRouting<C>,
-    },
-}
-
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     #[cfg(feature = "tokio-comp")]
     return Box::pin(tokio::time::sleep(duration));
@@ -193,7 +180,7 @@ fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     return Box::pin(async_std::task::sleep(duration));
 }
 
-enum Response {
+pub(crate) enum Response {
     Single(Value),
     Multiple(Vec<Value>),
 }
@@ -239,99 +226,6 @@ impl fmt::Debug for ConnectionState {
     }
 }
 
-#[derive(Clone)]
-struct RequestInfo<C> {
-    cmd: CmdArg<C>,
-}
-
-impl<C> RequestInfo<C> {
-    fn set_redirect(&mut self, redirect: Option<Redirect>) {
-        if let Some(redirect) = redirect {
-            match &mut self.cmd {
-                CmdArg::Cmd { routing, .. } => match routing {
-                    InternalRoutingInfo::SingleNode(route) => {
-                        let redirect = InternalSingleNodeRouting::Redirect {
-                            redirect,
-                            previous_routing: Box::new(std::mem::take(route)),
-                        }
-                        .into();
-                        *routing = redirect;
-                    }
-                    InternalRoutingInfo::MultiNode(_) => {
-                        panic!("Cannot redirect multinode requests")
-                    }
-                },
-                CmdArg::Pipeline { route, .. } => {
-                    let redirect = InternalSingleNodeRouting::Redirect {
-                        redirect,
-                        previous_routing: Box::new(std::mem::take(route)),
-                    };
-                    *route = redirect;
-                }
-            }
-        }
-    }
-
-    fn reset_routing(&mut self) {
-        let fix_route = |route: &mut InternalSingleNodeRouting<C>| {
-            match route {
-                InternalSingleNodeRouting::Redirect {
-                    previous_routing, ..
-                } => {
-                    let previous_routing = std::mem::take(previous_routing.as_mut());
-                    *route = previous_routing;
-                }
-                // If a specific connection is specified, then reconnecting without resetting the routing
-                // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
-                }
-                _ => {}
-            }
-        };
-        match &mut self.cmd {
-            CmdArg::Cmd { routing, .. } => {
-                if let InternalRoutingInfo::SingleNode(route) = routing {
-                    fix_route(route);
-                }
-            }
-            CmdArg::Pipeline { route, .. } => {
-                fix_route(route);
-            }
-        }
-    }
-}
-
-pin_project! {
-    #[project = RequestStateProj]
-    enum RequestState<F> {
-        None,
-        Future {
-            #[pin]
-            future: F,
-        },
-        Sleep {
-            #[pin]
-            sleep: BoxFuture<'static, ()>,
-        },
-    }
-}
-
-struct PendingRequest<C> {
-    retry: u32,
-    sender: oneshot::Sender<RedisResult<Response>>,
-    info: RequestInfo<C>,
-}
-
-pin_project! {
-    struct Request<C> {
-        retry_params: RetryParams,
-        request: Option<PendingRequest<C>>,
-        #[pin]
-        future: RequestState<BoxFuture<'static, OperationResult>>,
-    }
-}
-
 #[must_use]
 enum Next<C> {
     Retry {
@@ -349,134 +243,6 @@ enum Next<C> {
         request: PendingRequest<C>,
     },
     Done,
-}
-
-impl<C> Future for Request<C> {
-    type Output = Next<C>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        let mut this = self.as_mut().project();
-        if this.request.is_none() {
-            return Poll::Ready(Next::Done);
-        }
-        let future = match this.future.as_mut().project() {
-            RequestStateProj::Future { future } => future,
-            RequestStateProj::Sleep { sleep } => {
-                ready!(sleep.poll(cx));
-                return Next::Retry {
-                    request: self.project().request.take().unwrap(),
-                }
-                .into();
-            }
-            _ => panic!("Request future must be Some"),
-        };
-        match ready!(future.poll(cx)) {
-            Ok(item) => {
-                trace!("Ok");
-                self.respond(Ok(item));
-                Next::Done.into()
-            }
-            Err((target, err)) => {
-                trace!("Request error {}", err);
-
-                let request = this.request.as_mut().unwrap();
-                if request.retry >= this.retry_params.number_of_retries {
-                    self.respond(Err(err));
-                    return Next::Done.into();
-                }
-                request.retry = request.retry.saturating_add(1);
-
-                if err.kind() == ErrorKind::ClusterConnectionNotFound {
-                    return Next::ReconnectToInitialNodes {
-                        request: this.request.take().unwrap(),
-                    }
-                    .into();
-                }
-
-                let sleep_duration = this.retry_params.wait_time_for_retry(request.retry);
-
-                let address = match target {
-                    OperationTarget::Node { address } => address,
-                    OperationTarget::FanOut => {
-                        // Fanout operation are retried per internal request, and don't need additional retries.
-                        self.respond(Err(err));
-                        return Next::Done.into();
-                    }
-                    OperationTarget::NotFound => {
-                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
-                        let mut request = this.request.take().unwrap();
-                        request.info.reset_routing();
-                        return Next::RefreshSlots {
-                            request,
-                            sleep_duration: Some(sleep_duration),
-                        }
-                        .into();
-                    }
-                };
-
-                match err.retry_method() {
-                    crate::types::RetryMethod::AskRedirect => {
-                        let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
-                            err.redirect_node()
-                                .map(|(node, _slot)| Redirect::Ask(node.to_string())),
-                        );
-                        Next::Retry { request }.into()
-                    }
-                    crate::types::RetryMethod::MovedRedirect => {
-                        let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
-                            err.redirect_node()
-                                .map(|(node, _slot)| Redirect::Moved(node.to_string())),
-                        );
-                        Next::RefreshSlots {
-                            request,
-                            sleep_duration: None,
-                        }
-                        .into()
-                    }
-                    crate::types::RetryMethod::WaitAndRetry => {
-                        // Sleep and retry.
-                        this.future.set(RequestState::Sleep {
-                            sleep: boxed_sleep(sleep_duration),
-                        });
-                        self.poll(cx)
-                    }
-                    crate::types::RetryMethod::Reconnect => {
-                        let mut request = this.request.take().unwrap();
-                        // TODO should we reset the redirect here?
-                        request.info.reset_routing();
-                        Next::Reconnect {
-                            request,
-                            target: address,
-                        }
-                    }
-                    .into(),
-                    crate::types::RetryMethod::RetryImmediately => Next::Retry {
-                        request: this.request.take().unwrap(),
-                    }
-                    .into(),
-                    crate::types::RetryMethod::NoRetry => {
-                        self.respond(Err(err));
-                        Next::Done.into()
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl<C> Request<C> {
-    fn respond(self: Pin<&mut Self>, msg: RedisResult<Response>) {
-        // If `send` errors the receiver has dropped and thus does not care about the message
-        let _ = self
-            .project()
-            .request
-            .take()
-            .expect("Result should only be sent once")
-            .sender
-            .send(msg);
-    }
 }
 
 impl<C> ClusterConnInner<C>
