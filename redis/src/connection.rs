@@ -214,7 +214,7 @@ pub struct ConnectionInfo {
 }
 
 /// Types of pubsub subscriptions
-/// See <https://redis.io/docs/interact/pubsub/#sharded-pubsub> for more details
+/// See <https://valkey.io/docs/topics/pubsub> for more details
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum PubSubSubscriptionKind {
     /// Exact channel name.
