@@ -71,6 +71,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -105,6 +106,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -121,6 +123,7 @@ mod test_connect_and_check {
             params,
             None,
             RefreshConnectionType::AllConnections,
+            None,
             None,
         )
         .await;
@@ -152,6 +155,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -180,6 +184,7 @@ mod test_connect_and_check {
             ClusterParams::default(),
             None,
             RefreshConnectionType::AllConnections,
+            None,
             None,
         )
         .await;
@@ -224,6 +229,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -263,6 +269,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -305,6 +312,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -357,6 +365,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyUserConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -411,6 +420,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyUserConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);

@@ -23,7 +23,7 @@ pub struct Pipeline {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection(None).unwrap();
 /// let ((k1, k2),) : ((i32, i32),) = redis::pipe()
 ///     .cmd("SET").arg("key_1").arg(42).ignore()
 ///     .cmd("SET").arg("key_2").arg(43).ignore()
@@ -58,7 +58,7 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let (k1, k2) : (i32, i32) = redis::pipe()
     ///     .atomic()
     ///     .cmd("GET").arg("key_1")
@@ -110,7 +110,7 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let (k1, k2) : (i32, i32) = redis::pipe()
     ///     .cmd("SET").arg("key_1").arg(42).ignore()
     ///     .cmd("SET").arg("key_2").arg(43).ignore()
@@ -192,7 +192,7 @@ impl Pipeline {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let _ : () = redis::pipe().cmd("PING").query(&mut con).unwrap();
     /// ```
     ///

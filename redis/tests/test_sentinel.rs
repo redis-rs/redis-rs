@@ -72,7 +72,7 @@ fn connect_to_all_replicas(
         let replica_client = sentinel
             .replica_rotate_for(master_name, Some(node_conn_info))
             .unwrap();
-        let mut replica_con = replica_client.get_connection().unwrap();
+        let mut replica_con = replica_client.get_connection(None).unwrap();
 
         assert!(!replica_conn_infos.contains(&replica_client.get_connection_info().addr));
         replica_conn_infos.push(replica_client.get_connection_info().addr.clone());
@@ -95,7 +95,7 @@ fn assert_connect_to_known_replicas(
         let replica_client = sentinel
             .replica_rotate_for(master_name, Some(node_conn_info))
             .unwrap();
-        let mut replica_con = replica_client.get_connection().unwrap();
+        let mut replica_con = replica_client.get_connection(None).unwrap();
 
         assert!(replica_conn_infos.contains(&replica_client.get_connection_info().addr));
 
@@ -113,12 +113,12 @@ fn test_sentinel_connect_to_random_replica() {
     let master_client = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap();
-    let mut master_con = master_client.get_connection().unwrap();
+    let mut master_con = master_client.get_connection(None).unwrap();
 
     let mut replica_con = sentinel
         .replica_for(master_name, Some(&node_conn_info))
         .unwrap()
-        .get_connection()
+        .get_connection(None)
         .unwrap();
 
     assert_is_connection_to_master(&mut master_con);
@@ -136,7 +136,7 @@ fn test_sentinel_connect_to_multiple_replicas() {
     let master_client = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap();
-    let mut master_con = master_client.get_connection().unwrap();
+    let mut master_con = master_client.get_connection(None).unwrap();
 
     assert_is_connection_to_master(&mut master_con);
 
@@ -169,7 +169,7 @@ fn test_sentinel_server_down() {
     let master_client = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap();
-    let mut master_con = master_client.get_connection().unwrap();
+    let mut master_con = master_client.get_connection(None).unwrap();
 
     assert_is_connection_to_master(&mut master_con);
 
@@ -282,7 +282,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
             let mut replica_con = replica_client
-                .get_multiplexed_async_connection()
+                .get_multiplexed_async_connection(None)
                 .await
                 .unwrap();
 
@@ -315,7 +315,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
             let mut replica_con = replica_client
-                .get_multiplexed_async_connection()
+                .get_multiplexed_async_connection(None)
                 .await
                 .unwrap();
 
@@ -337,12 +337,12 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
 
             let mut replica_con = sentinel
                 .async_replica_for(master_name, Some(&node_conn_info))
                 .await?
-                .get_multiplexed_async_connection()
+                .get_multiplexed_async_connection(None)
                 .await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
@@ -366,7 +366,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -407,7 +407,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 

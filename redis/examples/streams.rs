@@ -69,7 +69,7 @@ fn demo_group_reads(client: &redis::Client) {
         let repeat = 5;
         let ca = client.clone();
         handles.push(thread::spawn(move || {
-            let mut con = ca.get_connection().expect("con");
+            let mut con = ca.get_connection(None).expect("con");
 
             // We must create each group and each consumer
             // See https://redis.io/commands/xreadgroup#differences-between-xread-and-xreadgroup
@@ -118,7 +118,7 @@ fn demo_group_reads(client: &redis::Client) {
 /// Generate some contrived records and add them to various
 /// streams.
 fn add_records(client: &redis::Client) -> RedisResult<()> {
-    let mut con = client.get_connection().expect("conn");
+    let mut con = client.get_connection(None).expect("conn");
 
     let maxlen = StreamMaxlen::Approx(1000);
 
@@ -202,7 +202,7 @@ const BLOCK_MILLIS: usize = 5000;
 /// just go back to the beginning of time and ask for all the
 /// records in the stream.
 fn read_records(client: &redis::Client) -> RedisResult<()> {
-    let mut con = client.get_connection().expect("conn");
+    let mut con = client.get_connection(None).expect("conn");
 
     let opts = StreamReadOptions::default().block(BLOCK_MILLIS);
 
@@ -239,7 +239,7 @@ fn consumer_name(slowness: u8) -> String {
 const GROUP_NAME: &str = "example-group-aaa";
 
 fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<StreamReadReply> {
-    let mut con = client.get_connection().expect("conn");
+    let mut con = client.get_connection(None).expect("conn");
 
     let opts = StreamReadOptions::default()
         .block(BLOCK_MILLIS)
@@ -258,7 +258,7 @@ fn read_group_records(client: &redis::Client, slowness: u8) -> RedisResult<Strea
 }
 
 fn clean_up(client: &redis::Client) {
-    let mut con = client.get_connection().expect("con");
+    let mut con = client.get_connection(None).expect("con");
     for k in STREAMS {
         let trimmed: RedisResult<()> = con.xtrim(*k, StreamMaxlen::Equals(0));
         trimmed.expect("trim");

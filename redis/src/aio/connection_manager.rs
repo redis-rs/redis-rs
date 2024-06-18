@@ -195,6 +195,7 @@ impl ConnectionManager {
             client.get_multiplexed_async_connection_with_timeouts(
                 response_timeout,
                 connection_timeout,
+                None,
             )
         })
         .await

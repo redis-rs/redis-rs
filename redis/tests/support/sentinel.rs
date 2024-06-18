@@ -135,7 +135,7 @@ fn wait_for_master_server(
     for _ in 0..100 {
         let master_client = get_client_fn();
         match master_client {
-            Ok(client) => match client.get_connection() {
+            Ok(client) => match client.get_connection(None) {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
                     let role = String::from_redis_value(r.first().unwrap()).unwrap();
@@ -165,7 +165,7 @@ fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> R
     for _ in 0..200 {
         let replica_client = get_client_fn();
         match replica_client {
-            Ok(client) => match client.get_connection() {
+            Ok(client) => match client.get_connection(None) {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
                     let role = String::from_redis_value(r.first().unwrap()).unwrap();
