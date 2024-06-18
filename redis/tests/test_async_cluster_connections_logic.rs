@@ -1,3 +1,4 @@
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 #![cfg(feature = "cluster-async")]
 mod support;
 
@@ -71,6 +72,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -105,6 +107,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -121,6 +124,7 @@ mod test_connect_and_check {
             params,
             None,
             RefreshConnectionType::AllConnections,
+            None,
             None,
         )
         .await;
@@ -152,6 +156,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::AllConnections,
             None,
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -180,6 +185,7 @@ mod test_connect_and_check {
             ClusterParams::default(),
             None,
             RefreshConnectionType::AllConnections,
+            None,
             None,
         )
         .await;
@@ -224,6 +230,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -263,6 +270,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -305,6 +313,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyManagementConnection,
             Some(node),
+            None,
         )
         .await;
         let (node, _) = assert_partial_result(result);
@@ -357,6 +366,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyUserConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);
@@ -411,6 +421,7 @@ mod test_connect_and_check {
             None,
             RefreshConnectionType::OnlyUserConnection,
             Some(node),
+            None,
         )
         .await;
         let node = assert_full_success(result);

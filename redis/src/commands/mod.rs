@@ -1345,7 +1345,7 @@ implement_commands! {
     /// use redis::{Connection,Commands,RedisResult};
     /// use redis::streams::{StreamClaimOptions,StreamClaimReply};
     /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
-    /// let mut con = client.get_connection().unwrap();
+    /// let mut con = client.get_connection(None).unwrap();
     ///
     /// // Claim all pending messages for key "k1",
     /// // from group "g1", checked out by consumer "c1"
@@ -1759,7 +1759,7 @@ implement_commands! {
     /// use redis::{Connection,RedisResult,Commands};
     /// use redis::streams::{StreamReadOptions,StreamReadReply};
     /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
-    /// let mut con = client.get_connection().unwrap();
+    /// let mut con = client.get_connection(None).unwrap();
     ///
     /// // Read 10 messages from the start of the stream,
     /// // without registering as a consumer group.
@@ -1897,7 +1897,7 @@ pub enum ControlFlow<U> {
 /// # fn do_something() -> redis::RedisResult<()> {
 /// use redis::{PubSubCommands, ControlFlow};
 /// let client = redis::Client::open("redis://127.0.0.1/")?;
-/// let mut con = client.get_connection()?;
+/// let mut con = client.get_connection(None)?;
 /// let mut count = 0;
 /// con.subscribe(&["foo"], |msg| {
 ///     // do something with message

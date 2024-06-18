@@ -5,7 +5,7 @@ use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind};
+use crate::{cmd, ConnectionInfo, ProtocolVersion, PushInfo, PushKind};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -391,11 +391,18 @@ impl MultiplexedConnection {
     pub async fn new<C>(
         connection_info: &ConnectionInfo,
         stream: C,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        Self::new_with_response_timeout(connection_info, stream, std::time::Duration::MAX).await
+        Self::new_with_response_timeout(
+            connection_info,
+            stream,
+            std::time::Duration::MAX,
+            push_sender,
+        )
+        .await
     }
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
@@ -404,6 +411,7 @@ impl MultiplexedConnection {
         connection_info: &ConnectionInfo,
         stream: C,
         response_timeout: std::time::Duration,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
@@ -424,6 +432,10 @@ impl MultiplexedConnection {
         let (mut pipeline, driver) = Pipeline::new(codec);
         let driver = boxed(driver);
         let pm = PushManager::default();
+        if let Some(sender) = push_sender {
+            pm.replace_sender(sender);
+        }
+
         pipeline.set_push_manager(pm.clone()).await;
         let mut con = MultiplexedConnection {
             pipeline,

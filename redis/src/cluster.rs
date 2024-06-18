@@ -10,7 +10,7 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let client = ClusterClient::new(nodes).unwrap();
-//! let mut connection = client.get_connection().unwrap();
+//! let mut connection = client.get_connection(None).unwrap();
 //!
 //! let _: () = connection.set("test", "test_data").unwrap();
 //! let rv: String = connection.get("test").unwrap();
@@ -25,7 +25,7 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let client = ClusterClient::new(nodes).unwrap();
-//! let mut connection = client.get_connection().unwrap();
+//! let mut connection = client.get_connection(None).unwrap();
 //!
 //! let key = "test";
 //!
@@ -59,11 +59,13 @@ pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo},
-    IntoConnectionInfo,
+    IntoConnectionInfo, PushInfo,
 };
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+
+use tokio::sync::mpsc;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
@@ -224,6 +226,7 @@ where
     pub(crate) fn new(
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
@@ -976,6 +979,7 @@ pub(crate) fn get_connection_info(
             client_name: cluster_params.client_name,
             protocol: cluster_params.protocol,
             db: 0,
+            pubsub_subscriptions: cluster_params.pubsub_subscriptions,
         },
     })
 }

@@ -5,11 +5,13 @@ use crate::{
     aio::{get_socket_addrs, ConnectionLike, Runtime},
     cluster::get_connection_info,
     cluster_client::ClusterParams,
+    push_manager::PushInfo,
     ErrorKind, RedisError, RedisResult,
 };
 
 use futures::prelude::*;
 use futures_util::{future::BoxFuture, join};
+use tokio::sync::mpsc;
 use tracing::warn;
 
 pub(crate) type ConnectionFuture<C> = futures::future::Shared<BoxFuture<'static, C>>;
@@ -77,6 +79,7 @@ pub(crate) async fn get_or_create_conn<C>(
     node: Option<AsyncClusterNode<C>>,
     params: &ClusterParams,
     conn_type: RefreshConnectionType,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> RedisResult<AsyncClusterNode<C>>
 where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
@@ -86,12 +89,19 @@ where
         // Instead, we depend on managed Redis services to close the connection for refresh if the node has changed.
         match check_node_connections(&node, params, conn_type, addr).await {
             None => Ok(node),
-            Some(conn_type) => connect_and_check(addr, params.clone(), None, conn_type, Some(node))
-                .await
-                .get_node(),
+            Some(conn_type) => connect_and_check(
+                addr,
+                params.clone(),
+                None,
+                conn_type,
+                Some(node),
+                push_sender,
+            )
+            .await
+            .get_node(),
         }
     } else {
-        connect_and_check(addr, params.clone(), None, conn_type, None)
+        connect_and_check(addr, params.clone(), None, conn_type, None, push_sender)
             .await
             .get_node()
     }
@@ -123,13 +133,20 @@ pub(crate) async fn connect_and_check_all_connections<C>(
     addr: &str,
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
     match future::join(
-        create_connection(addr, params.clone(), socket_addr),
-        create_connection(addr, params.clone(), socket_addr),
+        create_connection(
+            addr,
+            params.clone(),
+            socket_addr,
+            push_sender.clone(),
+            false,
+        ),
+        create_connection(addr, params.clone(), socket_addr, push_sender, true),
     )
     .await
     {
@@ -199,50 +216,52 @@ async fn connect_and_check_only_management_conn<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     prev_node: AsyncClusterNode<C>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
-    let (mut new_conn, new_ip) = match create_connection(addr, params.clone(), socket_addr).await {
-        Ok(tuple) => tuple,
-        Err(err) => {
-            return failed_management_connection(
-                addr,
-                prev_node.user_connection,
-                prev_node.ip,
-                err,
-            );
-        }
-    };
+    match future::join(
+        create_connection::<C>(addr, params.clone(), socket_addr, push_sender, false),
+        create_connection::<C>(addr, params.clone(), socket_addr, None, true),
+    )
+    .await
+    {
+        (Err(user_conn_err), _) => failed_management_connection(
+            addr,
+            prev_node.user_connection,
+            prev_node.ip,
+            user_conn_err,
+        ),
+        (_, Err(mngm_conn_err)) => failed_management_connection(
+            addr,
+            prev_node.user_connection,
+            prev_node.ip,
+            mngm_conn_err,
+        ),
 
-    let (user_connection, mut management_connection) = if new_ip != prev_node.ip {
-        // An IP mismatch was detected. Attempt to establish a new connection to replace both the management and user connections.
-        // Use the successfully established connection for the user, then proceed to create a new one for management.
-        warn_mismatch_ip(addr, new_ip, prev_node.ip);
-        if let Err(err) = setup_user_connection(&mut new_conn, params.clone()).await {
-            return ConnectAndCheckResult::Failed(err);
-        }
-        let user_connection = to_future(new_conn);
-        let management_connection = create_connection(addr, params.clone(), socket_addr)
-            .await
-            .map(|(conn, _ip)| conn)
-            .ok();
-        (user_connection, management_connection)
-    } else {
-        // The new IP matches the existing one. Use the created connection as the management connection.
-        (prev_node.user_connection, Some(new_conn))
-    };
+        (Ok(mut user_conn), Ok(mut mngm_conn)) => {
+            let (final_user_conn, user_ip) = if user_conn.1 != prev_node.ip {
+                // An IP mismatch was detected. Attempt to establish a new connection to replace both the management and user connections.
+                warn_mismatch_ip(addr, user_conn.1, prev_node.ip);
+                if let Err(err) = setup_user_connection(&mut user_conn.0, params.clone()).await {
+                    return ConnectAndCheckResult::Failed(err);
+                }
+                (to_future(user_conn.0), user_conn.1)
+            } else {
+                (prev_node.user_connection, prev_node.ip)
+            };
+            if let Err(err) = setup_management_connection(&mut mngm_conn.0).await {
+                return failed_management_connection(addr, final_user_conn, user_ip, err);
+            }
 
-    if let Some(new_conn) = management_connection.as_mut() {
-        if let Err(err) = setup_management_connection(new_conn).await {
-            return failed_management_connection(addr, user_connection, new_ip, err);
-        };
-    };
-    ConnectAndCheckResult::Success(ClusterNode {
-        user_connection,
-        ip: new_ip,
-        management_connection: management_connection.map(|conn| to_future(conn)),
-    })
+            ConnectAndCheckResult::Success(ClusterNode {
+                user_connection: final_user_conn,
+                ip: user_ip,
+                management_connection: Some(to_future(mngm_conn.0)),
+            })
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -305,17 +324,24 @@ pub async fn connect_and_check<C>(
     socket_addr: Option<SocketAddr>,
     conn_type: RefreshConnectionType,
     node: Option<AsyncClusterNode<C>>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
     match conn_type {
         RefreshConnectionType::OnlyUserConnection => {
-            let (user_conn, ip) =
-                match create_and_setup_user_connection(addr, params.clone(), socket_addr).await {
-                    Ok(tuple) => tuple,
-                    Err(err) => return err.into(),
-                };
+            let (user_conn, ip) = match create_and_setup_user_connection(
+                addr,
+                params.clone(),
+                socket_addr,
+                push_sender,
+            )
+            .await
+            {
+                Ok(tuple) => tuple,
+                Err(err) => return err.into(),
+            };
             if let Some(node) = node {
                 let mut management_conn = match node.management_connection {
                     Some(ref conn) => Some(conn.clone().await),
@@ -338,13 +364,22 @@ where
             // Refreshing only the management connection requires the node to exist alongside a user connection. Otherwise, refresh all connections.
             match node {
                 Some(node) => {
-                    connect_and_check_only_management_conn(addr, params, socket_addr, node).await
+                    connect_and_check_only_management_conn(
+                        addr,
+                        params,
+                        socket_addr,
+                        node,
+                        push_sender,
+                    )
+                    .await
                 }
-                None => connect_and_check_all_connections(addr, params, socket_addr).await,
+                None => {
+                    connect_and_check_all_connections(addr, params, socket_addr, push_sender).await
+                }
             }
         }
         RefreshConnectionType::AllConnections => {
-            connect_and_check_all_connections(addr, params, socket_addr).await
+            connect_and_check_all_connections(addr, params, socket_addr, push_sender).await
         }
     }
 }
@@ -353,12 +388,13 @@ async fn create_and_setup_user_connection<C>(
     node: &str,
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> RedisResult<(C, Option<IpAddr>)>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let (mut conn, ip): (C, Option<IpAddr>) =
-        create_connection(node, params.clone(), socket_addr).await?;
+        create_connection(node, params.clone(), socket_addr, push_sender, false).await?;
     setup_user_connection(&mut conn, params).await?;
     Ok((conn, ip))
 }
@@ -372,7 +408,7 @@ where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let (mut conn, ip): (C, Option<IpAddr>) =
-        create_connection(node, params.clone(), socket_addr).await?;
+        create_connection(node, params.clone(), socket_addr, None, true).await?;
     setup_management_connection(&mut conn).await?;
     Ok((conn, ip))
 }
@@ -408,16 +444,29 @@ where
 
 async fn create_connection<C>(
     node: &str,
-    params: ClusterParams,
+    mut params: ClusterParams,
     socket_addr: Option<SocketAddr>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    is_management: bool,
 ) -> RedisResult<(C, Option<IpAddr>)>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
+    // ignore pubsub subscriptions and push notifications for management connections
+    if is_management {
+        params.pubsub_subscriptions = None;
+    }
     let info = get_connection_info(node, params)?;
-    C::connect(info, response_timeout, connection_timeout, socket_addr).await
+    C::connect(
+        info,
+        response_timeout,
+        connection_timeout,
+        socket_addr,
+        if !is_management { push_sender } else { None },
+    )
+    .await
 }
 
 /// The function returns None if the checked connection/s are healthy. Otherwise, it returns the type of the unhealthy connection/s.

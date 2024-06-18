@@ -39,7 +39,7 @@
 //!
 //! fn do_something() -> redis::RedisResult<()> {
 //!     let client = redis::Client::open("redis://127.0.0.1/")?;
-//!     let mut con = client.get_connection()?;
+//!     let mut con = client.get_connection(None)?;
 //!
 //!     /* do something here */
 //!
@@ -153,7 +153,7 @@
 //! # use std::collections::{HashMap, HashSet};
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let count : i32 = con.get("my_counter")?;
 //! let count = con.get("my_counter").unwrap_or(0i32);
 //! let k : Option<String> = con.get("missing_key")?;
@@ -178,7 +178,7 @@
 //! ```rust,ignore
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let mut iter : redis::Iter<isize> = redis::cmd("SSCAN").arg("my_set")
 //!     .cursor_arg(0).clone().iter(&mut con)?;
 //! for x in iter {
@@ -202,7 +202,7 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
 //!     .cmd("SET").arg("key_2").arg(43).ignore()
@@ -219,7 +219,7 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .cmd("SET").arg("key_1").arg(42).ignore()
@@ -234,7 +234,7 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let (k1, k2) : (i32, i32) = redis::pipe()
 //!     .atomic()
 //!     .set("key_1", 42).ignore()
@@ -254,7 +254,7 @@
 //! # fn do_something() -> redis::RedisResult<()> {
 //! use redis::Commands;
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
+//! # let mut con = client.get_connection(None).unwrap();
 //! let key = "the_key";
 //! let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
 //!     let old_val : isize = con.get(key)?;
@@ -280,7 +280,7 @@
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/")?;
-//! let mut con = client.get_connection()?;
+//! let mut con = client.get_connection(None)?;
 //! let mut pubsub = con.as_pubsub();
 //! pubsub.subscribe("channel_1")?;
 //! pubsub.subscribe("channel_2")?;
@@ -307,7 +307,7 @@ Example:
 ```rust,no_run
 # fn do_something() -> redis::RedisResult<()> {
 # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-# let mut con = client.get_connection().unwrap();
+# let mut con = client.get_connection(None).unwrap();
 let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
@@ -337,7 +337,7 @@ use redis::AsyncCommands;
 # #[tokio::main]
 # async fn main() -> redis::RedisResult<()> {
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let mut con = client.get_async_connection().await?;
+let mut con = client.get_async_connection(None).await?;
 
 con.set("key1", b"foo").await?;
 
@@ -360,6 +360,7 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, warn(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 
 // public api
 pub use crate::client::Client;
@@ -369,7 +370,8 @@ pub use crate::commands::{
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
+    IntoConnectionInfo, Msg, PubSub, PubSubChannelOrPattern, PubSubSubscriptionInfo,
+    PubSubSubscriptionKind, RedisConnectionInfo, TlsMode,
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;

@@ -1,6 +1,6 @@
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue, RedisError,
+    ErrorKind, FromRedisValue, PushInfo, RedisError,
 };
 
 use std::{
@@ -17,6 +17,8 @@ use {
     once_cell::sync::Lazy,
     redis::{IntoConnectionInfo, RedisResult, Value},
 };
+
+use tokio::sync::mpsc;
 
 #[cfg(feature = "cluster-async")]
 use redis::{aio, cluster_async, RedisFuture};
@@ -132,6 +134,7 @@ impl cluster_async::Connect for MockConnection {
         _response_timeout: Duration,
         _connection_timeout: Duration,
         _socket_addr: Option<SocketAddr>,
+        _push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
@@ -454,7 +457,7 @@ impl MockEnv {
             Arc::new(move |cmd, port| handler(cmd, port)),
         );
         let client = client_builder.build().unwrap();
-        let connection = client.get_generic_connection().unwrap();
+        let connection = client.get_generic_connection(None).unwrap();
         #[cfg(feature = "cluster-async")]
         let async_connection = runtime
             .block_on(client.get_async_generic_connection())

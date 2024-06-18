@@ -1,5 +1,8 @@
 use crate::cluster_slotmap::ReadFromReplicaStrategy;
-use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::connection::{
+    ConnectionAddr, ConnectionInfo, IntoConnectionInfo, PubSubSubscriptionInfo,
+};
+use crate::push_manager::PushInfo;
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
@@ -16,6 +19,8 @@ use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{retrieve_tls_certificates, TlsCertificates};
+
+use tokio::sync::mpsc;
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -34,6 +39,7 @@ struct BuilderParams {
     client_name: Option<String>,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
+    pubsub_subscriptions: Option<PubSubSubscriptionInfo>,
 }
 
 #[derive(Clone)]
@@ -91,6 +97,7 @@ pub struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
     pub(crate) protocol: ProtocolVersion,
+    pub(crate) pubsub_subscriptions: Option<PubSubSubscriptionInfo>,
 }
 
 impl ClusterParams {
@@ -117,6 +124,7 @@ impl ClusterParams {
             client_name: value.client_name,
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
             protocol: value.protocol,
+            pubsub_subscriptions: value.pubsub_subscriptions,
         })
     }
 }
@@ -373,6 +381,15 @@ impl ClusterClientBuilder {
         };
         self
     }
+
+    /// Sets the pubsub configuration for the new ClusterClient.
+    pub fn pubsub_subscriptions(
+        mut self,
+        pubsub_subscriptions: PubSubSubscriptionInfo,
+    ) -> ClusterClientBuilder {
+        self.builder_params.pubsub_subscriptions = Some(pubsub_subscriptions);
+        self
+    }
 }
 
 /// This is a Redis Cluster client.
@@ -411,8 +428,15 @@ impl ClusterClient {
     /// # Errors
     ///
     /// An error is returned if there is a failure while creating connections or slots.
-    pub fn get_connection(&self) -> RedisResult<cluster::ClusterConnection> {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+    pub fn get_connection(
+        &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> RedisResult<cluster::ClusterConnection> {
+        cluster::ClusterConnection::new(
+            self.cluster_params.clone(),
+            self.initial_nodes.clone(),
+            push_sender,
+        )
     }
 
     /// Creates new connections to Redis Cluster nodes and returns a
@@ -422,17 +446,31 @@ impl ClusterClient {
     ///
     /// An error is returned if there is a failure while creating connections or slots.
     #[cfg(feature = "cluster-async")]
-    pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
-            .await
+    pub async fn get_async_connection(
+        &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> RedisResult<cluster_async::ClusterConnection> {
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            push_sender,
+        )
+        .await
     }
 
     #[doc(hidden)]
-    pub fn get_generic_connection<C>(&self) -> RedisResult<cluster::ClusterConnection<C>>
+    pub fn get_generic_connection<C>(
+        &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> RedisResult<cluster::ClusterConnection<C>>
     where
         C: crate::ConnectionLike + crate::cluster::Connect + Send,
     {
-        cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
+        cluster::ClusterConnection::new(
+            self.cluster_params.clone(),
+            self.initial_nodes.clone(),
+            push_sender,
+        )
     }
 
     #[doc(hidden)]
@@ -449,8 +487,12 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
-            .await
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            None,
+        )
+        .await
     }
 
     /// Use `new()`.

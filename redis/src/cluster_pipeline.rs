@@ -93,7 +93,7 @@ impl ClusterPipeline {
     /// ```rust,no_run
     /// # let nodes = vec!["redis://127.0.0.1:6379/"];
     /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let mut pipe = redis::cluster::cluster_pipe();
     /// let (k1, k2) : (i32, i32) = pipe
     ///     .cmd("SET").arg("key_1").arg(42).ignore()
@@ -133,7 +133,7 @@ impl ClusterPipeline {
     /// ```rust,no_run
     /// # let nodes = vec!["redis://127.0.0.1:6379/"];
     /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let mut pipe = redis::cluster::cluster_pipe();
     /// let _ : () = pipe.cmd("SET").arg("key_1").arg(42).ignore().query(&mut con).unwrap();
     /// ```

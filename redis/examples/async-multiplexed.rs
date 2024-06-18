@@ -1,3 +1,4 @@
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 use futures::prelude::*;
 use redis::{aio::MultiplexedConnection, RedisResult};
 
@@ -33,7 +34,7 @@ async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {
 async fn main() {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 
-    let con = client.get_multiplexed_tokio_connection().await.unwrap();
+    let con = client.get_multiplexed_tokio_connection(None).await.unwrap();
 
     let cmds = (0..100).map(|i| test_cmd(&con, i));
     let result = future::try_join_all(cmds).await.unwrap();
