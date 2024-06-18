@@ -35,15 +35,10 @@ pub(super) enum CmdArg<C> {
     },
 }
 
-#[derive(Clone)]
-pub(super) struct RequestInfo<C> {
-    pub(super) cmd: CmdArg<C>,
-}
-
-impl<C> RequestInfo<C> {
+impl<C> CmdArg<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
-            match &mut self.cmd {
+            match self {
                 CmdArg::Cmd { routing, .. } => match routing {
                     InternalRoutingInfo::SingleNode(route) => {
                         let redirect = InternalSingleNodeRouting::Redirect {
@@ -85,7 +80,7 @@ impl<C> RequestInfo<C> {
                 _ => {}
             }
         };
-        match &mut self.cmd {
+        match self {
             CmdArg::Cmd { routing, .. } => {
                 if let InternalRoutingInfo::SingleNode(route) = routing {
                     fix_route(route);
@@ -117,7 +112,7 @@ pub(super) enum RequestState<F> {
 pub(super) struct PendingRequest<C> {
     pub(super) retry: u32,
     pub(super) sender: oneshot::Sender<RedisResult<Response>>,
-    pub(super) info: RequestInfo<C>,
+    pub(super) cmd: CmdArg<C>,
 }
 
 pin_project! {
@@ -183,7 +178,7 @@ impl<C> Future for Request<C> {
                     OperationTarget::NotFound => {
                         // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
-                        request.info.reset_routing();
+                        request.cmd.reset_routing();
                         return Next::RefreshSlots {
                             request,
                             sleep_duration: Some(sleep_duration),
@@ -195,7 +190,7 @@ impl<C> Future for Request<C> {
                 match err.retry_method() {
                     crate::types::RetryMethod::AskRedirect => {
                         let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
+                        request.cmd.set_redirect(
                             err.redirect_node()
                                 .map(|(node, _slot)| Redirect::Ask(node.to_string())),
                         );
@@ -203,7 +198,7 @@ impl<C> Future for Request<C> {
                     }
                     crate::types::RetryMethod::MovedRedirect => {
                         let mut request = this.request.take().unwrap();
-                        request.info.set_redirect(
+                        request.cmd.set_redirect(
                             err.redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string())),
                         );
@@ -223,7 +218,7 @@ impl<C> Future for Request<C> {
                     crate::types::RetryMethod::Reconnect => {
                         let mut request = this.request.take().unwrap();
                         // TODO should we reset the redirect here?
-                        request.info.reset_routing();
+                        request.cmd.reset_routing();
                         Next::Reconnect {
                             request,
                             target: address,

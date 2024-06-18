@@ -50,7 +50,7 @@ use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
 use rand::{seq::IteratorRandom, thread_rng};
-use request::{CmdArg, PendingRequest, Request, RequestInfo, RequestState};
+use request::{CmdArg, PendingRequest, Request, RequestState};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -546,15 +546,13 @@ where
                         PendingRequest {
                             retry: 0,
                             sender,
-                            info: RequestInfo {
-                                cmd: CmdArg::Cmd {
-                                    cmd,
-                                    routing: InternalSingleNodeRouting::Connection {
-                                        identifier: addr,
-                                        conn,
-                                    }
-                                    .into(),
-                                },
+                            cmd: CmdArg::Cmd {
+                                cmd,
+                                routing: InternalSingleNodeRouting::Connection {
+                                    identifier: addr,
+                                    conn,
+                                }
+                                .into(),
                             },
                         },
                     )
@@ -645,8 +643,8 @@ where
         }
     }
 
-    async fn try_request(info: RequestInfo<C>, core: Core<C>) -> OperationResult {
-        match info.cmd {
+    async fn try_request(cmd: CmdArg<C>, core: Core<C>) -> OperationResult {
+        match cmd {
             CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
             CmdArg::Pipeline {
                 pipeline,
@@ -797,7 +795,7 @@ where
                     continue;
                 }
 
-                let future = Self::try_request(request.info.clone(), self.inner.clone()).boxed();
+                let future = Self::try_request(request.cmd.clone(), self.inner.clone()).boxed();
                 self.in_flight_requests.push(Box::pin(Request {
                     retry_params: self.inner.cluster_params.retry_params.clone(),
                     request: Some(request),
@@ -816,7 +814,7 @@ where
             match result {
                 Next::Done => {}
                 Next::Retry { request } => {
-                    let future = Self::try_request(request.info.clone(), self.inner.clone());
+                    let future = Self::try_request(request.cmd.clone(), self.inner.clone());
                     self.in_flight_requests.push(Box::pin(Request {
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
@@ -839,7 +837,7 @@ where
                         },
                         None => RequestState::Future {
                             future: Box::pin(Self::try_request(
-                                request.info.clone(),
+                                request.cmd.clone(),
                                 self.inner.clone(),
                             )),
                         },
@@ -948,8 +946,6 @@ where
         trace!("start_send");
         let Message { cmd, sender } = msg;
 
-        let info = RequestInfo { cmd };
-
         self.inner
             .pending_requests
             .lock()
@@ -957,7 +953,7 @@ where
             .push(PendingRequest {
                 retry: 0,
                 sender,
-                info,
+                cmd,
             });
         Ok(())
     }
