@@ -9,7 +9,7 @@ macro_rules! impl_manage_connection {
             type Error = RedisError;
 
             fn connect(&self) -> Result<Self::Connection, Self::Error> {
-                self.get_connection()
+                self.get_connection(None)
             }
 
             fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {

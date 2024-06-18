@@ -697,7 +697,7 @@ Old code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/")?;
-let con = client.get_connection()?;
+let con = client.get_connection(None)?;
 redis::cmd("SET").arg("my_key").arg(42).execute(&con);
 ```
 
@@ -705,7 +705,7 @@ New code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/")?;
-let mut con = client.get_connection()?;
+let mut con = client.get_connection(None)?;
 redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
 ```
 
@@ -715,7 +715,7 @@ Old code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let con = client.get_connection().unwrap();
+let con = client.get_connection(None).unwrap();
 let key = "the_key";
 let (new_val,) : (isize,) = redis::transaction(&con, &[key], |pipe| {
     let old_val : isize = con.get(key)?;
@@ -729,7 +729,7 @@ New code:
 
 ```rust
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-let mut con = client.get_connection().unwrap();
+let mut con = client.get_connection(None).unwrap();
 let key = "the_key";
 let (new_val,) : (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
     let old_val : isize = con.get(key)?;

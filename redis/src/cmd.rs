@@ -127,7 +127,7 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # use redis::AsyncCommands;
     /// # async fn scan_set() -> redis::RedisResult<()> {
     /// # let client = redis::Client::open("redis://127.0.0.1/")?;
-    /// # let mut con = client.get_async_connection().await?;
+    /// # let mut con = client.get_async_connection(None).await?;
     /// con.sadd("my_set", 42i32).await?;
     /// con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
@@ -309,7 +309,7 @@ impl Default for Cmd {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection(None).unwrap();
 /// let mut cmd = redis::cmd("SMEMBERS");
 /// let mut iter : redis::Iter<i32> = cmd.arg("my_set").clone().iter(&mut con).unwrap();
 /// ```
@@ -349,7 +349,7 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// redis::cmd("SET").arg(&["my_key", "my_value"]);
     /// redis::cmd("SET").arg("my_key").arg(42);
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
@@ -367,7 +367,7 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let mut cmd = redis::cmd("SSCAN");
     /// let mut iter : redis::Iter<isize> =
     ///     cmd.arg("my_set").cursor_arg(0).clone().iter(&mut con).unwrap();
@@ -523,7 +523,7 @@ impl Cmd {
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
+    /// # let mut con = client.get_connection(None).unwrap();
     /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
     /// ```
     #[inline]

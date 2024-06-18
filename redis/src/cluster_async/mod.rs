@@ -15,7 +15,7 @@
 //! async fn fetch_an_integer() -> String {
 //!     let nodes = vec!["redis://127.0.0.1/"];
 //!     let client = ClusterClient::new(nodes).unwrap();
-//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let mut connection = client.get_async_connection(None).await.unwrap();
 //!     let _: () = connection.set("test", "test_data").await.unwrap();
 //!     let rv: String = connection.get("test").await.unwrap();
 //!     return rv;
@@ -29,7 +29,7 @@ pub mod testing {
     pub use super::connections_logic::*;
 }
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -52,9 +52,11 @@ use crate::{
         SlotAddr,
     },
     cluster_topology::{
-        calculate_topology, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
+        calculate_topology, get_slot, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
         DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL, DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
     },
+    connection::{PubSubSubscriptionInfo, PubSubSubscriptionKind},
+    push_manager::PushInfo,
     Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
     Value,
 };
@@ -102,8 +104,9 @@ where
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<ClusterConnection<C>> {
-        ClusterConnInner::new(initial_nodes, cluster_params)
+        ClusterConnInner::new(initial_nodes, cluster_params, push_sender)
             .await
             .map(|inner| {
                 let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
@@ -201,6 +204,9 @@ struct InnerCore<C> {
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     slot_refresh_in_progress: AtomicBool,
     initial_nodes: Vec<ConnectionInfo>,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    subscriptions_by_address: RwLock<HashMap<ArcStr, PubSubSubscriptionInfo>>,
+    unassigned_subscriptions: RwLock<PubSubSubscriptionInfo>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -646,8 +652,12 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<Disposable<Self>> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let connections =
+            Self::create_initial_connections(initial_nodes, &cluster_params, push_sender.clone())
+                .await?;
+
         let topology_checks_interval = cluster_params.topology_checks_interval;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new(ConnectionsContainer::new(
@@ -656,10 +666,19 @@ where
                 cluster_params.read_from_replicas,
                 0,
             )),
-            cluster_params,
+            cluster_params: cluster_params.clone(),
             pending_requests: Mutex::new(Vec::new()),
             slot_refresh_in_progress: AtomicBool::new(false),
             initial_nodes: initial_nodes.to_vec(),
+            push_sender: push_sender.clone(),
+            unassigned_subscriptions: RwLock::new(
+                if let Some(subs) = cluster_params.pubsub_subscriptions {
+                    subs.clone()
+                } else {
+                    PubSubSubscriptionInfo::new()
+                },
+            ),
+            subscriptions_by_address: RwLock::new(Default::default()),
         });
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let connection = ClusterConnInner {
@@ -669,7 +688,8 @@ where
             state: ConnectionState::PollComplete,
             shutdown_flag: shutdown_flag.clone(),
         };
-        Self::refresh_slots_with_retries(connection.inner.clone()).await?;
+        Self::refresh_slots_and_subscriptions_with_retries(connection.inner.clone()).await?;
+
         if let Some(duration) = topology_checks_interval {
             let periodic_task = ClusterConnInner::periodic_topology_check(
                 connection.inner.clone(),
@@ -729,12 +749,17 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisResult<ConnectionMap<C>> {
         let initial_nodes: Vec<(String, Option<SocketAddr>)> =
             Self::try_to_expand_initial_nodes(initial_nodes).await;
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|(node_addr, socket_addr)| {
-                let params: ClusterParams = params.clone();
+                let mut params: ClusterParams = params.clone();
+                let push_sender = push_sender.clone();
+                // set subscriptions to none, they will be applied upon the topology discovery
+                params.pubsub_subscriptions = None;
+
                 async move {
                     let result = connect_and_check(
                         &node_addr,
@@ -742,6 +767,7 @@ where
                         socket_addr,
                         RefreshConnectionType::AllConnections,
                         None,
+                        push_sender,
                     )
                     .await
                     .get_node();
@@ -784,16 +810,19 @@ where
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
-            let connection_map =
-                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await
-                {
-                    Ok(map) => map,
-                    Err(err) => {
-                        warn!("Can't reconnect to initial nodes: `{err}`");
-                        return;
-                    }
-                };
+            let connection_map = match Self::create_initial_connections(
+                &inner.initial_nodes,
+                &inner.cluster_params,
+                None,
+            )
+            .await
+            {
+                Ok(map) => map,
+                Err(err) => {
+                    warn!("Can't reconnect to initial nodes: `{err}`");
+                    return;
+                }
+            };
             let mut write_lock = inner.conn_lock.write().await;
             *write_lock = ConnectionsContainer::new(
                 Default::default(),
@@ -802,7 +831,9 @@ where
                 0,
             );
             drop(write_lock);
-            if let Err(err) = Self::refresh_slots_with_retries(inner.clone()).await {
+            if let Err(err) =
+                Self::refresh_slots_and_subscriptions_with_retries(inner.clone()).await
+            {
                 warn!("Can't refresh slots with initial nodes: `{err}`");
             };
         }
@@ -816,13 +847,28 @@ where
         info!("Started refreshing connections to {:?}", addresses);
         let mut connections_container = inner.conn_lock.write().await;
         let cluster_params = &inner.cluster_params;
+        let subscriptions_by_address = &inner.subscriptions_by_address;
+        let push_sender = &inner.push_sender;
+
         stream::iter(addresses.into_iter())
             .fold(
                 &mut *connections_container,
                 |connections_container, address| async move {
                     let node_option = connections_container.remove_node(&address);
-                    let node =
-                        get_or_create_conn(&address, node_option, cluster_params, conn_type).await;
+
+                    // overide subscriptions for this connection
+                    let mut cluster_params = cluster_params.clone();
+                    let subs_guard = subscriptions_by_address.read().await;
+                    cluster_params.pubsub_subscriptions = subs_guard.get(&address).cloned();
+                    drop(subs_guard);
+                    let node = get_or_create_conn(
+                        &address,
+                        node_option,
+                        &cluster_params,
+                        conn_type,
+                        push_sender.clone(),
+                    )
+                    .await;
                     if let Ok(node) = node {
                         connections_container.replace_or_add_connection_for_address(address, node);
                     }
@@ -917,7 +963,9 @@ where
     }
 
     // Query a node to discover slot-> master mappings with retries
-    async fn refresh_slots_with_retries(inner: Arc<InnerCore<C>>) -> RedisResult<()> {
+    async fn refresh_slots_and_subscriptions_with_retries(
+        inner: Arc<InnerCore<C>>,
+    ) -> RedisResult<()> {
         if inner
             .slot_refresh_in_progress
             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
@@ -940,6 +988,9 @@ where
         inner
             .slot_refresh_in_progress
             .store(false, Ordering::Relaxed);
+
+        Self::refresh_pubsub_subscriptions(inner).await;
+
         res
     }
 
@@ -955,9 +1006,98 @@ where
             let _ = boxed_sleep(interval_duration).await;
 
             if Self::check_for_topology_diff(inner.clone()).await {
-                let _ = Self::refresh_slots_with_retries(inner.clone()).await;
+                let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone()).await;
+            } else {
+                Self::refresh_pubsub_subscriptions(inner.clone()).await;
             }
         }
+    }
+
+    async fn refresh_pubsub_subscriptions(inner: Arc<InnerCore<C>>) {
+        if inner.cluster_params.protocol != crate::types::ProtocolVersion::RESP3 {
+            return;
+        }
+
+        // validate active subscriptions location
+        let mut addrs_to_refresh: HashSet<ArcStr> = HashSet::new();
+        // lock the subscriptions and connections for writting - might be possible to optimize
+        let mut subs_by_address_guard = inner.subscriptions_by_address.write().await;
+        let mut unassigned_subs_guard = inner.unassigned_subscriptions.write().await;
+
+        let mut conns_write_guard = inner.conn_lock.write().await;
+
+        subs_by_address_guard.retain(|addr, addr_subs| {
+            addr_subs.retain(|kind, channels_patterns| {
+                channels_patterns.retain(|channel_pattern| {
+                    let new_slot = get_slot(channel_pattern);
+                    let mut valid = false;
+                    if let Some((new_address, _)) = conns_write_guard
+                        .connection_for_route(&Route::new(new_slot, SlotAddr::Master))
+                    {
+                        if *new_address == *addr {
+                            valid = true;
+                        }
+                    }
+                    // no new address or new address differ - move to unassigned and store this address for connection reset
+                    if !valid {
+                        addrs_to_refresh.insert(addr.clone()); // need to drop the original connection for clearing the subscription in the server, avoiding possible double-receivers
+                        conns_write_guard.remove_node(addr);
+
+                        unassigned_subs_guard
+                            .entry(*kind)
+                            .and_modify(|channels_patterns| {
+                                channels_patterns.insert(channel_pattern.clone());
+                            })
+                            .or_insert(HashSet::from([channel_pattern.clone()]));
+                    }
+                    valid
+                });
+                !channels_patterns.is_empty()
+            });
+            !addr_subs.is_empty()
+        });
+
+        // try to assign new addresses
+        unassigned_subs_guard.retain(|kind: &PubSubSubscriptionKind, channels_patterns| {
+            channels_patterns.retain(|channel_pattern| {
+                let new_slot = get_slot(channel_pattern);
+                if let Some((new_address, _)) =
+                    conns_write_guard.connection_for_route(&Route::new(new_slot, SlotAddr::Master))
+                {
+                    // need to drop the new connection so the subscription will be picked up in setup_connection()
+                    addrs_to_refresh.insert(new_address.clone());
+
+                    let e = subs_by_address_guard
+                        .entry(new_address.clone())
+                        .or_insert(PubSubSubscriptionInfo::new());
+
+                    e.entry(*kind)
+                        .or_insert(HashSet::new())
+                        .insert(channel_pattern.clone());
+
+                    return false;
+                }
+                true
+            });
+            !channels_patterns.is_empty()
+        });
+
+        // have to remove or otherwise the refresh_connection wont trigger node recreation
+        for addr_to_refresh in addrs_to_refresh.iter() {
+            conns_write_guard.remove_node(addr_to_refresh);
+        }
+
+        drop(conns_write_guard);
+        drop(unassigned_subs_guard);
+        drop(subs_by_address_guard);
+
+        // immediatly trigger connection reestablishment
+        Self::refresh_connections(
+            inner.clone(),
+            addrs_to_refresh.into_iter().collect(),
+            RefreshConnectionType::AllConnections,
+        )
+        .await;
     }
 
     /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
@@ -1065,11 +1205,17 @@ where
             .fold(
                 ConnectionsMap(HashMap::with_capacity(nodes_len)),
                 |mut connections, (addr, node)| async {
+                    let mut cluster_params = inner.cluster_params.clone();
+                    let subs_guard = inner.subscriptions_by_address.read().await;
+                    cluster_params.pubsub_subscriptions =
+                        subs_guard.get(&ArcStr::from(addr.as_str())).cloned();
+                    drop(subs_guard);
                     let node = get_or_create_conn(
                         addr,
                         node,
-                        &inner.cluster_params,
+                        &cluster_params,
                         RefreshConnectionType::AllConnections,
+                        inner.push_sender.clone(),
                     )
                     .await;
                     if let Ok(node) = node {
@@ -1322,12 +1468,17 @@ where
         let (address, mut conn) = match conn_check {
             ConnectionCheck::Found((address, connection)) => (address, connection.await),
             ConnectionCheck::OnlyAddress(addr) => {
+                let mut this_conn_params = core.cluster_params.clone();
+                let subs_guard = core.subscriptions_by_address.read().await;
+                this_conn_params.pubsub_subscriptions = subs_guard.get(addr.as_str()).cloned();
+                drop(subs_guard);
                 match connect_and_check::<C>(
                     &addr,
-                    core.cluster_params.clone(),
+                    this_conn_params,
                     None,
                     RefreshConnectionType::AllConnections,
                     None,
+                    core.push_sender.clone(),
                 )
                 .await
                 .get_node()
@@ -1377,7 +1528,9 @@ where
                 }
                 Err(err) => {
                     trace!("Recover slots failed!");
-                    *future = Box::pin(Self::refresh_slots_with_retries(self.inner.clone()));
+                    *future = Box::pin(Self::refresh_slots_and_subscriptions_with_retries(
+                        self.inner.clone(),
+                    ));
                     Poll::Ready(Err(err))
                 }
             },
@@ -1617,7 +1770,9 @@ where
                 PollFlushAction::None => return Poll::Ready(Ok(())),
                 PollFlushAction::RebuildSlots => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
-                        ClusterConnInner::refresh_slots_with_retries(self.inner.clone()),
+                        ClusterConnInner::refresh_slots_and_subscriptions_with_retries(
+                            self.inner.clone(),
+                        ),
                     )));
                 }
                 PollFlushAction::Reconnect(addresses) => {
@@ -1746,6 +1901,7 @@ pub trait Connect: Sized {
         response_timeout: Duration,
         connection_timeout: Duration,
         socket_addr: Option<SocketAddr>,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisFuture<'a, (Self, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a;
@@ -1757,6 +1913,7 @@ impl Connect for MultiplexedConnection {
         response_timeout: Duration,
         connection_timeout: Duration,
         socket_addr: Option<SocketAddr>,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     ) -> RedisFuture<'a, (MultiplexedConnection, Option<IpAddr>)>
     where
         T: IntoConnectionInfo + Send + 'a,
@@ -1773,6 +1930,7 @@ impl Connect for MultiplexedConnection {
                         client.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
                             response_timeout,
                             socket_addr,
+                            push_sender,
                         ),
                     )
                     .await?
@@ -1783,6 +1941,7 @@ impl Connect for MultiplexedConnection {
                         .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
                             response_timeout,
                             socket_addr,
+                            push_sender,
                         ))
                         .await?
                 }

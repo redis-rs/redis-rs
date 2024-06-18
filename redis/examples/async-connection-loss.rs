@@ -1,3 +1,4 @@
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 //! This example will connect to Redis in one of three modes:
 //!
 //! - Regular async connection
@@ -79,10 +80,10 @@ async fn main() -> RedisResult<()> {
 
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     match mode {
-        Mode::Default => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
+        Mode::Default => run_multi(client.get_multiplexed_tokio_connection(None).await?).await?,
         Mode::Reconnect => run_multi(client.get_connection_manager().await?).await?,
         #[allow(deprecated)]
-        Mode::Deprecated => run_single(client.get_async_connection().await?).await?,
+        Mode::Deprecated => run_single(client.get_async_connection(None).await?).await?,
     };
     Ok(())
 }

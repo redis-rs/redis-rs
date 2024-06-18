@@ -37,7 +37,7 @@ use redis::Commands;
 fn fetch_an_integer() -> redis::RedisResult<isize> {
     // connect to redis
     let client = redis::Client::open("redis://127.0.0.1/")?;
-    let mut con = client.get_connection()?;
+    let mut con = client.get_connection(None)?;
     // throw away the result, just make sure it does not fail
     let _ : () = con.set("my_key", 42)?;
     // read back the key and return it.  Because the return value
@@ -130,7 +130,7 @@ use redis::Commands;
 fn fetch_an_integer() -> String {
     let nodes = vec!["redis://127.0.0.1/"];
     let client = ClusterClient::new(nodes).unwrap();
-    let mut connection = client.get_connection().unwrap();
+    let mut connection = client.get_connection(None).unwrap();
     let _: () = connection.set("test", "test_data").unwrap();
     let rv: String = connection.get("test").unwrap();
     return rv;
@@ -174,7 +174,7 @@ use redis::ToRedisArgs;
 // Result returns Err(e) if there was an error with the server itself OR serde_json was unable to serialize the boolean
 fn set_json_bool<P: ToRedisArgs>(key: P, path: P, b: bool) -> RedisResult<bool> {
     let client = Client::open("redis://127.0.0.1").unwrap();
-    let connection = client.get_connection().unwrap();
+    let connection = client.get_connection(None).unwrap();
 
     // runs `JSON.SET {key} {path} {b}`
     connection.json_set(key, path, b)?

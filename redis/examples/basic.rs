@@ -1,3 +1,4 @@
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 use redis::{transaction, Commands};
 
 use std::collections::HashMap;
@@ -138,7 +139,7 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
 fn do_redis_code(url: &str) -> redis::RedisResult<()> {
     // general connection handling
     let client = redis::Client::open(url)?;
-    let mut con = client.get_connection()?;
+    let mut con = client.get_connection(None)?;
 
     // read some config and print it.
     do_print_max_entry_limits(&mut con)?;

@@ -13,6 +13,7 @@ use redis::aio::ConnectionLike;
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
+use redis::PushInfo;
 use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
@@ -23,6 +24,7 @@ use super::{build_single_client, load_certs_from_file};
 use super::use_protocol;
 use super::RedisServer;
 use super::TlsFilePaths;
+use tokio::sync::mpsc;
 
 const LOCALHOST: &str = "127.0.0.1";
 
@@ -286,7 +288,7 @@ impl RedisCluster {
             #[cfg(not(feature = "tls-rustls"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 
-            let mut con = client.get_connection().unwrap();
+            let mut con = client.get_connection(None).unwrap();
 
             // retry 500 times
             for _ in 1..500 {
@@ -396,12 +398,15 @@ impl TestClusterContext {
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
-        self.client.get_connection().unwrap()
+        self.client.get_connection(None).unwrap()
     }
 
     #[cfg(feature = "cluster-async")]
-    pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
-        self.client.get_async_connection().await.unwrap()
+    pub async fn async_connection(
+        &self,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> redis::cluster_async::ClusterConnection {
+        self.client.get_async_connection(push_sender).await.unwrap()
     }
 
     #[cfg(feature = "cluster-async")]
@@ -445,7 +450,7 @@ impl TestClusterContext {
             #[cfg(not(feature = "tls-rustls"))]
             let client = redis::Client::open(server.connection_info()).unwrap();
 
-            let mut con = client.get_connection().unwrap();
+            let mut con = client.get_connection(None).unwrap();
             let _: () = redis::cmd("ACL")
                 .arg("SETUSER")
                 .arg("default")
@@ -454,7 +459,7 @@ impl TestClusterContext {
                 .unwrap();
 
             // subsequent unauthenticated command should fail:
-            if let Ok(mut con) = client.get_connection() {
+            if let Ok(mut con) = client.get_connection(None) {
                 assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
             }
         }

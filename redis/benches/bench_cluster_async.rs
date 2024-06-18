@@ -79,7 +79,7 @@ fn bench_cluster_setup(c: &mut Criterion) {
     let cluster = TestClusterContext::new(6, 1);
     cluster.wait_for_cluster_up();
     let runtime = current_thread_runtime();
-    let mut con = runtime.block_on(cluster.async_connection());
+    let mut con = runtime.block_on(cluster.async_connection(None));
 
     bench_cluster_async(c, &mut con, &runtime);
 }

@@ -8,8 +8,8 @@
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
 //! let mut sentinel = Sentinel::build(nodes).unwrap();
-//! let mut master = sentinel.master_for("master_name", None).unwrap().get_connection().unwrap();
-//! let mut replica = sentinel.replica_for("master_name", None).unwrap().get_connection().unwrap();
+//! let mut master = sentinel.master_for("master_name", None).unwrap().get_connection(None).unwrap();
+//! let mut replica = sentinel.replica_for("master_name", None).unwrap().get_connection(None).unwrap();
 //!
 //! let _: () = master.set("test", "test_data").unwrap();
 //! let rv: String = replica.get("test").unwrap();
@@ -63,7 +63,7 @@
 //!         }),
 //!     )
 //!     .unwrap()
-//!     .get_connection()
+//!     .get_connection(None)
 //!     .unwrap();
 //!
 //! let mut replica_with_tls = sentinel
@@ -75,7 +75,7 @@
 //!         }),
 //!     )
 //!     .unwrap()
-//!     .get_connection()
+//!     .get_connection(None)
 //!     .unwrap();
 //! ```
 //!
@@ -266,7 +266,7 @@ fn check_role_result(result: &RedisResult<Vec<Value>>, target_role: &str) -> boo
 
 fn check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
     if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_connection() {
+        if let Ok(mut conn) = client.get_connection(None) {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query(&mut conn);
             return check_role_result(&result, target_role);
         }
@@ -301,7 +301,7 @@ fn find_valid_master(
 #[cfg(feature = "aio")]
 async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
     if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
+        if let Ok(mut conn) = client.get_multiplexed_async_connection(None).await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
             return check_role_result(&result, target_role);
         }
@@ -365,7 +365,9 @@ async fn async_reconnect(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
-    let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
+    let new_connection = sentinel_client
+        .get_multiplexed_async_connection(None)
+        .await?;
     connection.replace(new_connection);
     Ok(())
 }
@@ -399,7 +401,7 @@ fn reconnect(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
-    let new_connection = sentinel_client.get_connection()?;
+    let new_connection = sentinel_client.get_connection(None)?;
     connection.replace(new_connection);
     Ok(())
 }
@@ -737,7 +739,7 @@ impl SentinelClient {
     /// for the target type of server, and then create a connection using that client.
     pub fn get_connection(&mut self) -> RedisResult<Connection> {
         let client = self.get_client()?;
-        client.get_connection()
+        client.get_connection(None)
     }
 }
 
@@ -766,6 +768,6 @@ impl SentinelClient {
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&mut self) -> RedisResult<AsyncConnection> {
         let client = self.async_get_client().await?;
-        client.get_multiplexed_async_connection().await
+        client.get_multiplexed_async_connection(None).await
     }
 }

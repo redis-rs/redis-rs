@@ -19,7 +19,7 @@ macro_rules! implement_commands {
         /// ```rust,no_run
         /// # fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_connection()?;
+        /// let mut con = client.get_connection(None)?;
         /// redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
         /// assert_eq!(redis::cmd("GET").arg("my_key").query(&mut con), Ok(42));
         /// # Ok(()) }
@@ -31,7 +31,7 @@ macro_rules! implement_commands {
         /// # fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_connection()?;
+        /// let mut con = client.get_connection(None)?;
         /// con.set("my_key", 42)?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
@@ -135,7 +135,7 @@ macro_rules! implement_commands {
         /// use redis::AsyncCommands;
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_async_connection().await?;
+        /// let mut con = client.get_async_connection(None).await?;
         /// redis::cmd("SET").arg("my_key").arg(42i32).query_async(&mut con).await?;
         /// assert_eq!(redis::cmd("GET").arg("my_key").query_async(&mut con).await, Ok(42i32));
         /// # Ok(()) }
@@ -148,7 +148,7 @@ macro_rules! implement_commands {
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_async_connection().await?;
+        /// let mut con = client.get_async_connection(None).await?;
         /// con.set("my_key", 42i32).await?;
         /// assert_eq!(con.get("my_key").await, Ok(42i32));
         /// # Ok(()) }

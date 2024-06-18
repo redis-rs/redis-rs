@@ -21,7 +21,7 @@ pub struct Script {
 ///
 /// ```rust,no_run
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
+/// # let mut con = client.get_connection(None).unwrap();
 /// let script = redis::Script::new(r"
 ///     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 /// ");

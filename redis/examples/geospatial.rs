@@ -1,3 +1,4 @@
+#![allow(unknown_lints, dependency_on_unit_never_type_fallback)]
 use std::process::exit;
 
 use redis::RedisResult;
@@ -14,7 +15,7 @@ fn run() -> RedisResult<()> {
     };
 
     let client = redis::Client::open(redis_url.as_str())?;
-    let mut con = client.get_connection()?;
+    let mut con = client.get_connection(None)?;
 
     // Add some members to the geospatial index.
 
