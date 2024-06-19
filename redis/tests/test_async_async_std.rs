@@ -15,11 +15,11 @@ fn test_args() {
         redis::cmd("SET")
             .arg("key1")
             .arg(b"foo")
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         redis::cmd("SET")
             .arg(&["key2", "bar"])
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         let result = redis::cmd("MGET")
             .arg(&["key1", "key2"])
@@ -40,11 +40,11 @@ fn test_args_async_std() {
         redis::cmd("SET")
             .arg("key1")
             .arg(b"foo")
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         redis::cmd("SET")
             .arg(&["key2", "bar"])
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         let result = redis::cmd("MGET")
             .arg(&["key1", "key2"])
@@ -137,11 +137,11 @@ fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisRe
         redis::cmd("SET")
             .arg(&key[..])
             .arg(foo_val.as_bytes())
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         redis::cmd("SET")
             .arg(&[&key2, "bar"])
-            .query_async(&mut con)
+            .query_async::<()>(&mut con)
             .await?;
         redis::cmd("MGET")
             .arg(&[&key_2, &key2_2])
@@ -271,7 +271,7 @@ fn test_script() {
         script1
             .key("key1")
             .arg("foo")
-            .invoke_async(&mut con)
+            .invoke_async::<()>(&mut con)
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "foo");
@@ -280,7 +280,7 @@ fn test_script() {
         script1
             .key("key1")
             .arg("bar")
-            .invoke_async(&mut con)
+            .invoke_async::<()>(&mut con)
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");

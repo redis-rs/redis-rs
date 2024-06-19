@@ -34,7 +34,7 @@ mod cluster_async {
             cmd("SET")
                 .arg("test")
                 .arg("test_data")
-                .query_async(&mut connection)
+                .query_async::<()>(&mut connection)
                 .await?;
             let res: String = cmd("GET")
                 .arg("test")
@@ -285,7 +285,7 @@ mod cluster_async {
             let mut pipe = redis::pipe();
             pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
             pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
-            pipe.query_async(&mut connection).await?;
+            pipe.query_async::<()>(&mut connection).await?;
             let res: String = connection.get("test").await?;
             assert_eq!(res, "test_data");
             let res: String = connection.get("{test}3").await?;
@@ -333,7 +333,10 @@ mod cluster_async {
     async fn do_failover(
         redis: &mut redis::aio::MultiplexedConnection,
     ) -> Result<(), anyhow::Error> {
-        cmd("CLUSTER").arg("FAILOVER").query_async(redis).await?;
+        cmd("CLUSTER")
+            .arg("FAILOVER")
+            .query_async::<()>(redis)
+            .await?;
         Ok(())
     }
 
@@ -384,7 +387,7 @@ mod cluster_async {
                         tokio::time::timeout(std::time::Duration::from_secs(3), async {
                             Ok(redis::Cmd::new()
                                 .arg("FLUSHALL")
-                                .query_async(&mut conn)
+                                .query_async::<()>(&mut conn)
                                 .await?)
                         })
                         .await
@@ -393,7 +396,7 @@ mod cluster_async {
 
                     node_conns.push(conn);
                 }
-                Ok::<_, anyhow::Error>(())
+                Ok::<(), anyhow::Error>(())
             }
             .await;
             match cleared_nodes {
@@ -405,7 +408,7 @@ mod cluster_async {
             }
         }
 
-        (0..requests + 1)
+        let _: () = (0..requests + 1)
             .map(|i| {
                 let mut connection = connection.clone();
                 let mut node_conns = node_conns.clone();
@@ -430,7 +433,7 @@ mod cluster_async {
                             .arg(&key)
                             .arg(i)
                             .clone()
-                            .query_async(&mut connection)
+                            .query_async::<()>(&mut connection)
                             .await?;
                         let res: i32 = cmd("GET")
                             .arg(key)
@@ -537,7 +540,7 @@ mod cluster_async {
             redis::cmd("SET")
                 .arg("test")
                 .arg("test_data")
-                .query_async(&mut connection)
+                .query_async::<()>(&mut connection)
                 .await?;
             redis::cmd("GET")
                 .arg("test")
@@ -574,11 +577,7 @@ mod cluster_async {
             }
         });
 
-        let value = runtime.block_on(
-            cmd("GET")
-                .arg("test")
-                .query_async::<_, Value>(&mut connection),
-        );
+        let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         assert_eq!(value, Ok(Value::Nil));
     }
@@ -619,11 +618,7 @@ mod cluster_async {
             }
         });
 
-        let value = runtime.block_on(
-            cmd("GET")
-                .arg("test")
-                .query_async::<_, Value>(&mut connection),
-        );
+        let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         assert_eq!(value, Ok(Value::Nil));
     }
@@ -654,7 +649,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -687,7 +682,7 @@ mod cluster_async {
         let result = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         match result {
@@ -766,7 +761,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -817,7 +812,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -856,11 +851,7 @@ mod cluster_async {
 
         for _ in 0..4 {
             runtime
-                .block_on(
-                    cmd("GET")
-                        .arg("test")
-                        .query_async::<_, Value>(&mut connection),
-                )
+                .block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection))
                 .unwrap();
         }
 
@@ -902,7 +893,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -953,7 +944,7 @@ mod cluster_async {
 
         let value = runtime.block_on(
             cmd("EVAL") // Eval command has no directed, and so is redirected randomly
-                .query_async::<_, Value>(&mut connection),
+                .query_async::<Value>(&mut connection),
         );
 
         assert_eq!(value, Ok(Value::Okay));
@@ -1007,7 +998,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -1040,7 +1031,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
         assert_eq!(value, Ok(Some(123)));
 
@@ -1068,7 +1059,7 @@ mod cluster_async {
             cmd("SET")
                 .arg("test")
                 .arg("123")
-                .query_async::<_, Option<Value>>(&mut connection),
+                .query_async::<Option<Value>>(&mut connection),
         );
         assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
     }
@@ -1111,7 +1102,7 @@ mod cluster_async {
             },
         );
 
-        let _ = runtime.block_on(cmd.query_async::<_, Option<()>>(&mut connection));
+        let _ = runtime.block_on(cmd.query_async::<Option<()>>(&mut connection));
         found_ports.lock().unwrap().sort();
         // MockEnv creates 2 mock connections.
         assert_eq!(*found_ports.lock().unwrap(), expected_ports);
@@ -1278,7 +1269,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, i64>(&mut connection))
+            .block_on(cmd.query_async::<i64>(&mut connection))
             .unwrap();
         assert_eq!(result, 10, "{result}");
     }
@@ -1328,7 +1319,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Vec<i64>>(&mut connection))
+            .block_on(cmd.query_async::<Vec<i64>>(&mut connection))
             .unwrap();
         assert_eq!(result, vec![0, 0, 0, 1], "{result:?}");
     }
@@ -1365,7 +1356,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap();
         assert_eq!(result, Value::Okay, "{result:?}");
     }
@@ -1397,7 +1388,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
         assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
     }
@@ -1423,7 +1414,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap();
         assert_eq!(result, Value::Okay, "{result:?}");
     }
@@ -1456,7 +1447,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Value>(&mut connection))
+            .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
         assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
     }
@@ -1485,7 +1476,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, String>(&mut connection))
+            .block_on(cmd.query_async::<String>(&mut connection))
             .unwrap();
         assert_eq!(result, "foo", "{result:?}");
     }
@@ -1515,7 +1506,7 @@ mod cluster_async {
 
         // TODO once RESP3 is in, return this as a map
         let mut result = runtime
-            .block_on(cmd.query_async::<_, Vec<(String, String)>>(&mut connection))
+            .block_on(cmd.query_async::<Vec<(String, String)>>(&mut connection))
             .unwrap();
         result.sort();
         assert_eq!(
@@ -1553,7 +1544,7 @@ mod cluster_async {
         );
 
         let mut result = runtime
-            .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+            .block_on(cmd.query_async::<Vec<String>>(&mut connection))
             .unwrap();
         result.sort();
         assert_eq!(
@@ -1598,7 +1589,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+            .block_on(cmd.query_async::<Vec<String>>(&mut connection))
             .unwrap();
         assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
     }
@@ -1646,7 +1637,7 @@ mod cluster_async {
         );
 
         let result = runtime
-            .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
+            .block_on(cmd.query_async::<Vec<String>>(&mut connection))
             .unwrap();
         assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6382"]);
         assert_eq!(asking_called.load(Ordering::Relaxed), 1);
@@ -1666,7 +1657,7 @@ mod cluster_async {
             cmd("SET")
                 .arg("test")
                 .arg("test_data")
-                .query_async(&mut connection)
+                .query_async::<()>(&mut connection)
                 .await?;
             let res: String = cmd("GET")
                 .arg("test")
@@ -1711,7 +1702,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         assert_eq!(value, Ok(Some(123)));
@@ -1740,7 +1731,7 @@ mod cluster_async {
         let value = runtime.block_on(
             cmd("GET")
                 .arg("test")
-                .query_async::<_, Option<i32>>(&mut connection),
+                .query_async::<Option<i32>>(&mut connection),
         );
 
         match value {
@@ -1970,7 +1961,7 @@ mod cluster_async {
             let value = runtime.block_on(
                 cmd("GET")
                     .arg("test")
-                    .query_async::<_, Option<i32>>(&mut connection),
+                    .query_async::<Option<i32>>(&mut connection),
             );
 
             assert_eq!(value, Ok(Some(123)));
@@ -1996,7 +1987,7 @@ mod cluster_async {
                 cmd("SET")
                     .arg("test")
                     .arg("test_data")
-                    .query_async(&mut connection)
+                    .query_async::<()>(&mut connection)
                     .await?;
                 let res: String = cmd("GET")
                     .arg("test")

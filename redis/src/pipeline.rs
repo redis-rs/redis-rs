@@ -174,10 +174,10 @@ impl Pipeline {
     /// Async version of `query`.
     #[inline]
     #[cfg(feature = "aio")]
-    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
-    where
-        C: crate::aio::ConnectionLike,
-    {
+    pub async fn query_async<T: FromRedisValue>(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<T> {
         let value = if self.commands.is_empty() {
             return from_owned_redis_value(Value::Array(vec![]));
         } else if self.transaction_mode {

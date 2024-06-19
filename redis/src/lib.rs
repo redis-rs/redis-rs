@@ -98,7 +98,7 @@
 //!
 //! ```rust,no_run
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = redis::cmd("SET").arg("my_key").arg(42).query(con)?;
+//!     redis::cmd("SET").arg("my_key").arg(42).query::<()>(con)?;
 //!     Ok(())
 //! }
 //! ```
@@ -114,7 +114,7 @@
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<usize> {
 //!     // This will result in a server error: "unknown command `MEMORY USAGE`"
 //!     // because "USAGE" is technically a sub-command of "MEMORY".
-//!     redis::cmd("MEMORY USAGE").arg("my_key").query(con)?;
+//!     redis::cmd("MEMORY USAGE").arg("my_key").query::<usize>(con)?;
 //!
 //!     // However, this will work as you'd expect
 //!     redis::cmd("MEMORY").arg("USAGE").arg("my_key").query(con)
@@ -366,9 +366,9 @@ use redis::AsyncCommands;
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 let mut con = client.get_multiplexed_async_connection().await?;
 
-con.set("key1", b"foo").await?;
+let _ : () = con.set("key1", b"foo").await?;
 
-redis::cmd("SET").arg(&["key2", "bar"]).query_async(&mut con).await?;
+let _ : () = redis::cmd("SET").arg(&["key2", "bar"]).query_async::<()>(&mut con).await?;
 
 let result = redis::cmd("MGET")
  .arg(&["key1", "key2"])

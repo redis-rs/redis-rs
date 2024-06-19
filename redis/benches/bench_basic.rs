@@ -31,10 +31,13 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                 redis::cmd("SET")
                     .arg(key)
                     .arg(42)
-                    .query_async(&mut con)
+                    .query_async::<()>(&mut con)
                     .await?;
                 let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
-                redis::cmd("DEL").arg(key).query_async(&mut con).await?;
+                redis::cmd("DEL")
+                    .arg(key)
+                    .query_async::<()>(&mut con)
+                    .await?;
                 Ok::<_, RedisError>(())
             })
             .unwrap()
@@ -113,7 +116,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         runtime
-            .block_on(async { pipe.query_async::<_, ()>(&mut con).await })
+            .block_on(async { pipe.query_async::<()>(&mut con).await })
             .unwrap();
     });
 }
@@ -129,7 +132,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         runtime
-            .block_on(async { pipe.query_async::<_, ()>(&mut con).await })
+            .block_on(async { pipe.query_async::<()>(&mut con).await })
             .unwrap();
     });
 }
@@ -154,7 +157,7 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
             .block_on(async {
                 cmds.iter()
                     .zip(&mut connections)
-                    .map(|(cmd, con)| cmd.query_async::<_, ()>(con))
+                    .map(|(cmd, con)| cmd.query_async::<()>(con))
                     .collect::<stream::FuturesUnordered<_>>()
                     .try_for_each(|()| async { Ok(()) })
                     .await
