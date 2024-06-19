@@ -407,7 +407,7 @@ where
         let mut conn = C::connect(info, None)?;
         if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
-            cmd("READONLY").query(&mut conn)?;
+            cmd("READONLY").query::<()>(&mut conn)?;
         }
         conn.set_read_timeout(*self.read_timeout.borrow())?;
         conn.set_write_timeout(*self.write_timeout.borrow())?;

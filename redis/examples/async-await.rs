@@ -5,11 +5,11 @@ async fn main() -> redis::RedisResult<()> {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut con = client.get_multiplexed_async_connection().await?;
 
-    con.set("key1", b"foo").await?;
+    let _: () = con.set("key1", b"foo").await?;
 
     redis::cmd("SET")
         .arg(&["key2", "bar"])
-        .query_async(&mut con)
+        .query_async::<()>(&mut con)
         .await?;
 
     let result = redis::cmd("MGET")

@@ -327,7 +327,7 @@ mod tests {
         cmd("SET")
             .arg("foo")
             .arg("42")
-            .query_async::<_, ()>(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .unwrap();
         let result: Result<usize, _> = cmd("GET").arg("foo").query_async(&mut conn).await;
@@ -336,7 +336,7 @@ mod tests {
         cmd("SET")
             .arg("bar")
             .arg("foo")
-            .query_async::<_, ()>(&mut conn)
+            .query_async::<()>(&mut conn)
             .await
             .unwrap();
         let result: Result<Vec<u8>, _> = cmd("GET").arg("bar").query_async(&mut conn).await;

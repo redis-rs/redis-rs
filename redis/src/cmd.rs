@@ -128,8 +128,8 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # async fn scan_set() -> redis::RedisResult<()> {
     /// # let client = redis::Client::open("redis://127.0.0.1/")?;
     /// # let mut con = client.get_multiplexed_async_connection().await?;
-    /// con.sadd("my_set", 42i32).await?;
-    /// con.sadd("my_set", 43i32).await?;
+    /// let _ : () = con.sadd("my_set", 42i32).await?;
+    /// let _ : () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
     ///     assert!(element == 42 || element == 43);
@@ -431,10 +431,10 @@ impl Cmd {
     /// Async version of `query`.
     #[inline]
     #[cfg(feature = "aio")]
-    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
-    where
-        C: crate::aio::ConnectionLike,
-    {
+    pub async fn query_async<T: FromRedisValue>(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<T> {
         let val = con.req_packed_command(self).await?;
         from_owned_redis_value(val.extract_error()?)
     }

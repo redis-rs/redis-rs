@@ -147,7 +147,7 @@ impl<'a> ScriptInvocation<'a> {
             Ok(val) => Ok(val),
             Err(err) => {
                 if err.kind() == ErrorKind::NoScriptError {
-                    self.load_cmd().query(con)?;
+                    self.load_cmd().query::<()>(con)?;
                     eval_cmd.query(con)
                 } else {
                     Err(err)
@@ -159,11 +159,10 @@ impl<'a> ScriptInvocation<'a> {
     /// Asynchronously invokes the script and returns the result.
     #[inline]
     #[cfg(feature = "aio")]
-    pub async fn invoke_async<C, T>(&self, con: &mut C) -> RedisResult<T>
-    where
-        C: crate::aio::ConnectionLike,
-        T: FromRedisValue,
-    {
+    pub async fn invoke_async<T: FromRedisValue>(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<T> {
         let eval_cmd = self.eval_cmd();
         match eval_cmd.query_async(con).await {
             Ok(val) => {
@@ -173,7 +172,7 @@ impl<'a> ScriptInvocation<'a> {
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
                 if err.kind() == ErrorKind::NoScriptError {
-                    self.load_cmd().query_async(con).await?;
+                    self.load_cmd().query_async::<()>(con).await?;
                     eval_cmd.query_async(con).await
                 } else {
                     Err(err)
