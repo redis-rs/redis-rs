@@ -18,6 +18,8 @@ use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
 use redis::PushInfo;
+use redis::RedisResult;
+use redis::Value;
 use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
@@ -501,7 +503,7 @@ impl TestClusterContext {
     ) {
         let slots_ranges_of_node_id = slot_distribution[0].3.clone();
 
-        let mut conn = self.async_connection().await;
+        let mut conn = self.async_connection(None).await;
 
         let from = slot_distribution[0].clone();
         let target = slot_distribution[1].clone();
@@ -744,7 +746,7 @@ impl TestClusterContext {
     }
 
     pub async fn get_cluster_nodes(&self) -> String {
-        let mut conn = self.async_connection().await;
+        let mut conn = self.async_connection(None).await;
         let mut cmd = redis::cmd("CLUSTER");
         cmd.arg("NODES");
         let res: RedisResult<Value> = conn
@@ -756,7 +758,7 @@ impl TestClusterContext {
 
     pub async fn wait_for_fail_to_finish(&self, route: &RoutingInfo) -> RedisResult<()> {
         for _ in 0..500 {
-            let mut conn = self.async_connection().await;
+            let mut conn = self.async_connection(None).await;
             let cmd = redis::cmd("PING");
             let res: RedisResult<Value> = conn.route_command(&cmd, route.clone()).await;
             if res.is_err() {
@@ -773,7 +775,7 @@ impl TestClusterContext {
     pub async fn wait_for_connection_is_ready(&self, route: &RoutingInfo) -> RedisResult<()> {
         let mut i = 1;
         while i < 1000 {
-            let mut conn = self.async_connection().await;
+            let mut conn = self.async_connection(None).await;
             let cmd = redis::cmd("PING");
             let res: RedisResult<Value> = conn.route_command(&cmd, route.clone()).await;
             if res.is_ok() {

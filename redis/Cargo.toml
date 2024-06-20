@@ -25,6 +25,10 @@ bench = false
 ryu = "1.0"
 itoa = "1.0"
 
+# Strum is a set of macros and traits for working with enums and strings easier in Rust.
+strum = "0.26"
+strum_macros = "0.26"
+
 # This is a dependency that already exists in url
 percent-encoding = "2.1"
 

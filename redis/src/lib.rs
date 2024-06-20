@@ -450,7 +450,7 @@ pub mod cluster;
 mod cluster_slotmap;
 
 #[cfg(feature = "cluster-async")]
-pub use crate::commands::ScanStateCursor;
+pub use crate::commands::ScanStateRC;
 
 #[cfg(feature = "cluster-async")]
 pub use crate::commands::ObjectType;

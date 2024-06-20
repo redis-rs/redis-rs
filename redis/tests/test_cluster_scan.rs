@@ -6,13 +6,13 @@ mod test_cluster_scan_async {
     use crate::support::*;
     use rand::Rng;
     use redis::cluster_routing::{RoutingInfo, SingleNodeRoutingInfo};
-    use redis::{cmd, from_redis_value, ObjectType, RedisResult, ScanStateCursor, Value};
+    use redis::{cmd, from_redis_value, ObjectType, RedisResult, ScanStateRC, Value};
 
     async fn kill_one_node(
         cluster: &TestClusterContext,
         slot_distribution: Vec<(String, String, String, Vec<Vec<u16>>)>,
     ) -> RoutingInfo {
-        let mut cluster_conn = cluster.async_connection().await;
+        let mut cluster_conn = cluster.async_connection(None).await;
         let distribution_clone = slot_distribution.clone();
         let index_of_random_node = rand::thread_rng().gen_range(0..slot_distribution.len());
         let random_node = distribution_clone.get(index_of_random_node).unwrap();
@@ -48,7 +48,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     async fn test_async_cluster_scan() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
 
         // Set some keys
         for i in 0..10 {
@@ -61,20 +61,20 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
         }
@@ -90,7 +90,7 @@ mod test_cluster_scan_async {
     async fn test_async_cluster_scan_with_migration() {
         let cluster = TestClusterContext::new(3, 0);
 
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         // Set some keys
         let mut expected_keys: Vec<String> = Vec::new();
 
@@ -105,22 +105,22 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = Vec::new();
         let mut count = 0;
         loop {
             count += 1;
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>();
             keys.extend(scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             if count == 5 {
@@ -164,7 +164,7 @@ mod test_cluster_scan_async {
     #[tokio::test] // test cluster scan with node fail in the middle
     async fn test_async_cluster_scan_with_fail() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         // Set some keys
         for i in 0..1000 {
             let key = format!("key{}", i);
@@ -176,14 +176,14 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = Vec::new();
         let mut count = 0;
         let mut result: RedisResult<Value> = Ok(Value::Nil);
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateCursor, Vec<Value>)> = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await;
             let (next_cursor, scan_keys) = match scan_response {
                 Ok((cursor, keys)) => (cursor, keys),
@@ -192,9 +192,9 @@ mod test_cluster_scan_async {
                     break;
                 }
             };
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             keys.extend(scan_keys.into_iter().map(|v| from_redis_value(&v).unwrap()));
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             if count == 5 {
@@ -229,7 +229,7 @@ mod test_cluster_scan_async {
     async fn test_async_cluster_scan_with_all_masters_down() {
         let cluster = TestClusterContext::new(6, 1);
 
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
 
         let mut expected_keys: Vec<String> = Vec::new();
 
@@ -251,21 +251,21 @@ mod test_cluster_scan_async {
             expected_keys.push(key);
         }
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = Vec::new();
         let mut count = 0;
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateCursor, Vec<Value>)> = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }
             let (next_cursor, scan_keys) = scan_response.unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             keys.extend(scan_keys.into_iter().map(|v| from_redis_value(&v).unwrap()));
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             if count == 5 {
@@ -375,13 +375,13 @@ mod test_cluster_scan_async {
     async fn test_async_cluster_scan_with_all_replicas_down() {
         let cluster = TestClusterContext::new(6, 1);
 
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
 
         let mut expected_keys: Vec<String> = Vec::new();
 
         for server in cluster.cluster.servers.iter() {
-            let addres = server.addr.clone().to_string();
-            let host_and_port = addres.split(':');
+            let address = server.addr.clone().to_string();
+            let host_and_port = address.split(':');
             let host = host_and_port.clone().next().unwrap().to_string();
             let port = host_and_port
                 .clone()
@@ -417,21 +417,21 @@ mod test_cluster_scan_async {
             expected_keys.push(key);
         }
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = Vec::new();
         let mut count = 0;
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateCursor, Vec<Value>)> = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }
             let (next_cursor, scan_keys) = scan_response.unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             keys.extend(scan_keys.into_iter().map(|v| from_redis_value(&v).unwrap()));
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             if count == 5 {
@@ -470,7 +470,7 @@ mod test_cluster_scan_async {
     // Test cluster scan with setting keys for each iteration
     async fn test_async_cluster_scan_set_in_the_middle() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
         // Set some keys
@@ -488,20 +488,20 @@ mod test_cluster_scan_async {
             }
         }
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             let key = format!("key{}", i);
@@ -530,7 +530,7 @@ mod test_cluster_scan_async {
     async fn test_async_cluster_scan_dell_in_the_middle() {
         let cluster = TestClusterContext::new(3, 0);
 
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
         // Set some keys
@@ -548,20 +548,20 @@ mod test_cluster_scan_async {
             }
         }
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, None, None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, None, None)
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
             i -= 1;
@@ -591,7 +591,7 @@ mod test_cluster_scan_async {
     // Testing cluster scan with Pattern option
     async fn test_async_cluster_scan_with_pattern() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
         // Set some keys
@@ -616,20 +616,20 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, Some("key:pattern:*"), None, None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, Some("key:pattern:*"), None, None)
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
         }
@@ -649,7 +649,7 @@ mod test_cluster_scan_async {
     // Testing cluster scan with TYPE option
     async fn test_async_cluster_scan_with_type() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
         // Set some keys
@@ -674,20 +674,20 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, None, Some(ObjectType::SET))
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, None, Some(ObjectType::Set))
                 .await
                 .unwrap();
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
         }
@@ -707,7 +707,7 @@ mod test_cluster_scan_async {
     // Testing cluster scan with COUNT option
     async fn test_async_cluster_scan_with_count() {
         let cluster = TestClusterContext::new(3, 0);
-        let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
         // Set some keys
@@ -726,16 +726,16 @@ mod test_cluster_scan_async {
         }
 
         // Scan the keys
-        let mut scan_state_cursor = ScanStateCursor::new();
+        let mut scan_state_rc = ScanStateRC::new();
         let mut keys: Vec<String> = vec![];
         let mut comparing_times = 0;
         loop {
-            let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor.clone(), None, Some(100), None)
+            let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc.clone(), None, Some(100), None)
                 .await
                 .unwrap();
-            let (_, scan_without_count_keys): (ScanStateCursor, Vec<Value>) = connection
-                .cluster_scan(scan_state_cursor, None, Some(100), None)
+            let (_, scan_without_count_keys): (ScanStateRC, Vec<Value>) = connection
+                .cluster_scan(scan_state_rc, None, Some(100), None)
                 .await
                 .unwrap();
             if !scan_keys.is_empty() && !scan_without_count_keys.is_empty() {
@@ -743,13 +743,13 @@ mod test_cluster_scan_async {
 
                 comparing_times += 1;
             }
-            scan_state_cursor = next_cursor;
+            scan_state_rc = next_cursor;
             let mut scan_keys = scan_keys
                 .into_iter()
                 .map(|v| from_redis_value(&v).unwrap())
                 .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
             keys.append(&mut scan_keys);
-            if scan_state_cursor.is_none() {
+            if scan_state_rc.is_finished() {
                 break;
             }
         }

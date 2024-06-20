@@ -5,17 +5,18 @@ use crate::cluster_topology::SLOT_SIZE;
 use crate::{cmd, from_redis_value, Cmd, ErrorKind, RedisError, RedisResult, Value};
 use async_trait::async_trait;
 use std::sync::Arc;
+use strum_macros::Display;
 
 /// This module contains the implementation of scanning operations in a Redis cluster.
 ///
 /// The `ClusterScanArgs` struct represents the arguments for a cluster scan operation,
 /// including the scan state reference, match pattern, count, and object type.
 ///
-/// The `ScanStateCursor` struct is a wrapper for managing the state of a scan operation in a cluster.
+/// The `ScanStateRC` struct is a wrapper for managing the state of a scan operation in a cluster.
 /// It holds a reference to the scan state and provides methods for accessing the state.
 ///
 /// The `ClusterInScan` trait defines the methods for interacting with a Redis cluster during scanning,
-/// including retrieving address information, refreshing slot mapping, and routing commands to specific addresss.
+/// including retrieving address information, refreshing slot mapping, and routing commands to specific address.
 ///
 /// The `ScanState` struct represents the state of a scan operation in a Redis cluster.
 /// It holds information about the current scan state, including the cursor position, scanned slots map,
@@ -27,57 +28,32 @@ const BITS_ARRAY_SIZE: usize = NUM_OF_SLOTS / BITS_PER_U64;
 const END_OF_SCAN: u16 = NUM_OF_SLOTS as u16 + 1;
 type SlotsBitsArray = [u64; BITS_ARRAY_SIZE];
 
-#[derive(PartialEq, Debug, Clone)]
-pub(crate) struct ScanState {
-    // the real cursor in the scan operation
-    cursor: u64,
-    // a map of the slots that have been scanned
-    scanned_slots_map: SlotsBitsArray,
-    // the address that is being scanned currently, based on the next slot set to 0 in the scanned_slots_map, and the address "own" the slot
-    // in the SlotMap
-    pub(crate) address_in_scan: String,
-    // epoch represent the version of the address, when a failover happens or slots migrate in the epoch will be updated to +1
-    address_epoch: u64,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct ClusterScanArgs {
-    pub(crate) scan_state_cursor: ScanStateCursor,
+    pub(crate) scan_state_cursor: ScanStateRC,
     match_pattern: Option<String>,
     count: Option<usize>,
     object_type: Option<ObjectType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Display)]
 /// Represents the type of an object in Redis.
 pub enum ObjectType {
     /// Represents a string object in Redis.
-    STRING,
+    String,
     /// Represents a list object in Redis.
-    LIST,
+    List,
     /// Represents a set object in Redis.
-    SET,
+    Set,
     /// Represents a sorted set object in Redis.
-    ZSET,
+    ZSet,
     /// Represents a hash object in Redis.
-    HASH,
-}
-
-impl std::fmt::Display for ObjectType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ObjectType::STRING => write!(f, "string"),
-            ObjectType::LIST => write!(f, "list"),
-            ObjectType::SET => write!(f, "set"),
-            ObjectType::ZSET => write!(f, "zset"),
-            ObjectType::HASH => write!(f, "hash"),
-        }
-    }
+    Hash,
 }
 
 impl ClusterScanArgs {
     pub(crate) fn new(
-        scan_state_cursor: ScanStateCursor,
+        scan_state_cursor: ScanStateRC,
         match_pattern: Option<String>,
         count: Option<usize>,
         object_type: Option<ObjectType>,
@@ -91,41 +67,60 @@ impl ClusterScanArgs {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-/// A wrapper struct for managing the state of a scan operation in a cluster.
-pub struct ScanStateCursor {
-    scan_state_ref: Arc<Option<ScanState>>,
+#[derive(PartialEq, Debug, Clone, Default)]
+pub enum ScanStateStage {
+    #[default]
+    Initiating,
+    InProgress,
+    Finished,
 }
 
-impl ScanStateCursor {
-    /// Creates a new instance of `ScanStateCursor` from a given `ScanState`.
-    fn from_scan_state(scan_state: &ScanState) -> Self {
+#[derive(Debug, Clone, Default)]
+/// A wrapper struct for managing the state of a scan operation in a cluster.
+/// It holds a reference to the scan state and provides methods for accessing the state.
+/// The `status` field indicates the status of the scan operation.
+pub struct ScanStateRC {
+    scan_state_rc: Arc<Option<ScanState>>,
+    status: ScanStateStage,
+}
+
+impl ScanStateRC {
+    /// Creates a new instance of `ScanStateRC` from a given `ScanState`.
+    fn from_scan_state(scan_state: ScanState) -> Self {
         Self {
-            scan_state_ref: Arc::new(Some(scan_state.clone())),
+            scan_state_rc: Arc::new(Some(scan_state)),
+            status: ScanStateStage::InProgress,
         }
     }
 
-    /// Creates a new instance of `ScanStateCursor`.
+    /// Creates a new instance of `ScanStateRC`.
     ///
-    /// This method initializes the `ScanStateCursor` with a reference to a `ScanState` that is initially set to `None`.
-    /// An empty ScanState is equivilant to a 0 cursor.
+    /// This method initializes the `ScanStateRC` with a reference to a `ScanState` that is initially set to `None`.
+    /// An empty ScanState is equivalent to a 0 cursor.
     pub fn new() -> Self {
         Self {
-            scan_state_ref: Arc::new(None),
+            scan_state_rc: Arc::new(None),
+            status: ScanStateStage::Initiating,
         }
     }
-
-    /// Returns `true` if the scan state is empty, indicating that the scan operation has finished or has not started.
-    pub fn is_none(&self) -> bool {
-        self.scan_state_ref.is_none()
+    /// create a new instance of `ScanStateRC` with finished state and empty scan state.
+    fn create_finished() -> Self {
+        Self {
+            scan_state_rc: Arc::new(None),
+            status: ScanStateStage::Finished,
+        }
+    }
+    /// Returns `true` if the scan state is finished.
+    pub fn is_finished(&self) -> bool {
+        self.status == ScanStateStage::Finished
     }
 
     /// Returns a clone of the scan state, if it exist.
-    pub(crate) fn get_state_from_wrraper(&self) -> Option<ScanState> {
-        if self.is_none() {
+    pub(crate) fn get_state_from_wrapper(&self) -> Option<ScanState> {
+        if self.status == ScanStateStage::Initiating || self.status == ScanStateStage::Finished {
             None
         } else {
-            self.scan_state_ref.as_ref().clone()
+            self.scan_state_rc.as_ref().clone()
         }
     }
 }
@@ -133,10 +128,11 @@ impl ScanStateCursor {
 /// This trait defines the methods for interacting with a Redis cluster during scanning.
 #[async_trait]
 pub(crate) trait ClusterInScan {
-    /// Retrieves the address address associated with a given slot in the cluster.
+    /// Retrieves the address associated with a given slot in the cluster.
     async fn get_address_by_slot(&self, slot: u16) -> RedisResult<String>;
 
     /// Retrieves the epoch of a given address in the cluster.
+    /// The epoch represents the version of the address, which is updated when a failover occurs or slots migrate in.
     async fn get_address_epoch(&self, address: &str) -> Result<u64, RedisError>;
 
     /// Retrieves the slots assigned to a given address in the cluster.
@@ -148,14 +144,29 @@ pub(crate) trait ClusterInScan {
     /// Routes a Redis command to a specific address in the cluster.
     async fn route_command(&self, cmd: &Cmd, address: &str) -> RedisResult<Value>;
 
-    /// Chaeck if all slots are covered by the cluster
-    async fn is_all_slots_covered(&self) -> bool;
+    /// Check if all slots are covered by the cluster
+    async fn are_all_slots_covered(&self) -> bool;
 }
 
 /// Represents the state of a scan operation in a Redis cluster.
 ///
 /// This struct holds information about the current scan state, including the cursor position,
 /// the scanned slots map, the address being scanned, and the address's epoch.
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) struct ScanState {
+    // the real cursor in the scan operation
+    cursor: u64,
+    // a map of the slots that have been scanned
+    scanned_slots_map: SlotsBitsArray,
+    // the address that is being scanned currently, based on the next slot set to 0 in the scanned_slots_map, and the address that "owns" the slot
+    // in the SlotMap
+    pub(crate) address_in_scan: String,
+    // epoch represent the version of the address, when a failover happens or slots migrate in the epoch will be updated to +1
+    address_epoch: u64,
+    // the status of the scan operation
+    scan_status: ScanStateStage,
+}
+
 impl ScanState {
     /// Create a new instance of ScanState.
     ///
@@ -165,67 +176,59 @@ impl ScanState {
     /// * `scanned_slots_map` - The scanned slots map.
     /// * `address_in_scan` - The address being scanned.
     /// * `address_epoch` - The epoch of the address being scanned.
+    /// * `scan_status` - The status of the scan operation.
     ///
     /// # Returns
     ///
     /// A new instance of ScanState.
-    pub fn create(
+    pub fn new(
         cursor: u64,
         scanned_slots_map: SlotsBitsArray,
         address_in_scan: String,
         address_epoch: u64,
+        scan_status: ScanStateStage,
     ) -> Self {
         Self {
             cursor,
             scanned_slots_map,
             address_in_scan,
             address_epoch,
+            scan_status,
         }
     }
 
-    /// Initiate a scan operation by creating a new ScanState.
-    ///
-    /// This method creates a new ScanState with the initial values for a scan operation.
-    ///
-    /// # Arguments
-    ///
-    /// * `connection` - The connection to the Redis cluster.
-    ///
-    /// # Returns
-    ///
-    /// The initial ScanState.
-    pub(crate) async fn initiate_scan<C: ClusterInScan + ?Sized>(
-        connection: &C,
-    ) -> RedisResult<ScanState> {
+    fn create_finished_state() -> Self {
+        Self {
+            cursor: 0,
+            scanned_slots_map: [0; BITS_ARRAY_SIZE],
+            address_in_scan: String::new(),
+            address_epoch: 0,
+            scan_status: ScanStateStage::Finished,
+        }
+    }
+
+    /// Initialize a new scan operation.
+    /// This method creates a new scan state with the cursor set to 0, the scanned slots map initialized to 0,
+    /// and the address set to the address associated with slot 0.
+    /// The address epoch is set to the epoch of the address.
+    /// If the address epoch cannot be retrieved, the method returns an error.
+    async fn initiate_scan<C: ClusterInScan + ?Sized>(connection: &C) -> RedisResult<ScanState> {
         let new_scanned_slots_map: SlotsBitsArray = [0; BITS_ARRAY_SIZE];
         let new_cursor = 0;
-        let address_in_scan = connection.get_address_by_slot(0).await;
-        match address_in_scan {
-            Ok(address) => {
-                let address_epoch = connection.get_address_epoch(&address).await.unwrap_or(0);
-                Ok(ScanState::create(
-                    new_cursor,
-                    new_scanned_slots_map,
-                    address,
-                    address_epoch,
-                ))
-            }
-            Err(err) => Err(err),
-        }
+        let address = connection.get_address_by_slot(0).await?;
+        let address_epoch = connection.get_address_epoch(&address).await.unwrap_or(0);
+        Ok(ScanState::new(
+            new_cursor,
+            new_scanned_slots_map,
+            address,
+            address_epoch,
+            ScanStateStage::InProgress,
+        ))
     }
 
-    /// Get the next slot that hasn't been scanned.
-    ///
-    /// This method iterates over the scanned slots map and finds the next slot that is set to 0.
-    ///
-    /// # Arguments
-    ///
-    /// * `scanned_slots_map` - The scanned slots map.
-    ///
-    /// # Returns
-    ///
-    /// The next slot that hasn't been scanned, or `None` if all slots have been scanned.
-    pub fn get_next_slot(&self, scanned_slots_map: &SlotsBitsArray) -> Option<u16> {
+    /// Get the next slot to be scanned based on the scanned slots map.
+    /// If all slots have been scanned, the method returns `END_OF_SCAN`.
+    fn get_next_slot(&self, scanned_slots_map: &SlotsBitsArray) -> Option<u16> {
         let all_slots_scanned = scanned_slots_map.iter().all(|&word| word == u64::MAX);
         if all_slots_scanned {
             return Some(END_OF_SCAN);
@@ -242,72 +245,54 @@ impl ScanState {
         None
     }
 
-    /// Update the next address to be scanned without updating the scanned slots map.
-    /// This method is used when the address epoch has changed and we can't know which slots are new or when slots are missing.
-    /// In this case we will skip updating the scanned_slots_map and will just update the address and the cursor.
-    ///
-    /// # Arguments
-    ///
-    /// * `connection` - The connection to the Redis cluster.
-    ///
-    /// # Returns
-    ///
-    /// The updated ScanState.
-    pub(crate) async fn update_scan_state_without_updating_scanned_map<
-        C: ClusterInScan + ?Sized,
-    >(
+    /// Update the scan state without updating the scanned slots map.
+    /// This method is used when the address epoch has changed, and we can't determine which slots are new.
+    /// In this case, we skip updating the scanned slots map and only update the address and cursor.
+    async fn creating_state_without_slot_changes<C: ClusterInScan + ?Sized>(
         &self,
         connection: &C,
     ) -> RedisResult<ScanState> {
-        let next_slot = self.get_next_slot(&self.scanned_slots_map).unwrap();
+        let next_slot = self.get_next_slot(&self.scanned_slots_map).unwrap_or(0);
         let new_address = if next_slot == END_OF_SCAN {
-            Ok("".to_string())
+            return Ok(ScanState::create_finished_state());
         } else {
             connection.get_address_by_slot(next_slot).await
         };
         match new_address {
             Ok(address) => {
                 let new_epoch = connection.get_address_epoch(&address).await.unwrap_or(0);
-                let new_cursor = 0;
-                Ok(ScanState::create(
-                    new_cursor,
+                Ok(ScanState::new(
+                    0,
                     self.scanned_slots_map,
                     address,
                     new_epoch,
+                    ScanStateStage::InProgress,
                 ))
             }
             Err(err) => Err(err),
         }
     }
 
-    /// Update the next address to be scanned.
-    ///
-    /// This method updates the scan state by updating the scanned slots map, determining the next slot to be scanned,
-    /// retrieving the address for that slot and the epoch of that address, and creating a new ScanState.
-    ///
-    /// # Arguments
-    ///
-    /// * `connection` - The connection to the Redis cluster.
-    ///
-    /// # Returns
-    ///
-    /// The updated ScanState.
-    async fn update_scan_state_and_get_next_address<C: ClusterInScan + ?Sized>(
+    /// Update the scan state and get the next address to scan.
+    /// This method is called when the cursor reaches 0, indicating that the current address has been scanned.
+    /// This method updates the scan state based on the scanned slots map and retrieves the next address to scan.
+    /// If the address epoch has changed, the method skips updating the scanned slots map and only updates the address and cursor.
+    /// If the address epoch has not changed, the method updates the scanned slots map with the slots owned by the address.
+    /// The method returns the new scan state with the updated cursor, scanned slots map, address, and epoch.
+    async fn create_updated_scan_state_for_completed_address<C: ClusterInScan + ?Sized>(
         &mut self,
         connection: &C,
     ) -> RedisResult<ScanState> {
         let _ = connection.refresh_slots().await;
         let mut scanned_slots_map = self.scanned_slots_map;
-        // If the address epoch changed it mean that some slots in the address are new, so we cant know which slots been there from the begining and which are new, or out and in later.
+        // If the address epoch changed it mean that some slots in the address are new, so we cant know which slots been there from the beginning and which are new, or out and in later.
         // In this case we will skip updating the scanned_slots_map and will just update the address and the cursor
         let new_address_epoch = connection
             .get_address_epoch(&self.address_in_scan)
             .await
             .unwrap_or(0);
         if new_address_epoch != self.address_epoch {
-            return self
-                .update_scan_state_without_updating_scanned_map(connection)
-                .await;
+            return self.creating_state_without_slot_changes(connection).await;
         }
         // If epoch wasn't changed, the slots owned by the address after the refresh are all valid as slots that been scanned
         // So we will update the scanned_slots_map with the slots owned by the address
@@ -318,9 +303,9 @@ impl ScanState {
             scanned_slots_map[slot_index] |= 1 << slot_bit;
         }
         // Get the next address to scan and its param base on the next slot set to 0 in the scanned_slots_map
-        let next_slot = self.get_next_slot(&scanned_slots_map).unwrap();
+        let next_slot = self.get_next_slot(&scanned_slots_map).unwrap_or(0);
         let new_address = if next_slot == END_OF_SCAN {
-            Ok("".to_string())
+            return Ok(ScanState::create_finished_state());
         } else {
             connection.get_address_by_slot(next_slot).await
         };
@@ -331,11 +316,12 @@ impl ScanState {
                     .await
                     .unwrap_or(0);
                 let new_cursor = 0;
-                Ok(ScanState::create(
+                Ok(ScanState::new(
                     new_cursor,
                     scanned_slots_map,
                     new_address,
                     new_epoch,
+                    ScanStateStage::InProgress,
                 ))
             }
             Err(err) => Err(err),
@@ -356,7 +342,7 @@ where
         match address {
             Some(addr) => Ok(addr),
             None => {
-                if self.is_all_slots_covered().await {
+                if self.are_all_slots_covered().await {
                     Err(RedisError::from((
                         ErrorKind::IoError,
                         "Failed to get connection to the node cover the slot, please check the cluster configuration ",
@@ -379,14 +365,14 @@ where
     }
     // Refresh the topology of the cluster
     async fn refresh_slots(&self) -> RedisResult<()> {
-        ClusterConnInner::refresh_slots_with_retries(self.to_owned()).await
+        ClusterConnInner::refresh_slots_and_subscriptions_with_retries(self.to_owned()).await
     }
     async fn route_command(&self, cmd: &Cmd, address: &str) -> RedisResult<Value> {
         let core = self.to_owned();
         InnerCore::route_command_inner(core, cmd.clone(), address).await
     }
-    async fn is_all_slots_covered(&self) -> bool {
-        self.all_slots_covered().await
+    async fn are_all_slots_covered(&self) -> bool {
+        ClusterConnInner::<C>::check_if_all_slots_covered(&self.conn_lock.read().await.slot_map)
     }
 }
 
@@ -406,7 +392,7 @@ where
 pub(crate) async fn cluster_scan<C>(
     core: C,
     cluster_scan_args: ClusterScanArgs,
-) -> RedisResult<(ScanStateCursor, Vec<Value>)>
+) -> RedisResult<(ScanStateRC, Vec<Value>)>
 where
     C: ClusterInScan,
 {
@@ -417,21 +403,16 @@ where
         object_type,
     } = cluster_scan_args;
     // If scan_state is None, meaning we start a new scan
-    let mut scan_state;
-    match scan_state_cursor.get_state_from_wrraper() {
-        Some(state) => {
-            scan_state = state;
-        }
+    let scan_state = match scan_state_cursor.get_state_from_wrapper() {
+        Some(state) => state,
         None => match ScanState::initiate_scan(&core).await {
-            Ok(state) => {
-                scan_state = state;
-            }
+            Ok(state) => state,
             Err(err) => {
                 return Err(err);
             }
         },
-    }
-    // Send the actuall scan command to the address in the scan_state
+    };
+    // Send the actual scan command to the address in the scan_state
     let scan_result = send_scan(
         &scan_state,
         &core,
@@ -440,49 +421,53 @@ where
         object_type.clone(),
     )
     .await;
-    let (new_cursor, new_keys): (u64, Vec<Value>);
-    match scan_result {
-        Ok(scan_result) => (new_cursor, new_keys) = from_redis_value(&scan_result).unwrap(),
-        Err(_) => {
-            // If the scan command failed to route to the address we will try to get a new address to scan
-            let retry_result =
-                retry_scan(&scan_state, &core, match_pattern, count, object_type).await;
-            match retry_result {
-                Ok((Ok(scan_result), new_scan_state)) => {
-                    scan_state = new_scan_state;
-                    (new_cursor, new_keys) = from_redis_value(&scan_result).unwrap();
-                }
-                Ok((Err(err), _)) => return Err(err),
-                Err(err) => return Err(err),
+    let ((new_cursor, new_keys), mut scan_state): ((u64, Vec<Value>), ScanState) = match scan_result
+    {
+        Ok(scan_result) => (from_redis_value(&scan_result)?, scan_state.clone()),
+        Err(err) => match err.kind() {
+            ErrorKind::IoError | ErrorKind::ClusterConnectionNotFound => {
+                let retry =
+                    retry_scan(&scan_state, &core, match_pattern, count, object_type).await?;
+                (from_redis_value(&retry.0?)?, retry.1)
             }
-        }
+            ErrorKind::BusyLoadingError | ErrorKind::TryAgain => (
+                from_redis_value(
+                    &send_scan(
+                        &scan_state,
+                        &core,
+                        match_pattern.clone(),
+                        count,
+                        object_type.clone(),
+                    )
+                    .await?,
+                )?,
+                scan_state.clone(),
+            ),
+            _ => return Err(err),
+        },
     };
 
     // If the cursor is 0, meaning we finished scanning the address
     // we will update the scan state to get the next address to scan
     if new_cursor == 0 {
-        scan_state = match scan_state
-            .update_scan_state_and_get_next_address(&core)
-            .await
-        {
-            Ok(state) => state,
-
-            Err(err) => return Err(err),
-        }
-    };
-
-    // If the address is empty, meaning we finished scanning all the addresss
-    if scan_state.address_in_scan.is_empty() {
-        return Ok((ScanStateCursor::new(), new_keys));
+        scan_state = scan_state
+            .create_updated_scan_state_for_completed_address(&core)
+            .await?;
     }
 
-    scan_state = ScanState::create(
+    // If the address is empty, meaning we finished scanning all the address
+    if scan_state.scan_status == ScanStateStage::Finished {
+        return Ok((ScanStateRC::create_finished(), new_keys));
+    }
+
+    scan_state = ScanState::new(
         new_cursor,
         scan_state.scanned_slots_map,
         scan_state.address_in_scan,
         scan_state.address_epoch,
+        ScanStateStage::InProgress,
     );
-    Ok((ScanStateCursor::from_scan_state(&scan_state), new_keys))
+    Ok((ScanStateRC::from_scan_state(scan_state), new_keys))
 }
 
 // Send the scan command to the address in the scan_state
@@ -511,10 +496,10 @@ where
         .await
 }
 
-// If the scan command faild to route to the address we will check we will first refresh the slots, we will check if all slts are coverd by cluster,
-// and if so we will try to get a new address to scan for handeling case of failover.
-// if all slots are not coverd by the cluster we will return an error indicating that the cluster is not well configured.
-// if all slots are coverd by cluster but we failed to get a new address to scan we will return an error indicating that we failed to get a new address to scan.
+// If the scan command failed to route to the address we will check we will first refresh the slots, we will check if all slots are covered by cluster,
+// and if so we will try to get a new address to scan for handling case of failover.
+// if all slots are not covered by the cluster we will return an error indicating that the cluster is not well configured.
+// if all slots are covered by cluster but we failed to get a new address to scan we will return an error indicating that we failed to get a new address to scan.
 // if we got a new address to scan but the scan command failed to route to the address we will return an error indicating that we failed to route the command.
 async fn retry_scan<C>(
     scan_state: &ScanState,
@@ -526,35 +511,32 @@ async fn retry_scan<C>(
 where
     C: ClusterInScan,
 {
-    let refresh_result = core.refresh_slots().await;
-    match refresh_result {
-        Ok(_) => {
-            if !core.is_all_slots_covered().await {
-                return Err(RedisError::from((
-                        ErrorKind::NotAllSlotsCovered,
-                        "Not all slots are covered by the cluster, please check the cluster configuration",
-                    )));
-            }
-            let next_slot = scan_state
-                .get_next_slot(&scan_state.scanned_slots_map)
-                .unwrap();
-            let address = core.get_address_by_slot(next_slot).await;
-            match address {
-                Ok(new_address) => {
-                    let new_epoch = core.get_address_epoch(&new_address).await.unwrap_or(0);
-                    let scan_state =
-                        &ScanState::create(0, scan_state.scanned_slots_map, new_address, new_epoch);
-                    let res = (
-                        send_scan(scan_state, core, match_pattern, count, object_type).await,
-                        scan_state.clone(),
-                    );
-                    Ok(res)
-                }
-                Err(err) => Err(err),
-            }
-        }
-        Err(err) => Err(err),
+    core.refresh_slots().await?;
+
+    if !core.are_all_slots_covered().await {
+        return Err(RedisError::from((
+            ErrorKind::NotAllSlotsCovered,
+            "Not all slots are covered by the cluster, please check the cluster configuration",
+        )));
     }
+    let next_slot = scan_state
+        .get_next_slot(&scan_state.scanned_slots_map)
+        .unwrap_or(0);
+    let address = core.get_address_by_slot(next_slot).await?;
+
+    let new_epoch = core.get_address_epoch(&address).await.unwrap_or(0);
+    let scan_state = &ScanState::new(
+        0,
+        scan_state.scanned_slots_map,
+        address,
+        new_epoch,
+        ScanStateStage::InProgress,
+    );
+    let res = (
+        send_scan(scan_state, core, match_pattern, count, object_type).await,
+        scan_state.clone(),
+    );
+    Ok(res)
 }
 
 #[cfg(test)]
@@ -564,8 +546,8 @@ mod tests {
 
     #[test]
     fn test_creation_of_empty_scan_wrapper() {
-        let scan_state_wrapper = ScanStateCursor::new();
-        assert!(scan_state_wrapper.is_none());
+        let scan_state_wrapper = ScanStateRC::new();
+        assert!(scan_state_wrapper.status == ScanStateStage::Initiating);
     }
 
     #[test]
@@ -575,10 +557,11 @@ mod tests {
             scanned_slots_map: [0; BITS_ARRAY_SIZE],
             address_in_scan: String::from("address1"),
             address_epoch: 1,
+            scan_status: ScanStateStage::InProgress,
         };
 
-        let scan_state_wrapper = ScanStateCursor::from_scan_state(&scan_state);
-        assert!(!scan_state_wrapper.is_none());
+        let scan_state_wrapper = ScanStateRC::from_scan_state(scan_state);
+        assert!(!scan_state_wrapper.is_finished());
     }
 
     #[test]
@@ -590,6 +573,7 @@ mod tests {
             scanned_slots_map,
             address_in_scan: String::from("address1"),
             address_epoch: 1,
+            scan_status: ScanStateStage::InProgress,
         };
         let next_slot = scan_state.get_next_slot(&scanned_slots_map);
         assert_eq!(next_slot, Some(0));
@@ -601,6 +585,7 @@ mod tests {
             scanned_slots_map,
             address_in_scan: String::from("address1"),
             address_epoch: 1,
+            scan_status: ScanStateStage::InProgress,
         };
         let next_slot = scan_state.get_next_slot(&scanned_slots_map);
         assert_eq!(next_slot, Some(1));
@@ -628,7 +613,7 @@ mod tests {
         async fn route_command(&self, _: &Cmd, _: &str) -> RedisResult<Value> {
             unimplemented!()
         }
-        async fn is_all_slots_covered(&self) -> bool {
+        async fn are_all_slots_covered(&self) -> bool {
             true
         }
     }
@@ -653,6 +638,7 @@ mod tests {
             scanned_slots_map: [0; BITS_ARRAY_SIZE],
             address_in_scan: "".to_string(),
             address_epoch: 0,
+            scan_status: ScanStateStage::InProgress,
         };
         // Test when all first bits of each u6 are set to 1, the next slots should be 1
         let scanned_slots_map: SlotsBitsArray = [1; BITS_ARRAY_SIZE];
@@ -678,7 +664,7 @@ mod tests {
         let scan_state = ScanState::initiate_scan(&connection).await;
         let updated_scan_state = scan_state
             .unwrap()
-            .update_scan_state_and_get_next_address(&connection)
+            .create_updated_scan_state_for_completed_address(&connection)
             .await
             .unwrap();
 
@@ -695,10 +681,16 @@ mod tests {
     #[tokio::test]
     async fn test_update_scan_state_without_updating_scanned_map() {
         let connection = MockConnection;
-        let scan_state = ScanState::create(0, [0; BITS_ARRAY_SIZE], "address".to_string(), 0);
+        let scan_state = ScanState::new(
+            0,
+            [0; BITS_ARRAY_SIZE],
+            "address".to_string(),
+            0,
+            ScanStateStage::InProgress,
+        );
         let scanned_slots_map = scan_state.scanned_slots_map;
         let updated_scan_state = scan_state
-            .update_scan_state_without_updating_scanned_map(&connection)
+            .creating_state_without_slot_changes(&connection)
             .await
             .unwrap();
         assert_eq!(updated_scan_state.scanned_slots_map, scanned_slots_map);

@@ -34,7 +34,6 @@ pub(crate) enum ReadFromReplicaStrategy {
 pub(crate) struct SlotMap {
     pub(crate) slots: BTreeMap<u16, SlotMapValue>,
     read_from_replica: ReadFromReplicaStrategy,
-    pub(crate) all_slots_covered: bool,
 }
 
 fn get_address_from_slot(
@@ -62,7 +61,6 @@ impl SlotMap {
         let mut this = Self {
             slots: BTreeMap::new(),
             read_from_replica,
-            all_slots_covered: true,
         };
         this.slots.extend(
             slots
@@ -130,14 +128,12 @@ impl SlotMap {
 
     // Returns the slots that are assigned to the given address.
     pub(crate) fn get_slots_of_node(&self, node_address: &str) -> Vec<u16> {
+        let node_address = node_address.to_string();
         self.slots
             .iter()
             .filter_map(|(end, slot_value)| {
                 if slot_value.addrs.primary == node_address
-                    || slot_value
-                        .addrs
-                        .replicas
-                        .contains(&node_address.to_string())
+                    || slot_value.addrs.replicas.contains(&node_address)
                 {
                     Some(slot_value.start..(*end + 1))
                 } else {
@@ -163,14 +159,6 @@ impl SlotMap {
                 None
             }
         })
-    }
-
-    pub(crate) fn set_all_slots_covered(&mut self, all_slots_covered: bool) {
-        self.all_slots_covered = all_slots_covered;
-    }
-
-    pub(crate) fn is_all_slots_covered(&self) -> bool {
-        self.all_slots_covered
     }
 }
 

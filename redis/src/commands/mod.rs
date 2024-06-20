@@ -14,7 +14,7 @@ mod macros;
 mod json;
 
 #[cfg(feature = "cluster-async")]
-pub use cluster_scan::ScanStateCursor;
+pub use cluster_scan::ScanStateRC;
 
 #[cfg(feature = "cluster-async")]
 pub(crate) mod cluster_scan;

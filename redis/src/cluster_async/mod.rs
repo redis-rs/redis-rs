@@ -42,7 +42,10 @@ use std::{
 
 use crate::{
     cluster_slotmap::SlotMap,
-    commands::cluster_scan::{cluster_scan, ClusterScanArgs, ObjectType, ScanStateCursor},
+    cluster_topology::SLOT_SIZE,
+    cmd,
+    commands::cluster_scan::{cluster_scan, ClusterScanArgs, ObjectType, ScanStateRC},
+    FromRedisValue, InfoDict,
 };
 
 use crate::{
@@ -59,7 +62,6 @@ use crate::{
     cluster_topology::{
         calculate_topology, get_slot, DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES,
         DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL, DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT,
-        SLOT_SIZE,
     },
     connection::{PubSubSubscriptionInfo, PubSubSubscriptionKind},
     push_manager::PushInfo,
@@ -131,48 +133,49 @@ where
             })
     }
 
-    // Special handeling for 'SCAN' command, using cluster_scan
+    // Special handling for 'SCAN' command, using cluster_scan
     /// Perform a SCAN command on a Redis cluster, using scan state object in order to handle changes in topology
     /// and make sure that all cluster is scanned.
+    /// In order to make sure all keys in the cluster scanned, topology refresh occurs more frequently and may affect performance.
     ///
     /// # Arguments
     ///
-    /// * `scan_state_cursor` - A reference to the scan state, For initiating new scan send ScanStateCursor::new(),
-    /// for each iteration after the first use the returned RefCell.
-    /// * `match_pattern` - An optional match pattern of wanted keys.
-    /// * `count` - An optional count of keys wanted,
-    /// the amount returned can vary and not obligated to return exactlly count.
-    /// * `object_type` - An optional ObjectType enum of wanted key redis type.
+    /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send ScanStateRC::new(),
+    /// for each subsequent iteration use the returned ScanStateRC.
+    /// * `match_pattern` - An optional match pattern of requested keys.
+    /// * `count` - An optional count of keys requested,
+    /// the amount returned can vary and not obligated to return exactly count.
+    /// * `object_type` - An optional ObjectType enum of requested key redis type.
     ///
     /// # Returns
     ///
-    /// A ScanStateCursor for the updated state of the scan and the vector of keys that were found in the scan.
+    /// A ScanStateRC for the updated state of the scan and the vector of keys that were found in the scan.
     /// structure of returned value:
-    /// `Ok((ScanStateCursor, Vec<Value>))`
+    /// `Ok((ScanStateRC, Vec<Value>))`
     ///
-    /// When the scan is finishid ScanStateCursor will be None, and can be checked easilly by calling scan_state_wraper.is_none().
+    /// When the scan is finished ScanStateRC will be None, and can be checked by calling scan_state_wrapper.is_finished().
     ///
     /// # Example
     /// ```rust,no_run
     /// use redis::cluster::ClusterClient;
-    /// use redis::{ScanStateCursor, FromRedisValue, from_redis_value, Value, ObjectType};
+    /// use redis::{ScanStateRC, FromRedisValue, from_redis_value, Value, ObjectType};
     ///
     /// async fn scan_all_cluster() -> Vec<String> {
     ///     let nodes = vec!["redis://127.0.0.1/"];
     ///     let client = ClusterClient::new(nodes).unwrap();
-    ///     let mut connection = client.get_async_connection().await.unwrap();
-    ///     let mut new_scan_state_cursor = ScanStateCursor::new();
+    ///     let mut connection = client.get_async_connection(None).await.unwrap();
+    ///     let mut scan_state_rc = ScanStateRC::new();
     ///     let mut keys: Vec<String> = vec![];
     ///     loop {
-    ///         let (next_cursor, scan_keys): (ScanStateCursor, Vec<Value>) =
-    ///             connection.cluster_scan(new_scan_state_cursor, None, None, None).await.unwrap();
-    ///         scan_state_cursor = next_cursor;
+    ///         let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) =
+    ///             connection.cluster_scan(scan_state_rc, None, None, None).await.unwrap();
+    ///         scan_state_rc = next_cursor;
     ///         let mut scan_keys = scan_keys
     ///             .into_iter()
     ///             .map(|v| from_redis_value(&v).unwrap())
     ///             .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
     ///         keys.append(&mut scan_keys);
-    ///         if scan_state_cursor.is_none() {
+    ///         if scan_state_rc.is_finished() {
     ///             break;
     ///             }
     ///         }
@@ -181,29 +184,25 @@ where
     /// ````
     pub async fn cluster_scan(
         &mut self,
-        scan_state_cursor: ScanStateCursor,
+        scan_state_rc: ScanStateRC,
         match_pattern: Option<&str>,
         count: Option<usize>,
         object_type: Option<ObjectType>,
-    ) -> RedisResult<(ScanStateCursor, Vec<Value>)> {
+    ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
         let cluster_scan_args = ClusterScanArgs::new(
-            scan_state_cursor,
+            scan_state_rc,
             match_pattern.map(|s| s.to_string()),
             count,
             object_type,
         );
-        let result = self.route_cluster_scan(cluster_scan_args).await;
-        match result {
-            Ok((new_scan_state_cursor, key)) => Ok((new_scan_state_cursor, key)),
-            Err(e) => Err(e),
-        }
+        self.route_cluster_scan(cluster_scan_args).await
     }
 
-    /// Route cluster scan to be handeled by internal cluster_scan command
+    /// Route cluster scan to be handled by internal cluster_scan command
     async fn route_cluster_scan(
         &mut self,
         cluster_scan_args: ClusterScanArgs,
-    ) -> RedisResult<(ScanStateCursor, Vec<Value>)> {
+    ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
@@ -324,12 +323,6 @@ impl<C> InnerCore<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    // Check if all slots are covered by the cluster
-    pub(crate) async fn all_slots_covered(&self) -> bool {
-        let conn = self.conn_lock.read().await;
-        conn.slot_map.is_all_slots_covered()
-    }
-
     // return address of node for slot
     pub(crate) async fn get_address_from_slot(
         &self,
@@ -350,38 +343,35 @@ where
             .conn_lock
             .read()
             .await
-            .connection_for_address(node_address);
-        match node_conn {
-            Some((_, conn)) => {
-                let cluster_info = conn.await.req_packed_command(&command).await;
-                match cluster_info {
-                    Ok(value) => {
-                        let info_dict: Result<InfoDict, RedisError> =
-                            FromRedisValue::from_redis_value(&value);
-                        if let Ok(info_dict) = info_dict {
-                            let epoch = info_dict.get("cluster_my_epoch");
-                            if let Some(epoch) = epoch {
-                                Ok(epoch)
-                            } else {
-                                Err(RedisError::from((
-                                    ErrorKind::ResponseError,
-                                    "Failed to get epoch from cluster info",
-                                )))
-                            }
-                        } else {
-                            Err(RedisError::from((
-                                ErrorKind::ResponseError,
-                                "Failed to parse cluster info",
-                            )))
-                        }
+            .connection_for_address(node_address)
+            .ok_or(RedisError::from((
+                ErrorKind::ResponseError,
+                "Failed to parse cluster info",
+            )))?;
+
+        let cluster_info = node_conn.1.await.req_packed_command(&command).await;
+        match cluster_info {
+            Ok(value) => {
+                let info_dict: Result<InfoDict, RedisError> =
+                    FromRedisValue::from_redis_value(&value);
+                if let Ok(info_dict) = info_dict {
+                    let epoch = info_dict.get("cluster_my_epoch");
+                    if let Some(epoch) = epoch {
+                        Ok(epoch)
+                    } else {
+                        Err(RedisError::from((
+                            ErrorKind::ResponseError,
+                            "Failed to get epoch from cluster info",
+                        )))
                     }
-                    Err(redis_error) => Err(redis_error),
+                } else {
+                    Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "Failed to parse cluster info",
+                    )))
                 }
             }
-            None => Err(RedisError::from((
-                ErrorKind::IoError,
-                "Failed to get connection for address",
-            ))),
+            Err(redis_error) => Err(redis_error),
         }
     }
 
@@ -400,21 +390,12 @@ where
         cmd: Cmd,
         address: &str,
     ) -> RedisResult<Value> {
-        let node_conn = ClusterConnInner::get_connection(
+        let mut node_conn = ClusterConnInner::get_connection(
             InternalSingleNodeRouting::ByAddress(address.to_string()),
             core,
         )
-        .await;
-        match node_conn {
-            Ok((_, mut conn)) => {
-                let command_response = conn.req_packed_command(&cmd).await;
-                match command_response {
-                    Ok(value) => Ok(value),
-                    Err(e) => Err(e),
-                }
-            }
-            Err(err) => Err(err),
-        }
+        .await?;
+        node_conn.1.req_packed_command(&cmd).await
     }
 }
 
@@ -507,6 +488,7 @@ enum CmdArg<C> {
         route: InternalSingleNodeRouting<C>,
     },
     ClusterScan {
+        // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
         cluster_scan_args: ClusterScanArgs,
     },
 }
@@ -556,7 +538,7 @@ fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
 
 enum Response {
     Single(Value),
-    ClusterScanResult(ScanStateCursor, Vec<Value>),
+    ClusterScanResult(ScanStateRC, Vec<Value>),
     Multiple(Vec<Value>),
 }
 
@@ -772,7 +754,7 @@ impl<C> Future for Request<C> {
                         return Next::Done.into();
                     }
                     OperationTarget::NotFound => {
-                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
+                        // TODO - this is essentially a repeat of the retirable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
                         request.info.reset_redirect();
                         return Next::RefreshSlots {
@@ -1075,7 +1057,7 @@ where
                 |connections_container, address| async move {
                     let node_option = connections_container.remove_node(&address);
 
-                    // overide subscriptions for this connection
+                    // override subscriptions for this connection
                     let mut cluster_params = cluster_params.clone();
                     let subs_guard = subscriptions_by_address.read().await;
                     cluster_params.pubsub_subscriptions = subs_guard.get(&address).cloned();
@@ -1183,7 +1165,7 @@ where
     }
 
     // Query a node to discover slot-> master mappings with retries
-    async fn refresh_slots_and_subscriptions_with_retries(
+    pub(crate) async fn refresh_slots_and_subscriptions_with_retries(
         inner: Arc<InnerCore<C>>,
     ) -> RedisResult<()> {
         if inner
@@ -1240,7 +1222,7 @@ where
 
         // validate active subscriptions location
         let mut addrs_to_refresh: HashSet<ArcStr> = HashSet::new();
-        // lock the subscriptions and connections for writting - might be possible to optimize
+        // lock the subscriptions and connections for writing - might be possible to optimize
         let mut subs_by_address_guard = inner.subscriptions_by_address.write().await;
         let mut unassigned_subs_guard = inner.unassigned_subscriptions.write().await;
 
@@ -1311,7 +1293,7 @@ where
         drop(unassigned_subs_guard);
         drop(subs_by_address_guard);
 
-        // immediatly trigger connection reestablishment
+        // immediately trigger connection reestablishment
         Self::refresh_connections(
             inner.clone(),
             addrs_to_refresh.into_iter().collect(),
@@ -1370,17 +1352,17 @@ where
             })
     }
 
-    fn check_if_all_slots_covered(slot_map: &SlotMap) -> bool {
+    pub(crate) fn check_if_all_slots_covered(slot_map: &SlotMap) -> bool {
         let mut slots_covered = 0;
         for (end, slots) in slot_map.slots.iter() {
-            slots_covered += end - slots.start + 1;
+            slots_covered += end.saturating_sub(slots.start).saturating_add(1);
         }
         slots_covered == SLOT_SIZE
     }
 
     // Query a node to discover slot-> master mappings
     async fn refresh_slots_inner(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
-        let mut read_guard = inner.conn_lock.read().await;
+        let read_guard = inner.conn_lock.read().await;
         let num_of_nodes = read_guard.len();
         const MAX_REQUESTED_NODES: usize = 50;
         let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
@@ -1392,17 +1374,6 @@ where
         )
         .await
         .0?;
-
-        let all_slots_covered = Self::check_if_all_slots_covered(&new_slots);
-        drop(read_guard);
-        inner
-            .conn_lock
-            .write()
-            .await
-            .slot_map
-            .set_all_slots_covered(all_slots_covered);
-
-        read_guard = inner.conn_lock.read().await;
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
         let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
@@ -1821,8 +1792,8 @@ where
         if !pending_requests_guard.is_empty() {
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
             for request in pending_requests.drain(..) {
-                // Drop the request if noone is waiting for a response to free up resources for
-                // requests callers care about (load shedding). It will be ambigous whether the
+                // Drop the request if none is waiting for a response to free up resources for
+                // requests callers care about (load shedding). It will be ambiguous whether the
                 // request actually goes through regardless.
                 if request.sender.is_closed() {
                     continue;
