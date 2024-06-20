@@ -2166,6 +2166,73 @@ impl PubSubCommands for Connection {
     }
 }
 
+/// Options for the [SCAN](https://redis.io/commands/scan) command
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, ScanOptions};
+/// fn force_fetching_every_matching_key(
+///     con: &mut redis::Connection,
+///     pattern: Option<&str>,
+///     cursor: Option<u64>,
+///     count: Option<usize>,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = ScanOptions::default()
+///         .cursor(cursor.unwrap_or_default())
+///         .pattern(pattern)
+///         .count(count);
+///     con.scan_options(opts)
+/// }
+/// ```
+#[derive(Default)]
+pub struct ScanOptions {
+    cursor: u64,
+    pattern: Option<String>,
+    count: Option<usize>,
+}
+
+impl ScanOptions {
+    /// Limit the results to the first N matching items.
+    pub fn count(mut self, n: usize) -> Self {
+        self.count = Some(n);
+        self
+    }
+
+    /// Cursor at which to start scan
+    pub fn cursor(mut self, n: u64) -> Self {
+        self.cursor = n;
+        self
+    }
+
+    /// Pattern for scan
+    pub fn pattern(mut self, p: impl Into<String>) -> Self {
+        self.pattern = Some(p.into());
+        self
+    }
+}
+
+impl ToRedisArgs for ScanOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(p) = &self.pattern {
+            out.write_arg(b"MATCH");
+            out.write_arg_fmt(p);
+        }
+
+        if let Some(n) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg_fmt(n);
+        }
+    }
+
+    fn is_single_arg(&self) -> bool {
+        false
+    }
+}
+
 /// Options for the [LPOS](https://redis.io/commands/lpos) command
 ///
 /// # Example
