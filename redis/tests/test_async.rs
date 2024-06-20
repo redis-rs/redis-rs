@@ -2,15 +2,15 @@ mod support;
 
 #[cfg(test)]
 mod basic_async {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     use futures::{prelude::*, StreamExt};
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushInfo, PushKind,
-        RedisConnectionInfo, RedisResult, Value,
+        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushKind, RedisConnectionInfo,
+        RedisResult, ScanOptions, Value,
     };
-    use tokio::sync::mpsc::error::TryRecvError;
+    use tokio::{sync::mpsc::error::TryRecvError, time::timeout};
 
     use crate::support::*;
 
@@ -636,6 +636,23 @@ mod basic_async {
             ErrorKind::AuthenticationFailed,
             "Unexpected error: {err}",
         );
+    }
+
+    #[tokio::test]
+    async fn test_scan_with_options_works() {
+        let ctx = TestContext::new();
+        let mut con = ctx.multiplexed_async_connection().await.unwrap();
+        for i in 0..20usize {
+            let _: () = con.append(format!("test/{i}"), i).await.unwrap();
+        }
+        let opts = ScanOptions::default().count(20).pattern("test/*");
+        let values = con.scan_options::<String>(opts).await.unwrap();
+        let values: Vec<_> = timeout(Duration::from_millis(100), values.collect())
+            .await
+            .unwrap();
+        assert_eq!(values.len(), 20);
+        let values: Vec<String> = con.mget(values.clone()).await.unwrap();
+        assert_eq!(values.len(), 20);
     }
 
     // Test issue of Stream trait blocking if we try to iterate more than 10 items
