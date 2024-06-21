@@ -2104,8 +2104,9 @@ mod cluster_async {
                             Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
                         )),
                     )
-                    .await;
-                assert!(result.is_ok());
+                    .await
+                    .unwrap();
+                assert_eq!(result, Value::SimpleString("PONG".to_string()));
 
                 Ok::<_, RedisError>(())
             },
