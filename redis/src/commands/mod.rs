@@ -2,8 +2,8 @@ use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
-    ExistenceCheck, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite, SetExpiry,
-    ToRedisArgs,
+    ExistenceCheck, ExpireOption, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite,
+    SetExpiry, ToRedisArgs,
 };
 
 #[macro_use]
@@ -56,14 +56,18 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"GETBIT"
             | b"GETRANGE"
             | b"HEXISTS"
+            | b"HEXPIRETIME"
             | b"HGET"
             | b"HGETALL"
             | b"HKEYS"
             | b"HLEN"
             | b"HMGET"
             | b"HRANDFIELD"
+            | b"HPTTL"
+            | b"HPEXPIRETIME"
             | b"HSCAN"
             | b"HSTRLEN"
+            | b"HTTL"
             | b"HVALS"
             | b"KEYS"
             | b"LCS"
@@ -408,6 +412,51 @@ implement_commands! {
     /// Checks if a field in a hash exists.
     fn hexists<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
         cmd("HEXISTS").arg(key).arg(field)
+    }
+
+    /// Get one or more fields TTL in seconds.
+    fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+        cmd("HTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Get one or more fields TTL in milliseconds.
+    fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+        cmd("HPTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Set one or more fields time to live in seconds.
+    fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) {
+       cmd("HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
+    fn hexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) {
+        cmd("HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Returns the absolute Unix expiration timestamp in seconds.
+    fn hexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+        cmd("HEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Remove the expiration from a key.
+    fn hpersist<K: ToRedisArgs, F :ToRedisArgs>(key: K, fields: F) {
+        cmd("HPERSIST").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Set one or more fields time to live in milliseconds.
+    fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) {
+        cmd("HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
+    fn hpexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) {
+        cmd("HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
+    /// Returns the absolute Unix expiration timestamp in seconds.
+    fn hpexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+        cmd("HPEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Gets all the keys in a hash.
