@@ -58,12 +58,11 @@ macro_rules! implement_commands {
             #[inline]
             fn scan_options<RV: FromRedisValue>(&mut self, opts: ScanOptions) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SCAN");
-                c.cursor_arg(opts.cursor).arg(opts);
+                c.cursor_arg(0).arg(opts);
                 c.iter(self)
             }
 
             /// Incrementally iterate the keys space for keys matching a pattern.
-            #[deprecated(since="0.26.0", note="please use `scan_options` instead")]
             #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<'_, RV>> {
                 let mut c = cmd("SCAN");
@@ -191,12 +190,11 @@ macro_rules! implement_commands {
             #[inline]
             fn scan_options<RV: FromRedisValue>(&mut self, opts: ScanOptions) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
-                c.cursor_arg(opts.cursor).arg(opts);
+                c.cursor_arg(0).arg(opts);
                 Box::pin(async move { c.iter_async(self).await })
             }
 
             /// Incrementally iterate set elements for elements matching a pattern.
-            #[deprecated(since="0.26.0", note="please use `scan_options` instead")]
             #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");

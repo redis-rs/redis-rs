@@ -644,15 +644,20 @@ mod basic_async {
         let mut con = ctx.multiplexed_async_connection().await.unwrap();
         for i in 0..20usize {
             let _: () = con.append(format!("test/{i}"), i).await.unwrap();
+            let _: () = con.append(format!("other/{i}"), i).await.unwrap();
         }
-        let opts = ScanOptions::default().count(20).pattern("test/*");
+        let opts = ScanOptions::default().set_count(20).set_pattern("test/*");
         let values = con.scan_options::<String>(opts).await.unwrap();
         let values: Vec<_> = timeout(Duration::from_millis(100), values.collect())
             .await
             .unwrap();
         assert_eq!(values.len(), 20);
-        let values: Vec<String> = con.mget(values.clone()).await.unwrap();
-        assert_eq!(values.len(), 20);
+        let opts = ScanOptions::default();
+        let values = con.scan_options::<String>(opts).await.unwrap();
+        let values: Vec<_> = timeout(Duration::from_millis(100), values.collect())
+            .await
+            .unwrap();
+        assert_eq!(values.len(), 40);
     }
 
     // Test issue of Stream trait blocking if we try to iterate more than 10 items
