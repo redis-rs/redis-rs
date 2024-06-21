@@ -4,6 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod basic {
+    use assert_approx_eq::assert_approx_eq;
     use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
@@ -12,7 +13,7 @@ mod basic {
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::thread::{sleep, spawn};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -277,6 +278,87 @@ mod basic {
         assert_eq!(h.len(), 2);
         assert_eq!(h.get("key_1"), Some(&1i32));
         assert_eq!(h.get("key_2"), Some(&2i32));
+    }
+
+    #[test]
+    fn test_hash_expiration() {
+        let ctx = TestContext::new();
+        // Hash expiration is only supported in Redis 7.4.0 and later.
+        if ctx.get_version() < (7, 4, 0) {
+            return;
+        }
+        let mut con = ctx.connection();
+        redis::cmd("HMSET")
+            .arg("foo")
+            .arg("f0")
+            .arg("v0")
+            .arg("f1")
+            .arg("v1")
+            .execute(&mut con);
+
+        let result: Vec<bool> = con.hexpire("foo", 10, &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![true, true]);
+
+        let result: Vec<bool> = con.hpexpire("foo", 10000, &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![true, true]);
+
+        let ttls: Vec<i64> = con.httl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10, 3);
+        assert_approx_eq!(ttls[1], 10, 3);
+
+        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10000, 3000);
+        assert_approx_eq!(ttls[1], 10000, 3000);
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH);
+        let expire_time_seconds: Vec<i64> = con.hexpire_time("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(expire_time_seconds.len(), 2);
+        let now_seconds = now.as_ref().unwrap().as_secs();
+        assert_approx_eq!(expire_time_seconds[0], (now_seconds + 10) as i64, 3);
+        assert_approx_eq!(expire_time_seconds[1], (now_seconds + 10) as i64, 3);
+
+        let expire_time_milliseconds: Vec<i64> = con.hpexpire_time("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(expire_time_milliseconds.len(), 2);
+        let now_milliseconds = now.as_ref().unwrap().as_millis();
+        assert_approx_eq!(
+            expire_time_milliseconds[0],
+            (now_milliseconds + 10000) as i64,
+            3000
+        );
+        assert_approx_eq!(
+            expire_time_milliseconds[1],
+            (now_milliseconds + 10000) as i64,
+            3000
+        );
+
+        let result: Vec<bool> = con.hpersist("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![true, true]);
+        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_eq!(ttls[0], -1);
+        assert_eq!(ttls[1], -1);
+
+        let result: Vec<bool> = con
+            .hexpire_at("foo", (now_seconds + 10) as i64, &["f0", "f1"])
+            .unwrap();
+        assert_eq!(result, vec![true, true]);
+        let ttls: Vec<i64> = con.httl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10, 3);
+        assert_approx_eq!(ttls[1], 10, 3);
+
+        let result: Vec<bool> = con
+            .hpexpire_at("foo", (now_milliseconds + 10000) as i64, &["f0", "f1"])
+            .unwrap();
+        assert_eq!(result, vec![true, true]);
+        let ttls: Vec<i64> = con.httl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10, 3);
+        assert_approx_eq!(ttls[1], 10, 3);
+
+        assert_eq!(con.unlink(&["foo"]), Ok(1));
     }
 
     // Requires redis-server >= 4.0.0.
