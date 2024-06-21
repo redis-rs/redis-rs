@@ -478,6 +478,7 @@ pub use crate::types::{
     Expiry,
     SetExpiry,
     ExistenceCheck,
+    ExpireOption,
 
     // error and result types
     RedisError,

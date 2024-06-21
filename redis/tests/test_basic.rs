@@ -4,10 +4,12 @@ mod support;
 
 #[cfg(test)]
 mod basic {
+    use assert_approx_eq::assert_approx_eq;
     use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, ScanOptions};
     use redis::{
-        Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
-        PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
+        Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
+        ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
+        ToRedisArgs, Value,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
@@ -302,6 +304,92 @@ mod basic {
         assert_eq!(h.len(), 2);
         assert_eq!(h.get("key_1"), Some(&1i32));
         assert_eq!(h.get("key_2"), Some(&2i32));
+    }
+
+    #[test]
+    fn test_hash_expiration() {
+        let ctx = TestContext::new();
+        // Hash expiration is only supported in Redis 7.4.0 and later.
+        if ctx.get_version() < (7, 4, 0) {
+            return;
+        }
+        let mut con = ctx.connection();
+        redis::cmd("HMSET")
+            .arg("foo")
+            .arg("f0")
+            .arg("v0")
+            .arg("f1")
+            .arg("v1")
+            .exec(&mut con)
+            .unwrap();
+
+        let result: Vec<i32> = con
+            .hexpire("foo", 10, ExpireOption::NONE, &["f0", "f1"])
+            .unwrap();
+        assert_eq!(result, vec![1, 1]);
+
+        let ttls: Vec<i64> = con.httl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10, 3);
+        assert_approx_eq!(ttls[1], 10, 3);
+
+        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls.len(), 2);
+        assert_approx_eq!(ttls[0], 10000, 3000);
+        assert_approx_eq!(ttls[1], 10000, 3000);
+
+        let result: Vec<i32> = con
+            .hexpire("foo", 10, ExpireOption::NX, &["f0", "f1"])
+            .unwrap();
+        // should return 0 because the keys already have an expiration time
+        assert_eq!(result, vec![0, 0]);
+
+        let result: Vec<i32> = con
+            .hexpire("foo", 10, ExpireOption::XX, &["f0", "f1"])
+            .unwrap();
+        // should return 1 because the keys already have an expiration time
+        assert_eq!(result, vec![1, 1]);
+
+        let result: Vec<i32> = con
+            .hpexpire("foo", 1000, ExpireOption::GT, &["f0", "f1"])
+            .unwrap();
+        // should return 0 because the keys already have an expiration time greater than 1000
+        assert_eq!(result, vec![0, 0]);
+
+        let result: Vec<i32> = con
+            .hpexpire("foo", 1000, ExpireOption::LT, &["f0", "f1"])
+            .unwrap();
+        // should return 1 because the keys already have an expiration time less than 1000
+        assert_eq!(result, vec![1, 1]);
+
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let result: Vec<i32> = con
+            .hexpire_at(
+                "foo",
+                (now_secs + 10) as i64,
+                ExpireOption::GT,
+                &["f0", "f1"],
+            )
+            .unwrap();
+        assert_eq!(result, vec![1, 1]);
+
+        let result: Vec<u64> = con.hexpire_time("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![now_secs + 10, now_secs + 10]);
+        let result: Vec<u64> = con.hpexpire_time("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(
+            result,
+            vec![now_secs * 1000 + 10_000, now_secs * 1000 + 10_000]
+        );
+
+        let result: Vec<bool> = con.hpersist("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![true, true]);
+        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls, vec![-1, -1]);
+
+        assert_eq!(con.unlink(&["foo"]), Ok(1));
     }
 
     // Requires redis-server >= 4.0.0.
