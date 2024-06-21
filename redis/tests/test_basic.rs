@@ -4,7 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod basic {
-    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo};
+    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, ScanOptions};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, Expiry,
         PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
@@ -412,6 +412,24 @@ mod basic {
         }
 
         assert_eq!(unseen.len(), 0);
+    }
+
+    #[test]
+    fn test_scan_with_options_works() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        for i in 0..20usize {
+            let _: () = con.append(format!("test/{i}"), i).unwrap();
+            let _: () = con.append(format!("other/{i}"), i).unwrap();
+        }
+        let opts = ScanOptions::default().set_count(20).set_pattern("test/*");
+        let values = con.scan_options::<String>(opts).unwrap();
+        let values: Vec<_> = values.collect();
+        assert_eq!(values.len(), 20);
+        let opts = ScanOptions::default();
+        let values = con.scan_options::<String>(opts).unwrap();
+        let values: Vec<_> = values.collect();
+        assert_eq!(values.len(), 40);
     }
 
     #[test]

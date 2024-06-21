@@ -2187,26 +2187,19 @@ impl PubSubCommands for Connection {
 /// ```
 #[derive(Default)]
 pub struct ScanOptions {
-    cursor: u64,
     pattern: Option<String>,
     count: Option<usize>,
 }
 
 impl ScanOptions {
     /// Limit the results to the first N matching items.
-    pub fn count(mut self, n: usize) -> Self {
+    pub fn set_count(mut self, n: usize) -> Self {
         self.count = Some(n);
         self
     }
 
-    /// Cursor at which to start scan
-    pub fn cursor(mut self, n: u64) -> Self {
-        self.cursor = n;
-        self
-    }
-
     /// Pattern for scan
-    pub fn pattern(mut self, p: impl Into<String>) -> Self {
+    pub fn set_pattern(mut self, p: impl Into<String>) -> Self {
         self.pattern = Some(p.into());
         self
     }
