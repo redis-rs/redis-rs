@@ -38,7 +38,7 @@ mod test_cluster_scan_async {
                 .await;
         }
         let mut shutdown_cmd = cmd("SHUTDOWN");
-        shutdown_cmd.arg("NOSAVE").arg("NOW").arg("FORCE");
+        shutdown_cmd.arg("NOSAVE");
         let _: RedisResult<Value> = cluster_conn
             .route_command(&shutdown_cmd, random_node_route_info.clone())
             .await;
@@ -314,7 +314,7 @@ mod test_cluster_scan_async {
                 }
                 for master in masters.iter() {
                     let mut shut_cmd = cmd("SHUTDOWN");
-                    shut_cmd.arg("NOSAVE").arg("NOW").arg("FORCE");
+                    shut_cmd.arg("NOSAVE");
                     let _ = connection
                         .route_command(
                             &shut_cmd,
@@ -437,7 +437,7 @@ mod test_cluster_scan_async {
             if count == 5 {
                 for replica in replicas.iter() {
                     let mut shut_cmd = cmd("SHUTDOWN");
-                    shut_cmd.arg("NOSAVE").arg("NOW").arg("FORCE");
+                    shut_cmd.arg("NOSAVE");
                     let ready: RedisResult<Value> = connection
                         .route_command(
                             &shut_cmd,
