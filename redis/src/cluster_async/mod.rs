@@ -133,27 +133,27 @@ where
             })
     }
 
-    // Special handling for 'SCAN' command, using cluster_scan
-    /// Perform a SCAN command on a Redis cluster, using scan state object in order to handle changes in topology
-    /// and make sure that all cluster is scanned.
+    // Special handling for `SCAN` command, using cluster_scan
+    /// Perform a `SCAN` command on a Redis cluster, using scan state object in order to handle changes in topology
+    /// and make sure that all keys that were in the cluster from start to end of the scan are scanned.
     /// In order to make sure all keys in the cluster scanned, topology refresh occurs more frequently and may affect performance.
     ///
     /// # Arguments
     ///
-    /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send ScanStateRC::new(),
-    /// for each subsequent iteration use the returned ScanStateRC.
+    /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
+    /// for each subsequent iteration use the returned [`ScanStateRC`].
     /// * `match_pattern` - An optional match pattern of requested keys.
     /// * `count` - An optional count of keys requested,
     /// the amount returned can vary and not obligated to return exactly count.
-    /// * `object_type` - An optional ObjectType enum of requested key redis type.
+    /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
     ///
     /// # Returns
     ///
-    /// A ScanStateRC for the updated state of the scan and the vector of keys that were found in the scan.
+    /// A [`ScanStateRC`] for the updated state of the scan and the vector of keys that were found in the scan.
     /// structure of returned value:
     /// `Ok((ScanStateRC, Vec<Value>))`
     ///
-    /// When the scan is finished ScanStateRC will be None, and can be checked by calling scan_state_wrapper.is_finished().
+    /// When the scan is finished [`ScanStateRC`] will be None, and can be checked by calling `scan_state_wrapper.is_finished()`.
     ///
     /// # Example
     /// ```rust,no_run
@@ -181,7 +181,7 @@ where
     ///         }
     ///     keys     
     ///     }
-    /// ````
+    /// ```
     pub async fn cluster_scan(
         &mut self,
         scan_state_rc: ScanStateRC,

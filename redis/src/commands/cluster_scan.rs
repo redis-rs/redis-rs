@@ -9,16 +9,16 @@ use strum_macros::Display;
 
 /// This module contains the implementation of scanning operations in a Redis cluster.
 ///
-/// The `ClusterScanArgs` struct represents the arguments for a cluster scan operation,
+/// The [`ClusterScanArgs`] struct represents the arguments for a cluster scan operation,
 /// including the scan state reference, match pattern, count, and object type.
 ///
-/// The `ScanStateRC` struct is a wrapper for managing the state of a scan operation in a cluster.
+/// The [[`ScanStateRC`]] struct is a wrapper for managing the state of a scan operation in a cluster.
 /// It holds a reference to the scan state and provides methods for accessing the state.
 ///
-/// The `ClusterInScan` trait defines the methods for interacting with a Redis cluster during scanning,
+/// The [[`ClusterInScan`]] trait defines the methods for interacting with a Redis cluster during scanning,
 /// including retrieving address information, refreshing slot mapping, and routing commands to specific address.
 ///
-/// The `ScanState` struct represents the state of a scan operation in a Redis cluster.
+/// The [[`ScanState`]] struct represents the state of a scan operation in a Redis cluster.
 /// It holds information about the current scan state, including the cursor position, scanned slots map,
 /// address being scanned, and address's epoch.
 
@@ -85,7 +85,7 @@ pub struct ScanStateRC {
 }
 
 impl ScanStateRC {
-    /// Creates a new instance of `ScanStateRC` from a given `ScanState`.
+    /// Creates a new instance of [`ScanStateRC`] from a given [`ScanState`].
     fn from_scan_state(scan_state: ScanState) -> Self {
         Self {
             scan_state_rc: Arc::new(Some(scan_state)),
@@ -93,9 +93,9 @@ impl ScanStateRC {
         }
     }
 
-    /// Creates a new instance of `ScanStateRC`.
+    /// Creates a new instance of [`ScanStateRC`].
     ///
-    /// This method initializes the `ScanStateRC` with a reference to a `ScanState` that is initially set to `None`.
+    /// This method initializes the [`ScanStateRC`] with a reference to a [`ScanState`] that is initially set to `None`.
     /// An empty ScanState is equivalent to a 0 cursor.
     pub fn new() -> Self {
         Self {
@@ -103,7 +103,7 @@ impl ScanStateRC {
             status: ScanStateStage::Initiating,
         }
     }
-    /// create a new instance of `ScanStateRC` with finished state and empty scan state.
+    /// create a new instance of [`ScanStateRC`] with finished state and empty scan state.
     fn create_finished() -> Self {
         Self {
             scan_state_rc: Arc::new(None),
@@ -227,7 +227,7 @@ impl ScanState {
     }
 
     /// Get the next slot to be scanned based on the scanned slots map.
-    /// If all slots have been scanned, the method returns `END_OF_SCAN`.
+    /// If all slots have been scanned, the method returns [`END_OF_SCAN`].
     fn get_next_slot(&self, scanned_slots_map: &SlotsBitsArray) -> Option<u16> {
         let all_slots_scanned = scanned_slots_map.iter().all(|&word| word == u64::MAX);
         if all_slots_scanned {
@@ -329,7 +329,7 @@ impl ScanState {
     }
 }
 
-// Implement the `ClusterInScan` trait for `InnerCore` of async cluster connection.
+// Implement the [`ClusterInScan`] trait for [`InnerCore`] of async cluster connection.
 #[async_trait]
 impl<C> ClusterInScan for Core<C>
 where
@@ -377,7 +377,7 @@ where
 }
 
 /// Perform a cluster scan operation.
-/// This function performs a scan operation in a Redis cluster using the given `ClusterInScan` connection.
+/// This function performs a scan operation in a Redis cluster using the given [`ClusterInScan`] connection.
 /// It scans the cluster for keys based on the given `ClusterScanArgs` arguments.
 /// The function returns a tuple containing the new scan state cursor and the keys found in the scan operation.
 /// If the scan operation fails, an error is returned.
