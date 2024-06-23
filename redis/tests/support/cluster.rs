@@ -7,6 +7,10 @@ use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
+use redis::cluster_routing::RoutingInfo;
+use redis::cluster_routing::SingleNodeRoutingInfo;
+use redis::from_redis_value;
+
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
@@ -14,6 +18,8 @@ use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
 use redis::PushInfo;
+use redis::RedisResult;
+use redis::Value;
 use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
@@ -468,5 +474,319 @@ impl TestClusterContext {
     pub fn get_version(&self) -> super::Version {
         let mut conn = self.connection();
         super::get_version(&mut conn)
+    }
+
+    pub fn get_node_ids(&self) -> Vec<String> {
+        let mut conn = self.connection();
+        let nodes: Vec<String> = redis::cmd("CLUSTER")
+            .arg("NODES")
+            .query::<String>(&mut conn)
+            .unwrap()
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect();
+        let node_ids: Vec<String> = nodes
+            .iter()
+            .map(|node| node.split(' ').next().unwrap().to_string())
+            .collect();
+        node_ids
+            .iter()
+            .filter(|id| !id.is_empty())
+            .cloned()
+            .collect()
+    }
+
+    // Migrate half the slots from one node to another
+    pub async fn migrate_slots_from_node_to_another(
+        &self,
+        slot_distribution: Vec<(String, String, String, Vec<Vec<u16>>)>,
+    ) {
+        let slots_ranges_of_node_id = slot_distribution[0].3.clone();
+
+        let mut conn = self.async_connection(None).await;
+
+        let from = slot_distribution[0].clone();
+        let target = slot_distribution[1].clone();
+
+        let from_node_id = from.0.clone();
+        let target_node_id = target.0.clone();
+
+        let from_route = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: from.1.clone(),
+            port: from.2.clone().parse::<u16>().unwrap(),
+        });
+        let target_route = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: target.1.clone(),
+            port: target.2.clone().parse::<u16>().unwrap(),
+        });
+
+        // Migrate the slots
+        for range in slots_ranges_of_node_id {
+            let mut slots_of_nodes: std::ops::Range<u16> = range[0]..range[1];
+            let number_of_slots = range[1] - range[0] + 1;
+            // Migrate half the slots
+            for _i in 0..(number_of_slots as f64 / 2.0).floor() as usize {
+                let slot = slots_of_nodes.next().unwrap();
+                // Set the nodes to MIGRATING and IMPORTING
+                let mut set_cmd = redis::cmd("CLUSTER");
+                set_cmd
+                    .arg("SETSLOT")
+                    .arg(slot)
+                    .arg("IMPORTING")
+                    .arg(from_node_id.clone());
+                let result: RedisResult<Value> =
+                    conn.route_command(&set_cmd, target_route.clone()).await;
+                match result {
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!(
+                            "Failed to set slot {} to IMPORTING with error {}",
+                            slot, err
+                        );
+                    }
+                }
+                let mut set_cmd = redis::cmd("CLUSTER");
+                set_cmd
+                    .arg("SETSLOT")
+                    .arg(slot)
+                    .arg("MIGRATING")
+                    .arg(target_node_id.clone());
+                let result: RedisResult<Value> =
+                    conn.route_command(&set_cmd, from_route.clone()).await;
+                match result {
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!(
+                            "Failed to set slot {} to MIGRATING with error {}",
+                            slot, err
+                        );
+                    }
+                }
+                // Get a key from the slot
+                let mut get_key_cmd = redis::cmd("CLUSTER");
+                get_key_cmd.arg("GETKEYSINSLOT").arg(slot).arg(1);
+                let result: RedisResult<Value> =
+                    conn.route_command(&get_key_cmd, from_route.clone()).await;
+                let vec_string_result: Vec<String> = match result {
+                    Ok(val) => {
+                        let val: Vec<String> = from_redis_value(&val).unwrap();
+                        val
+                    }
+                    Err(err) => {
+                        println!("Failed to get keys in slot {}: {:?}", slot, err);
+                        continue;
+                    }
+                };
+                if vec_string_result.is_empty() {
+                    continue;
+                }
+                let key = vec_string_result[0].clone();
+                // Migrate the key, which will make the whole slot to move
+                let mut migrate_cmd = redis::cmd("MIGRATE");
+                migrate_cmd
+                    .arg(target.1.clone())
+                    .arg(target.2.clone())
+                    .arg(key.clone())
+                    .arg(0)
+                    .arg(5000);
+                let result: RedisResult<Value> =
+                    conn.route_command(&migrate_cmd, from_route.clone()).await;
+
+                match result {
+                    Ok(Value::Okay) => {}
+                    Ok(Value::SimpleString(str)) => {
+                        if str != "NOKEY" {
+                            println!(
+                                "Failed to migrate key {} to target node with status {}",
+                                key, str
+                            );
+                        } else {
+                            println!("Key {} does not exist", key);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!(
+                            "Failed to migrate key {} to target node with error {}",
+                            key, err
+                        );
+                    }
+                }
+                // Tell the source and target nodes to propagate the slot change to the cluster
+                let mut setslot_cmd = redis::cmd("CLUSTER");
+                setslot_cmd
+                    .arg("SETSLOT")
+                    .arg(slot)
+                    .arg("NODE")
+                    .arg(target_node_id.clone());
+                let result: RedisResult<Value> =
+                    conn.route_command(&setslot_cmd, target_route.clone()).await;
+                match result {
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!(
+                            "Failed to set slot {} to target NODE with error {}",
+                            slot, err
+                        );
+                    }
+                };
+                self.wait_for_connection_is_ready(&from_route)
+                    .await
+                    .unwrap();
+                self.wait_for_connection_is_ready(&target_route)
+                    .await
+                    .unwrap();
+                self.wait_for_cluster_up();
+            }
+        }
+    }
+
+    // Return the slots distribution of the cluster as a vector of tuples
+    // where the first element is the node id, seconed is host, third is port and the last element is a vector of slots ranges
+    pub fn get_slots_ranges_distribution(
+        &self,
+        cluster_nodes: &str,
+    ) -> Vec<(String, String, String, Vec<Vec<u16>>)> {
+        let nodes_string: Vec<String> = cluster_nodes
+            .split('\n')
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut nodes: Vec<Vec<String>> = vec![];
+        for node in nodes_string {
+            let node_vec: Vec<String> = node.split(' ').map(|s| s.to_string()).collect();
+            if node_vec.last().unwrap() == "connected" || node_vec.last().unwrap() == "disconnected"
+            {
+                continue;
+            } else {
+                nodes.push(node_vec);
+            }
+        }
+        let mut slot_distribution = vec![];
+        for node in &nodes {
+            let mut slots_ranges: Vec<Vec<u16>> = vec![];
+            let mut slots_ranges_vec: Vec<u16> = vec![];
+            let node_id = node[0].clone();
+            let host_and_port: Vec<String> = node[1].split(':').map(|s| s.to_string()).collect();
+            let host = host_and_port[0].clone();
+            let port = host_and_port[1].split('@').next().unwrap().to_string();
+            let slots = node[8..].to_vec();
+            for slot in slots {
+                if slot.contains("->") || slot.contains("<-") {
+                    continue;
+                }
+                if slot.contains('-') {
+                    let range: Vec<u16> =
+                        slot.split('-').map(|s| s.parse::<u16>().unwrap()).collect();
+                    slots_ranges_vec.push(range[0]);
+                    slots_ranges_vec.push(range[1]);
+                    slots_ranges.push(slots_ranges_vec.clone());
+                    slots_ranges_vec.clear();
+                } else {
+                    let slot: u16 = slot.parse::<u16>().unwrap();
+                    slots_ranges_vec.push(slot);
+                    slots_ranges_vec.push(slot);
+                    slots_ranges.push(slots_ranges_vec.clone());
+                    slots_ranges_vec.clear();
+                }
+            }
+            let parsed_node: (String, String, String, Vec<Vec<u16>>) =
+                (node_id, host, port, slots_ranges);
+            slot_distribution.push(parsed_node);
+        }
+        slot_distribution
+    }
+
+    pub async fn get_masters(&self, cluster_nodes: &str) -> Vec<Vec<String>> {
+        let mut masters = vec![];
+        for line in cluster_nodes.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            if parts[2] == "master" || parts[2] == "myself,master" {
+                let id = parts[0];
+                let host_and_port = parts[1].split(':');
+                let host = host_and_port.clone().next().unwrap();
+                let port = host_and_port
+                    .clone()
+                    .last()
+                    .unwrap()
+                    .split('@')
+                    .next()
+                    .unwrap();
+                masters.push(vec![id.to_string(), host.to_string(), port.to_string()]);
+            }
+        }
+        masters
+    }
+
+    pub async fn get_replicas(&self, cluster_nodes: &str) -> Vec<Vec<String>> {
+        let mut replicas = vec![];
+        for line in cluster_nodes.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            if parts[2] == "slave" || parts[2] == "myself,slave" {
+                let id = parts[0];
+                let host_and_port = parts[1].split(':');
+                let host = host_and_port.clone().next().unwrap();
+                let port = host_and_port
+                    .clone()
+                    .last()
+                    .unwrap()
+                    .split('@')
+                    .next()
+                    .unwrap();
+                replicas.push(vec![id.to_string(), host.to_string(), port.to_string()]);
+            }
+        }
+        replicas
+    }
+
+    pub async fn get_cluster_nodes(&self) -> String {
+        let mut conn = self.async_connection(None).await;
+        let mut cmd = redis::cmd("CLUSTER");
+        cmd.arg("NODES");
+        let res: RedisResult<Value> = conn
+            .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            .await;
+        let res: String = from_redis_value(&res.unwrap()).unwrap();
+        res
+    }
+
+    pub async fn wait_for_fail_to_finish(&self, route: &RoutingInfo) -> RedisResult<()> {
+        for _ in 0..500 {
+            let mut conn = self.async_connection(None).await;
+            let cmd = redis::cmd("PING");
+            let res: RedisResult<Value> = conn.route_command(&cmd, route.clone()).await;
+            if res.is_err() {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(50));
+        }
+        Err(redis::RedisError::from((
+            redis::ErrorKind::IoError,
+            "Failed to get connection",
+        )))
+    }
+
+    pub async fn wait_for_connection_is_ready(&self, route: &RoutingInfo) -> RedisResult<()> {
+        let mut i = 1;
+        while i < 1000 {
+            let mut conn = self.async_connection(None).await;
+            let cmd = redis::cmd("PING");
+            let res: RedisResult<Value> = conn.route_command(&cmd, route.clone()).await;
+            if res.is_ok() {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(i * 10));
+            i += 10;
+        }
+        Err(redis::RedisError::from((
+            redis::ErrorKind::IoError,
+            "Failed to get connection",
+        )))
     }
 }

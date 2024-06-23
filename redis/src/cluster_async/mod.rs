@@ -41,6 +41,14 @@ use std::{
 };
 
 use crate::{
+    cluster_slotmap::SlotMap,
+    cluster_topology::SLOT_SIZE,
+    cmd,
+    commands::cluster_scan::{cluster_scan, ClusterScanArgs, ObjectType, ScanStateRC},
+    FromRedisValue, InfoDict,
+};
+
+use crate::{
     aio::{get_socket_addrs, ConnectionLike, MultiplexedConnection, Runtime},
     cluster::slot_cmd,
     cluster_async::connections_logic::{
@@ -125,6 +133,104 @@ where
             })
     }
 
+    // Special handling for `SCAN` command, using cluster_scan
+    /// Perform a `SCAN` command on a Redis cluster, using scan state object in order to handle changes in topology
+    /// and make sure that all keys that were in the cluster from start to end of the scan are scanned.
+    /// In order to make sure all keys in the cluster scanned, topology refresh occurs more frequently and may affect performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
+    /// for each subsequent iteration use the returned [`ScanStateRC`].
+    /// * `match_pattern` - An optional match pattern of requested keys.
+    /// * `count` - An optional count of keys requested,
+    /// the amount returned can vary and not obligated to return exactly count.
+    /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
+    ///
+    /// # Returns
+    ///
+    /// A [`ScanStateRC`] for the updated state of the scan and the vector of keys that were found in the scan.
+    /// structure of returned value:
+    /// `Ok((ScanStateRC, Vec<Value>))`
+    ///
+    /// When the scan is finished [`ScanStateRC`] will be None, and can be checked by calling `scan_state_wrapper.is_finished()`.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use redis::cluster::ClusterClient;
+    /// use redis::{ScanStateRC, FromRedisValue, from_redis_value, Value, ObjectType};
+    ///
+    /// async fn scan_all_cluster() -> Vec<String> {
+    ///     let nodes = vec!["redis://127.0.0.1/"];
+    ///     let client = ClusterClient::new(nodes).unwrap();
+    ///     let mut connection = client.get_async_connection(None).await.unwrap();
+    ///     let mut scan_state_rc = ScanStateRC::new();
+    ///     let mut keys: Vec<String> = vec![];
+    ///     loop {
+    ///         let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) =
+    ///             connection.cluster_scan(scan_state_rc, None, None, None).await.unwrap();
+    ///         scan_state_rc = next_cursor;
+    ///         let mut scan_keys = scan_keys
+    ///             .into_iter()
+    ///             .map(|v| from_redis_value(&v).unwrap())
+    ///             .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
+    ///         keys.append(&mut scan_keys);
+    ///         if scan_state_rc.is_finished() {
+    ///             break;
+    ///             }
+    ///         }
+    ///     keys     
+    ///     }
+    /// ```
+    pub async fn cluster_scan(
+        &mut self,
+        scan_state_rc: ScanStateRC,
+        match_pattern: Option<&str>,
+        count: Option<usize>,
+        object_type: Option<ObjectType>,
+    ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
+        let cluster_scan_args = ClusterScanArgs::new(
+            scan_state_rc,
+            match_pattern.map(|s| s.to_string()),
+            count,
+            object_type,
+        );
+        self.route_cluster_scan(cluster_scan_args).await
+    }
+
+    /// Route cluster scan to be handled by internal cluster_scan command
+    async fn route_cluster_scan(
+        &mut self,
+        cluster_scan_args: ClusterScanArgs,
+    ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
+        let (sender, receiver) = oneshot::channel();
+        self.0
+            .send(Message {
+                cmd: CmdArg::ClusterScan { cluster_scan_args },
+                sender,
+            })
+            .await
+            .map_err(|_| {
+                RedisError::from(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "redis_cluster: Unable to send command",
+                ))
+            })?;
+        receiver
+            .await
+            .unwrap_or_else(|_| {
+                Err(RedisError::from(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "redis_cluster: Unable to receive command",
+                )))
+            })
+            .map(|response| match response {
+                Response::ClusterScanResult(new_scan_state_ref, key) => (new_scan_state_ref, key),
+                Response::Single(_) => unreachable!(),
+                Response::Multiple(_) => unreachable!(),
+            })
+    }
+
     /// Send a command to the given `routing`. If `routing` is [None], it will be computed from `cmd`.
     pub async fn route_command(
         &mut self,
@@ -159,6 +265,7 @@ where
             .map(|response| match response {
                 Response::Single(value) => value,
                 Response::Multiple(_) => unreachable!(),
+                Response::ClusterScanResult(_, _) => unreachable!(),
             })
     }
 
@@ -190,6 +297,7 @@ where
             .map(|response| match response {
                 Response::Multiple(values) => values,
                 Response::Single(_) => unreachable!(),
+                Response::ClusterScanResult(_, _) => unreachable!(),
             })
     }
 }
@@ -198,21 +306,101 @@ type ConnectionMap<C> = connections_container::ConnectionsMap<ConnectionFuture<C
 type ConnectionsContainer<C> =
     self::connections_container::ConnectionsContainer<ConnectionFuture<C>>;
 
-struct InnerCore<C> {
-    conn_lock: RwLock<ConnectionsContainer<C>>,
+pub(crate) struct InnerCore<C> {
+    pub(crate) conn_lock: RwLock<ConnectionsContainer<C>>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
-    slot_refresh_in_progress: AtomicBool,
+    pub(crate) slot_refresh_in_progress: AtomicBool,
     initial_nodes: Vec<ConnectionInfo>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     subscriptions_by_address: RwLock<HashMap<ArcStr, PubSubSubscriptionInfo>>,
     unassigned_subscriptions: RwLock<PubSubSubscriptionInfo>,
 }
 
-type Core<C> = Arc<InnerCore<C>>;
+pub(crate) type Core<C> = Arc<InnerCore<C>>;
 
-struct ClusterConnInner<C> {
-    inner: Core<C>,
+impl<C> InnerCore<C>
+where
+    C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
+{
+    // return address of node for slot
+    pub(crate) async fn get_address_from_slot(
+        &self,
+        slot: u16,
+        slot_addr: SlotAddr,
+    ) -> Option<String> {
+        self.conn_lock
+            .read()
+            .await
+            .slot_map
+            .get_node_address_for_slot(slot, slot_addr)
+    }
+
+    // return epoch of node
+    pub(crate) async fn get_address_epoch(&self, node_address: &str) -> Result<u64, RedisError> {
+        let command = cmd("CLUSTER").arg("INFO").to_owned();
+        let node_conn = self
+            .conn_lock
+            .read()
+            .await
+            .connection_for_address(node_address)
+            .ok_or(RedisError::from((
+                ErrorKind::ResponseError,
+                "Failed to parse cluster info",
+            )))?;
+
+        let cluster_info = node_conn.1.await.req_packed_command(&command).await;
+        match cluster_info {
+            Ok(value) => {
+                let info_dict: Result<InfoDict, RedisError> =
+                    FromRedisValue::from_redis_value(&value);
+                if let Ok(info_dict) = info_dict {
+                    let epoch = info_dict.get("cluster_my_epoch");
+                    if let Some(epoch) = epoch {
+                        Ok(epoch)
+                    } else {
+                        Err(RedisError::from((
+                            ErrorKind::ResponseError,
+                            "Failed to get epoch from cluster info",
+                        )))
+                    }
+                } else {
+                    Err(RedisError::from((
+                        ErrorKind::ResponseError,
+                        "Failed to parse cluster info",
+                    )))
+                }
+            }
+            Err(redis_error) => Err(redis_error),
+        }
+    }
+
+    // return slots of node
+    pub(crate) async fn get_slots_of_address(&self, node_address: &str) -> Vec<u16> {
+        self.conn_lock
+            .read()
+            .await
+            .slot_map
+            .get_slots_of_node(node_address)
+    }
+
+    // Route command to the given address
+    pub(crate) async fn route_command_inner(
+        core: Arc<InnerCore<C>>,
+        cmd: Cmd,
+        address: &str,
+    ) -> RedisResult<Value> {
+        let mut node_conn = ClusterConnInner::get_connection(
+            InternalSingleNodeRouting::ByAddress(address.to_string()),
+            core,
+        )
+        .await?;
+        node_conn.1.req_packed_command(&cmd).await
+    }
+}
+
+pub(crate) struct ClusterConnInner<C> {
+    pub(crate) inner: Core<C>,
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
@@ -299,6 +487,10 @@ enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
     },
+    ClusterScan {
+        // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
+        cluster_scan_args: ClusterScanArgs,
+    },
 }
 
 fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
@@ -346,6 +538,7 @@ fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
 
 enum Response {
     Single(Value),
+    ClusterScanResult(ScanStateRC, Vec<Value>),
     Multiple(Vec<Value>),
 }
 
@@ -419,6 +612,10 @@ impl<C> RequestInfo<C> {
                     };
                     *route = redirect;
                 }
+                // cluster_scan is sent as a normal command internally so we will not reach that point.
+                CmdArg::ClusterScan { .. } => {
+                    unreachable!()
+                }
             }
         }
     }
@@ -443,6 +640,10 @@ impl<C> RequestInfo<C> {
                     let previous_routing = std::mem::take(previous_routing.as_mut());
                     *route = previous_routing;
                 }
+            }
+            // cluster_scan is sent as a normal command internally so we will not reach that point.
+            CmdArg::ClusterScan { .. } => {
+                unreachable!()
             }
         }
     }
@@ -553,7 +754,7 @@ impl<C> Future for Request<C> {
                         return Next::Done.into();
                     }
                     OperationTarget::NotFound => {
-                        // TODO - this is essentially a repeat of the retriable error. probably can remove duplication.
+                        // TODO - this is essentially a repeat of the retirable error. probably can remove duplication.
                         let mut request = this.request.take().unwrap();
                         request.info.reset_redirect();
                         return Next::RefreshSlots {
@@ -839,7 +1040,7 @@ where
         }
     }
 
-    async fn refresh_connections(
+    pub(crate) async fn refresh_connections(
         inner: Arc<InnerCore<C>>,
         addresses: Vec<ArcStr>,
         conn_type: RefreshConnectionType,
@@ -856,7 +1057,7 @@ where
                 |connections_container, address| async move {
                     let node_option = connections_container.remove_node(&address);
 
-                    // overide subscriptions for this connection
+                    // override subscriptions for this connection
                     let mut cluster_params = cluster_params.clone();
                     let subs_guard = subscriptions_by_address.read().await;
                     cluster_params.pubsub_subscriptions = subs_guard.get(&address).cloned();
@@ -887,6 +1088,7 @@ where
         let extract_result = |response| match response {
             Response::Single(value) => value,
             Response::Multiple(_) => unreachable!(),
+            Response::ClusterScanResult(_, _) => unreachable!(),
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
@@ -963,7 +1165,7 @@ where
     }
 
     // Query a node to discover slot-> master mappings with retries
-    async fn refresh_slots_and_subscriptions_with_retries(
+    pub(crate) async fn refresh_slots_and_subscriptions_with_retries(
         inner: Arc<InnerCore<C>>,
     ) -> RedisResult<()> {
         if inner
@@ -1020,7 +1222,7 @@ where
 
         // validate active subscriptions location
         let mut addrs_to_refresh: HashSet<ArcStr> = HashSet::new();
-        // lock the subscriptions and connections for writting - might be possible to optimize
+        // lock the subscriptions and connections for writing - might be possible to optimize
         let mut subs_by_address_guard = inner.subscriptions_by_address.write().await;
         let mut unassigned_subs_guard = inner.unassigned_subscriptions.write().await;
 
@@ -1091,7 +1293,7 @@ where
         drop(unassigned_subs_guard);
         drop(subs_by_address_guard);
 
-        // immediatly trigger connection reestablishment
+        // immediately trigger connection reestablishment
         Self::refresh_connections(
             inner.clone(),
             addrs_to_refresh.into_iter().collect(),
@@ -1135,7 +1337,7 @@ where
         false
     }
 
-    async fn refresh_slots(
+    pub(crate) async fn refresh_slots(
         inner: Arc<InnerCore<C>>,
         curr_retry: usize,
     ) -> Result<(), BackoffError<RedisError>> {
@@ -1148,6 +1350,14 @@ where
                     BackoffError::from(err)
                 }
             })
+    }
+
+    pub(crate) fn check_if_all_slots_covered(slot_map: &SlotMap) -> bool {
+        let mut slots_covered = 0;
+        for (end, slots) in slot_map.slots.iter() {
+            slots_covered += end.saturating_sub(slots.start).saturating_add(1);
+        }
+        slots_covered == SLOT_SIZE
     }
 
     // Query a node to discover slot-> master mappings
@@ -1164,7 +1374,6 @@ where
         )
         .await
         .0?;
-        info!("Found slot map: {new_slots}");
         let connections = &*read_guard;
         // Create a new connection vector of the found nodes
         let mut nodes = new_slots.values().flatten().collect::<Vec<_>>();
@@ -1406,6 +1615,18 @@ where
                 )
                 .await
             }
+            CmdArg::ClusterScan {
+                cluster_scan_args, ..
+            } => {
+                let core = core;
+                let scan_result = cluster_scan(core, cluster_scan_args).await;
+                match scan_result {
+                    Ok((scan_state_ref, values)) => {
+                        Ok(Response::ClusterScanResult(scan_state_ref, values))
+                    }
+                    Err(err) => Err((OperationTarget::FanOut, err)),
+                }
+            }
         }
     }
 
@@ -1571,8 +1792,8 @@ where
         if !pending_requests_guard.is_empty() {
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
             for request in pending_requests.drain(..) {
-                // Drop the request if noone is waiting for a response to free up resources for
-                // requests callers care about (load shedding). It will be ambigous whether the
+                // Drop the request if none is waiting for a response to free up resources for
+                // requests callers care about (load shedding). It will be ambiguous whether the
                 // request actually goes through regardless.
                 if request.sender.is_closed() {
                     continue;
