@@ -422,10 +422,13 @@ mod basic {
             let _: () = con.append(format!("test/{i}"), i).unwrap();
             let _: () = con.append(format!("other/{i}"), i).unwrap();
         }
-        let opts = ScanOptions::default().set_count(20).set_pattern("test/*");
+
+        // scan with pattern
+        let opts = ScanOptions::default().with_count(20).with_pattern("test/*");
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 20);
+        // scan without pattern
         let opts = ScanOptions::default();
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();

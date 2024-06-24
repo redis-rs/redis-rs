@@ -616,12 +616,15 @@ mod basic_async {
             let _: () = con.append(format!("test/{i}"), i).await.unwrap();
             let _: () = con.append(format!("other/{i}"), i).await.unwrap();
         }
-        let opts = ScanOptions::default().set_count(20).set_pattern("test/*");
+        // scan with pattern
+        let opts = ScanOptions::default().with_count(20).with_pattern("test/*");
         let values = con.scan_options::<String>(opts).await.unwrap();
         let values: Vec<_> = timeout(Duration::from_millis(100), values.collect())
             .await
             .unwrap();
         assert_eq!(values.len(), 20);
+
+        // scan without pattern
         let opts = ScanOptions::default();
         let values = con.scan_options::<String>(opts).await.unwrap();
         let values: Vec<_> = timeout(Duration::from_millis(100), values.collect())
