@@ -240,6 +240,16 @@ implement_commands! {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
+    /// Get the time to live for a key in seconds.
+    fn expire_time<K: ToRedisArgs>(key: K) {
+        cmd("EXPIRETIME").arg(key)
+        }
+
+    /// Get the time to live for a key in milliseconds.
+    fn pexpire_time<K: ToRedisArgs>(key: K) {
+        cmd("PEXPIRETIME").arg(key)
+    }
+
     /// Remove the expiration from a key.
     fn persist<K: ToRedisArgs>(key: K) {
         cmd("PERSIST").arg(key)

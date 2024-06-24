@@ -12,7 +12,7 @@ mod basic {
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::thread::{sleep, spawn};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -1513,6 +1513,21 @@ mod basic {
         let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
 
         assert_args!(&opts, "EX", "1000");
+    }
+
+    #[test]
+    fn test_expire_time() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let _: () = con.set_ex("foo", "bar", 10).unwrap();
+        let expire_time_seconds: u64 = con.expire_time("foo").unwrap();
+        // get now unix timestamp
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("expire_time_seconds: {}", expire_time_seconds);
+        assert!(expire_time_seconds > now.as_secs());
+        let expire_time_milliseconds: u128 = con.pexpire_time("foo").unwrap();
+        assert!(expire_time_milliseconds > now.as_millis());
     }
 
     #[test]
