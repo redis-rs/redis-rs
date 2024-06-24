@@ -2193,13 +2193,13 @@ pub struct ScanOptions {
 
 impl ScanOptions {
     /// Limit the results to the first N matching items.
-    pub fn set_count(mut self, n: usize) -> Self {
+    pub fn with_count(mut self, n: usize) -> Self {
         self.count = Some(n);
         self
     }
 
     /// Pattern for scan
-    pub fn set_pattern(mut self, p: impl Into<String>) -> Self {
+    pub fn with_pattern(mut self, p: impl Into<String>) -> Self {
         self.pattern = Some(p.into());
         self
     }
