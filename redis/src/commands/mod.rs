@@ -2170,18 +2170,16 @@ impl PubSubCommands for Connection {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use redis::{Commands, RedisResult, ScanOptions};
-/// fn force_fetching_every_matching_key(
-///     con: &mut redis::Connection,
-///     pattern: Option<&str>,
-///     cursor: Option<u64>,
-///     count: Option<usize>,
-/// ) -> RedisResult<Vec<usize>> {
+/// ```rust
+/// use redis::{Commands, RedisResult, ScanOptions, Iter};
+/// fn force_fetching_every_matching_key<'a, T: redis::FromRedisValue>(
+///     con: &'a mut redis::Connection,
+///     pattern: &'a str,
+///     count: usize,
+/// ) -> RedisResult<Iter<'a, T>> {
 ///     let opts = ScanOptions::default()
-///         .cursor(cursor.unwrap_or_default())
-///         .pattern(pattern)
-///         .count(count);
+///         .with_pattern(pattern)
+///         .with_count(count);
 ///     con.scan_options(opts)
 /// }
 /// ```

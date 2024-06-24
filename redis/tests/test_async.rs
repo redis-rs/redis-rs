@@ -7,8 +7,8 @@ mod basic_async {
     use futures::{prelude::*, StreamExt};
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushKind, RedisConnectionInfo,
-        RedisResult, ScanOptions, Value,
+        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, PushInfo, PushKind,
+        RedisConnectionInfo, RedisResult, ScanOptions, Value,
     };
     use tokio::{sync::mpsc::error::TryRecvError, time::timeout};
 
