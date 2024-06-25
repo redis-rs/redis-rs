@@ -215,14 +215,8 @@ mod test_cluster_scan_async {
                 assert_ne!(slot_distribution, new_slot_distribution);
             }
         }
-
-        // We expect an error of finding address covering slot or not all slots are covered
-        // Both errors message contains "please check the cluster configuration"
-        let res = result
-            .unwrap_err()
-            .to_string()
-            .contains("please check the cluster configuration");
-        assert!(res);
+        // We expect an error of finding address
+        assert!(result.is_err());
     }
 
     #[tokio::test] // Test cluster scan with killing all masters during scan
@@ -764,5 +758,68 @@ mod test_cluster_scan_async {
             assert!(keys.contains(key));
         }
         assert!(keys.len() == expected_keys.len());
+    }
+
+    #[tokio::test]
+    // Testing cluster scan when connection fails in the middle and we get an error
+    // then cluster up again and scanning can continue without any problem
+    async fn test_async_cluster_scan_failover() {
+        let mut cluster = TestClusterContext::new(3, 0);
+        let mut connection = cluster.async_connection(None).await;
+        let mut i = 0;
+        loop {
+            let key = format!("key{}", i);
+            let _: Result<(), redis::RedisError> = redis::cmd("SET")
+                .arg(&key)
+                .arg("value")
+                .query_async(&mut connection)
+                .await;
+            i += 1;
+            if i == 1000 {
+                break;
+            }
+        }
+        let mut scan_state_rc = ScanStateRC::new();
+        let mut keys: Vec<String> = Vec::new();
+        let mut count = 0;
+        loop {
+            count += 1;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                .cluster_scan(scan_state_rc, None, None, None)
+                .await;
+            if scan_response.is_err() {
+                println!("error: {:?}", scan_response);
+            }
+            let (next_cursor, scan_keys) = scan_response.unwrap();
+            scan_state_rc = next_cursor;
+            keys.extend(scan_keys.into_iter().map(|v| from_redis_value(&v).unwrap()));
+            if scan_state_rc.is_finished() {
+                break;
+            }
+            if count == 5 {
+                drop(cluster);
+                let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                    .cluster_scan(scan_state_rc.clone(), None, None, None)
+                    .await;
+                assert!(scan_response.is_err());
+                break;
+            };
+        }
+        cluster = TestClusterContext::new(3, 0);
+        connection = cluster.async_connection(None).await;
+        loop {
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
+                .cluster_scan(scan_state_rc, None, None, None)
+                .await;
+            if scan_response.is_err() {
+                println!("error: {:?}", scan_response);
+            }
+            let (next_cursor, scan_keys) = scan_response.unwrap();
+            scan_state_rc = next_cursor;
+            keys.extend(scan_keys.into_iter().map(|v| from_redis_value(&v).unwrap()));
+            if scan_state_rc.is_finished() {
+                break;
+            }
+        }
     }
 }

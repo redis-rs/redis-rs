@@ -310,7 +310,7 @@ pub(crate) struct InnerCore<C> {
     pub(crate) conn_lock: RwLock<ConnectionsContainer<C>>,
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
-    pub(crate) slot_refresh_in_progress: AtomicBool,
+    slot_refresh_in_progress: AtomicBool,
     initial_nodes: Vec<ConnectionInfo>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     subscriptions_by_address: RwLock<HashMap<ArcStr, PubSubSubscriptionInfo>>,
@@ -383,20 +383,6 @@ where
             .slot_map
             .get_slots_of_node(node_address)
     }
-
-    // Route command to the given address
-    pub(crate) async fn route_command_inner(
-        core: Arc<InnerCore<C>>,
-        cmd: Cmd,
-        address: &str,
-    ) -> RedisResult<Value> {
-        let mut node_conn = ClusterConnInner::get_connection(
-            InternalSingleNodeRouting::ByAddress(address.to_string()),
-            core,
-        )
-        .await?;
-        node_conn.1.req_packed_command(&cmd).await
-    }
 }
 
 pub(crate) struct ClusterConnInner<C> {
@@ -416,7 +402,7 @@ impl<C> Dispose for ClusterConnInner<C> {
 }
 
 #[derive(Clone)]
-enum InternalRoutingInfo<C> {
+pub(crate) enum InternalRoutingInfo<C> {
     SingleNode(InternalSingleNodeRouting<C>),
     MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
 }
@@ -441,7 +427,7 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 }
 
 #[derive(Clone)]
-enum InternalSingleNodeRouting<C> {
+pub(crate) enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
     ByAddress(String),
@@ -536,13 +522,13 @@ fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     return Box::pin(async_std::task::sleep(duration));
 }
 
-enum Response {
+pub(crate) enum Response {
     Single(Value),
     ClusterScanResult(ScanStateRC, Vec<Value>),
     Multiple(Vec<Value>),
 }
 
-enum OperationTarget {
+pub(crate) enum OperationTarget {
     Node { address: ArcStr },
     FanOut,
     NotFound,
@@ -1040,7 +1026,7 @@ where
         }
     }
 
-    pub(crate) async fn refresh_connections(
+    async fn refresh_connections(
         inner: Arc<InnerCore<C>>,
         addresses: Vec<ArcStr>,
         conn_type: RefreshConnectionType,
@@ -1165,7 +1151,7 @@ where
     }
 
     // Query a node to discover slot-> master mappings with retries
-    pub(crate) async fn refresh_slots_and_subscriptions_with_retries(
+    async fn refresh_slots_and_subscriptions_with_retries(
         inner: Arc<InnerCore<C>>,
     ) -> RedisResult<()> {
         if inner
@@ -1196,6 +1182,15 @@ where
         res
     }
 
+    pub(crate) async fn check_topology_and_refresh_if_diff(inner: Arc<InnerCore<C>>) -> bool {
+        if Self::check_for_topology_diff(inner.clone()).await {
+            let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone()).await;
+            true
+        } else {
+            false
+        }
+    }
+
     async fn periodic_topology_check(
         inner: Arc<InnerCore<C>>,
         interval_duration: Duration,
@@ -1207,9 +1202,7 @@ where
             }
             let _ = boxed_sleep(interval_duration).await;
 
-            if Self::check_for_topology_diff(inner.clone()).await {
-                let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone()).await;
-            } else {
+            if !Self::check_topology_and_refresh_if_diff(inner.clone()).await {
                 Self::refresh_pubsub_subscriptions(inner.clone()).await;
             }
         }
@@ -1305,7 +1298,7 @@ where
     /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
     /// topology view differs from the one currently stored in the connection manager.
     /// Returns true if change was detected, otherwise false.
-    pub(crate) async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
+    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes: usize = read_guard.len();
         // TODO: Starting from Rust V1.67, integers has logarithms support.
@@ -1337,7 +1330,7 @@ where
         false
     }
 
-    pub(crate) async fn refresh_slots(
+    async fn refresh_slots(
         inner: Arc<InnerCore<C>>,
         curr_retry: usize,
     ) -> Result<(), BackoffError<RedisError>> {
@@ -1552,7 +1545,7 @@ where
             .map_err(|err| (OperationTarget::FanOut, err))
     }
 
-    async fn try_cmd_request(
+    pub(crate) async fn try_cmd_request(
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
         core: Core<C>,
