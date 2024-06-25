@@ -1305,7 +1305,7 @@ where
     /// Queries log2n nodes (where n represents the number of cluster nodes) to determine whether their
     /// topology view differs from the one currently stored in the connection manager.
     /// Returns true if change was detected, otherwise false.
-    async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
+    pub(crate) async fn check_for_topology_diff(inner: Arc<InnerCore<C>>) -> bool {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes: usize = read_guard.len();
         // TODO: Starting from Rust V1.67, integers has logarithms support.

@@ -146,6 +146,9 @@ pub(crate) trait ClusterInScan {
 
     /// Check if all slots are covered by the cluster
     async fn are_all_slots_covered(&self) -> bool;
+
+    /// Check if the topology of the cluster has changed and refresh the slots if needed
+    async fn refresh_if_topology_changed(&self) -> RedisResult<()>;
 }
 
 /// Represents the state of a scan operation in a Redis cluster.
@@ -283,7 +286,7 @@ impl ScanState {
         &mut self,
         connection: &C,
     ) -> RedisResult<ScanState> {
-        let _ = connection.refresh_slots().await;
+        let _ = connection.refresh_if_topology_changed().await;
         let mut scanned_slots_map = self.scanned_slots_map;
         // If the address epoch changed it mean that some slots in the address are new, so we cant know which slots been there from the beginning and which are new, or out and in later.
         // In this case we will skip updating the scanned_slots_map and will just update the address and the cursor
@@ -373,6 +376,13 @@ where
     }
     async fn are_all_slots_covered(&self) -> bool {
         ClusterConnInner::<C>::check_if_all_slots_covered(&self.conn_lock.read().await.slot_map)
+    }
+    async fn refresh_if_topology_changed(&self) -> RedisResult<()> {
+        if ClusterConnInner::check_for_topology_diff(self.to_owned()).await {
+            self.refresh_slots().await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -594,6 +604,9 @@ mod tests {
     struct MockConnection;
     #[async_trait]
     impl ClusterInScan for MockConnection {
+        async fn refresh_if_topology_changed(&self) -> RedisResult<()> {
+            Ok(())
+        }
         async fn get_address_by_slot(&self, _slot: u16) -> RedisResult<String> {
             Ok("mock_address".to_string())
         }
