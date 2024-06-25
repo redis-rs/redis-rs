@@ -463,28 +463,28 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = redis::cmd("SET")
+        redis::cmd("SET")
             .arg("x")
             .arg("x-value")
-            .query(&mut con)
+            .exec(&mut con)
             .unwrap();
-        let _: () = redis::cmd("SET")
+        redis::cmd("SET")
             .arg("y")
             .arg("y-value")
-            .query(&mut con)
+            .exec(&mut con)
             .unwrap();
 
-        let _: () = redis::cmd("SLAVEOF")
+        redis::cmd("SLAVEOF")
             .arg("1.1.1.1")
             .arg("99")
-            .query(&mut con)
+            .exec(&mut con)
             .unwrap();
 
         let res = redis::pipe()
             .set("x", "another-x-value")
             .ignore()
             .get("y")
-            .query::<()>(&mut con);
+            .exec(&mut con);
         assert_eq!(res.unwrap_err().kind(), ErrorKind::ReadOnly);
 
         // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
@@ -500,9 +500,9 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = redis::pipe().cmd("PING").ignore().query(&mut con).unwrap();
+        redis::pipe().cmd("PING").ignore().exec(&mut con).unwrap();
 
-        let _: () = redis::pipe().query(&mut con).unwrap();
+        redis::pipe().exec(&mut con).unwrap();
     }
 
     #[test]
@@ -537,10 +537,10 @@ mod basic {
         let _: () = con.set("x", 42).unwrap();
 
         // Make Redis a replica of a nonexistent master, thereby making it read-only.
-        let _: () = redis::cmd("slaveof")
+        redis::cmd("slaveof")
             .arg("1.1.1.1")
             .arg("1")
-            .query(&mut con)
+            .exec(&mut con)
             .unwrap();
 
         // Ensure that a write command fails with a READONLY error
@@ -639,10 +639,10 @@ mod basic {
         let mut con = ctx.connection();
 
         let key = "the_key";
-        let _: () = redis::cmd("SET").arg(key).arg(42).query(&mut con).unwrap();
+        redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
 
         loop {
-            let _: () = redis::cmd("WATCH").arg(key).query(&mut con).unwrap();
+            redis::cmd("WATCH").arg(key).exec(&mut con).unwrap();
             let val: isize = redis::cmd("GET").arg(key).query(&mut con).unwrap();
             let response: Option<(isize,)> = redis::pipe()
                 .atomic()
@@ -673,7 +673,7 @@ mod basic {
         let mut con = ctx.connection();
 
         let key = "the_key";
-        let _: () = redis::cmd("SET").arg(key).arg(42).query(&mut con).unwrap();
+        redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
 
         let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
             let val: isize = redis::cmd("GET").arg(key).query(con)?;
@@ -1619,7 +1619,7 @@ mod basic {
         let _ = cmd("CLIENT")
             .arg("TRACKING")
             .arg("ON")
-            .query::<()>(&mut con)
+            .exec(&mut con)
             .unwrap();
         let pipe = build_simple_pipeline_for_invalidation();
         for _ in 0..10 {

@@ -1696,7 +1696,7 @@ pub fn transaction<
 ) -> RedisResult<T> {
     let mut func = func;
     loop {
-        cmd("WATCH").arg(keys).query::<()>(con)?;
+        cmd("WATCH").arg(keys).exec(con)?;
         let mut p = pipe();
         let response: Option<T> = func(con, p.atomic())?;
         match response {
@@ -1706,7 +1706,7 @@ pub fn transaction<
             Some(response) => {
                 // make sure no watch is left in the connection, even if
                 // someone forgot to use the pipeline.
-                cmd("UNWATCH").query::<()>(con)?;
+                cmd("UNWATCH").exec(con)?;
                 return Ok(response);
             }
         }

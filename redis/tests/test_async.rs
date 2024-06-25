@@ -23,11 +23,11 @@ mod basic_async {
             redis::cmd("SET")
                 .arg("key1")
                 .arg(b"foo")
-                .query_async::<()>(&mut con)
+                .exec_async(&mut con)
                 .await?;
             redis::cmd("SET")
                 .arg(&["key2", "bar"])
-                .query_async::<()>(&mut con)
+                .exec_async(&mut con)
                 .await?;
             let result = redis::cmd("MGET")
                 .arg(&["key1", "key2"])
@@ -248,7 +248,7 @@ mod basic_async {
             redis::cmd("slaveof")
                 .arg("1.1.1.1")
                 .arg("1")
-                .query_async::<()>(&mut con)
+                .exec_async(&mut con)
                 .await
                 .unwrap();
 
@@ -287,11 +287,11 @@ mod basic_async {
             redis::cmd("SET")
                 .arg(&key[..])
                 .arg(foo_val.as_bytes())
-                .query_async::<()>(&mut con)
+                .exec_async(&mut con)
                 .await?;
             redis::cmd("SET")
                 .arg(&[&key2, "bar"])
-                .query_async::<()>(&mut con)
+                .exec_async(&mut con)
                 .await?;
             redis::cmd("MGET")
                 .arg(&[&key_2, &key2_2])
@@ -432,7 +432,7 @@ mod basic_async {
                             redis::cmd("SADD")
                                 .arg("foo")
                                 .arg(x)
-                                .query_async::<()>(&mut con)
+                                .exec_async(&mut con)
                                 .await?;
                             unseen.insert(x);
                         }
@@ -771,7 +771,7 @@ mod basic_async {
                 redis::cmd("SET")
                     .arg("foo")
                     .arg("bar")
-                    .query_async::<()>(&mut conn)
+                    .exec_async(&mut conn)
                     .await?;
 
                 let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;
@@ -999,7 +999,7 @@ mod basic_async {
                 redis::cmd("SET")
                     .arg("key1")
                     .arg(b"foo")
-                    .query_async::<()>(&mut con)
+                    .exec_async(&mut con)
                     .await?;
                 let result = redis::cmd("GET").arg(&["key1"]).query_async(&mut con).await;
                 assert_eq!(result, Ok("foo".to_string()));
@@ -1020,7 +1020,7 @@ mod basic_async {
                 redis::cmd("SET")
                     .arg("key1")
                     .arg(b"foo")
-                    .query_async::<()>(&mut con)
+                    .exec_async(&mut con)
                     .await?;
                 let result = redis::cmd("GET").arg(&["key1"]).query_async(&mut con).await;
                 assert_eq!(result, Ok("foo".to_string()));

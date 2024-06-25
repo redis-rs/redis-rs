@@ -9,7 +9,7 @@ async fn main() -> redis::RedisResult<()> {
 
     redis::cmd("SET")
         .arg(&["key2", "bar"])
-        .query_async::<()>(&mut con)
+        .exec_async(&mut con)
         .await?;
 
     let result = redis::cmd("MGET")

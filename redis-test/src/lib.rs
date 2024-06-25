@@ -327,7 +327,7 @@ mod tests {
         cmd("SET")
             .arg("foo")
             .arg("42")
-            .query_async::<()>(&mut conn)
+            .exec_async(&mut conn)
             .await
             .unwrap();
         let result: Result<usize, _> = cmd("GET").arg("foo").query_async(&mut conn).await;
@@ -336,7 +336,7 @@ mod tests {
         cmd("SET")
             .arg("bar")
             .arg("foo")
-            .query_async::<()>(&mut conn)
+            .exec_async(&mut conn)
             .await
             .unwrap();
         let result: Result<Vec<u8>, _> = cmd("GET").arg("bar").query_async(&mut conn).await;
@@ -356,7 +356,7 @@ mod tests {
         let err = cmd("SET")
             .arg("bar")
             .arg("foo")
-            .query::<()>(&mut conn)
+            .exec(&mut conn)
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ClientError);
         assert_eq!(err.detail(), Some("unexpected command"));
@@ -374,7 +374,7 @@ mod tests {
         let err = cmd("SET")
             .arg("bar")
             .arg("foo")
-            .query::<()>(&mut conn)
+            .exec(&mut conn)
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ClientError);
         assert!(err.detail().unwrap().contains("unexpected command"));

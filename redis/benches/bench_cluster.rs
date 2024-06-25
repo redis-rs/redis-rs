@@ -68,7 +68,7 @@ fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection
     }
     group.bench_function("query_pipeline", |b| {
         b.iter(|| {
-            pipe.query::<()>(con).unwrap();
+            pipe.exec(con).unwrap();
             black_box(())
         })
     });

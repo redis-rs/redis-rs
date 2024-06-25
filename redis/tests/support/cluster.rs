@@ -511,16 +511,16 @@ impl TestClusterContext {
             let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
-            let _: () = redis::cmd("ACL")
+            redis::cmd("ACL")
                 .arg("SETUSER")
                 .arg("default")
                 .arg("off")
-                .query(&mut con)
+                .exec(&mut con)
                 .unwrap();
 
             // subsequent unauthenticated command should fail:
             if let Ok(mut con) = client.get_connection() {
-                assert!(redis::cmd("PING").query::<()>(&mut con).is_err());
+                assert!(redis::cmd("PING").exec(&mut con).is_err());
             }
         }
     }
