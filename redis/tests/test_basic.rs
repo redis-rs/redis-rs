@@ -12,7 +12,7 @@ mod basic {
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::thread::{sleep, spawn};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -1513,6 +1513,41 @@ mod basic {
         let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
 
         assert_args!(&opts, "EX", "1000");
+    }
+
+    #[test]
+    fn test_expire_time() {
+        let ctx = TestContext::new();
+        // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
+        if ctx.get_version() < (7, 4, 0) {
+            return;
+        }
+
+        let mut con = ctx.connection();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let _: () = con
+            .set_options(
+                "foo",
+                "bar",
+                SetOptions::default().with_expiration(SetExpiry::EXAT(now + 10)),
+            )
+            .unwrap();
+        let expire_time_seconds: u64 = con.expire_time("foo").unwrap();
+        assert_eq!(expire_time_seconds, now + 10);
+
+        let _: () = con
+            .set_options(
+                "foo",
+                "bar",
+                SetOptions::default().with_expiration(SetExpiry::PXAT(now * 1000 + 12_000)),
+            )
+            .unwrap();
+        let expire_time_milliseconds: u64 = con.pexpire_time("foo").unwrap();
+        assert_eq!(expire_time_milliseconds, now * 1000 + 12_000);
     }
 
     #[test]
