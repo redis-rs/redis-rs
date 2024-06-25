@@ -1518,16 +1518,36 @@ mod basic {
     #[test]
     fn test_expire_time() {
         let ctx = TestContext::new();
+        // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
+        if ctx.get_version() < (7, 4, 0) {
+            return;
+        }
+
         let mut con = ctx.connection();
 
-        let _: () = con.set_ex("foo", "bar", 10).unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let _: () = con
+            .set_options(
+                "foo",
+                "bar",
+                SetOptions::default().with_expiration(SetExpiry::EXAT(now + 10)),
+            )
+            .unwrap();
         let expire_time_seconds: u64 = con.expire_time("foo").unwrap();
-        // get now unix timestamp
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("expire_time_seconds: {}", expire_time_seconds);
-        assert!(expire_time_seconds > now.as_secs());
-        let expire_time_milliseconds: u128 = con.pexpire_time("foo").unwrap();
-        assert!(expire_time_milliseconds > now.as_millis());
+        assert_eq!(expire_time_seconds, now + 10);
+
+        let _: () = con
+            .set_options(
+                "foo",
+                "bar",
+                SetOptions::default().with_expiration(SetExpiry::PXAT(now * 1000 + 12_000)),
+            )
+            .unwrap();
+        let expire_time_milliseconds: u64 = con.pexpire_time("foo").unwrap();
+        assert_eq!(expire_time_milliseconds, now * 1000 + 12_000);
     }
 
     #[test]
