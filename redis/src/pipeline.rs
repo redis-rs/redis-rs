@@ -196,7 +196,7 @@ impl Pipeline {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let mut con = client.get_connection().unwrap();
-    /// let _ : () = redis::pipe().cmd("PING").query(&mut con).unwrap();
+    /// redis::pipe().cmd("PING").query::<()>(&mut con).unwrap();
     /// ```
     ///
     /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
@@ -204,7 +204,18 @@ impl Pipeline {
     ///       it is necessary to call the `clear()` before inserting new commands.
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        self.exec(con).unwrap();
+    }
+
+    /// This is a shortcut to `query`, to avoid having to define generic bounds for `()`.
+    pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
+        self.query::<()>(con)
+    }
+
+    /// This is a shortcut to `query_async`, to avoid having to define generic bounds for `()`.
+    #[cfg(feature = "aio")]
+    pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
+        self.query_async::<()>(con).await
     }
 }
 

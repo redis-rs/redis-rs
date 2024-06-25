@@ -29,11 +29,11 @@
 //!
 //! let key = "test";
 //!
-//! let _: () = cluster_pipe()
+//! cluster_pipe()
 //!     .rpush(key, "123").ignore()
 //!     .ltrim(key, -10, -1).ignore()
 //!     .expire(key, 60).ignore()
-//!     .query(&mut connection).unwrap();
+//!     .exec(&mut connection).unwrap();
 //! ```
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -407,7 +407,7 @@ where
         let mut conn = C::connect(info, None)?;
         if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
-            cmd("READONLY").query::<()>(&mut conn)?;
+            cmd("READONLY").exec(&mut conn)?;
         }
         conn.set_read_timeout(*self.read_timeout.borrow())?;
         conn.set_write_timeout(*self.write_timeout.borrow())?;

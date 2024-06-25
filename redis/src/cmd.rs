@@ -128,8 +128,8 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # async fn scan_set() -> redis::RedisResult<()> {
     /// # let client = redis::Client::open("redis://127.0.0.1/")?;
     /// # let mut con = client.get_multiplexed_async_connection().await?;
-    /// let _ : () = con.sadd("my_set", 42i32).await?;
-    /// let _ : () = con.sadd("my_set", 43i32).await?;
+    /// let _: () = con.sadd("my_set", 42i32).await?;
+    /// let _: () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
     ///     assert!(element == 42 || element == 43);
@@ -524,11 +524,22 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let mut con = client.get_connection().unwrap();
-    /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
+    /// redis::cmd("PING").query::<()>(&mut con).unwrap();
     /// ```
     #[inline]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        self.exec(con).unwrap();
+    }
+
+    /// This is a shortcut to `query`, to avoid having to define generic bounds for `()`.
+    pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
+        self.query::<()>(con)
+    }
+
+    /// This is a shortcut to `query_async`, to avoid having to define generic bounds for `()`.
+    #[cfg(feature = "aio")]
+    pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
+        self.query_async::<()>(con).await
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)

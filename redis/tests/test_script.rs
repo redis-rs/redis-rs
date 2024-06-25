@@ -14,10 +14,10 @@ mod script {
 
         let script = redis::Script::new(r"return {redis.call('GET', KEYS[1]), ARGV[1]}");
 
-        let _: () = redis::cmd("SET")
+        redis::cmd("SET")
             .arg("my_key")
             .arg("foo")
-            .query(&mut con)
+            .exec(&mut con)
             .unwrap();
         let response = script.key("my_key").arg(42).invoke(&mut con);
 

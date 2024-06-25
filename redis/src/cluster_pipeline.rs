@@ -135,11 +135,16 @@ impl ClusterPipeline {
     /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
     /// # let mut con = client.get_connection().unwrap();
     /// let mut pipe = redis::cluster::cluster_pipe();
-    /// let _ : () = pipe.cmd("SET").arg("key_1").arg(42).ignore().query(&mut con).unwrap();
+    /// pipe.cmd("SET").arg("key_1").arg(42).ignore().query::<()>(&mut con).unwrap();
     /// ```
     #[inline]
     pub fn execute(&self, con: &mut ClusterConnection) {
-        self.query::<()>(con).unwrap();
+        self.exec(con).unwrap();
+    }
+
+    /// This is a shortcut to `query`, to avoid having to define generic bounds for `()`.
+    pub fn exec(&self, con: &mut ClusterConnection) -> RedisResult<()> {
+        self.query::<()>(con)
     }
 }
 

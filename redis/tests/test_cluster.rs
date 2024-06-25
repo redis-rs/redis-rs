@@ -239,7 +239,7 @@ mod cluster {
             .arg(42)
             .ignore()
             .cmd(" SCRIPT kill ")
-            .query::<()>(&mut con)
+            .exec(&mut con)
             .unwrap_err();
 
         assert_eq!(
@@ -247,7 +247,7 @@ mod cluster {
         "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
-        let err = cluster_pipe().keys("*").query::<()>(&mut con).unwrap_err();
+        let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
         err.to_string(),
@@ -301,7 +301,7 @@ mod cluster {
                 expected.push(r);
             }
         }
-        pipe.query::<()>(&mut con).unwrap_err();
+        pipe.exec(&mut con).unwrap_err();
 
         std::thread::sleep(std::time::Duration::from_secs(5));
 

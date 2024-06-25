@@ -21,13 +21,9 @@ fn bench_cluster_async(
             runtime
                 .block_on(async {
                     let key = "test_key";
-                    redis::cmd("SET")
-                        .arg(key)
-                        .arg(42)
-                        .query_async::<()>(con)
-                        .await?;
+                    redis::cmd("SET").arg(key).arg(42).exec_async(con).await?;
                     let _: isize = redis::cmd("GET").arg(key).query_async(con).await?;
-                    redis::cmd("DEL").arg(key).query_async::<()>(con).await?;
+                    redis::cmd("DEL").arg(key).exec_async(con).await?;
 
                     Ok::<_, RedisError>(())
                 })
@@ -49,7 +45,7 @@ fn bench_cluster_async(
                 .block_on(async {
                     cmds.iter()
                         .zip(&mut connections)
-                        .map(|(cmd, con)| cmd.query_async::<()>(con))
+                        .map(|(cmd, con)| cmd.exec_async(con))
                         .collect::<stream::FuturesUnordered<_>>()
                         .try_for_each(|()| async { Ok(()) })
                         .await
@@ -70,7 +66,7 @@ fn bench_cluster_async(
 
         b.iter(|| {
             runtime
-                .block_on(async { pipe.query_async::<()>(con).await })
+                .block_on(async { pipe.exec_async(con).await })
                 .unwrap();
             black_box(())
         });

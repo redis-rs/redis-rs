@@ -98,7 +98,7 @@
 //!
 //! ```rust,no_run
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     redis::cmd("SET").arg("my_key").arg(42).query::<()>(con)?;
+//!     redis::cmd("SET").arg("my_key").arg(42).exec(con)?;
 //!     Ok(())
 //! }
 //! ```
@@ -133,7 +133,7 @@
 //! use redis::Commands;
 //!
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     let _ : () = con.set("my_key", 42)?;
+//!     let _: () = con.set("my_key", 42)?;
 //!     Ok(())
 //! }
 //! ```
@@ -366,9 +366,9 @@ use redis::AsyncCommands;
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 let mut con = client.get_multiplexed_async_connection().await?;
 
-let _ : () = con.set("key1", b"foo").await?;
+let _: () = con.set("key1", b"foo").await?;
 
-let _ : () = redis::cmd("SET").arg(&["key2", "bar"]).query_async::<()>(&mut con).await?;
+redis::cmd("SET").arg(&["key2", "bar"]).exec_async(&mut con).await?;
 
 let result = redis::cmd("MGET")
  .arg(&["key1", "key2"])
