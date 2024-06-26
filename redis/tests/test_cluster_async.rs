@@ -1125,7 +1125,7 @@ mod cluster_async {
                     respond_startup(name, cmd)?;
                 }
 
-                if contains_slice(cmd, b"PING") {
+                if contains_slice(cmd, b"PING") || contains_slice(cmd, b"SETNAME") {
                     return Err(Ok(Value::SimpleString("OK".into())));
                 }
 
@@ -1232,9 +1232,18 @@ mod cluster_async {
             },
         );
 
-        // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
-        // If we add more nodes or more setup calls, this number should increase.
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
+        // We expect 6 calls in total. MockEnv creates both synchronous and asynchronous connections, which make the following calls:
+        // - 1 call by the sync connection to `CLUSTER SLOTS` for initializing the client's topology map.
+        // - 3 calls by the async connection to `PING`: one for the user connection when creating the node from initial addresses,
+        //     and two more for checking the user and management connections during client initialization in `refresh_slots`.
+        // - 1 call by the async connection to `CLIENT SETNAME` for setting up the management connection name.
+        // - 1 call by the async connection to `CLUSTER SLOTS` for initializing the client's topology map.
+        // Note: If additional nodes or setup calls are added, this number should increase.
+        let expected_init_calls = 6;
+        assert_eq!(
+            connection_count_clone.load(Ordering::Relaxed),
+            expected_init_calls
+        );
 
         let value = runtime.block_on(connection.route_command(
             &cmd("ECHO"),
@@ -1259,8 +1268,11 @@ mod cluster_async {
         ));
 
         assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
-        // 5 - because of the 4 above, and then another PING for new connections.
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
+        // `expected_init_calls` plus another PING for a new user connection created from refresh_connections
+        assert_eq!(
+            connection_count_clone.load(Ordering::Relaxed),
+            expected_init_calls + 1
+        );
     }
 
     #[test]
