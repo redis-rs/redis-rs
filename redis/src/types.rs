@@ -1194,12 +1194,14 @@ pub trait ToRedisArgs: Sized {
         NumericBehavior::NonNumeric
     }
 
-    /// Returns an indiciation if the value contained is exactly one
-    /// argument.  It returns false if it's zero or more than one.  This
-    /// is used in some high level functions to intelligently switch
-    /// between `GET` and `MGET` variants.
-    fn is_single_arg(&self) -> bool {
-        true
+    /// Returns the number of arguments this value will generate.
+    ///
+    /// This is used in some high level functions to intelligently switch
+    /// between `GET` and `MGET` variants. Also, for some commands like HEXPIREDAT
+    /// which require a specific number of arguments, this method can be used to
+    /// know the number of arguments.
+    fn num_of_args(&self) -> usize {
+        1
     }
 
     /// This only exists internally as a workaround for the lack of
@@ -1228,7 +1230,7 @@ pub trait ToRedisArgs: Sized {
 
     #[doc(hidden)]
     fn is_single_vec_arg(items: &[Self]) -> bool {
-        items.len() == 1 && items[0].is_single_arg()
+        items.len() == 1 && items[0].num_of_args() <= 1
     }
 }
 
@@ -1414,8 +1416,15 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
         ToRedisArgs::write_args_from_slice(self, out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(&self[..])
+    fn num_of_args(&self) -> usize {
+        if ToRedisArgs::is_single_vec_arg(&self[..]) {
+            return 1;
+        }
+        if self.len() == 1 {
+            self[0].num_of_args()
+        } else {
+            self.len()
+        }
     }
 }
 
@@ -1427,8 +1436,15 @@ impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
         ToRedisArgs::write_args_from_slice(self, out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(self)
+    fn num_of_args(&self) -> usize {
+        if ToRedisArgs::is_single_vec_arg(&self[..]) {
+            return 1;
+        }
+        if self.len() == 1 {
+            self[0].num_of_args()
+        } else {
+            self.len()
+        }
     }
 }
 
@@ -1449,10 +1465,10 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
-    fn is_single_arg(&self) -> bool {
+    fn num_of_args(&self) -> usize {
         match *self {
-            Some(ref x) => x.is_single_arg(),
-            None => false,
+            Some(ref x) => x.num_of_args(),
+            None => 0,
         }
     }
 }
@@ -1472,8 +1488,8 @@ macro_rules! deref_to_write_redis_args_impl {
                 (**self).write_redis_args(out)
             }
 
-            fn is_single_arg(&self) -> bool {
-                (**self).is_single_arg()
+            fn num_of_args(&self) -> usize {
+                (**self).num_of_args()
             }
 
             fn describe_numeric_behavior(&self) -> NumericBehavior {
@@ -1516,8 +1532,8 @@ impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
         ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
+    fn num_of_args(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1533,8 +1549,8 @@ impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for ahash
         ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
+    fn num_of_args(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1549,8 +1565,8 @@ impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
         ToRedisArgs::make_arg_iter_ref(self.iter(), out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
+    fn num_of_args(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1565,15 +1581,15 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<
     {
         for (key, value) in self {
             // otherwise things like HMSET will simply NOT work
-            assert!(key.is_single_arg() && value.is_single_arg());
+            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
 
             key.write_redis_args(out);
             value.write_redis_args(out);
         }
     }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
+    fn num_of_args(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1585,15 +1601,15 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
         W: ?Sized + RedisWrite,
     {
         for (key, value) in self {
-            assert!(key.is_single_arg() && value.is_single_arg());
+            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
 
             key.write_redis_args(out);
             value.write_redis_args(out);
         }
     }
 
-    fn is_single_arg(&self) -> bool {
-        self.len() <= 1
+    fn num_of_args(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1611,10 +1627,10 @@ macro_rules! to_redis_args_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn is_single_arg(&self) -> bool {
-                let mut n = 0u32;
+            fn num_of_args(&self) -> usize {
+                let mut n: usize = 0;
                 $(let $name = (); n += 1;)*
-                n == 1
+                n
             }
         }
         to_redis_args_for_tuple_peel!($($name,)*);
@@ -1638,8 +1654,15 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
         ToRedisArgs::write_args_from_slice(self.as_slice(), out)
     }
 
-    fn is_single_arg(&self) -> bool {
-        ToRedisArgs::is_single_vec_arg(self.as_slice())
+    fn num_of_args(&self) -> usize {
+        if ToRedisArgs::is_single_vec_arg(&self[..]) {
+            return 1;
+        }
+        if self.len() == 1 {
+            self[0].num_of_args()
+        } else {
+            self.len()
+        }
     }
 }
 
