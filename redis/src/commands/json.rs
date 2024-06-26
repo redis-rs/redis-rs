@@ -292,7 +292,7 @@ implement_json_commands! {
     /// in square brackets (or empty brackets if not found). If you want to deserialize it
     /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
     fn json_get<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
-        let mut cmd = cmd(if key.is_single_arg() { "JSON.GET" } else { "JSON.MGET" });
+        let mut cmd = cmd(if key.num_of_args() <= 1 { "JSON.GET" } else { "JSON.MGET" });
 
         cmd.arg(key)
            .arg(path);
