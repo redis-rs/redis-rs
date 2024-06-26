@@ -1,5 +1,7 @@
 use crate::aio::ConnectionLike;
-use crate::cluster_async::{ClusterConnInner, Connect, Core, InnerCore};
+use crate::cluster_async::{
+    ClusterConnInner, Connect, Core, InternalRoutingInfo, InternalSingleNodeRouting, Response,
+};
 use crate::cluster_routing::SlotAddr;
 use crate::cluster_topology::SLOT_SIZE;
 use crate::{cmd, from_redis_value, Cmd, ErrorKind, RedisError, RedisResult, Value};
@@ -138,14 +140,14 @@ pub(crate) trait ClusterInScan {
     /// Retrieves the slots assigned to a given address in the cluster.
     async fn get_slots_of_address(&self, address: &str) -> Vec<u16>;
 
-    /// Refreshes the slot mapping of the cluster.
-    async fn refresh_slots(&self) -> RedisResult<()>;
-
     /// Routes a Redis command to a specific address in the cluster.
-    async fn route_command(&self, cmd: &Cmd, address: &str) -> RedisResult<Value>;
+    async fn route_command(&self, cmd: Cmd, address: &str) -> RedisResult<Value>;
 
     /// Check if all slots are covered by the cluster
     async fn are_all_slots_covered(&self) -> bool;
+
+    /// Check if the topology of the cluster has changed and refresh the slots if needed
+    async fn refresh_if_topology_changed(&self);
 }
 
 /// Represents the state of a scan operation in a Redis cluster.
@@ -283,7 +285,7 @@ impl ScanState {
         &mut self,
         connection: &C,
     ) -> RedisResult<ScanState> {
-        let _ = connection.refresh_slots().await;
+        let _ = connection.refresh_if_topology_changed().await;
         let mut scanned_slots_map = self.scanned_slots_map;
         // If the address epoch changed it mean that some slots in the address are new, so we cant know which slots been there from the beginning and which are new, or out and in later.
         // In this case we will skip updating the scanned_slots_map and will just update the address and the cursor
@@ -363,16 +365,27 @@ where
     async fn get_slots_of_address(&self, address: &str) -> Vec<u16> {
         self.as_ref().get_slots_of_address(address).await
     }
-    // Refresh the topology of the cluster
-    async fn refresh_slots(&self) -> RedisResult<()> {
-        ClusterConnInner::refresh_slots_and_subscriptions_with_retries(self.to_owned()).await
-    }
-    async fn route_command(&self, cmd: &Cmd, address: &str) -> RedisResult<Value> {
+    async fn route_command(&self, cmd: Cmd, address: &str) -> RedisResult<Value> {
+        let routing = InternalRoutingInfo::SingleNode(InternalSingleNodeRouting::ByAddress(
+            address.to_string(),
+        ));
         let core = self.to_owned();
-        InnerCore::route_command_inner(core, cmd.clone(), address).await
+        let response = ClusterConnInner::<C>::try_cmd_request(Arc::new(cmd), routing, core)
+            .await
+            .map_err(|err| err.1)?;
+        match response {
+            Response::Single(value) => Ok(value),
+            _ => Err(RedisError::from((
+                ErrorKind::ClientError,
+                "Expected single response, got unexpected response",
+            ))),
+        }
     }
     async fn are_all_slots_covered(&self) -> bool {
         ClusterConnInner::<C>::check_if_all_slots_covered(&self.conn_lock.read().await.slot_map)
+    }
+    async fn refresh_if_topology_changed(&self) {
+        ClusterConnInner::check_topology_and_refresh_if_diff(self.to_owned()).await;
     }
 }
 
@@ -425,24 +438,15 @@ where
     {
         Ok(scan_result) => (from_redis_value(&scan_result)?, scan_state.clone()),
         Err(err) => match err.kind() {
+            // If the scan command failed to route to the address because the address is not found in the cluster or
+            // the connection to the address cant be reached from different reasons, we will check we want to check if
+            // the problem is problem that we can recover from like failover or scale down or some network issue
+            // that we can retry the scan command to an address that own the next slot we are at.
             ErrorKind::IoError | ErrorKind::ClusterConnectionNotFound => {
                 let retry =
                     retry_scan(&scan_state, &core, match_pattern, count, object_type).await?;
                 (from_redis_value(&retry.0?)?, retry.1)
             }
-            ErrorKind::BusyLoadingError | ErrorKind::TryAgain => (
-                from_redis_value(
-                    &send_scan(
-                        &scan_state,
-                        &core,
-                        match_pattern.clone(),
-                        count,
-                        object_type.clone(),
-                    )
-                    .await?,
-                )?,
-                scan_state.clone(),
-            ),
             _ => return Err(err),
         },
     };
@@ -492,7 +496,8 @@ where
     if let Some(object_type) = object_type {
         scan_command.arg("TYPE").arg(object_type.to_string());
     }
-    core.route_command(&scan_command, &scan_state.address_in_scan)
+
+    core.route_command(scan_command, &scan_state.address_in_scan)
         .await
 }
 
@@ -511,14 +516,19 @@ async fn retry_scan<C>(
 where
     C: ClusterInScan,
 {
-    core.refresh_slots().await?;
-
+    // TODO: This mechanism of refreshing on failure to route to address should be part of the routing mechanism
+    // After the routing mechanism is updated to handle this case, this refresh in the case bellow should be removed
+    core.refresh_if_topology_changed().await;
     if !core.are_all_slots_covered().await {
         return Err(RedisError::from((
             ErrorKind::NotAllSlotsCovered,
             "Not all slots are covered by the cluster, please check the cluster configuration",
         )));
     }
+    // If for some reason we failed to reach the address we don't know if its a scale down or a failover.
+    // Since it might be scale down we cant just keep going with the current state we the same cursor as we are at
+    // the same point in the new address, so we need to get the new address own the next slot that haven't been scanned
+    // and start from the beginning of this address.
     let next_slot = scan_state
         .get_next_slot(&scan_state.scanned_slots_map)
         .unwrap_or(0);
@@ -594,6 +604,7 @@ mod tests {
     struct MockConnection;
     #[async_trait]
     impl ClusterInScan for MockConnection {
+        async fn refresh_if_topology_changed(&self) {}
         async fn get_address_by_slot(&self, _slot: u16) -> RedisResult<String> {
             Ok("mock_address".to_string())
         }
@@ -607,10 +618,7 @@ mod tests {
                 vec![0, 1, 2]
             }
         }
-        async fn refresh_slots(&self) -> RedisResult<()> {
-            Ok(())
-        }
-        async fn route_command(&self, _: &Cmd, _: &str) -> RedisResult<Value> {
+        async fn route_command(&self, _: Cmd, _: &str) -> RedisResult<Value> {
             unimplemented!()
         }
         async fn are_all_slots_covered(&self) -> bool {
