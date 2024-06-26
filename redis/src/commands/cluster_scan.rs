@@ -521,6 +521,10 @@ where
             "Not all slots are covered by the cluster, please check the cluster configuration",
         )));
     }
+    // If for some reason we failed to reach the address we don't know if its a scale down or a failover.
+    // Since it might be scale down we cant just keep going with the current state we the same cursor as we are at
+    // the same point in the new address, so we need to get the new address own the next slot that haven't been scanned
+    // and start from the beginning of this address.
     let next_slot = scan_state
         .get_next_slot(&scan_state.scanned_slots_map)
         .unwrap_or(0);

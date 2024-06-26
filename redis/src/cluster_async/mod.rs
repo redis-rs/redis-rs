@@ -1183,12 +1183,11 @@ where
     }
 
     pub(crate) async fn check_topology_and_refresh_if_diff(inner: Arc<InnerCore<C>>) -> bool {
-        if Self::check_for_topology_diff(inner.clone()).await {
+        let topology_changed = Self::check_for_topology_diff(inner.clone()).await;
+        if topology_changed {
             let _ = Self::refresh_slots_and_subscriptions_with_retries(inner.clone()).await;
-            true
-        } else {
-            false
         }
+        topology_changed
     }
 
     async fn periodic_topology_check(
@@ -1201,8 +1200,8 @@ where
                 return;
             }
             let _ = boxed_sleep(interval_duration).await;
-
-            if !Self::check_topology_and_refresh_if_diff(inner.clone()).await {
+            let topology_changed = Self::check_topology_and_refresh_if_diff(inner.clone()).await;
+            if !topology_changed {
                 Self::refresh_pubsub_subscriptions(inner.clone()).await;
             }
         }
