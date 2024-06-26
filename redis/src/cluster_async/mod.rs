@@ -1616,6 +1616,8 @@ where
                     Ok((scan_state_ref, values)) => {
                         Ok(Response::ClusterScanResult(scan_state_ref, values))
                     }
+                    // TODO: After routing issues with sending to random node on not-key based commands are resolved,
+                    // this error should be handled in the same way as other errors and not fan-out.
                     Err(err) => Err((OperationTarget::FanOut, err)),
                 }
             }

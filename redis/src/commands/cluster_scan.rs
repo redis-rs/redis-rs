@@ -376,7 +376,7 @@ where
         match response {
             Response::Single(value) => Ok(value),
             _ => Err(RedisError::from((
-                ErrorKind::ResponseError,
+                ErrorKind::ClientError,
                 "Expected single response, got unexpected response",
             ))),
         }
@@ -438,6 +438,10 @@ where
     {
         Ok(scan_result) => (from_redis_value(&scan_result)?, scan_state.clone()),
         Err(err) => match err.kind() {
+            // If the scan command failed to route to the address because the address is not found in the cluster or
+            // the connection to the address cant be reached from different reasons, we will check we want to check if
+            // the problem is problem that we can recover from like failover or scale down or some network issue
+            // that we can retry the scan command to an address that own the next slot we are at.
             ErrorKind::IoError | ErrorKind::ClusterConnectionNotFound => {
                 let retry =
                     retry_scan(&scan_state, &core, match_pattern, count, object_type).await?;
