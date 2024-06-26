@@ -2557,19 +2557,22 @@ mod cluster_async {
         //             )
         //         );
         //     }
-
+        //     let ports: Vec<_> = cluster
+        //          .nodes
+        //          .iter()
+        //          .map(|info| match info.addr {
+        //              redis::ConnectionAddr::Tcp(_, port) => port,
+        //              redis::ConnectionAddr::TcpTls { port, .. } => port,
+        //              redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+        //          })
+        //          .collect();
         //     // drop and recreate cluster and connections
         //     drop(cluster);
-        //     println!("*********** DROPPED **********");
-
-        //     let cluster = TestClusterContext::new_with_cluster_client_builder(
-        //         3,
-        //         0,
-        //         |builder| builder.retries(3).use_protocol(ProtocolVersion::RESP3),
-        //         //|builder| builder.retries(3),
-        //         false,
-        //     );
-
+        //     println!("*********** DROPPED **********");;
+        // let _cluster = RedisCluster::new(RedisClusterConfiguration {
+        //     ports: ports.clone(),
+        //     ..Default::default()
+        // });
         //     let result = connection
         //     .route_command(&redis::Cmd::new().arg("PUBLISH").arg("test_channel").arg("test_message_from_node_0"), RoutingInfo::SingleNode(node_0_route.clone()))
         //     .await;
@@ -2776,7 +2779,15 @@ mod cluster_async {
         //             ]
         //         )
         //     );
-
+        //     let ports: Vec<_> = cluster
+        //          .nodes
+        //          .iter()
+        //          .map(|info| match info.addr {
+        //              redis::ConnectionAddr::Tcp(_, port) => port,
+        //              redis::ConnectionAddr::TcpTls { port, .. } => port,
+        //              redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+        //          })
+        //          .collect();
         //     // simulate scale in
         //     drop(cluster);
         //     println!("*********** DROPPED **********");
@@ -2920,7 +2931,15 @@ mod cluster_async {
         //             )
         //         );
         //     }
-
+        //     let ports: Vec<_> = cluster
+        //          .nodes
+        //          .iter()
+        //          .map(|info| match info.addr {
+        //              redis::ConnectionAddr::Tcp(_, port) => port,
+        //              redis::ConnectionAddr::TcpTls { port, .. } => port,
+        //              redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+        //          })
+        //          .collect();
         //     // drop and recreate cluster and connections
         //     drop(cluster);
         //     println!("*********** DROPPED **********");
