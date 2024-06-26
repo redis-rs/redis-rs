@@ -493,7 +493,7 @@ impl TestContext {
         let millisecond = Duration::from_millis(1);
         let mut retries = 0;
         loop {
-            match client.get_connection() {
+            match client.get_connection(None) {
                 Err(err) => {
                     if err.is_connection_refusal() {
                         sleep(millisecond);

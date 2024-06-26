@@ -47,7 +47,7 @@ mod test_cluster_scan_async {
 
     #[tokio::test]
     async fn test_async_cluster_scan() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
 
         // Set some keys
@@ -88,7 +88,7 @@ mod test_cluster_scan_async {
 
     #[tokio::test] // test cluster scan with slot migration in the middle
     async fn test_async_cluster_scan_with_migration() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection(None).await;
         // Set some keys
@@ -163,7 +163,7 @@ mod test_cluster_scan_async {
 
     #[tokio::test] // test cluster scan with node fail in the middle
     async fn test_async_cluster_scan_with_fail() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
         // Set some keys
         for i in 0..1000 {
@@ -227,8 +227,11 @@ mod test_cluster_scan_async {
 
     #[tokio::test] // Test cluster scan with killing all masters during scan
     async fn test_async_cluster_scan_with_all_masters_down() {
-        let cluster = TestClusterContext::new(6, 1);
-
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            nodes: 6,
+            replicas: 1,
+            ..Default::default()
+        });
         let mut connection = cluster.async_connection(None).await;
 
         let mut expected_keys: Vec<String> = Vec::new();
@@ -373,8 +376,11 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Test cluster scan with killing all replicas during scan
     async fn test_async_cluster_scan_with_all_replicas_down() {
-        let cluster = TestClusterContext::new(6, 1);
-
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            nodes: 6,
+            replicas: 1,
+            ..Default::default()
+        });
         let mut connection = cluster.async_connection(None).await;
 
         let mut expected_keys: Vec<String> = Vec::new();
@@ -469,7 +475,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Test cluster scan with setting keys for each iteration
     async fn test_async_cluster_scan_set_in_the_middle() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
@@ -528,7 +534,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Test cluster scan with deleting keys for each iteration
     async fn test_async_cluster_scan_dell_in_the_middle() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
@@ -590,7 +596,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Testing cluster scan with Pattern option
     async fn test_async_cluster_scan_with_pattern() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
@@ -648,7 +654,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Testing cluster scan with TYPE option
     async fn test_async_cluster_scan_with_type() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
@@ -706,7 +712,7 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Testing cluster scan with COUNT option
     async fn test_async_cluster_scan_with_count() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection(None).await;
         let mut expected_keys: Vec<String> = Vec::new();
         let mut i = 0;
