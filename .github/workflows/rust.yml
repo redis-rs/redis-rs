@@ -65,8 +65,6 @@ jobs:
         toolchain: ${{ matrix.rust }}
         components: rustfmt
 
-    - uses: Swatinem/rust-cache@v2
-
     - uses: actions/checkout@v4
 
     - name: Run tests
