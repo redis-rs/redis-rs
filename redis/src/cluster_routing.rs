@@ -36,8 +36,8 @@ pub enum AggregateOp {
 pub enum ResponsePolicy {
     /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
-    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
-    OneSucceededNonEmpty,
+    /// Returns the first succeeded non-empty result; if all results are empty, returns `Nil`; otherwise, returns the last received error.
+    FirstSucceededNonEmptyOrAllEmpty,
     /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
     /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
@@ -319,7 +319,7 @@ impl ResponsePolicy {
             b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceededNonEmpty),
+            b"RANDOMKEY" => Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty),
 
             b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
             | b"LATENCY LATEST" => Some(ResponsePolicy::Special),

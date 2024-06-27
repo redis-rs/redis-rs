@@ -608,18 +608,29 @@ where
                 Err(last_failure
                     .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
             }
-            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+                // Attempt to return the first result that isn't `Nil` or an error.
+                // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
+                // If we received only errors, return the last received error.
+                // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty,
+                // thus we return the last received error instead of `Nil`.
                 let mut last_failure = None;
-
+                let num_of_results = results.len();
+                let mut nil_counter = 0;
                 for result in results {
                     match result.map(|(_, res)| res) {
-                        Ok(Value::Nil) => continue,
+                        Ok(Value::Nil) => nil_counter += 1,
                         Ok(val) => return Ok(val),
                         Err(err) => last_failure = Some(err),
                     }
                 }
-                Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                if nil_counter == num_of_results {
+                    Ok(Value::Nil)
+                } else {
+                    Err(last_failure.unwrap_or_else(|| {
+                        (ErrorKind::IoError, "Couldn't find a connection").into()
+                    }))
+                }
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 let results = results
