@@ -20,7 +20,7 @@ macro_rules! implement_commands {
         /// # fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_connection()?;
-        /// redis::cmd("SET").arg("my_key").arg(42).execute(&mut con);
+        /// redis::cmd("SET").arg("my_key").arg(42).exec(&mut con).unwrap();
         /// assert_eq!(redis::cmd("GET").arg("my_key").query(&mut con), Ok(42));
         /// # Ok(()) }
         /// ```

@@ -527,16 +527,24 @@ impl Cmd {
     /// redis::cmd("PING").query::<()>(&mut con).unwrap();
     /// ```
     #[inline]
+    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
         self.exec(con).unwrap();
     }
 
-    /// This is a shortcut to `query`, to avoid having to define generic bounds for `()`.
+    /// This is an alternative to `query`` that can be used if you want to be able to handle a
+    /// command's success or failure but don't care about the command's response. For example,
+    /// this is useful for "SET" commands for which the response's content is not important.
+    /// It avoids the need to define generic bounds for ().
+    #[inline]
     pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
         self.query::<()>(con)
     }
 
-    /// This is a shortcut to `query_async`, to avoid having to define generic bounds for `()`.
+    /// This is an alternative to `query_async` that can be used if you want to be able to handle a
+    /// command's success or failure but don't care about the command's response. For example,
+    /// this is useful for "SET" commands for which the response's content is not important.
+    /// It avoids the need to define generic bounds for ().
     #[cfg(feature = "aio")]
     pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
         self.query_async::<()>(con).await

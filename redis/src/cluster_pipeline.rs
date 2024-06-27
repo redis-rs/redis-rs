@@ -138,11 +138,16 @@ impl ClusterPipeline {
     /// pipe.cmd("SET").arg("key_1").arg(42).ignore().query::<()>(&mut con).unwrap();
     /// ```
     #[inline]
+    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
     pub fn execute(&self, con: &mut ClusterConnection) {
         self.exec(con).unwrap();
     }
 
-    /// This is a shortcut to `query`, to avoid having to define generic bounds for `()`.
+    /// This is an alternative to `query`` that can be used if you want to be able to handle a
+    /// command's success or failure but don't care about the command's response. For example,
+    /// this is useful for "SET" commands for which the response's content is not important.
+    /// It avoids the need to define generic bounds for ().
+    #[inline]
     pub fn exec(&self, con: &mut ClusterConnection) -> RedisResult<()> {
         self.query::<()>(con)
     }

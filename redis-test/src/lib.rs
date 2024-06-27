@@ -304,10 +304,10 @@ mod tests {
             MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
         ]);
 
-        cmd("SET").arg("foo").arg(42).execute(&mut conn);
+        cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
 
-        cmd("SET").arg("bar").arg("foo").execute(&mut conn);
+        cmd("SET").arg("bar").arg("foo").exec(&mut conn).unwrap();
         assert_eq!(
             cmd("GET").arg("bar").query(&mut conn),
             Ok(Value::BulkString(b"foo".as_ref().into()))
@@ -350,7 +350,7 @@ mod tests {
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
         ]);
 
-        cmd("SET").arg("foo").arg(42).execute(&mut conn);
+        cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
 
         let err = cmd("SET")
@@ -370,7 +370,7 @@ mod tests {
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
         ]);
 
-        cmd("SET").arg("foo").arg(42).execute(&mut conn);
+        cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         let err = cmd("SET")
             .arg("bar")
             .arg("foo")
