@@ -17,7 +17,7 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
 
     group.bench_function("set", |b| {
         b.iter(|| {
-            redis::cmd("SET").arg(key).arg(42).execute(con);
+            redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
             black_box(())
         })
     });
@@ -27,8 +27,8 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
     });
 
     let mut set_and_del = || {
-        redis::cmd("SET").arg(key).arg(42).execute(con);
-        redis::cmd("DEL").arg(key).execute(con);
+        redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
+        redis::cmd("DEL").arg(key).exec(con).unwrap();
     };
     group.bench_function("set_and_del", |b| {
         b.iter(|| {

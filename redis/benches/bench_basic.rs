@@ -13,9 +13,9 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
     b.iter(|| {
         let key = "test_key";
-        redis::cmd("SET").arg(key).arg(42).execute(&mut con);
+        redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
         let _: isize = redis::cmd("GET").arg(key).query(&mut con).unwrap();
-        redis::cmd("DEL").arg(key).execute(&mut con);
+        redis::cmd("DEL").arg(key).exec(&mut con).unwrap();
     });
 }
 

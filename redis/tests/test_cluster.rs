@@ -23,8 +23,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("MGET")
@@ -48,8 +52,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("MGET")
@@ -81,8 +89,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         // Read commands would go to the replica nodes
         assert_eq!(
@@ -269,7 +281,7 @@ mod cluster {
             expected.push(format!("bar{i}"));
             pipe.set(&queries[i], &expected[i]).ignore();
         }
-        pipe.execute(&mut con);
+        pipe.exec(&mut con).unwrap();
 
         pipe.clear();
         for q in &queries {
@@ -1000,8 +1012,12 @@ mod cluster {
             redis::cmd("SET")
                 .arg("{x}key1")
                 .arg(b"foo")
-                .execute(&mut con);
-            redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+                .exec(&mut con)
+                .unwrap();
+            redis::cmd("SET")
+                .arg(&["{x}key2", "bar"])
+                .exec(&mut con)
+                .unwrap();
 
             assert_eq!(
                 redis::cmd("MGET")

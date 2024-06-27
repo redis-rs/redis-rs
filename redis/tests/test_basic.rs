@@ -36,8 +36,15 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("key1").arg(b"foo").execute(&mut con);
-        redis::cmd("SET").arg(&["key2", "bar"]).execute(&mut con);
+        redis::cmd("SET")
+            .arg("key1")
+            .arg(b"foo")
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("MGET").arg(&["key1", "key2"]).query(&mut con),
@@ -85,10 +92,14 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(42));
 
-        redis::cmd("SET").arg("bar").arg("foo").execute(&mut con);
+        redis::cmd("SET")
+            .arg("bar")
+            .arg("foo")
+            .exec(&mut con)
+            .unwrap();
         assert_eq!(
             redis::cmd("GET").arg("bar").query(&mut con),
             Ok(b"foo".to_vec())
@@ -102,7 +113,7 @@ mod basic {
         let mut con = ctx.connection();
 
         //The key is a simple value
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         let string_key_type: String = con.key_type("foo").unwrap();
         assert_eq!(string_key_type, "string");
 
@@ -110,7 +121,8 @@ mod basic {
         redis::cmd("LPUSH")
             .arg("list_bar")
             .arg("foo")
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
         let list_key_type: String = con.key_type("list_bar").unwrap();
         assert_eq!(list_key_type, "list");
 
@@ -118,7 +130,8 @@ mod basic {
         redis::cmd("SADD")
             .arg("set_bar")
             .arg("foo")
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
         let set_key_type: String = con.key_type("set_bar").unwrap();
         assert_eq!(set_key_type, "set");
 
@@ -127,7 +140,8 @@ mod basic {
             .arg("sorted_set_bar")
             .arg("1")
             .arg("foo")
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
         let zset_key_type: String = con.key_type("sorted_set_bar").unwrap();
         assert_eq!(zset_key_type, "zset");
 
@@ -136,7 +150,8 @@ mod basic {
             .arg("hset_bar")
             .arg("hset_key_1")
             .arg("foo")
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
         let hash_key_type: String = con.key_type("hset_bar").unwrap();
         assert_eq!(hash_key_type, "hash");
     }
@@ -183,7 +198,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         assert_eq!(redis::cmd("INCR").arg("foo").query(&mut con), Ok(43usize));
     }
 
@@ -192,7 +207,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
 
         assert_eq!(con.get_del("foo"), Ok(42usize));
 
@@ -207,7 +222,11 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(42usize).execute(&mut con);
+        redis::cmd("SET")
+            .arg("foo")
+            .arg(42usize)
+            .exec(&mut con)
+            .unwrap();
 
         // Return of get_ex must match set value
         let ret_value = con.get_ex::<_, usize>("foo", Expiry::EX(1)).unwrap();
@@ -224,7 +243,11 @@ mod basic {
         assert_eq!(after_expire_get, None);
 
         // Persist option test prep
-        redis::cmd("SET").arg("foo").arg(420usize).execute(&mut con);
+        redis::cmd("SET")
+            .arg("foo")
+            .arg(420usize)
+            .exec(&mut con)
+            .unwrap();
 
         // Return of get_ex with persist option must match set value
         let ret_value = con.get_ex::<_, usize>("foo", Expiry::PERSIST).unwrap();
@@ -261,12 +284,14 @@ mod basic {
             .arg("foo")
             .arg("key_1")
             .arg(1)
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
         redis::cmd("HSET")
             .arg("foo")
             .arg("key_2")
             .arg(2)
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
 
         let h: HashMap<String, i32> = redis::cmd("HGETALL").arg("foo").query(&mut con).unwrap();
         assert_eq!(h.len(), 2);
@@ -287,12 +312,12 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(42));
         assert_eq!(con.unlink("foo"), Ok(1));
 
-        redis::cmd("SET").arg("foo").arg(42).execute(&mut con);
-        redis::cmd("SET").arg("bar").arg(42).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
+        redis::cmd("SET").arg("bar").arg(42).exec(&mut con).unwrap();
         assert_eq!(con.unlink(&["foo", "bar"]), Ok(2));
     }
 
@@ -344,7 +369,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(1).execute(&mut con);
+        redis::cmd("SET").arg("foo").arg(1).exec(&mut con).unwrap();
 
         let (a, b): (Option<i32>, Option<i32>) = redis::cmd("MGET")
             .arg("foo")
@@ -368,7 +393,7 @@ mod basic {
         let mut unseen = HashSet::new();
 
         for x in 0..1000 {
-            redis::cmd("SADD").arg("foo").arg(x).execute(&mut con);
+            redis::cmd("SADD").arg("foo").arg(x).exec(&mut con).unwrap();
             unseen.insert(x);
         }
 
@@ -576,7 +601,7 @@ mod basic {
 
         assert_eq!(k1, 42);
 
-        redis::cmd("DEL").arg("pkey_1").execute(&mut con);
+        redis::cmd("DEL").arg("pkey_1").exec(&mut con).unwrap();
 
         // The internal commands vector of the pipeline still contains the previous commands.
         let ((k1,), (k2, k3)): ((i32,), (i32, i32)) = pl
@@ -615,7 +640,7 @@ mod basic {
 
         assert_eq!(k1, 44);
 
-        redis::cmd("DEL").arg("pkey_1").execute(&mut con);
+        redis::cmd("DEL").arg("pkey_1").exec(&mut con).unwrap();
 
         let ((k1, k2),): ((bool, i32),) = pl
             .cmd("SET")
@@ -723,7 +748,11 @@ mod basic {
         });
 
         let _ = barrier.wait();
-        redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("PUBLISH")
+            .arg("foo")
+            .arg(42)
+            .exec(&mut con)
+            .unwrap();
         // We can also call the command directly
         assert_eq!(con.publish("foo", 23), Ok(1));
 
@@ -957,7 +986,11 @@ mod basic {
         // between channel subscription and blocking for messages.
         sleep(Duration::from_millis(100));
 
-        redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("PUBLISH")
+            .arg("foo")
+            .arg(42)
+            .exec(&mut con)
+            .unwrap();
         assert_eq!(con.publish("bar", 23), Ok(1));
 
         // Wait for thread
@@ -977,7 +1010,8 @@ mod basic {
         redis::cmd("HMSET")
             .arg("my_key")
             .arg(&[("field_1", 42), ("field_2", 23)])
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("HGET")
@@ -1414,7 +1448,8 @@ mod basic {
             .arg("SET")
             .arg(b"maxmemory-policy")
             .arg("allkeys-lfu")
-            .execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
 
         let _: () = con.get("object_key_str").unwrap();
         // since maxmemory-policy changed, freq should reset to 1 since we only called
@@ -1700,15 +1735,20 @@ mod basic {
             redis::cmd("SUBSCRIBE")
                 .arg("foo")
                 .set_no_response(true)
-                .execute(&mut pubsub_con);
+                .exec(&mut pubsub_con)
+                .unwrap();
         }
         // We are using different redis connection to send PubSub message but it's okay to re-use the same connection.
-        redis::cmd("PUBLISH").arg("foo").arg(42).execute(&mut con);
+        redis::cmd("PUBLISH")
+            .arg("foo")
+            .arg(42)
+            .exec(&mut con)
+            .unwrap();
         // We can also call the command directly
         assert_eq!(con.publish("foo", 23), Ok(1));
 
         // In sync connection it can't receive push messages from socket without requesting some command
-        redis::cmd("PING").execute(&mut pubsub_con);
+        redis::cmd("PING").exec(&mut pubsub_con).unwrap();
 
         // We have received verification from Redis that it's subscribed to channel.
         let PushInfo { kind, data } = rx.try_recv().unwrap();
