@@ -918,12 +918,15 @@ pub(crate) fn create_rustls_config(
     }
 }
 
-fn connect_auth(con: &mut Connection, connection_info: &RedisConnectionInfo) -> RedisResult<()> {
+fn connect_auth(
+    con: &mut Connection,
+    connection_info: &RedisConnectionInfo,
+    password: &str,
+) -> RedisResult<()> {
     let mut command = cmd("AUTH");
     if let Some(username) = &connection_info.username {
         command.arg(username);
     }
-    let password = connection_info.password.as_ref().unwrap();
     let err = match command.arg(password).query::<Value>(con) {
         Ok(Value::Okay) => return Ok(()),
         Ok(_) => {
@@ -1001,8 +1004,8 @@ fn setup_connection(
         if let Err(err) = val {
             return Err(get_resp3_hello_command_error(err));
         }
-    } else if connection_info.password.is_some() {
-        connect_auth(&mut rv, connection_info)?;
+    } else if let Some(password) = &connection_info.password {
+        connect_auth(&mut rv, connection_info, password)?;
     }
     if connection_info.db != 0 {
         match cmd("SELECT")
