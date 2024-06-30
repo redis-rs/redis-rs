@@ -1,23 +1,61 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
 use crate::cluster::get_connection_addr;
+#[cfg(feature = "cluster-async")]
+use crate::cluster_client::SlotsRefreshRateLimit;
 use crate::cluster_routing::Slot;
 use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap};
 use crate::{cluster::TlsMode, ErrorKind, RedisError, RedisResult, Value};
+#[cfg(all(feature = "cluster-async", not(feature = "tokio-comp")))]
+use async_std::sync::RwLock;
 use derivative::Derivative;
 use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
-use std::time::Duration;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+#[cfg(all(feature = "cluster-async", feature = "tokio-comp"))]
+use tokio::sync::RwLock;
 
-/// The default number of refersh topology retries
+// Exponential backoff constants for retrying a slot refresh
+/// The default number of refresh topology retries in the same call
 pub const DEFAULT_NUMBER_OF_REFRESH_SLOTS_RETRIES: usize = 3;
-/// The default timeout for retrying topology refresh
-pub const DEFAULT_REFRESH_SLOTS_RETRY_TIMEOUT: Duration = Duration::from_secs(1);
+/// The default maximum interval between two retries of the same call for topology refresh
+pub const DEFAULT_REFRESH_SLOTS_RETRY_MAX_INTERVAL: Duration = Duration::from_secs(1);
 /// The default initial interval for retrying topology refresh
 pub const DEFAULT_REFRESH_SLOTS_RETRY_INITIAL_INTERVAL: Duration = Duration::from_millis(500);
 
+// Constants for the intervals between two independent consecutive refresh slots calls
+/// The default wait duration between two consecutive refresh slots calls
+#[cfg(feature = "cluster-async")]
+pub const DEFAULT_SLOTS_REFRESH_WAIT_DURATION: Duration = Duration::from_secs(15);
+/// The default maximum jitter duration to add to the refresh slots wait duration
+#[cfg(feature = "cluster-async")]
+pub const DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI: u64 = 15 * 1000; // 15 seconds
+
 pub(crate) const SLOT_SIZE: u16 = 16384;
 pub(crate) type TopologyHash = u64;
+
+/// Represents the state of slot refresh operations.
+#[cfg(feature = "cluster-async")]
+pub(crate) struct SlotRefreshState {
+    /// Indicates if a slot refresh is currently in progress
+    pub(crate) in_progress: AtomicBool,
+    /// The last slot refresh run timestamp
+    pub(crate) last_run: Arc<RwLock<Option<SystemTime>>>,
+    pub(crate) rate_limiter: SlotsRefreshRateLimit,
+}
+
+#[cfg(feature = "cluster-async")]
+impl SlotRefreshState {
+    pub(crate) fn new(rate_limiter: SlotsRefreshRateLimit) -> Self {
+        Self {
+            in_progress: AtomicBool::new(false),
+            last_run: Arc::new(RwLock::new(None)),
+            rate_limiter,
+        }
+    }
+}
 
 #[derive(Derivative)]
 #[derivative(PartialEq, Eq)]

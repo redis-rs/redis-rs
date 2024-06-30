@@ -7,6 +7,7 @@ mod test_cluster_scan_async {
     use rand::Rng;
     use redis::cluster_routing::{RoutingInfo, SingleNodeRoutingInfo};
     use redis::{cmd, from_redis_value, ObjectType, RedisResult, ScanStateRC, Value};
+    use std::time::Duration;
 
     async fn kill_one_node(
         cluster: &TestClusterContext,
@@ -221,7 +222,12 @@ mod test_cluster_scan_async {
 
     #[tokio::test] // Test cluster scan with killing all masters during scan
     async fn test_async_cluster_scan_with_all_masters_down() {
-        let cluster = TestClusterContext::new(6, 1);
+        let cluster = TestClusterContext::new_with_cluster_client_builder(
+            6,
+            1,
+            |builder| builder.slots_refresh_rate_limit(Duration::from_secs(0), 0),
+            false,
+        );
 
         let mut connection = cluster.async_connection(None).await;
 
@@ -367,7 +373,12 @@ mod test_cluster_scan_async {
     #[tokio::test]
     // Test cluster scan with killing all replicas during scan
     async fn test_async_cluster_scan_with_all_replicas_down() {
-        let cluster = TestClusterContext::new(6, 1);
+        let cluster = TestClusterContext::new_with_cluster_client_builder(
+            6,
+            1,
+            |builder| builder.slots_refresh_rate_limit(Duration::from_secs(0), 0),
+            false,
+        );
 
         let mut connection = cluster.async_connection(None).await;
 

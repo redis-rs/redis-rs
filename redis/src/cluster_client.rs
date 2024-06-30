@@ -1,11 +1,15 @@
 use crate::cluster_slotmap::ReadFromReplicaStrategy;
-use crate::connection::{
-    ConnectionAddr, ConnectionInfo, IntoConnectionInfo, PubSubSubscriptionInfo,
+#[cfg(feature = "cluster-async")]
+use crate::cluster_topology::{
+    DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI, DEFAULT_SLOTS_REFRESH_WAIT_DURATION,
 };
-use crate::push_manager::PushInfo;
+use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
+use crate::{PubSubSubscriptionInfo, PushInfo};
 use rand::Rng;
+#[cfg(feature = "cluster-async")]
+use std::ops::Add;
 use std::time::Duration;
 
 #[cfg(feature = "tls-rustls")]
@@ -35,7 +39,10 @@ struct BuilderParams {
     certs: Option<TlsCertificates>,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
     topology_checks_interval: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
+    slots_refresh_rate_limit: SlotsRefreshRateLimit,
     client_name: Option<String>,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
@@ -79,6 +86,42 @@ impl RetryParams {
     }
 }
 
+/// Configuration for rate limiting slot refresh operations in a Redis cluster.
+///
+/// This struct defines the interval duration between consecutive slot refresh
+/// operations and an additional jitter to introduce randomness in the refresh intervals.
+///
+/// # Fields
+///
+/// * `interval_duration`: The minimum duration to wait between consecutive slot refresh operations.
+/// * `max_jitter_milli`: The maximum jitter in milliseconds to add to the interval duration.
+#[cfg(feature = "cluster-async")]
+#[derive(Clone, Copy)]
+pub(crate) struct SlotsRefreshRateLimit {
+    pub(crate) interval_duration: Duration,
+    pub(crate) max_jitter_milli: u64,
+}
+
+#[cfg(feature = "cluster-async")]
+impl Default for SlotsRefreshRateLimit {
+    fn default() -> Self {
+        Self {
+            interval_duration: DEFAULT_SLOTS_REFRESH_WAIT_DURATION,
+            max_jitter_milli: DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI,
+        }
+    }
+}
+
+#[cfg(feature = "cluster-async")]
+impl SlotsRefreshRateLimit {
+    pub(crate) fn wait_duration(&self) -> Duration {
+        let duration_jitter = match self.max_jitter_milli {
+            0 => Duration::from_millis(0),
+            _ => Duration::from_millis(rand::thread_rng().gen_range(0..self.max_jitter_milli)),
+        };
+        self.interval_duration.add(duration_jitter)
+    }
+}
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
 #[doc(hidden)]
@@ -91,7 +134,10 @@ pub struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
+    #[cfg(feature = "cluster-async")]
     pub(crate) topology_checks_interval: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) slots_refresh_rate_limit: SlotsRefreshRateLimit,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) client_name: Option<String>,
     pub(crate) connection_timeout: Duration,
@@ -119,7 +165,10 @@ impl ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             connection_timeout: value.connection_timeout.unwrap_or(Duration::MAX),
+            #[cfg(feature = "cluster-async")]
             topology_checks_interval: value.topology_checks_interval,
+            #[cfg(feature = "cluster-async")]
+            slots_refresh_rate_limit: value.slots_refresh_rate_limit,
             tls_params,
             client_name: value.client_name,
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
@@ -338,8 +387,44 @@ impl ClusterClientBuilder {
     /// have been any changes in the cluster's topology. If a change is detected, it will trigger a slot refresh.
     /// Unlike slot refreshments, the periodic topology checks only examine a limited number of nodes to query their
     /// topology, ensuring that the check remains quick and efficient.
+    #[cfg(feature = "cluster-async")]
     pub fn periodic_topology_checks(mut self, interval: Duration) -> ClusterClientBuilder {
         self.builder_params.topology_checks_interval = Some(interval);
+        self
+    }
+
+    /// Sets the rate limit for slot refresh operations in the cluster.
+    ///
+    /// This method configures the interval duration between consecutive slot
+    /// refresh operations and an additional jitter to introduce randomness
+    /// in the refresh intervals.
+    ///
+    /// # Parameters
+    ///
+    /// * `interval_duration`: The minimum duration to wait between consecutive slot refresh operations.
+    /// * `max_jitter_milli`: The maximum jitter in milliseconds to add to the interval duration.
+    ///
+    /// # Defaults
+    ///
+    /// If not set, the slots refresh rate limit configurations will be set with the default values:
+    /// ```
+    /// #[cfg(feature = "cluster-async")]
+    /// use redis::cluster_topology::{DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI, DEFAULT_SLOTS_REFRESH_WAIT_DURATION};
+    /// ```
+    ///
+    /// - `interval_duration`: `DEFAULT_SLOTS_REFRESH_WAIT_DURATION`
+    /// - `max_jitter_milli`: `DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI`
+    ///
+    #[cfg(feature = "cluster-async")]
+    pub fn slots_refresh_rate_limit(
+        mut self,
+        interval_duration: Duration,
+        max_jitter_milli: u64,
+    ) -> ClusterClientBuilder {
+        self.builder_params.slots_refresh_rate_limit = SlotsRefreshRateLimit {
+            interval_duration,
+            max_jitter_milli,
+        };
         self
     }
 
@@ -504,6 +589,11 @@ impl ClusterClient {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "cluster-async")]
+    use crate::cluster_topology::{
+        DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI, DEFAULT_SLOTS_REFRESH_WAIT_DURATION,
+    };
+
     use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
@@ -596,5 +686,51 @@ mod tests {
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
         assert!(client.is_err())
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn give_slots_refresh_rate_limit_configurations() {
+        let interval_dur = std::time::Duration::from_secs(20);
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .slots_refresh_rate_limit(interval_dur, 500)
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .cluster_params
+                .slots_refresh_rate_limit
+                .interval_duration,
+            interval_dur
+        );
+        assert_eq!(
+            client
+                .cluster_params
+                .slots_refresh_rate_limit
+                .max_jitter_milli,
+            500
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn dont_give_slots_refresh_rate_limit_configurations_uses_defaults() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .cluster_params
+                .slots_refresh_rate_limit
+                .interval_duration,
+            DEFAULT_SLOTS_REFRESH_WAIT_DURATION
+        );
+        assert_eq!(
+            client
+                .cluster_params
+                .slots_refresh_rate_limit
+                .max_jitter_milli,
+            DEFAULT_SLOTS_REFRESH_MAX_JITTER_MILLI
+        );
     }
 }
