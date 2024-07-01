@@ -765,6 +765,23 @@ mod basic {
     }
 
     #[test]
+    fn pub_sub_subscription_to_multiple_channels() {
+        let ctx = TestContext::new();
+        let mut conn = ctx.connection();
+        let mut pubsub_conn = conn.as_pubsub();
+        pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).unwrap();
+        let mut publish_conn = ctx.connection();
+
+        let _: () = publish_conn.publish("phonewave", "banana").unwrap();
+        let msg_payload: String = pubsub_conn.get_message().unwrap().get_payload().unwrap();
+        assert_eq!("banana".to_string(), msg_payload);
+
+        let _: () = publish_conn.publish("foo", "foobar").unwrap();
+        let msg_payload: String = pubsub_conn.get_message().unwrap().get_payload().unwrap();
+        assert_eq!("foobar".to_string(), msg_payload);
+    }
+
+    #[test]
     fn test_pubsub_unsubscribe() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
@@ -1742,5 +1759,19 @@ mod basic {
             ),
             (kind, data)
         );
+    }
+
+    #[test]
+    fn test_select_db() {
+        let ctx = TestContext::new();
+        let mut connection_info = ctx.client.get_connection_info().clone();
+        connection_info.redis.db = 5;
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut connection = client.get_connection().unwrap();
+        let info: String = redis::cmd("CLIENT")
+            .arg("info")
+            .query(&mut connection)
+            .unwrap();
+        assert!(info.contains("db=5"));
     }
 }

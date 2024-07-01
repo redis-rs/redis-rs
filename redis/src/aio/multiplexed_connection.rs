@@ -4,7 +4,7 @@ use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::push_manager::PushManager;
-use crate::types::{RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{cmd, ConnectionInfo, ProtocolVersion, PushKind, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -21,7 +21,6 @@ use pin_project_lite::pin_project;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
-use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
@@ -510,9 +509,7 @@ impl MultiplexedConnection {
             .pipeline
             .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
-            .map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            });
+            .map_err(|err| err.unwrap_or_else(closed_connection_error));
         if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
@@ -541,9 +538,7 @@ impl MultiplexedConnection {
                 self.response_timeout,
             )
             .await
-            .map_err(|err| {
-                err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            });
+            .map_err(|err| err.unwrap_or_else(closed_connection_error));
 
         if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
