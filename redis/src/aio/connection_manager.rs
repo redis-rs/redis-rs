@@ -2,6 +2,7 @@ use super::RedisFuture;
 use crate::cmd::Cmd;
 use crate::push_manager::PushManager;
 use crate::types::{RedisError, RedisResult, Value};
+use crate::AsyncConnectionConfig;
 use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     Client,
@@ -194,21 +195,18 @@ impl ConnectionManager {
     /// In case of reconnection issues, the manager will retry reconnection
     /// number_of_retries times, with an exponentially increasing delay, calculated as
     /// rand(0 .. factor * (exponent_base ^ current-try)).
+    #[deprecated(note = "Use `new_with_config`")]
     pub async fn new_with_backoff(
         client: Client,
         exponent_base: u64,
         factor: u64,
         number_of_retries: usize,
     ) -> RedisResult<Self> {
-        Self::new_with_backoff_and_timeouts(
-            client,
-            exponent_base,
-            factor,
-            number_of_retries,
-            std::time::Duration::MAX,
-            std::time::Duration::MAX,
-        )
-        .await
+        let config = ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor)
+            .set_number_of_retries(number_of_retries);
+        Self::new_with_config(client, config).await
     }
 
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
@@ -222,6 +220,7 @@ impl ConnectionManager {
     ///
     /// The new connection will time out operations after `response_timeout` has passed.
     /// Each connection attempt to the server will time out after `connection_timeout`.
+    #[deprecated(note = "Use `new_with_config`")]
     pub async fn new_with_backoff_and_timeouts(
         client: Client,
         exponent_base: u64,
@@ -300,11 +299,11 @@ impl ConnectionManager {
         connection_timeout: std::time::Duration,
     ) -> RedisResult<MultiplexedConnection> {
         let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
+        let config = AsyncConnectionConfig::new()
+            .set_connection_timeout(connection_timeout)
+            .set_response_timeout(response_timeout);
         Retry::spawn(retry_strategy, || {
-            client.get_multiplexed_async_connection_with_timeouts(
-                response_timeout,
-                connection_timeout,
-            )
+            client.get_multiplexed_async_connection_with_config(&config)
         })
         .await
     }
