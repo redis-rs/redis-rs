@@ -13,9 +13,9 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 
     b.iter(|| {
         let key = "test_key";
-        redis::cmd("SET").arg(key).arg(42).execute(&mut con);
+        redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
         let _: isize = redis::cmd("GET").arg(key).query(&mut con).unwrap();
-        redis::cmd("DEL").arg(key).execute(&mut con);
+        redis::cmd("DEL").arg(key).exec(&mut con).unwrap();
     });
 }
 
@@ -31,10 +31,10 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                 redis::cmd("SET")
                     .arg(key)
                     .arg(42)
-                    .query_async(&mut con)
+                    .exec_async(&mut con)
                     .await?;
                 let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
-                redis::cmd("DEL").arg(key).query_async(&mut con).await?;
+                redis::cmd("DEL").arg(key).exec_async(&mut con).await?;
                 Ok::<_, RedisError>(())
             })
             .unwrap()
@@ -100,7 +100,7 @@ fn bench_long_pipeline(b: &mut Bencher) {
     let pipe = long_pipeline();
 
     b.iter(|| {
-        pipe.query::<()>(&mut con).unwrap();
+        pipe.exec(&mut con).unwrap();
     });
 }
 
@@ -113,7 +113,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         runtime
-            .block_on(async { pipe.query_async::<_, ()>(&mut con).await })
+            .block_on(async { pipe.exec_async(&mut con).await })
             .unwrap();
     });
 }
@@ -129,7 +129,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 
     b.iter(|| {
         runtime
-            .block_on(async { pipe.query_async::<_, ()>(&mut con).await })
+            .block_on(async { pipe.exec_async(&mut con).await })
             .unwrap();
     });
 }
@@ -154,7 +154,7 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
             .block_on(async {
                 cmds.iter()
                     .zip(&mut connections)
-                    .map(|(cmd, con)| cmd.query_async::<_, ()>(con))
+                    .map(|(cmd, con)| cmd.exec_async(con))
                     .collect::<stream::FuturesUnordered<_>>()
                     .try_for_each(|()| async { Ok(()) })
                     .await

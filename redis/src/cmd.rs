@@ -128,8 +128,8 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # async fn scan_set() -> redis::RedisResult<()> {
     /// # let client = redis::Client::open("redis://127.0.0.1/")?;
     /// # let mut con = client.get_multiplexed_async_connection().await?;
-    /// con.sadd("my_set", 42i32).await?;
-    /// con.sadd("my_set", 43i32).await?;
+    /// let _: () = con.sadd("my_set", 42i32).await?;
+    /// let _: () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
     ///     assert!(element == 42 || element == 43);
@@ -431,10 +431,10 @@ impl Cmd {
     /// Async version of `query`.
     #[inline]
     #[cfg(feature = "aio")]
-    pub async fn query_async<C, T: FromRedisValue>(&self, con: &mut C) -> RedisResult<T>
-    where
-        C: crate::aio::ConnectionLike,
-    {
+    pub async fn query_async<T: FromRedisValue>(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<T> {
         let val = con.req_packed_command(self).await?;
         from_owned_redis_value(val.extract_error()?)
     }
@@ -524,11 +524,30 @@ impl Cmd {
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     /// # let mut con = client.get_connection().unwrap();
-    /// let _ : () = redis::cmd("PING").query(&mut con).unwrap();
+    /// redis::cmd("PING").query::<()>(&mut con).unwrap();
     /// ```
     #[inline]
+    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.query::<()>(con).unwrap();
+        self.exec(con).unwrap();
+    }
+
+    /// This is an alternative to `query`` that can be used if you want to be able to handle a
+    /// command's success or failure but don't care about the command's response. For example,
+    /// this is useful for "SET" commands for which the response's content is not important.
+    /// It avoids the need to define generic bounds for ().
+    #[inline]
+    pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
+        self.query::<()>(con)
+    }
+
+    /// This is an alternative to `query_async` that can be used if you want to be able to handle a
+    /// command's success or failure but don't care about the command's response. For example,
+    /// this is useful for "SET" commands for which the response's content is not important.
+    /// It avoids the need to define generic bounds for ().
+    #[cfg(feature = "aio")]
+    pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
+        self.query_async::<()>(con).await
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)

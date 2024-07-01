@@ -23,8 +23,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("MGET")
@@ -48,8 +52,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         assert_eq!(
             redis::cmd("MGET")
@@ -81,8 +89,12 @@ mod cluster {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
-            .execute(&mut con);
-        redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
 
         // Read commands would go to the replica nodes
         assert_eq!(
@@ -239,7 +251,7 @@ mod cluster {
             .arg(42)
             .ignore()
             .cmd(" SCRIPT kill ")
-            .query::<()>(&mut con)
+            .exec(&mut con)
             .unwrap_err();
 
         assert_eq!(
@@ -247,7 +259,7 @@ mod cluster {
         "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
-        let err = cluster_pipe().keys("*").query::<()>(&mut con).unwrap_err();
+        let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
         err.to_string(),
@@ -269,7 +281,7 @@ mod cluster {
             expected.push(format!("bar{i}"));
             pipe.set(&queries[i], &expected[i]).ignore();
         }
-        pipe.execute(&mut con);
+        pipe.exec(&mut con).unwrap();
 
         pipe.clear();
         for q in &queries {
@@ -301,7 +313,7 @@ mod cluster {
                 expected.push(r);
             }
         }
-        pipe.query::<()>(&mut con).unwrap_err();
+        pipe.exec(&mut con).unwrap_err();
 
         std::thread::sleep(std::time::Duration::from_secs(5));
 
@@ -1000,8 +1012,12 @@ mod cluster {
             redis::cmd("SET")
                 .arg("{x}key1")
                 .arg(b"foo")
-                .execute(&mut con);
-            redis::cmd("SET").arg(&["{x}key2", "bar"]).execute(&mut con);
+                .exec(&mut con)
+                .unwrap();
+            redis::cmd("SET")
+                .arg(&["{x}key2", "bar"])
+                .exec(&mut con)
+                .unwrap();
 
             assert_eq!(
                 redis::cmd("MGET")

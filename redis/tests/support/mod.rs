@@ -496,7 +496,7 @@ impl TestContext {
                 }
             }
         }
-        redis::cmd("FLUSHDB").execute(&mut con);
+        redis::cmd("FLUSHDB").exec(&mut con).unwrap();
 
         TestContext {
             server,
