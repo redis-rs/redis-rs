@@ -74,8 +74,8 @@ impl<C> CmdArg<C> {
                 }
                 // If a specific connection is specified, then reconnecting without resetting the routing
                 // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
+                InternalSingleNodeRouting::Connection { address, .. } => {
+                    *route = InternalSingleNodeRouting::ByAddress(address.clone());
                 }
                 _ => {}
             }
