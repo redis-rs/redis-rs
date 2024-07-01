@@ -780,6 +780,7 @@ pub(crate) enum RetryMethod {
     WaitAndRetry,
     AskRedirect,
     MovedRedirect,
+    ReconnectFromInitialConnections,
 }
 
 /// Indicates a general failure in the library.
@@ -927,6 +928,7 @@ impl RedisError {
     pub fn is_unrecoverable_error(&self) -> bool {
         match self.retry_method() {
             RetryMethod::Reconnect => true,
+            RetryMethod::ReconnectFromInitialConnections => true,
 
             RetryMethod::NoRetry => false,
             RetryMethod::RetryImmediately => false,
@@ -1017,7 +1019,7 @@ impl RedisError {
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ClusterConnectionNotFound => RetryMethod::Reconnect,
+            ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 
             ErrorKind::IoError => match &self.repr {
                 ErrorRepr::IoError(err) => match err.kind() {

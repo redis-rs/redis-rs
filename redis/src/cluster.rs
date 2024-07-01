@@ -769,6 +769,16 @@ where
                             return Err(err);
                         }
                         crate::types::RetryMethod::RetryImmediately => {}
+                        crate::types::RetryMethod::ReconnectFromInitialConnections => {
+                            // TODO - implement reconnect from initial connections
+                            if *self.auto_reconnect.borrow() {
+                                if let Ok(mut conn) = self.connect(&addr) {
+                                    if conn.check_connection() {
+                                        self.connections.borrow_mut().insert(addr, conn);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
