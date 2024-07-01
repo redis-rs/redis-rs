@@ -23,18 +23,18 @@ mod types {
         let twobytesslice: &[_] = &[bytes, bytes][..];
         let twobytesvec = vec![bytes, bytes];
 
-        assert!("foo".is_single_arg());
-        assert!(sslice.is_single_arg());
-        assert!(nestslice.is_single_arg());
-        assert!(nestvec.is_single_arg());
-        assert!(bytes.is_single_arg());
-        assert!(Arc::new(sslice).is_single_arg());
-        assert!(Rc::new(nestslice).is_single_arg());
+        assert_eq!("foo".num_of_args(), 1);
+        assert_eq!(sslice.num_of_args(), 1);
+        assert_eq!(nestslice.num_of_args(), 1);
+        assert_eq!(nestvec.num_of_args(), 1);
+        assert_eq!(bytes.num_of_args(), 1);
+        assert_eq!(Arc::new(sslice).num_of_args(), 1);
+        assert_eq!(Rc::new(nestslice).num_of_args(), 1);
 
-        assert!(!twobytesslice.is_single_arg());
-        assert!(!twobytesvec.is_single_arg());
-        assert!(!Arc::new(twobytesslice).is_single_arg());
-        assert!(!Rc::new(twobytesslice).is_single_arg());
+        assert_eq!(twobytesslice.num_of_args(), 2);
+        assert_eq!(twobytesvec.num_of_args(), 2);
+        assert_eq!(Arc::new(twobytesslice).num_of_args(), 2);
+        assert_eq!(Rc::new(twobytesslice).num_of_args(), 2);
     }
 
     /// The `FromRedisValue` trait provides two methods for parsing:

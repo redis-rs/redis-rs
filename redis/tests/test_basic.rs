@@ -1584,12 +1584,12 @@ mod basic {
         );
 
         if redis_version.0 >= 7 {
-            let min = con.bzmpop_min::<&str, (String, Vec<Vec<(String, String)>>)>(
+            let min = con.bzmpop_min::<&[&str], (String, Vec<Vec<(String, String)>>)>(
                 0.0,
                 vec!["a", "b", "c", "d"].as_slice(),
                 1,
             );
-            let max = con.bzmpop_max::<&str, (String, Vec<Vec<(String, String)>>)>(
+            let max = con.bzmpop_max::<&[&str], (String, Vec<Vec<(String, String)>>)>(
                 0.0,
                 vec!["a", "b", "c", "d"].as_slice(),
                 1,

@@ -95,8 +95,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
         ToRedisArgs::write_redis_args(&self.latitude, out);
     }
 
-    fn is_single_arg(&self) -> bool {
-        false
+    fn num_of_args(&self) -> usize {
+        2
     }
 }
 
@@ -233,8 +233,29 @@ impl ToRedisArgs for RadiusOptions {
         }
     }
 
-    fn is_single_arg(&self) -> bool {
-        false
+    fn num_of_args(&self) -> usize {
+        let mut n: usize = 0;
+        if self.with_coord {
+            n += 1;
+        }
+        if self.with_dist {
+            n += 1;
+        }
+        if self.count.is_some() {
+            n += 2;
+        }
+        match self.order {
+            RadiusOrder::Asc => n += 1,
+            RadiusOrder::Desc => n += 1,
+            _ => {}
+        };
+        if self.store.is_some() {
+            n += 1 + self.store.as_ref().unwrap().len();
+        }
+        if self.store_dist.is_some() {
+            n += 1 + self.store_dist.as_ref().unwrap().len();
+        }
+        n
     }
 }
 
