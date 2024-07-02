@@ -700,7 +700,7 @@ mod basic {
         let mut pubsub_con = ctx.connection();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         // Only useful when RESP3 is enabled
-        pubsub_con.get_push_manager().replace_sender(tx);
+        con.set_sender(tx);
 
         // Barrier is used to make test thread wait to publish
         // until after the pubsub thread has subscribed.
@@ -771,7 +771,7 @@ mod basic {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         // Only useful when RESP3 is enabled
-        con.get_push_manager().replace_sender(tx);
+        con.set_sender(tx);
         {
             let mut pubsub = con.as_pubsub();
             pubsub.subscribe("foo").unwrap();
@@ -1615,7 +1615,7 @@ mod basic {
 
         let mut con = client.get_connection().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager().replace_sender(tx);
+        con.set_sender(tx);
         let _ = cmd("CLIENT")
             .arg("TRACKING")
             .arg("ON")
@@ -1637,7 +1637,7 @@ mod basic {
             );
         }
         let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager().replace_sender(new_tx.clone());
+        con.set_sender(new_tx.clone());
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
         let _: i32 = con.get("key_1").unwrap();
@@ -1671,7 +1671,7 @@ mod basic {
 
         let mut con = client.get_connection().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        con.get_push_manager().replace_sender(tx.clone());
+        con.set_sender(tx.clone());
 
         let _: () = con.set("A", "1").unwrap();
         assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
@@ -1692,7 +1692,7 @@ mod basic {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut pubsub_con = ctx.connection();
-        pubsub_con.get_push_manager().replace_sender(tx);
+        pubsub_con.set_sender(tx);
 
         {
             // `set_no_response` is used because in RESP3
