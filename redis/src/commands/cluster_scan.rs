@@ -52,6 +52,8 @@ pub enum ObjectType {
     ZSet,
     /// Represents a hash object in Redis.
     Hash,
+    /// Represents a stream object in Redis.
+    Stream,
 }
 
 impl ClusterScanArgs {
