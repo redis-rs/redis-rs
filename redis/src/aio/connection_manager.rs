@@ -14,6 +14,7 @@ use futures::{
     FutureExt,
 };
 use futures_util::future::BoxFuture;
+use futures_util::TryFutureExt;
 use std::sync::Arc;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
@@ -137,11 +138,10 @@ pub struct ConnectionManager {
     /// without making the `ConnectionManager` mutable.
     connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
+    config: ConnectionManagerConfig,
+
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
-    number_of_retries: usize,
-    response_timeout: std::time::Duration,
-    connection_timeout: std::time::Duration,
     push_manager: PushManager,
 }
 
@@ -257,6 +257,26 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
+        let mut connection_manager = Self::new_with_config_lazy(client, config);
+
+        let guard = connection_manager.connection.load();
+        let _ = (**guard)
+            .clone()
+            .await
+            .map_err(|e| e.clone_mostly("Reconnecting failed"))
+            .map(|connection| {
+                connection_manager.connection = Arc::new(ArcSwap::from_pointee(
+                    future::ok(connection.clone()).boxed().shared(),
+                ));
+            });
+
+        Ok(connection_manager)
+    }
+
+    /// Lazy version of [`Self::new_with_config`]
+    ///
+    /// The connection establishment is deferred until the first usage of the connection.
+    pub fn new_with_config_lazy(client: Client, config: ConnectionManagerConfig) -> Self {
         // Create a MultiplexedConnection and wait for it to be established
         let push_manager = PushManager::default();
         let runtime = Runtime::locate();
@@ -267,29 +287,28 @@ impl ConnectionManager {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
 
-        let mut connection = Self::new_connection(
+        let push_manager_cloned = push_manager.clone();
+        let connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
             config.number_of_retries,
             config.response_timeout,
             config.connection_timeout,
         )
-        .await?;
+        .map_err(Arc::new)
+        .and_then(|mut connection| async {
+            connection.set_push_manager(push_manager_cloned);
+            Ok(connection)
+        });
 
-        // Wrap the connection in an `ArcSwap` instance for fast atomic access
-        connection.set_push_manager(push_manager.clone()).await;
-        Ok(Self {
+        Self {
             client,
-            connection: Arc::new(ArcSwap::from_pointee(
-                future::ok(connection).boxed().shared(),
-            )),
+            connection: Arc::new(ArcSwap::from_pointee(connection.boxed().shared())),
+            config,
             runtime,
-            number_of_retries: config.number_of_retries,
             retry_strategy,
-            response_timeout: config.response_timeout,
-            connection_timeout: config.connection_timeout,
-            push_manager,
-        })
+            push_manager: push_manager.clone(),
+        }
     }
 
     async fn new_connection(
@@ -316,9 +335,9 @@ impl ConnectionManager {
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
-        let number_of_retries = self.number_of_retries;
-        let response_timeout = self.response_timeout;
-        let connection_timeout = self.connection_timeout;
+        let number_of_retries = self.config.number_of_retries;
+        let response_timeout = self.config.response_timeout;
+        let connection_timeout = self.config.connection_timeout;
         let pmc = self.push_manager.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
             let mut con = Self::new_connection(
@@ -329,7 +348,7 @@ impl ConnectionManager {
                 connection_timeout,
             )
             .await?;
-            con.set_push_manager(pmc).await;
+            con.set_push_manager(pmc);
             Ok(con)
         }
         .boxed()
