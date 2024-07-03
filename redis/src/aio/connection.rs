@@ -28,6 +28,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
+use tracing::info;
 
 /// Represents a stateful redis TCP connection.
 #[deprecated(note = "aio::Connection is deprecated. Use aio::MultiplexedConnection instead.")]
@@ -451,6 +452,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
+                info!("IP of node {:?} is {:?}", host, socket_addr.ip());
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp(socket_addr).await?,
@@ -477,6 +479,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
+                info!("IP of node {:?} is {:?}", host, socket_addr.ip());
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp_tls(host, socket_addr, insecure, tls_params).await?,
