@@ -1490,7 +1490,7 @@ where
     async fn refresh_slots_inner(inner: Arc<InnerCore<C>>, curr_retry: usize) -> RedisResult<()> {
         let read_guard = inner.conn_lock.read().await;
         let num_of_nodes = read_guard.len();
-        const MAX_REQUESTED_NODES: usize = 50;
+        const MAX_REQUESTED_NODES: usize = 10;
         let num_of_nodes_to_query = std::cmp::min(num_of_nodes, MAX_REQUESTED_NODES);
         let (new_slots, topology_hash) = calculate_topology_from_random_nodes(
             &inner,
