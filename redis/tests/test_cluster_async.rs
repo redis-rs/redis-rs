@@ -3758,6 +3758,33 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_blocking_command_when_cluster_drops() {
+        let cluster = TestClusterContext::new_with_cluster_client_builder(
+            3,
+            0,
+            |builder| builder.retries(3),
+            false,
+        );
+        block_on_all(async move {
+            let mut connection = cluster.async_connection(None).await;
+            futures::future::join(
+                async {
+                    let res = connection.blpop::<&str, f64>("foo", 0.0).await;
+                    assert!(res.is_err());
+                    println!("blpop returned error {:?}", res.map_err(|e| e.to_string()));
+                },
+                async {
+                    let _ = sleep(futures_time::time::Duration::from_secs(3)).await;
+                    drop(cluster);
+                },
+            )
+            .await;
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn test_async_cluster_saves_reconnected_connection() {
         let name = "test_async_cluster_saves_reconnected_connection";
         let ping_attempts = Arc::new(AtomicI32::new(0));
