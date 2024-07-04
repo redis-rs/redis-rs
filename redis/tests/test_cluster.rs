@@ -322,12 +322,18 @@ mod cluster {
         let cluster = TestClusterContext::new();
         let mut con = cluster.connection();
 
-        redis::cmd("SET").arg("{key}1").arg("key1").execute(&mut con);
-        redis::cmd("SET").arg("{key}2").arg("key2").execute(&mut con);
+        redis::cmd("SET")
+            .arg("{key}2")
+            .arg("key2")
+            .execute(&mut con);
 
-        con.set_read_timeout(Some(Duration::from_nanos(1))).unwrap();
+        con.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
 
-        let res = redis::cmd("GET").arg("{key}1").query::<()>(&mut con);
+        let res = redis::cmd("BLPOP")
+            .arg("{key}1")
+            .arg(1)
+            .query::<()>(&mut con);
         assert!(res.unwrap_err().is_timeout());
         assert!(!con.is_open());
 
