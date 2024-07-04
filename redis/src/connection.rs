@@ -1242,11 +1242,14 @@ impl Connection {
         };
         // shutdown connection on protocol error
         if let Err(e) = &result {
-            let shutdown = match e.as_io_error().map(|e| e.kind()) {
-                Some(io::ErrorKind::UnexpectedEof) => true,
-                Some(io::ErrorKind::WouldBlock) => true,
-                Some(io::ErrorKind::TimedOut) => true,
-                _ => false,
+            let shutdown = match e.as_io_error() {
+                Some(e) => matches!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                ),
+                None => false,
             };
             if shutdown {
                 // Notify the PushManager that the connection was lost
