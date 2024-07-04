@@ -3,9 +3,12 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
-    use std::sync::{
-        atomic::{self, AtomicI32, Ordering},
-        Arc,
+    use std::{
+        sync::{
+            atomic::{self, AtomicI32, Ordering},
+            Arc,
+        },
+        time::Duration,
     };
 
     use crate::support::*;
@@ -312,6 +315,28 @@ mod cluster {
 
         let got = pipe.query::<Vec<String>>(&mut con).unwrap();
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_cluster_timeout_recycles_connection() {
+        let cluster = TestClusterContext::new();
+        let mut con = cluster.connection();
+
+        redis::cmd("SET").arg("{key}1").arg("key1").execute(&mut con);
+        redis::cmd("SET").arg("{key}2").arg("key2").execute(&mut con);
+
+        con.set_read_timeout(Some(Duration::from_nanos(1))).unwrap();
+
+        let res = redis::cmd("GET").arg("{key}1").query::<()>(&mut con);
+        assert!(res.unwrap_err().is_timeout());
+        assert!(!con.is_open());
+
+        let mut con = cluster.connection();
+        let res = redis::cmd("GET")
+            .arg("{key}2")
+            .query::<String>(&mut con)
+            .unwrap();
+        assert_eq!(res, "key2");
     }
 
     #[test]

@@ -1029,6 +1029,7 @@ impl RedisError {
                     io::ErrorKind::BrokenPipe => RetryMethod::Reconnect,
                     io::ErrorKind::UnexpectedEof => RetryMethod::Reconnect,
 
+                    io::ErrorKind::WouldBlock => RetryMethod::NoRetry,
                     io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
                     io::ErrorKind::Unsupported => RetryMethod::NoRetry,
 
