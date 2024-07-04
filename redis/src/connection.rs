@@ -1245,6 +1245,7 @@ impl Connection {
             let shutdown = match e.as_io_error().map(|e| e.kind()) {
                 Some(io::ErrorKind::UnexpectedEof) => true,
                 Some(io::ErrorKind::WouldBlock) => true,
+                Some(io::ErrorKind::TimedOut) => true,
                 _ => false,
             };
             if shutdown {
