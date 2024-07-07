@@ -33,7 +33,7 @@ use crate::{
     cluster_topology::SLOT_SIZE,
     cmd,
     commands::cluster_scan::{cluster_scan, ClusterScanArgs, ObjectType, ScanStateRC},
-    FromRedisValue, InfoDict,
+    FromRedisValue, InfoDict, ToRedisArgs,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use async_std::task::{spawn, JoinHandle};
@@ -139,7 +139,8 @@ where
             })
     }
 
-    // Special handling for `SCAN` command, using cluster_scan
+    /// Special handling for `SCAN` command, using `cluster_scan`.
+    /// If you wish to use a match pattern, use [`cluster_scan_with_pattern`].
     /// Perform a `SCAN` command on a Redis cluster, using scan state object in order to handle changes in topology
     /// and make sure that all keys that were in the cluster from start to end of the scan are scanned.
     /// In order to make sure all keys in the cluster scanned, topology refresh occurs more frequently and may affect performance.
@@ -147,8 +148,7 @@ where
     /// # Arguments
     ///
     /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
-    /// for each subsequent iteration use the returned [`ScanStateRC`].
-    /// * `match_pattern` - An optional match pattern of requested keys.
+    /// for each subsequent iteration use the returned [`ScanStateRC`].    
     /// * `count` - An optional count of keys requested,
     /// the amount returned can vary and not obligated to return exactly count.
     /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
@@ -174,7 +174,7 @@ where
     ///     let mut keys: Vec<String> = vec![];
     ///     loop {
     ///         let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) =
-    ///             connection.cluster_scan(scan_state_rc, None, None, None).await.unwrap();
+    ///             connection.cluster_scan(scan_state_rc, None, None).await.unwrap();
     ///         scan_state_rc = next_cursor;
     ///         let mut scan_keys = scan_keys
     ///             .into_iter()
@@ -191,13 +191,73 @@ where
     pub async fn cluster_scan(
         &mut self,
         scan_state_rc: ScanStateRC,
-        match_pattern: Option<&str>,
+        count: Option<usize>,
+        object_type: Option<ObjectType>,
+    ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
+        let cluster_scan_args = ClusterScanArgs::new(scan_state_rc, None, count, object_type);
+        self.route_cluster_scan(cluster_scan_args).await
+    }
+
+    /// Special handling for `SCAN` command, using `cluster_scan_with_pattern`.
+    /// It is a special case of [`cluster_scan`], with an additional match pattern.
+    /// Perform a `SCAN` command on a Redis cluster, using scan state object in order to handle changes in topology
+    /// and make sure that all keys that were in the cluster from start to end of the scan are scanned.
+    /// In order to make sure all keys in the cluster scanned, topology refresh occurs more frequently and may affect performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
+    /// for each subsequent iteration use the returned [`ScanStateRC`].
+    /// * `match_pattern` - A match pattern of requested keys.
+    /// * `count` - An optional count of keys requested,
+    /// the amount returned can vary and not obligated to return exactly count.
+    /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
+    ///
+    /// # Returns
+    ///
+    /// A [`ScanStateRC`] for the updated state of the scan and the vector of keys that were found in the scan.
+    /// structure of returned value:
+    /// `Ok((ScanStateRC, Vec<Value>))`
+    ///
+    /// When the scan is finished [`ScanStateRC`] will be None, and can be checked by calling `scan_state_wrapper.is_finished()`.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use redis::cluster::ClusterClient;
+    /// use redis::{ScanStateRC, FromRedisValue, from_redis_value, Value, ObjectType};
+    ///
+    /// async fn scan_all_cluster() -> Vec<String> {
+    ///     let nodes = vec!["redis://127.0.0.1/"];
+    ///     let client = ClusterClient::new(nodes).unwrap();
+    ///     let mut connection = client.get_async_connection(None).await.unwrap();
+    ///     let mut scan_state_rc = ScanStateRC::new();
+    ///     let mut keys: Vec<String> = vec![];
+    ///     loop {
+    ///         let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) =
+    ///             connection.cluster_scan_with_pattern(scan_state_rc, b"my_key", None, None).await.unwrap();
+    ///         scan_state_rc = next_cursor;
+    ///         let mut scan_keys = scan_keys
+    ///             .into_iter()
+    ///             .map(|v| from_redis_value(&v).unwrap())
+    ///             .collect::<Vec<String>>(); // Change the type of `keys` to `Vec<String>`
+    ///         keys.append(&mut scan_keys);
+    ///         if scan_state_rc.is_finished() {
+    ///             break;
+    ///             }
+    ///         }
+    ///     keys     
+    ///     }
+    /// ```
+    pub async fn cluster_scan_with_pattern<K: ToRedisArgs>(
+        &mut self,
+        scan_state_rc: ScanStateRC,
+        match_pattern: K,
         count: Option<usize>,
         object_type: Option<ObjectType>,
     ) -> RedisResult<(ScanStateRC, Vec<Value>)> {
         let cluster_scan_args = ClusterScanArgs::new(
             scan_state_rc,
-            match_pattern.map(|s| s.to_string()),
+            Some(match_pattern.to_redis_args().concat()),
             count,
             object_type,
         );
