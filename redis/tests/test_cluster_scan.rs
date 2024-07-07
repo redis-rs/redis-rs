@@ -66,7 +66,7 @@ mod test_cluster_scan_async {
         let mut keys: Vec<String> = vec![];
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, None, None)
+                .cluster_scan(scan_state_rc, None, None)
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -112,7 +112,7 @@ mod test_cluster_scan_async {
         loop {
             count += 1;
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, None, None)
+                .cluster_scan(scan_state_rc, None, None)
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -183,9 +183,8 @@ mod test_cluster_scan_async {
         let mut result: RedisResult<Value> = Ok(Value::Nil);
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                .cluster_scan(scan_state_rc, None, None, None)
-                .await;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> =
+                connection.cluster_scan(scan_state_rc, None, None).await;
             let (next_cursor, scan_keys) = match scan_response {
                 Ok((cursor, keys)) => (cursor, keys),
                 Err(e) => {
@@ -256,9 +255,8 @@ mod test_cluster_scan_async {
         let mut count = 0;
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                .cluster_scan(scan_state_rc, None, None, None)
-                .await;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> =
+                connection.cluster_scan(scan_state_rc, None, None).await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }
@@ -427,9 +425,8 @@ mod test_cluster_scan_async {
         let mut count = 0;
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                .cluster_scan(scan_state_rc, None, None, None)
-                .await;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> =
+                connection.cluster_scan(scan_state_rc, None, None).await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }
@@ -497,7 +494,7 @@ mod test_cluster_scan_async {
         let mut keys: Vec<String> = vec![];
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, None, None)
+                .cluster_scan(scan_state_rc, None, None)
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -557,7 +554,7 @@ mod test_cluster_scan_async {
         let mut keys: Vec<String> = vec![];
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, None, None)
+                .cluster_scan(scan_state_rc, None, None)
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -625,7 +622,7 @@ mod test_cluster_scan_async {
         let mut keys: Vec<String> = vec![];
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, Some("key:pattern:*"), None, None)
+                .cluster_scan_with_pattern(scan_state_rc, "key:pattern:*", None, None)
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -683,7 +680,7 @@ mod test_cluster_scan_async {
         let mut keys: Vec<String> = vec![];
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, None, Some(ObjectType::Set))
+                .cluster_scan(scan_state_rc, None, Some(ObjectType::Set))
                 .await
                 .unwrap();
             scan_state_rc = next_cursor;
@@ -736,11 +733,11 @@ mod test_cluster_scan_async {
         let mut comparing_times = 0;
         loop {
             let (next_cursor, scan_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc.clone(), None, Some(100), None)
+                .cluster_scan(scan_state_rc.clone(), Some(100), None)
                 .await
                 .unwrap();
             let (_, scan_without_count_keys): (ScanStateRC, Vec<Value>) = connection
-                .cluster_scan(scan_state_rc, None, Some(100), None)
+                .cluster_scan(scan_state_rc, Some(100), None)
                 .await
                 .unwrap();
             if !scan_keys.is_empty() && !scan_without_count_keys.is_empty() {
@@ -795,9 +792,8 @@ mod test_cluster_scan_async {
         let mut count = 0;
         loop {
             count += 1;
-            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                .cluster_scan(scan_state_rc, None, None, None)
-                .await;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> =
+                connection.cluster_scan(scan_state_rc, None, None).await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }
@@ -810,7 +806,7 @@ mod test_cluster_scan_async {
             if count == 5 {
                 drop(cluster);
                 let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                    .cluster_scan(scan_state_rc.clone(), None, None, None)
+                    .cluster_scan(scan_state_rc.clone(), None, None)
                     .await;
                 assert!(scan_response.is_err());
                 break;
@@ -819,9 +815,8 @@ mod test_cluster_scan_async {
         cluster = TestClusterContext::new(3, 0);
         connection = cluster.async_connection(None).await;
         loop {
-            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> = connection
-                .cluster_scan(scan_state_rc, None, None, None)
-                .await;
+            let scan_response: RedisResult<(ScanStateRC, Vec<Value>)> =
+                connection.cluster_scan(scan_state_rc, None, None).await;
             if scan_response.is_err() {
                 println!("error: {:?}", scan_response);
             }

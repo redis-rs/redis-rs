@@ -31,10 +31,10 @@ const BITS_ARRAY_SIZE: usize = NUM_OF_SLOTS / BITS_PER_U64;
 const END_OF_SCAN: u16 = NUM_OF_SLOTS as u16 + 1;
 type SlotsBitsArray = [u64; BITS_ARRAY_SIZE];
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct ClusterScanArgs {
     pub(crate) scan_state_cursor: ScanStateRC,
-    match_pattern: Option<String>,
+    match_pattern: Option<Vec<u8>>,
     count: Option<usize>,
     object_type: Option<ObjectType>,
 }
@@ -59,7 +59,7 @@ pub enum ObjectType {
 impl ClusterScanArgs {
     pub(crate) fn new(
         scan_state_cursor: ScanStateRC,
-        match_pattern: Option<String>,
+        match_pattern: Option<Vec<u8>>,
         count: Option<usize>,
         object_type: Option<ObjectType>,
     ) -> Self {
@@ -487,7 +487,7 @@ where
 async fn send_scan<C>(
     scan_state: &ScanState,
     core: &C,
-    match_pattern: Option<String>,
+    match_pattern: Option<Vec<u8>>,
     count: Option<usize>,
     object_type: Option<ObjectType>,
 ) -> RedisResult<Value>
@@ -518,7 +518,7 @@ where
 async fn retry_scan<C>(
     scan_state: &ScanState,
     core: &C,
-    match_pattern: Option<String>,
+    match_pattern: Option<Vec<u8>>,
     count: Option<usize>,
     object_type: Option<ObjectType>,
 ) -> RedisResult<(RedisResult<Value>, ScanState)>
