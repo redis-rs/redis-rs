@@ -983,6 +983,34 @@ mod basic_async {
         .unwrap();
     }
 
+    #[test]
+    #[cfg(feature = "connection-manager")]
+    fn test_new_with_config_lazy() {
+        let exponent_base = 2;
+        let factor = 100;
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_exponent_base(exponent_base)
+            .set_factor(factor);
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("redis")
+            .tempdir()
+            .expect("failed to create tempdir");
+        let tls_files = build_keys_and_certs_for_tls(&temp_dir);
+
+        let ctx = TestContext::with_tls(tls_files.clone(), false);
+
+        block_on_all(async move {
+            let mut manager =
+                redis::aio::ConnectionManager::new_with_config_lazy(ctx.client, config);
+
+            let result: redis::Value = manager.set("foo", "bar").await.unwrap();
+            assert_eq!(result, redis::Value::Okay);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[cfg(feature = "tls-rustls")]
     mod mtls_test {
         use super::*;
