@@ -450,6 +450,12 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ) -> RedisResult<(T, Option<IpAddr>)> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
+            if let Some(socket_addr) = _socket_addr {
+                return Ok::<_, RedisError>((
+                    <T>::connect_tcp(socket_addr).await?,
+                    Some(socket_addr.ip()),
+                ));
+            }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
                 info!("IP of node {:?} is {:?}", host, socket_addr.ip());
