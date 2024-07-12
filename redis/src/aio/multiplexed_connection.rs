@@ -455,6 +455,27 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
+        let shared_sender = Arc::new(ArcSwap::new(Arc::new(None)));
+        Self::new_with_config(
+            connection_info,
+            stream,
+            AsyncConnectionConfig {
+                response_timeout,
+                connection_timeout: None,
+                shared_sender,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn new_with_config<C>(
+        connection_info: &ConnectionInfo,
+        stream: C,
+        config: AsyncConnectionConfig,
+    ) -> RedisResult<(Self, impl Future<Output = ()>)>
+    where
+        C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
+    {
         fn boxed(
             f: impl Future<Output = ()> + Send + 'static,
         ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
