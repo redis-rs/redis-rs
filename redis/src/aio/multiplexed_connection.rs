@@ -409,7 +409,7 @@ impl Pipeline {
 /// but this doesn't mean that the actual request sent to the server is cancelled.
 /// A side-effect of this is that the underlying connection won't be closed until all sent requests have been answered,
 /// which means that in case of blocking commands, the underlying connection resource might not be released,
-/// even when all clones of the multiplexed connection have been dropped (see https://github.com/redis-rs/redis-rs/issues/1236).
+/// even when all clones of the multiplexed connection have been dropped (see <https://github.com/redis-rs/redis-rs/issues/1236>).
 /// If that is an issue, the user can, instead of using [crate::Client::get_multiplexed_async_connection], use either [MultiplexedConnection::new] or
 /// [crate::Client::create_multiplexed_tokio_connection]/[crate::Client::create_multiplexed_async_std_connection],
 /// manually spawn the returned driver function, keep the spawned task's handle and abort the task whenever they want,
