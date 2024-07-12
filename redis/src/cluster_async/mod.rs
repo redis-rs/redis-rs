@@ -1,9 +1,7 @@
 //! This module provides async functionality for Redis Cluster.
 //!
 //! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
-//! of connections to each node in the cluster. While it  generally behaves similarly to
-//! the sync cluster module, certain commands do not route identically, due most notably to
-//! a current lack of support for routing commands to multiple nodes.
+//! of connections to each node in the cluster.
 //!
 //! Also note that pubsub functionality is not currently provided by this module.
 //!
@@ -19,6 +17,47 @@
 //!     let _: () = connection.set("test", "test_data").await.unwrap();
 //!     let rv: String = connection.get("test").await.unwrap();
 //!     return rv;
+//! }
+//! ```
+//!
+//! # Pipelining
+//! ```rust,no_run
+//! use redis::cluster::ClusterClient;
+//! use redis::{Value, AsyncCommands};
+//!
+//! async fn fetch_an_integer() -> redis::RedisResult<()> {
+//!     let nodes = vec!["redis://127.0.0.1/"];
+//!     let client = ClusterClient::new(nodes).unwrap();
+//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let key = "test";
+//!     
+//!     redis::pipe()
+//!         .rpush(key, "123").ignore()
+//!         .ltrim(key, -10, -1).ignore()
+//!         .expire(key, 60).ignore()
+//!         .exec_async(&mut connection).await
+//! }
+//! ```
+//!
+//! # Sending request to specific node
+//! In some cases you'd want to send a request to a specific node in the cluster, instead of
+//! letting the cluster connection decide by itself to which node it should send the request.
+//! This can happen, for example, if you want to send SCAN commands to each node in the cluster.
+//!
+//! ```rust,no_run
+//! use redis::cluster::ClusterClient;
+//! use redis::{Value, AsyncCommands};
+//! use redis::cluster_routing::{ RoutingInfo, SingleNodeRoutingInfo };
+//!
+//! async fn fetch_an_integer() -> redis::RedisResult<Value> {
+//!     let nodes = vec!["redis://127.0.0.1/"];
+//!     let client = ClusterClient::new(nodes).unwrap();
+//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let routing_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress{
+//!         host: "redis://127.0.0.1".to_string(),
+//!         port: 6378
+//!     });
+//!     connection.route_command(&redis::cmd("PING"), routing_info).await
 //! }
 //! ```
 use std::{
