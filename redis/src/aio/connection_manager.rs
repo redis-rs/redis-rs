@@ -2,8 +2,7 @@ use super::RedisFuture;
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
-    push_manager::PushManager,
-    types::{RedisError, RedisResult, Value},
+    types::{PushSender, RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -140,9 +139,7 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBackoff,
     number_of_retries: usize,
-    response_timeout: std::time::Duration,
-    connection_timeout: std::time::Duration,
-    push_manager: PushManager,
+    connection_config: AsyncConnectionConfig,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -256,7 +253,6 @@ impl ConnectionManager {
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
         // Create a MultiplexedConnection and wait for it to be established
-        let push_manager = PushManager::default();
         let runtime = Runtime::locate();
 
         let mut retry_strategy =
@@ -265,17 +261,19 @@ impl ConnectionManager {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
 
-        let mut connection = Self::new_connection(
+        let connection_config = AsyncConnectionConfig::new()
+            .set_connection_timeout(config.connection_timeout)
+            .set_response_timeout(config.response_timeout);
+
+        let connection = Self::new_connection(
             client.clone(),
             retry_strategy.clone(),
             config.number_of_retries,
-            config.response_timeout,
-            config.connection_timeout,
+            &connection_config,
         )
         .await?;
 
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
-        connection.set_push_manager(push_manager.clone()).await;
         Ok(Self {
             client,
             connection: Arc::new(ArcSwap::from_pointee(
@@ -284,9 +282,7 @@ impl ConnectionManager {
             runtime,
             number_of_retries: config.number_of_retries,
             retry_strategy,
-            response_timeout: config.response_timeout,
-            connection_timeout: config.connection_timeout,
-            push_manager,
+            connection_config,
         })
     }
 
@@ -294,15 +290,12 @@ impl ConnectionManager {
         client: Client,
         exponential_backoff: ExponentialBackoff,
         number_of_retries: usize,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
+        connection_config: &AsyncConnectionConfig,
     ) -> RedisResult<MultiplexedConnection> {
         let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
-        let config = AsyncConnectionConfig::new()
-            .set_connection_timeout(connection_timeout)
-            .set_response_timeout(response_timeout);
+        let connection_config = connection_config.clone();
         Retry::spawn(retry_strategy, || {
-            client.get_multiplexed_async_connection_with_config(&config)
+            client.get_multiplexed_async_connection_with_config(&connection_config)
         })
         .await
     }
@@ -315,19 +308,15 @@ impl ConnectionManager {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy.clone();
         let number_of_retries = self.number_of_retries;
-        let response_timeout = self.response_timeout;
-        let connection_timeout = self.connection_timeout;
-        let pmc = self.push_manager.clone();
+        let connection_config = self.connection_config.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let mut con = Self::new_connection(
+            let con = Self::new_connection(
                 client,
                 retry_strategy,
                 number_of_retries,
-                response_timeout,
-                connection_timeout,
+                &connection_config,
             )
             .await?;
-            con.set_push_manager(pmc).await;
             Ok(con)
         }
         .boxed()
@@ -422,9 +411,13 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
-    pub fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
+    /// Sets sender channel for push values. Returns error if the connection isn't configured for RESP3 communications.
+    pub fn set_push_sender(&mut self, sender: PushSender) -> RedisResult<()> {
+        check_resp3!(self.client.connection_info.redis.protocol);
+        self.connection_config
+            .shared_sender
+            .store(Arc::new(Some(sender)));
+        Ok(())
     }
 }
 

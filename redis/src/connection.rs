@@ -11,8 +11,8 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, PushSender, RedisError,
+    RedisResult, ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
@@ -28,7 +28,6 @@ use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
-use crate::push_manager::PushManager;
 use crate::PushInfo;
 
 #[cfg(all(
@@ -540,9 +539,8 @@ pub struct Connection {
     // Field indicating which protocol to use for server communications.
     protocol: ProtocolVersion,
 
-    /// `PushManager` instance for the connection.
     /// This is used to manage Push messages in RESP3 mode.
-    push_manager: PushManager,
+    push_sender: Option<PushSender>,
 }
 
 /// Represents a pubsub connection.
@@ -995,7 +993,7 @@ fn setup_connection(
         db: connection_info.db,
         pubsub: false,
         protocol: connection_info.protocol,
-        push_manager: PushManager::new(),
+        push_sender: None,
     };
 
     if connection_info.protocol != ProtocolVersion::RESP2 {
@@ -1211,32 +1209,54 @@ impl Connection {
         Ok(())
     }
 
+    fn send_push(&self, push: PushInfo) {
+        if let Some(sender) = &self.push_sender {
+            let _ = sender.send(push);
+        }
+    }
+
+    fn try_send(&self, value: &RedisResult<Value>) {
+        if let Ok(Value::Push { kind, data }) = value {
+            self.send_push(PushInfo {
+                kind: kind.clone(),
+                data: data.clone(),
+            });
+        }
+    }
+
+    fn send_disconnect(&self) {
+        self.send_push(PushInfo {
+            kind: PushKind::Disconnection,
+            data: vec![],
+        })
+    }
+
     /// Fetches a single response from the connection.
     fn read_response(&mut self) -> RedisResult<Value> {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result);
+                self.try_send(&result);
                 result
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result);
+                self.try_send(&result);
                 result
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
                 let result = self.parser.parse_value(reader);
-                self.push_manager.try_send(&result);
+                self.try_send(&result);
                 result
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
                 let result = self.parser.parse_value(sock);
-                self.push_manager.try_send(&result);
+                self.try_send(&result);
                 result
             }
         };
@@ -1248,7 +1268,7 @@ impl Connection {
             };
             if shutdown {
                 // Notify the PushManager that the connection was lost
-                self.push_manager.try_send_disconnect();
+                self.send_disconnect();
                 match self.con {
                     ActualConnection::Tcp(ref mut connection) => {
                         let _ = connection.reader.shutdown(net::Shutdown::Both);
@@ -1275,9 +1295,9 @@ impl Connection {
         result
     }
 
-    /// Returns `PushManager` of Connection, this method is used to subscribe/unsubscribe from Push types
-    pub fn get_push_manager(&self) -> PushManager {
-        self.push_manager.clone()
+    /// Sets sender channel for push values.
+    pub fn set_push_sender(&mut self, sender: PushSender) {
+        self.push_sender = Some(sender);
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
@@ -1285,8 +1305,7 @@ impl Connection {
         if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
-                    // Notify the PushManager that the connection was lost
-                    self.push_manager.try_send_disconnect();
+                    self.send_disconnect();
                 }
             }
         }
