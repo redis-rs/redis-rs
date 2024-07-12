@@ -8,13 +8,18 @@ use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
+#[cfg(feature = "aio")]
+use std::sync::Arc;
 
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+#[cfg(feature = "aio")]
+use arc_swap::ArcSwap;
 use num_bigint::BigInt;
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
+use tokio::sync::mpsc;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -2552,3 +2557,16 @@ impl ToRedisArgs for ExpireOption {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+/// A push message from the server.
+pub struct PushInfo {
+    /// Push Kind
+    pub kind: PushKind,
+    /// Data from push message
+    pub data: Vec<Value>,
+}
+
+pub(crate) type PushSender = mpsc::UnboundedSender<PushInfo>;
+#[cfg(feature = "aio")]
+pub(crate) type SharedSender = Arc<ArcSwap<Option<PushSender>>>;

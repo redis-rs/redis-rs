@@ -441,6 +441,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 // public api
+#[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
@@ -453,7 +454,6 @@ pub use crate::connection::{
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
-pub use push_manager::{PushInfo, PushManager};
 
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
@@ -490,7 +490,8 @@ pub use crate::types::{
     Value,
     PushKind,
     VerbatimFormat,
-    ProtocolVersion
+    ProtocolVersion,
+    PushInfo
 };
 
 #[cfg(feature = "aio")]
@@ -570,6 +571,5 @@ mod cmd;
 mod commands;
 mod connection;
 mod parser;
-mod push_manager;
 mod script;
 mod types;

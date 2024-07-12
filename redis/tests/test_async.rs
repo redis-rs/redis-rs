@@ -9,7 +9,7 @@ mod basic_async {
     use redis::aio::ConnectionManager;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushInfo, PushKind,
+        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
     use tokio::{sync::mpsc::error::TryRecvError, time::timeout};
@@ -807,7 +807,7 @@ mod basic_async {
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
                 let pub_count = 10;
                 let channel_name = "phonewave".to_string();
-                conn.get_push_manager().replace_sender(tx.clone());
+                conn.set_push_sender(tx).unwrap();
                 conn.subscribe(channel_name.clone()).await?;
                 let push = rx.recv().await.unwrap();
                 assert_eq!(push.kind, PushKind::Subscribe);
@@ -879,7 +879,7 @@ mod basic_async {
         }
 
         #[test]
-        fn push_manager_disconnection() {
+        fn push_sender_send_on_disconnect() {
             use redis::RedisError;
 
             let ctx = TestContext::new();
@@ -890,7 +890,7 @@ mod basic_async {
             block_on_all(async move {
                 let mut conn = client.get_multiplexed_async_connection().await?;
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                conn.get_push_manager().replace_sender(tx.clone());
+                conn.set_push_sender(tx).unwrap();
 
                 let _: () = conn.set("A", "1").await?;
                 assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
@@ -961,7 +961,9 @@ mod basic_async {
                     .unwrap();
 
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
+            if ctx.protocol != ProtocolVersion::RESP2 {
+                manager.set_push_sender(tx).unwrap();
+            }
             kill_client_async(&mut manager, &ctx.client).await.unwrap();
 
             let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
@@ -973,7 +975,9 @@ mod basic_async {
 
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);
-            assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+            if ctx.protocol != ProtocolVersion::RESP2 {
+                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+            }
             Ok(())
         })
         .unwrap();
@@ -1044,7 +1048,7 @@ mod basic_async {
 
     #[test]
     #[cfg(feature = "connection-manager")]
-    fn test_push_manager_cm() {
+    fn test_resp3_pushes_connection_manager() {
         let ctx = TestContext::new();
         let mut connection_info = ctx.server.connection_info();
         connection_info.redis.protocol = ProtocolVersion::RESP3;
@@ -1053,7 +1057,7 @@ mod basic_async {
         block_on_all(async move {
             let mut manager = redis::aio::ConnectionManager::new(client).await.unwrap();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(tx.clone());
+            manager.set_push_sender(tx).unwrap();
             manager
                 .send_packed_command(cmd("CLIENT").arg("TRACKING").arg("ON"))
                 .await
@@ -1072,7 +1076,7 @@ mod basic_async {
                 (kind, data)
             );
             let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
-            manager.get_push_manager().replace_sender(new_tx);
+            manager.set_push_sender(new_tx).unwrap();
             drop(rx);
             let _: RedisResult<()> = pipe.query_async(&mut manager).await;
             let _: i32 = manager.get("key_1").await.unwrap();
