@@ -29,6 +29,7 @@ pub mod testing {
     pub use super::connections_logic::*;
 }
 use crate::{
+    cluster_routing::{Routable, RoutingInfo},
     cluster_slotmap::SlotMap,
     cluster_topology::SLOT_SIZE,
     cmd,
@@ -1765,7 +1766,7 @@ where
 
         // if we reached this point, we're sending the command only to single node, and we need to find the
         // right connection to the node.
-        let (address, mut conn) = Self::get_connection(routing, core)
+        let (address, mut conn) = Self::get_connection(routing, core, Some(cmd.clone()))
             .await
             .map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_command(&cmd)
@@ -1801,7 +1802,7 @@ where
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(route, core),
+                    Self::get_connection(route, core, None),
                 )
                 .await
             }
@@ -1825,6 +1826,7 @@ where
     async fn get_connection(
         routing: InternalSingleNodeRouting<C>,
         core: Core<C>,
+        cmd: Option<Arc<Cmd>>,
     ) -> RedisResult<(ArcStr, C)> {
         let read_guard = core.conn_lock.read().await;
         let mut asking = false;
@@ -1849,15 +1851,32 @@ where
                     ConnectionCheck::Found,
                 )
             }
-            // This means that a request routed to a route without a matching connection will be sent to a random node, hopefully to be redirected afterwards.
             InternalSingleNodeRouting::SpecificNode(route) => {
-                read_guard.connection_for_route(&route).map_or_else(
-                    || {
-                        warn!("No connection found for route `{route:?}");
-                        ConnectionCheck::RandomConnection
-                    },
-                    ConnectionCheck::Found,
-                )
+                match read_guard.connection_for_route(&route) {
+                    Some((conn, address)) => ConnectionCheck::Found((conn, address)),
+                    None => {
+                        // No connection is found for the given route:
+                        // - For key-based commands, attempt redirection to a random node,
+                        //   hopefully to be redirected afterwards by a MOVED error.
+                        // - For non-key-based commands, avoid attempting redirection to a random node
+                        //   as it wouldn't result in MOVED hints and can lead to unwanted results
+                        //   (e.g., sending management command to a different node than the user asked for); instead, raise the error.
+                        let routable_cmd = cmd.and_then(|cmd| Routable::command(&*cmd));
+                        if routable_cmd.is_some()
+                            && !RoutingInfo::is_key_based_cmd(&routable_cmd.unwrap())
+                        {
+                            return Err((
+                                ErrorKind::ClusterConnectionNotFound,
+                                "Requested connection not found for route",
+                                format!("{route:?}"),
+                            )
+                                .into());
+                        } else {
+                            warn!("No connection found for route `{route:?}`. Attempting redirection to a random node.");
+                            ConnectionCheck::RandomConnection
+                        }
+                    }
+                }
             }
             InternalSingleNodeRouting::Random => ConnectionCheck::RandomConnection,
             InternalSingleNodeRouting::Connection { address, conn } => {

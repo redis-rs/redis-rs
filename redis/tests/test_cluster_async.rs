@@ -4020,6 +4020,126 @@ mod cluster_async {
     .unwrap();
     }
 
+    #[test]
+    fn test_async_cluster_dont_route_to_a_random_on_non_key_based_cmd() {
+        // This test verifies that non-key-based commands do not get routed to a random node
+        // when no connection is found for the given route. Instead, the appropriate error
+        // should be raised.
+        let name = "test_async_cluster_dont_route_to_a_random_on_non_key_based_cmd";
+        let request_counter = Arc::new(AtomicU32::new(0));
+        let cloned_req_counter = request_counter.clone();
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            move |received_cmd: &[u8], _| {
+                let slots_config_vec = vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![],
+                        slot_range: (0_u16..8000_u16),
+                    },
+                    MockSlotRange {
+                        primary_port: 6380,
+                        replica_ports: vec![],
+                        // Don't cover all slots
+                        slot_range: (8001_u16..12000_u16),
+                    },
+                ];
+                respond_startup_with_config(name, received_cmd, Some(slots_config_vec), false)?;
+                // If requests are sent to random nodes, they will be caught and counted here.
+                request_counter.fetch_add(1, Ordering::Relaxed);
+                Err(Ok(Value::Nil))
+            },
+        );
+
+        runtime
+            .block_on(async move {
+                let uncovered_slot = 16000;
+                let route = redis::cluster_routing::Route::new(
+                    uncovered_slot,
+                    redis::cluster_routing::SlotAddr::Master,
+                );
+                let single_node_route =
+                    redis::cluster_routing::SingleNodeRoutingInfo::SpecificNode(route);
+                let routing = RoutingInfo::SingleNode(single_node_route);
+                let res = connection
+                    .route_command(&redis::cmd("FLUSHALL"), routing)
+                    .await;
+                assert!(res.is_err());
+                let res_err = res.unwrap_err();
+                assert_eq!(
+                    res_err.kind(),
+                    ErrorKind::ClusterConnectionNotFound,
+                    "{:?}",
+                    res_err
+                );
+                assert_eq!(cloned_req_counter.load(Ordering::Relaxed), 0);
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_async_cluster_route_to_random_on_key_based_cmd() {
+        // This test verifies that key-based commands get routed to a random node
+        // when no connection is found for the given route. The command should
+        // then be redirected correctly by the server's MOVED error.
+        let name = "test_async_cluster_route_to_random_on_key_based_cmd";
+        let request_counter = Arc::new(AtomicU32::new(0));
+        let cloned_req_counter = request_counter.clone();
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            move |received_cmd: &[u8], _| {
+                let slots_config_vec = vec![
+                    MockSlotRange {
+                        primary_port: 6379,
+                        replica_ports: vec![],
+                        slot_range: (0_u16..8000_u16),
+                    },
+                    MockSlotRange {
+                        primary_port: 6380,
+                        replica_ports: vec![],
+                        // Don't cover all slots
+                        slot_range: (8001_u16..12000_u16),
+                    },
+                ];
+                respond_startup_with_config(name, received_cmd, Some(slots_config_vec), false)?;
+                if contains_slice(received_cmd, b"GET") {
+                    if request_counter.fetch_add(1, Ordering::Relaxed) == 0 {
+                        return Err(parse_redis_value(
+                            format!("-MOVED 12182 {name}:6380\r\n").as_bytes(),
+                        ));
+                    } else {
+                        return Err(Ok(Value::SimpleString("bar".into())));
+                    }
+                }
+                panic!("unexpected command {:?}", received_cmd);
+            },
+        );
+
+        runtime
+            .block_on(async move {
+                // The keyslot of "foo" is 12182 and it isn't covered by any node, so we expect the
+                // request to be routed to a random node and then to be redirected to the MOVED node (2 requests in total)
+                let res: String = connection.get("foo").await.unwrap();
+                assert_eq!(res, "bar".to_string());
+                assert_eq!(cloned_req_counter.load(Ordering::Relaxed), 2);
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+    }
+
     #[cfg(feature = "tls-rustls")]
     mod mtls_test {
         use crate::support::mtls_test::create_cluster_client_from_cluster;
