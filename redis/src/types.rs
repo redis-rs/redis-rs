@@ -1,24 +1,19 @@
+#[cfg(feature = "ahash")]
+pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(not(feature = "ahash"))]
+pub(crate) use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::error;
 use std::ffi::{CString, NulError};
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
+use std::ops::Deref;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
-#[cfg(feature = "aio")]
-use std::sync::Arc;
-
-#[cfg(feature = "ahash")]
-pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
-#[cfg(feature = "aio")]
-use arc_swap::ArcSwap;
-use num_bigint::BigInt;
-#[cfg(not(feature = "ahash"))]
-pub(crate) use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 use tokio::sync::mpsc;
 
 macro_rules! invalid_type_error {
@@ -2568,5 +2563,3 @@ pub struct PushInfo {
 }
 
 pub(crate) type PushSender = mpsc::UnboundedSender<PushInfo>;
-#[cfg(feature = "aio")]
-pub(crate) type SharedSender = Arc<ArcSwap<Option<PushSender>>>;

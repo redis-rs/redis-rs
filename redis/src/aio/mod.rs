@@ -179,6 +179,16 @@ macro_rules! check_resp3 {
             )));
         }
     };
+
+    ($protocol: expr, $message: expr) => {
+        use crate::types::ProtocolVersion;
+        if $protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                $message,
+            )));
+        }
+    };
 }
 
 pub(crate) use check_resp3;

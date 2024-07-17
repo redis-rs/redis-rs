@@ -3,13 +3,12 @@ use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{PushSender, RedisError, RedisFuture, RedisResult, SharedSender, Value};
+use crate::types::{PushSender, RedisError, RedisFuture, RedisResult, Value};
 use crate::{cmd, AsyncConnectionConfig, ConnectionInfo, ProtocolVersion, PushInfo, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
-use arc_swap::ArcSwap;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -22,7 +21,6 @@ use std::fmt;
 use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -77,19 +75,10 @@ struct PipelineMessage {
 /// items being output by the `Stream` (the number is specified at time of sending). With the
 /// interface provided by `Pipeline` an easy interface of request to response, hiding the `Stream`
 /// and `Sink`.
+#[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
-
-    shared_sender: SharedSender,
-}
-
-impl Clone for Pipeline {
-    fn clone(&self) -> Self {
-        Pipeline {
-            sender: self.sender.clone(),
-            shared_sender: self.shared_sender.clone(),
-        }
-    }
+    push_sender: Option<PushSender>,
 }
 
 impl Debug for Pipeline {
@@ -104,13 +93,12 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        push_sender: SharedSender,
+        push_sender: Option<PushSender>,
     }
 }
 
-fn send_push(push_sender: &SharedSender, info: PushInfo) {
-    let guard = push_sender.load();
-    match guard.as_ref() {
+fn send_push(push_sender: &Option<PushSender>, info: PushInfo) {
+    match push_sender {
         Some(sender) => {
             let _ = sender.send(info);
         }
@@ -118,7 +106,7 @@ fn send_push(push_sender: &SharedSender, info: PushInfo) {
     };
 }
 
-pub(crate) fn send_disconnect(push_sender: &SharedSender) {
+pub(crate) fn send_disconnect(push_sender: &Option<PushSender>) {
     send_push(
         push_sender,
         PushInfo {
@@ -132,7 +120,7 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new(sink_stream: T, push_sender: SharedSender) -> Self
+    fn new(sink_stream: T, push_sender: Option<PushSender>) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -344,7 +332,7 @@ where
 }
 
 impl Pipeline {
-    fn new<T>(sink_stream: T, shared_sender: SharedSender) -> (Self, impl Future<Output = ()>)
+    fn new<T>(sink_stream: T, push_sender: Option<PushSender>) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
         T: Send + 'static,
@@ -355,7 +343,7 @@ impl Pipeline {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
 
-        let sink = PipelineSink::new(sink_stream, shared_sender.clone());
+        let sink = PipelineSink::new(sink_stream, push_sender.clone());
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
@@ -363,7 +351,7 @@ impl Pipeline {
         (
             Pipeline {
                 sender,
-                shared_sender,
+                push_sender,
             },
             f,
         )
@@ -462,14 +450,13 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let shared_sender = Arc::new(ArcSwap::new(Arc::new(None)));
         Self::new_with_config(
             connection_info,
             stream,
             AsyncConnectionConfig {
                 response_timeout,
                 connection_timeout: None,
-                shared_sender,
+                push_sender: None,
             },
         )
         .await
@@ -494,7 +481,13 @@ impl MultiplexedConnection {
 
         let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default().framed(stream);
-        let (pipeline, driver) = Pipeline::new(codec, config.shared_sender);
+        if config.push_sender.is_some() {
+            check_resp3!(
+                redis_connection_info.protocol,
+                "Can only pass push sender to a connection using RESP3"
+            );
+        }
+        let (pipeline, driver) = Pipeline::new(codec, config.push_sender);
         let driver = boxed(driver);
         let mut con = MultiplexedConnection {
             pipeline,
@@ -542,7 +535,7 @@ impl MultiplexedConnection {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
-                    send_disconnect(&self.pipeline.shared_sender);
+                    send_disconnect(&self.pipeline.push_sender);
                 }
             }
         }
@@ -574,7 +567,7 @@ impl MultiplexedConnection {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     // Notify the PushManager that the connection was lost
-                    send_disconnect(&self.pipeline.shared_sender);
+                    send_disconnect(&self.pipeline.push_sender);
                 }
             }
         }
@@ -583,13 +576,6 @@ impl MultiplexedConnection {
             Value::Array(values) => Ok(values),
             _ => Ok(vec![value]),
         }
-    }
-
-    /// Sets sender channel for push values. Returns error if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(&mut self, sender: PushSender) -> RedisResult<()> {
-        check_resp3!(self.protocol);
-        self.pipeline.shared_sender.store(Arc::new(Some(sender)));
-        Ok(())
     }
 }
 
