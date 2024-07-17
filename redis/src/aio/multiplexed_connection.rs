@@ -78,7 +78,6 @@ struct PipelineMessage {
 #[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
-    push_sender: Option<PushSender>,
 }
 
 impl Debug for Pipeline {
@@ -343,18 +342,12 @@ impl Pipeline {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
 
-        let sink = PipelineSink::new(sink_stream, push_sender.clone());
+        let sink = PipelineSink::new(sink_stream, push_sender);
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
             .map(|_| ());
-        (
-            Pipeline {
-                sender,
-                push_sender,
-            },
-            f,
-        )
+        (Pipeline { sender }, f)
     }
 
     // `None` means that the stream was out of items causing that poll loop to shut down.
@@ -524,22 +517,12 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let result = self
-            .pipeline
+        self.pipeline
             .send_single(cmd.get_packed_command(), self.response_timeout)
             .await
             .map_err(|err| {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
-            });
-        if self.protocol != ProtocolVersion::RESP2 {
-            if let Err(e) = &result {
-                if e.is_connection_dropped() {
-                    // Notify the PushManager that the connection was lost
-                    send_disconnect(&self.pipeline.push_sender);
-                }
-            }
-        }
-        result
+            })
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -563,14 +546,6 @@ impl MultiplexedConnection {
                 err.unwrap_or_else(|| RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
             });
 
-        if self.protocol != ProtocolVersion::RESP2 {
-            if let Err(e) = &result {
-                if e.is_connection_dropped() {
-                    // Notify the PushManager that the connection was lost
-                    send_disconnect(&self.pipeline.push_sender);
-                }
-            }
-        }
         let value = result?;
         match value {
             Value::Array(values) => Ok(values),

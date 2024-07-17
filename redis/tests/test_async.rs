@@ -979,7 +979,7 @@ mod basic_async {
             let result: redis::Value = manager.set("foo", "bar").await.unwrap();
             assert_eq!(result, redis::Value::Okay);
             if ctx.protocol != ProtocolVersion::RESP2 {
-                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+                assert!(rx.try_recv().is_err());
             }
             Ok(())
         })
