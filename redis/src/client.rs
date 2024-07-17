@@ -1,14 +1,13 @@
 use std::time::Duration;
 
+#[cfg(feature = "aio")]
+use crate::types::PushSender;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
-
-#[cfg(feature = "aio")]
-use crate::types::SharedSender;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{inner_build_with_tls, TlsCertificates};
@@ -71,24 +70,20 @@ impl Client {
 
 /// Options for creation of async connection
 #[cfg(feature = "aio")]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a response from the server
     pub(crate) response_timeout: Option<std::time::Duration>,
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
-    pub(crate) shared_sender: SharedSender,
+    pub(crate) push_sender: Option<PushSender>,
 }
 
 #[cfg(feature = "aio")]
 impl AsyncConnectionConfig {
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
-        Self {
-            response_timeout: None,
-            connection_timeout: None,
-            shared_sender: SharedSender::default(),
-        }
+        Self::default()
     }
 
     /// Sets the connection timeout
@@ -102,12 +97,11 @@ impl AsyncConnectionConfig {
         self.response_timeout = Some(response_timeout);
         self
     }
-}
 
-#[cfg(feature = "aio")]
-impl Default for AsyncConnectionConfig {
-    fn default() -> Self {
-        Self::new()
+    /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
+    pub fn set_push_sender(mut self, sender: PushSender) -> Self {
+        self.push_sender = Some(sender);
+        self
     }
 }
 

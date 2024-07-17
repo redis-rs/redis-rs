@@ -35,6 +35,8 @@ pub struct ConnectionManagerConfig {
     response_timeout: std::time::Duration,
     /// Each connection attempt to the server will time out after `connection_timeout`.
     connection_timeout: std::time::Duration,
+    /// sender channel for push values
+    push_sender: Option<PushSender>,
 }
 
 impl ConnectionManagerConfig {
@@ -53,6 +55,7 @@ impl ConnectionManagerConfig {
             max_delay: None,
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+            push_sender: None,
         }
     }
 
@@ -98,6 +101,12 @@ impl ConnectionManagerConfig {
         duration: std::time::Duration,
     ) -> ConnectionManagerConfig {
         self.connection_timeout = duration;
+        self
+    }
+
+    /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
+    pub fn set_push_sender(mut self, sender: PushSender) -> Self {
+        self.push_sender = Some(sender);
         self
     }
 }
@@ -261,9 +270,17 @@ impl ConnectionManager {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
 
-        let connection_config = AsyncConnectionConfig::new()
+        let mut connection_config = AsyncConnectionConfig::new()
             .set_connection_timeout(config.connection_timeout)
             .set_response_timeout(config.response_timeout);
+
+        if let Some(push_sender) = config.push_sender.clone() {
+            check_resp3!(
+                client.connection_info.redis.protocol,
+                "Can only pass push sender to a connection using RESP3"
+            );
+            connection_config = connection_config.set_push_sender(push_sender);
+        }
 
         let connection = Self::new_connection(
             client.clone(),
@@ -408,15 +425,6 @@ impl ConnectionManager {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
-        Ok(())
-    }
-
-    /// Sets sender channel for push values. Returns error if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(&mut self, sender: PushSender) -> RedisResult<()> {
-        check_resp3!(self.client.connection_info.redis.protocol);
-        self.connection_config
-            .shared_sender
-            .store(Arc::new(Some(sender)));
         Ok(())
     }
 }

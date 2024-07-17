@@ -316,9 +316,9 @@
 //!
 //! # async fn func() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
-//! let mut con = client.get_multiplexed_async_connection().await?;
 //! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-//! con.set_push_sender(tx)?;
+//! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+//! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
 //! con.subscribe("channel_1").await?;
 //! con.subscribe("channel_2").await?;
 //!
