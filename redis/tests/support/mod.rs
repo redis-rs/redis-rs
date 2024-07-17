@@ -253,9 +253,8 @@ impl RedisServer {
     ) -> RedisServer {
         #[cfg(feature = "rustls")]
         if rustls::crypto::CryptoProvider::get_default().is_none() {
-            rustls::crypto::ring::default_provider()
-                .install_default()
-                .unwrap();
+            // we don't care about success, because failure means that the provider was set from another thread.
+            let _ = rustls::crypto::ring::default_provider().install_default();
         }
 
         let mut redis_cmd = process::Command::new("redis-server");
