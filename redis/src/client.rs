@@ -644,10 +644,11 @@ impl Client {
     where
         T: crate::aio::RedisRuntime,
     {
-        let (connection, driver) = self
+        let (mut connection, driver) = self
             .create_multiplexed_async_connection_inner::<T>(config)
             .await?;
-        T::spawn(driver);
+        let handle = T::spawn(driver);
+        connection.set_task_handle(handle);
         Ok(connection)
     }
 
