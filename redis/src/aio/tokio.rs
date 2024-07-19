@@ -1,4 +1,4 @@
-use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr};
+use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr, TaskHandle};
 use async_trait::async_trait;
 use std::{
     future::Future,
@@ -174,12 +174,12 @@ impl RedisRuntime for Tokio {
     }
 
     #[cfg(feature = "tokio-comp")]
-    fn spawn(f: impl Future<Output = ()> + Send + 'static) {
-        tokio::spawn(f);
+    fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
+        TaskHandle::Tokio(tokio::spawn(f))
     }
 
     #[cfg(not(feature = "tokio-comp"))]
-    fn spawn(_: impl Future<Output = ()> + Send + 'static) {
+    fn spawn(_: impl Future<Output = ()> + Send + 'static) -> TokioTaskHandle {
         unreachable!()
     }
 

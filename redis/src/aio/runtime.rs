@@ -1,11 +1,11 @@
-use std::{io, time::Duration};
+use std::{io, sync::Arc, time::Duration};
 
 use futures_util::Future;
 
 #[cfg(feature = "async-std-comp")]
-use super::async_std;
+use super::async_std as crate_async_std;
 #[cfg(feature = "tokio-comp")]
-use super::tokio;
+use super::tokio as crate_tokio;
 use super::RedisRuntime;
 use crate::types::RedisError;
 
@@ -15,6 +15,42 @@ pub(crate) enum Runtime {
     Tokio,
     #[cfg(feature = "async-std-comp")]
     AsyncStd,
+}
+
+pub(crate) enum TaskHandle {
+    #[cfg(feature = "tokio-comp")]
+    Tokio(tokio::task::JoinHandle<()>),
+    #[cfg(feature = "async-std-comp")]
+    AsyncStd(async_std::task::JoinHandle<()>),
+}
+
+pub(crate) struct HandleContainer(Option<TaskHandle>);
+
+impl HandleContainer {
+    pub(crate) fn new(handle: TaskHandle) -> Self {
+        Self(Some(handle))
+    }
+}
+
+impl Drop for HandleContainer {
+    fn drop(&mut self) {
+        match self.0.take() {
+            None => {}
+            #[cfg(feature = "tokio-comp")]
+            Some(TaskHandle::Tokio(handle)) => handle.abort(),
+            #[cfg(feature = "async-std-comp")]
+            Some(TaskHandle::AsyncStd(handle)) => {
+                // schedule for cancellation without waiting for result.
+                Runtime::locate().spawn(async move { handle.cancel().await.unwrap_or_default() });
+            }
+        }
+    }
+}
+
+pub(crate) type SharedHandleContainer = Arc<HandleContainer>;
+
+pub(crate) fn new_shared_handle(handle: TaskHandle) -> SharedHandleContainer {
+    Arc::new(HandleContainer::new(handle))
 }
 
 impl Runtime {
@@ -45,12 +81,12 @@ impl Runtime {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) {
+    pub(crate) fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
         match self {
             #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => tokio::Tokio::spawn(f),
+            Runtime::Tokio => crate_tokio::Tokio::spawn(f),
             #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => async_std::AsyncStd::spawn(f),
+            Runtime::AsyncStd => crate_async_std::AsyncStd::spawn(f),
         }
     }
 
@@ -61,11 +97,11 @@ impl Runtime {
     ) -> Result<F::Output, Elapsed> {
         match self {
             #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => ::tokio::time::timeout(duration, future)
+            Runtime::Tokio => tokio::time::timeout(duration, future)
                 .await
                 .map_err(|_| Elapsed(())),
             #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => ::async_std::future::timeout(duration, future)
+            Runtime::AsyncStd => async_std::future::timeout(duration, future)
                 .await
                 .map_err(|_| Elapsed(())),
         }
