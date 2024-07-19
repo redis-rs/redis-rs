@@ -3,7 +3,7 @@ use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{PushSender, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{AsyncPushSender, RedisError, RedisFuture, RedisResult, Value};
 use crate::{cmd, AsyncConnectionConfig, ConnectionInfo, ProtocolVersion, PushInfo, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -92,11 +92,11 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        push_sender: Option<PushSender>,
+        push_sender: Option<AsyncPushSender>,
     }
 }
 
-fn send_push(push_sender: &Option<PushSender>, info: PushInfo) {
+fn send_push(push_sender: &Option<AsyncPushSender>, info: PushInfo) {
     match push_sender {
         Some(sender) => {
             let _ = sender.send(info);
@@ -105,7 +105,7 @@ fn send_push(push_sender: &Option<PushSender>, info: PushInfo) {
     };
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<PushSender>) {
+pub(crate) fn send_disconnect(push_sender: &Option<AsyncPushSender>) {
     send_push(
         push_sender,
         PushInfo {
@@ -119,7 +119,7 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new(sink_stream: T, push_sender: Option<PushSender>) -> Self
+    fn new(sink_stream: T, push_sender: Option<AsyncPushSender>) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -331,7 +331,10 @@ where
 }
 
 impl Pipeline {
-    fn new<T>(sink_stream: T, push_sender: Option<PushSender>) -> (Self, impl Future<Output = ()>)
+    fn new<T>(
+        sink_stream: T,
+        push_sender: Option<AsyncPushSender>,
+    ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
         T: Send + 'static,

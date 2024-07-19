@@ -2,7 +2,7 @@ use super::RedisFuture;
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
-    types::{PushSender, RedisError, RedisResult, Value},
+    types::{AsyncPushSender, RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -36,7 +36,7 @@ pub struct ConnectionManagerConfig {
     /// Each connection attempt to the server will time out after `connection_timeout`.
     connection_timeout: std::time::Duration,
     /// sender channel for push values
-    push_sender: Option<PushSender>,
+    push_sender: Option<AsyncPushSender>,
 }
 
 impl ConnectionManagerConfig {
@@ -105,7 +105,7 @@ impl ConnectionManagerConfig {
     }
 
     /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(mut self, sender: PushSender) -> Self {
+    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
         self.push_sender = Some(sender);
         self
     }

@@ -14,7 +14,6 @@ use std::io;
 use std::ops::Deref;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
-use tokio::sync::mpsc;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -2562,4 +2561,7 @@ pub struct PushInfo {
     pub data: Vec<Value>,
 }
 
-pub(crate) type PushSender = mpsc::UnboundedSender<PushInfo>;
+#[cfg(feature = "aio")]
+pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
+
+pub(crate) type SyncPushSender = std::sync::mpsc::SyncSender<PushInfo>;

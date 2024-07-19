@@ -12,8 +12,8 @@ use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, PushSender, RedisError,
-    RedisResult, ToRedisArgs, Value,
+    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
+    SyncPushSender, ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
@@ -544,7 +544,7 @@ pub struct Connection {
     protocol: ProtocolVersion,
 
     /// This is used to manage Push messages in RESP3 mode.
-    push_sender: Option<PushSender>,
+    push_sender: Option<SyncPushSender>,
 }
 
 /// Represents a pubsub connection.
@@ -1300,7 +1300,7 @@ impl Connection {
     }
 
     /// Sets sender channel for push values.
-    pub fn set_push_sender(&mut self, sender: PushSender) {
+    pub fn set_push_sender(&mut self, sender: SyncPushSender) {
         self.push_sender = Some(sender);
     }
 
