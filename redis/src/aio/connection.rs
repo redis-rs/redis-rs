@@ -444,6 +444,16 @@ pub(crate) async fn get_socket_addrs(
     }
 }
 
+fn log_conn_creation<T>(conn_type: &str, node: T, ip: Option<IpAddr>)
+where
+    T: std::fmt::Debug,
+{
+    info!(
+        "Creating {conn_type} connection for node: {node:?}{}",
+        ip.map(|ip| format!(", IP: {:?}", ip)).unwrap_or_default()
+    );
+}
+
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
     _socket_addr: Option<SocketAddr>,
@@ -458,7 +468,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
-                info!("IP of node {:?} is {:?}", host, socket_addr.ip());
+                log_conn_creation("TCP", host, Some(socket_addr.ip()));
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp(socket_addr).await?,
@@ -485,7 +495,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
-                info!("IP of node {:?} is {:?}", host, socket_addr.ip());
+                log_conn_creation("TCP with TLS", host, Some(socket_addr.ip()));
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp_tls(host, socket_addr, insecure, tls_params).await?,
@@ -506,7 +516,10 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         }
 
         #[cfg(unix)]
-        ConnectionAddr::Unix(ref path) => (<T>::connect_unix(path).await?, None),
+        ConnectionAddr::Unix(ref path) => {
+            log_conn_creation("UDS", path, None);
+            (<T>::connect_unix(path).await?, None)
+        }
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {

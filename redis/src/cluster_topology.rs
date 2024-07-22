@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 #[cfg(all(feature = "cluster-async", feature = "tokio-comp"))]
 use tokio::sync::RwLock;
+use tracing::info;
 
 // Exponential backoff constants for retrying a slot refresh
 /// The default number of refresh topology retries in the same call
@@ -260,8 +261,11 @@ pub(crate) fn calculate_topology<'a>(
     }
 
     let parse_and_built_result = |most_frequent_topology: TopologyView| {
+        info!(
+            "calculate_topology found topology map:\n{:?}",
+            most_frequent_topology
+        );
         let slots_data = most_frequent_topology.slots_and_count.1;
-
         Ok((
             SlotMap::new(slots_data, read_from_replica),
             most_frequent_topology.hash_value,
