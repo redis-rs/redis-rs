@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use super::{connections_container::ClusterNode, Connect};
 use crate::{
-    aio::{get_socket_addrs, ConnectionLike, Runtime},
+    aio::{ConnectionLike, Runtime},
     cluster::get_connection_info,
     cluster_client::ClusterParams,
     push_manager::PushInfo,
@@ -35,24 +35,6 @@ where
     C: Clone + Send + 'static,
 {
     async { conn }.boxed().shared()
-}
-
-/// Return true if a DNS change is detected, otherwise return false.
-/// This function takes a node's address, examines if its host has encountered a DNS change, where the node's endpoint now leads to a different IP address.
-/// If no socket addresses are discovered for the node's host address, or if it's a non-DNS address, it returns false.
-/// In case the node's host address resolves to socket addresses and none of them match the current connection's IP,
-/// a DNS change is detected, so the current connection isn't valid anymore and a new connection should be made.
-async fn has_dns_changed(addr: &str, curr_ip: &IpAddr) -> bool {
-    let (host, port) = match get_host_and_port_from_addr(addr) {
-        Some((host, port)) => (host, port),
-        None => return false,
-    };
-    let mut updated_addresses = match get_socket_addrs(host, port).await {
-        Ok(socket_addrs) => socket_addrs,
-        Err(_) => return false,
-    };
-
-    !updated_addresses.any(|socket_addr| socket_addr.ip() == *curr_ip)
 }
 
 fn failed_management_connection<C>(
@@ -107,14 +89,6 @@ where
     }
 }
 
-fn warn_mismatch_ip(addr: &str, new_ip: Option<IpAddr>, prev_ip: Option<IpAddr>) {
-    warn!(
-        "New IP was found for node {:?}: 
-                new connection IP = {:?}, previous connection IP = {:?}",
-        addr, new_ip, prev_ip
-    );
-}
-
 fn create_async_node<C>(
     user_conn: C,
     management_conn: Option<C>,
@@ -152,47 +126,25 @@ where
     {
         (Ok(conn_1), Ok(conn_2)) => {
             // Both connections were successfully established
-            let (mut user_conn, mut user_ip): (C, Option<IpAddr>) = conn_1;
-            let (mut management_conn, management_ip): (C, Option<IpAddr>) = conn_2;
-            if user_ip == management_ip {
-                // Set up both connections
-                if let Err(err) = setup_user_connection(&mut user_conn, params).await {
-                    return err.into();
-                }
-                match setup_management_connection(&mut management_conn).await {
-                    Ok(_) => ConnectAndCheckResult::Success(create_async_node(
-                        user_conn,
-                        Some(management_conn),
-                        user_ip,
-                    )),
-                    Err(err) => {
-                        failed_management_connection(addr, to_future(user_conn), user_ip, err)
-                    }
-                }
-            } else {
-                // Use only the connection with the latest IP address
-                warn_mismatch_ip(addr, user_ip, management_ip);
-                if has_dns_changed(addr, &user_ip.unwrap()).await {
-                    // The user_ip is incorrect. Use the created `management_conn` for the user connection
-                    user_conn = management_conn;
-                    user_ip = management_ip;
-                }
-                match setup_user_connection(&mut user_conn, params).await {
-                    Ok(_) => failed_management_connection(
-                        addr,
-                        to_future(user_conn),
-                        user_ip,
-                        (ErrorKind::IoError, "mismatched IP").into(),
-                    ),
-                    Err(err) => err.into(),
-                }
+            let (mut user_conn, ip): (C, Option<IpAddr>) = conn_1;
+            let (mut management_conn, _ip): (C, Option<IpAddr>) = conn_2;
+            if let Err(err) = setup_user_connection(&mut user_conn, params).await {
+                return err.into();
+            }
+            match setup_management_connection(&mut management_conn).await {
+                Ok(_) => ConnectAndCheckResult::Success(create_async_node(
+                    user_conn,
+                    Some(management_conn),
+                    ip,
+                )),
+                Err(err) => failed_management_connection(addr, to_future(user_conn), ip, err),
             }
         }
         (Ok(conn), Err(err)) | (Err(err), Ok(conn)) => {
             // Only a single connection was successfully established. Use it for the user connection
-            let (mut user_conn, user_ip): (C, Option<IpAddr>) = conn;
+            let (mut user_conn, ip): (C, Option<IpAddr>) = conn;
             match setup_user_connection(&mut user_conn, params).await {
-                Ok(_) => failed_management_connection(addr, to_future(user_conn), user_ip, err),
+                Ok(_) => failed_management_connection(addr, to_future(user_conn), ip, err),
                 Err(err) => err.into(),
             }
         }
@@ -216,49 +168,29 @@ async fn connect_and_check_only_management_conn<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     prev_node: AsyncClusterNode<C>,
-    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
-    match future::join(
-        create_connection::<C>(addr, params.clone(), socket_addr, push_sender, false),
-        create_connection::<C>(addr, params.clone(), socket_addr, None, true),
-    )
-    .await
-    {
-        (Err(user_conn_err), _) => failed_management_connection(
-            addr,
-            prev_node.user_connection,
-            prev_node.ip,
-            user_conn_err,
-        ),
-        (_, Err(mngm_conn_err)) => failed_management_connection(
-            addr,
-            prev_node.user_connection,
-            prev_node.ip,
-            mngm_conn_err,
-        ),
+    match create_connection::<C>(addr, params.clone(), socket_addr, None, true).await {
+        Err(conn_err) => {
+            failed_management_connection(addr, prev_node.user_connection, prev_node.ip, conn_err)
+        }
 
-        (Ok(mut user_conn), Ok(mut mngm_conn)) => {
-            let (final_user_conn, user_ip) = if user_conn.1 != prev_node.ip {
-                // An IP mismatch was detected. Attempt to establish a new connection to replace both the management and user connections.
-                warn_mismatch_ip(addr, user_conn.1, prev_node.ip);
-                if let Err(err) = setup_user_connection(&mut user_conn.0, params.clone()).await {
-                    return ConnectAndCheckResult::Failed(err);
-                }
-                (to_future(user_conn.0), user_conn.1)
-            } else {
-                (prev_node.user_connection, prev_node.ip)
-            };
-            if let Err(err) = setup_management_connection(&mut mngm_conn.0).await {
-                return failed_management_connection(addr, final_user_conn, user_ip, err);
+        Ok(mut conn) => {
+            if let Err(err) = setup_management_connection(&mut conn.0).await {
+                return failed_management_connection(
+                    addr,
+                    prev_node.user_connection,
+                    prev_node.ip,
+                    err,
+                );
             }
 
             ConnectAndCheckResult::Success(ClusterNode {
-                user_connection: final_user_conn,
-                ip: user_ip,
-                management_connection: Some(to_future(mngm_conn.0)),
+                user_connection: prev_node.user_connection,
+                ip: prev_node.ip,
+                management_connection: Some(to_future(conn.0)),
             })
         }
     }
@@ -364,14 +296,7 @@ where
             // Refreshing only the management connection requires the node to exist alongside a user connection. Otherwise, refresh all connections.
             match node {
                 Some(node) => {
-                    connect_and_check_only_management_conn(
-                        addr,
-                        params,
-                        socket_addr,
-                        node,
-                        push_sender,
-                    )
-                    .await
+                    connect_and_check_only_management_conn(addr, params, socket_addr, node).await
                 }
                 None => {
                     connect_and_check_all_connections(addr, params, socket_addr, push_sender).await
