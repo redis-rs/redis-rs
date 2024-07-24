@@ -920,71 +920,195 @@ pub(crate) fn create_rustls_config(
     }
 }
 
-fn connect_auth(
-    con: &mut Connection,
+fn authenticate_cmd(
     connection_info: &RedisConnectionInfo,
+    check_username: bool,
     password: &str,
-) -> RedisResult<()> {
+) -> Cmd {
     let mut command = cmd("AUTH");
-    if let Some(username) = &connection_info.username {
-        command.arg(username);
-    }
-    let err = match command.arg(password).query::<Value>(con) {
-        Ok(Value::Okay) => return Ok(()),
-        Ok(_) => {
-            fail!((
-                ErrorKind::ResponseError,
-                "Redis server refused to authenticate, returns Ok() != Value::Okay"
-            ));
+    if check_username {
+        if let Some(username) = &connection_info.username {
+            command.arg(username);
         }
-        Err(e) => e,
-    };
-    let err_msg = err.detail().ok_or((
-        ErrorKind::AuthenticationFailed,
-        "Password authentication failed",
-    ))?;
-    if !err_msg.contains("wrong number of arguments for 'auth' command") {
-        fail!((
-            ErrorKind::AuthenticationFailed,
-            "Password authentication failed",
-        ));
     }
-
-    // fallback to AUTH version <= 5
-    let mut command = cmd("AUTH");
-    match command.arg(password).query::<Value>(con) {
-        Ok(Value::Okay) => Ok(()),
-        _ => fail!((
-            ErrorKind::AuthenticationFailed,
-            "Password authentication failed",
-        )),
-    }
+    command.arg(password);
+    command
 }
 
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
-    let con = ActualConnection::new(&connection_info.addr, timeout)?;
+    let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
     setup_connection(con, &connection_info.redis)
 }
 
-#[cfg(not(feature = "disable-client-setinfo"))]
-pub(crate) fn client_set_info_pipeline() -> Pipeline {
-    let mut pipeline = crate::pipe();
+pub(crate) struct ConnectionSetupComponents {
+    authenticate_with_resp3_cmd_index: Option<usize>,
+    authenticate_with_resp2_cmd_index: Option<usize>,
+    select_db_cmd_index: Option<usize>,
+}
+
+pub(crate) fn connection_setup_pipeline(
+    connection_info: &RedisConnectionInfo,
+    check_username: bool,
+) -> (crate::Pipeline, ConnectionSetupComponents) {
+    let mut last_cmd_index = 0;
+
+    let mut get_next_command_index = |condition| {
+        if condition {
+            last_cmd_index += 1;
+            Some(last_cmd_index - 1)
+        } else {
+            None
+        }
+    };
+
+    let authenticate_with_resp3_cmd_index =
+        get_next_command_index(connection_info.protocol != ProtocolVersion::RESP2);
+    let authenticate_with_resp2_cmd_index = get_next_command_index(
+        authenticate_with_resp3_cmd_index.is_none() && connection_info.password.is_some(),
+    );
+    let select_db_cmd_index = get_next_command_index(connection_info.db != 0);
+
+    let mut pipeline = pipe();
+
+    if authenticate_with_resp3_cmd_index.is_some() {
+        pipeline.add_command(resp3_hello(connection_info));
+    } else if authenticate_with_resp2_cmd_index.is_some() {
+        pipeline.add_command(authenticate_cmd(
+            connection_info,
+            check_username,
+            connection_info.password.as_ref().unwrap(),
+        ));
+    }
+
+    if select_db_cmd_index.is_some() {
+        pipeline.cmd("SELECT").arg(connection_info.db);
+    }
+
+    // result is ignored, as per the command's instructions.
+    // https://redis.io/commands/client-setinfo/
+    #[cfg(not(feature = "disable-client-setinfo"))]
     pipeline
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-NAME")
         .arg("redis-rs")
         .ignore();
+    #[cfg(not(feature = "disable-client-setinfo"))]
     pipeline
         .cmd("CLIENT")
         .arg("SETINFO")
         .arg("LIB-VER")
         .arg(env!("CARGO_PKG_VERSION"))
         .ignore();
-    pipeline
+
+    (
+        pipeline,
+        ConnectionSetupComponents {
+            authenticate_with_resp3_cmd_index,
+            authenticate_with_resp2_cmd_index,
+            select_db_cmd_index,
+        },
+    )
+}
+
+fn check_resp3_auth(
+    results: &[Value],
+    instructions: &ConnectionSetupComponents,
+) -> RedisResult<()> {
+    if let Some(index) = instructions.authenticate_with_resp3_cmd_index {
+        if let Some(Value::ServerError(err)) = results.get(index) {
+            return Err(get_resp3_hello_command_error(err.clone().into()));
+        }
+    }
+    Ok(())
+}
+
+#[derive(PartialEq)]
+pub(crate) enum AuthResult {
+    Succeeded,
+    ShouldRetryWithoutUsername,
+}
+
+fn check_resp2_auth(
+    results: &[Value],
+    instructions: &ConnectionSetupComponents,
+) -> RedisResult<AuthResult> {
+    if let Some(index) = instructions.authenticate_with_resp2_cmd_index {
+        let err = match results.get(index).unwrap() {
+            Value::Okay => {
+                return Ok(AuthResult::Succeeded);
+            }
+            Value::ServerError(err) => err,
+            _ => {
+                return Err((
+                    ErrorKind::ResponseError,
+                    "Redis server refused to authenticate, returns Ok() != Value::Okay",
+                )
+                    .into());
+            }
+        };
+        let err_msg = err.details().ok_or((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        ))?;
+        if !err_msg.contains("wrong number of arguments for 'auth' command") {
+            return Err((
+                ErrorKind::AuthenticationFailed,
+                "Password authentication failed",
+            )
+                .into());
+        }
+        return Ok(AuthResult::ShouldRetryWithoutUsername);
+    }
+    Ok(AuthResult::Succeeded)
+}
+
+fn check_db_select(results: &[Value], instructions: &ConnectionSetupComponents) -> RedisResult<()> {
+    if let Some(index) = instructions.select_db_cmd_index {
+        if let Some(Value::ServerError(err)) = results.get(index) {
+            return match err.details() {
+                Some(err_msg) => Err((
+                    ErrorKind::ResponseError,
+                    "Redis server refused to switch database",
+                    err_msg.to_string(),
+                )
+                    .into()),
+                None => Err((
+                    ErrorKind::ResponseError,
+                    "Redis server refused to switch database",
+                )
+                    .into()),
+            };
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn check_connection_setup(
+    results: Vec<Value>,
+    instructions: ConnectionSetupComponents,
+) -> RedisResult<AuthResult> {
+    check_resp3_auth(&results, &instructions)?;
+    if check_resp2_auth(&results, &instructions)? == AuthResult::ShouldRetryWithoutUsername {
+        return Ok(AuthResult::ShouldRetryWithoutUsername);
+    }
+    check_db_select(&results, &instructions)?;
+    Ok(AuthResult::Succeeded)
+}
+
+fn execute_connection_pipeline(
+    rv: &mut Connection,
+    (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
+) -> RedisResult<AuthResult> {
+    if pipeline.len() == 0 {
+        return Ok(AuthResult::Succeeded);
+    }
+    let results = rv.req_packed_commands(&pipeline.get_packed_pipeline(), 0, pipeline.len())?;
+
+    check_connection_setup(results, instructions)
 }
 
 fn setup_connection(
@@ -1000,32 +1124,11 @@ fn setup_connection(
         push_sender: None,
     };
 
-    if connection_info.protocol != ProtocolVersion::RESP2 {
-        let hello_cmd = resp3_hello(connection_info);
-        let val: RedisResult<Value> = hello_cmd.query(&mut rv);
-        if let Err(err) = val {
-            return Err(get_resp3_hello_command_error(err));
-        }
-    } else if let Some(password) = &connection_info.password {
-        connect_auth(&mut rv, connection_info, password)?;
+    if execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, true))?
+        == AuthResult::ShouldRetryWithoutUsername
+    {
+        execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, false))?;
     }
-    if connection_info.db != 0 {
-        match cmd("SELECT")
-            .arg(connection_info.db)
-            .query::<Value>(&mut rv)
-        {
-            Ok(Value::Okay) => {}
-            _ => fail!((
-                ErrorKind::ResponseError,
-                "Redis server refused to switch database"
-            )),
-        }
-    }
-
-    // result is ignored, as per the command's instructions.
-    // https://redis.io/commands/client-setinfo/
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    let _: RedisResult<()> = client_set_info_pipeline().query(&mut rv);
 
     Ok(rv)
 }
