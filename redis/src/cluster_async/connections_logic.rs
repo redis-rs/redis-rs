@@ -1,6 +1,9 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
-use super::{connections_container::ClusterNode, Connect};
+use super::{
+    connections_container::{ClusterNode, ConnectionWithIp},
+    Connect,
+};
 use crate::{
     aio::{ConnectionLike, Runtime},
     cluster::get_connection_info,
@@ -30,17 +33,9 @@ pub enum RefreshConnectionType {
     AllConnections,
 }
 
-fn to_future<C>(conn: C) -> ConnectionFuture<C>
-where
-    C: Clone + Send + 'static,
-{
-    async { conn }.boxed().shared()
-}
-
 fn failed_management_connection<C>(
     addr: &str,
-    user_conn: ConnectionFuture<C>,
-    ip: Option<IpAddr>,
+    user_conn: ConnectionWithIp<ConnectionFuture<C>>,
     err: RedisError,
 ) -> ConnectAndCheckResult<C>
 where
@@ -51,7 +46,7 @@ where
         addr, err
     );
     ConnectAndCheckResult::ManagementConnectionFailed {
-        node: AsyncClusterNode::new(user_conn, None, ip),
+        node: AsyncClusterNode::new(user_conn, None),
         err,
     }
 }
@@ -90,17 +85,16 @@ where
 }
 
 fn create_async_node<C>(
-    user_conn: C,
-    management_conn: Option<C>,
-    ip: Option<IpAddr>,
+    user_conn: ConnectionWithIp<C>,
+    management_conn: Option<ConnectionWithIp<C>>,
 ) -> AsyncClusterNode<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
-    let user_conn = to_future(user_conn);
-    let management_conn = management_conn.map(to_future);
-
-    AsyncClusterNode::new(user_conn, management_conn, ip)
+    AsyncClusterNode::new(
+        user_conn.into_future(),
+        management_conn.map(|conn| conn.into_future()),
+    )
 }
 
 pub(crate) async fn connect_and_check_all_connections<C>(
@@ -126,25 +120,23 @@ where
     {
         (Ok(conn_1), Ok(conn_2)) => {
             // Both connections were successfully established
-            let (mut user_conn, ip): (C, Option<IpAddr>) = conn_1;
-            let (mut management_conn, _ip): (C, Option<IpAddr>) = conn_2;
-            if let Err(err) = setup_user_connection(&mut user_conn, params).await {
+            let mut user_conn: ConnectionWithIp<C> = conn_1;
+            let mut management_conn: ConnectionWithIp<C> = conn_2;
+            if let Err(err) = setup_user_connection(&mut user_conn.conn, params).await {
                 return err.into();
             }
-            match setup_management_connection(&mut management_conn).await {
+            match setup_management_connection(&mut management_conn.conn).await {
                 Ok(_) => ConnectAndCheckResult::Success(create_async_node(
                     user_conn,
                     Some(management_conn),
-                    ip,
                 )),
-                Err(err) => failed_management_connection(addr, to_future(user_conn), ip, err),
+                Err(err) => failed_management_connection(addr, user_conn.into_future(), err),
             }
         }
-        (Ok(conn), Err(err)) | (Err(err), Ok(conn)) => {
+        (Ok(mut connection), Err(err)) | (Err(err), Ok(mut connection)) => {
             // Only a single connection was successfully established. Use it for the user connection
-            let (mut user_conn, ip): (C, Option<IpAddr>) = conn;
-            match setup_user_connection(&mut user_conn, params).await {
-                Ok(_) => failed_management_connection(addr, to_future(user_conn), ip, err),
+            match setup_user_connection(&mut connection.conn, params).await {
+                Ok(_) => failed_management_connection(addr, connection.into_future(), err),
                 Err(err) => err.into(),
             }
         }
@@ -173,24 +165,16 @@ where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
     match create_connection::<C>(addr, params.clone(), socket_addr, None, true).await {
-        Err(conn_err) => {
-            failed_management_connection(addr, prev_node.user_connection, prev_node.ip, conn_err)
-        }
+        Err(conn_err) => failed_management_connection(addr, prev_node.user_connection, conn_err),
 
-        Ok(mut conn) => {
-            if let Err(err) = setup_management_connection(&mut conn.0).await {
-                return failed_management_connection(
-                    addr,
-                    prev_node.user_connection,
-                    prev_node.ip,
-                    err,
-                );
+        Ok(mut connection) => {
+            if let Err(err) = setup_management_connection(&mut connection.conn).await {
+                return failed_management_connection(addr, prev_node.user_connection, err);
             }
 
             ConnectAndCheckResult::Success(ClusterNode {
                 user_connection: prev_node.user_connection,
-                ip: prev_node.ip,
-                management_connection: Some(to_future(conn.0)),
+                management_connection: Some(connection.into_future()),
             })
         }
     }
@@ -263,7 +247,7 @@ where
 {
     match conn_type {
         RefreshConnectionType::OnlyUserConnection => {
-            let (user_conn, ip) = match create_and_setup_user_connection(
+            let user_conn = match create_and_setup_user_connection(
                 addr,
                 params.clone(),
                 socket_addr,
@@ -274,23 +258,8 @@ where
                 Ok(tuple) => tuple,
                 Err(err) => return err.into(),
             };
-            if let Some(node) = node {
-                let mut management_conn = match node.management_connection {
-                    Some(ref conn) => Some(conn.clone().await),
-                    None => None,
-                };
-                if ip != node.ip {
-                    // New IP was found, refresh the management connection too
-                    management_conn =
-                        create_and_setup_management_connection(addr, params, socket_addr)
-                            .await
-                            .ok()
-                            .map(|(conn, _ip): (C, Option<IpAddr>)| conn);
-                }
-                create_async_node(user_conn, management_conn, ip).into()
-            } else {
-                create_async_node(user_conn, None, ip).into()
-            }
+            let management_conn = node.and_then(|node| node.management_connection);
+            AsyncClusterNode::new(user_conn.into_future(), management_conn).into()
         }
         RefreshConnectionType::OnlyManagementConnection => {
             // Refreshing only the management connection requires the node to exist alongside a user connection. Otherwise, refresh all connections.
@@ -314,28 +283,14 @@ async fn create_and_setup_user_connection<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
-) -> RedisResult<(C, Option<IpAddr>)>
+) -> RedisResult<ConnectionWithIp<C>>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
-    let (mut conn, ip): (C, Option<IpAddr>) =
+    let mut connection: ConnectionWithIp<C> =
         create_connection(node, params.clone(), socket_addr, push_sender, false).await?;
-    setup_user_connection(&mut conn, params).await?;
-    Ok((conn, ip))
-}
-
-async fn create_and_setup_management_connection<C>(
-    node: &str,
-    params: ClusterParams,
-    socket_addr: Option<SocketAddr>,
-) -> RedisResult<(C, Option<IpAddr>)>
-where
-    C: ConnectionLike + Connect + Send + 'static,
-{
-    let (mut conn, ip): (C, Option<IpAddr>) =
-        create_connection(node, params.clone(), socket_addr, None, true).await?;
-    setup_management_connection(&mut conn).await?;
-    Ok((conn, ip))
+    setup_user_connection(&mut connection.conn, params).await?;
+    Ok(connection)
 }
 
 async fn setup_user_connection<C>(conn: &mut C, params: ClusterParams) -> RedisResult<()>
@@ -373,7 +328,7 @@ async fn create_connection<C>(
     socket_addr: Option<SocketAddr>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     is_management: bool,
-) -> RedisResult<(C, Option<IpAddr>)>
+) -> RedisResult<ConnectionWithIp<C>>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
@@ -392,6 +347,7 @@ where
         if !is_management { push_sender } else { None },
     )
     .await
+    .map(|conn| conn.into())
 }
 
 /// The function returns None if the checked connection/s are healthy. Otherwise, it returns the type of the unhealthy connection/s.
@@ -430,7 +386,7 @@ where
                 return false;
             }
             match node.management_connection.clone() {
-                Some(conn) => check(conn, timeout, "management").await,
+                Some(connection) => check(connection.conn, timeout, "management").await,
                 None => {
                     warn!("The management connection for node {} isn't set", address);
                     true
@@ -441,7 +397,7 @@ where
             if !check_user_connection {
                 return false;
             }
-            let conn = node.user_connection.clone();
+            let conn = node.user_connection.conn.clone();
             check(conn, timeout, "user").await
         },
     );

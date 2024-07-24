@@ -26,6 +26,7 @@ mod connections_container;
 mod connections_logic;
 /// Exposed only for testing.
 pub mod testing {
+    pub use super::connections_container::ConnectionWithIp;
     pub use super::connections_logic::*;
 }
 use crate::{
@@ -1916,7 +1917,7 @@ where
                 .get_node()
                 {
                     Ok(node) => {
-                        let connection_clone = node.user_connection.clone().await;
+                        let connection_clone = node.user_connection.conn.clone().await;
                         let mut connections = core.conn_lock.write().await;
                         let address = connections.replace_or_add_connection_for_address(addr, node);
                         drop(connections);

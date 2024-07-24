@@ -1,18 +1,57 @@
+use crate::cluster_async::ConnectionFuture;
+use arcstr::ArcStr;
+use futures::FutureExt;
+use rand::seq::IteratorRandom;
 use std::collections::HashMap;
 use std::net::IpAddr;
-
-use arcstr::ArcStr;
-use rand::seq::IteratorRandom;
 
 use crate::cluster_routing::{Route, SlotAddr};
 use crate::cluster_slotmap::{ReadFromReplicaStrategy, SlotMap, SlotMapValue};
 use crate::cluster_topology::TopologyHash;
 
+/// A struct that encapsulates a network connection along with its associated IP address.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct ConnectionWithIp<Connection> {
+    /// The actual connection
+    pub conn: Connection,
+    /// The IP associated with the connection
+    pub ip: Option<IpAddr>,
+}
+
+impl<Connection> ConnectionWithIp<Connection>
+where
+    Connection: Clone + Send + 'static,
+{
+    /// Consumes the current instance and returns a new `ConnectionWithIp`
+    /// where the connection is wrapped in a future.
+    #[doc(hidden)]
+    pub fn into_future(self) -> ConnectionWithIp<ConnectionFuture<Connection>> {
+        ConnectionWithIp {
+            conn: async { self.conn }.boxed().shared(),
+            ip: self.ip,
+        }
+    }
+}
+
+impl<Connection> From<(Connection, Option<IpAddr>)> for ConnectionWithIp<Connection> {
+    fn from(val: (Connection, Option<IpAddr>)) -> Self {
+        ConnectionWithIp {
+            conn: val.0,
+            ip: val.1,
+        }
+    }
+}
+
+impl<Connection> From<ConnectionWithIp<Connection>> for (Connection, Option<IpAddr>) {
+    fn from(val: ConnectionWithIp<Connection>) -> Self {
+        (val.conn, val.ip)
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ClusterNode<Connection> {
-    pub user_connection: Connection,
-    pub management_connection: Option<Connection>,
-    pub ip: Option<IpAddr>,
+    pub user_connection: ConnectionWithIp<Connection>,
+    pub management_connection: Option<ConnectionWithIp<Connection>>,
 }
 
 impl<Connection> ClusterNode<Connection>
@@ -20,24 +59,22 @@ where
     Connection: Clone,
 {
     pub fn new(
-        user_connection: Connection,
-        management_connection: Option<Connection>,
-        ip: Option<IpAddr>,
+        user_connection: ConnectionWithIp<Connection>,
+        management_connection: Option<ConnectionWithIp<Connection>>,
     ) -> Self {
         Self {
             user_connection,
             management_connection,
-            ip,
         }
     }
 
     pub(crate) fn get_connection(&self, conn_type: &ConnectionType) -> Connection {
         match conn_type {
-            ConnectionType::User => self.user_connection.clone(),
-            ConnectionType::PreferManagement => self
-                .management_connection
-                .clone()
-                .unwrap_or_else(|| self.user_connection.clone()),
+            ConnectionType::User => self.user_connection.conn.clone(),
+            ConnectionType::PreferManagement => self.management_connection.as_ref().map_or_else(
+                || self.user_connection.conn.clone(),
+                |management_conn| management_conn.conn.clone(),
+            ),
         }
     }
 }
@@ -54,7 +91,7 @@ pub(crate) struct ConnectionsMap<Connection>(pub(crate) HashMap<ArcStr, ClusterN
 impl<Connection> std::fmt::Display for ConnectionsMap<Connection> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (address, node) in self.0.iter() {
-            match node.ip {
+            match node.user_connection.ip {
                 Some(ip) => writeln!(f, "{address} - {ip}")?,
                 None => writeln!(f, "{address}")?,
             };
@@ -178,7 +215,7 @@ where
     ) -> impl Iterator<Item = ConnectionAndAddress<Connection>> + '_ {
         self.connection_map
             .iter()
-            .map(move |(address, node)| (address.clone(), node.user_connection.clone()))
+            .map(move |(address, node)| (address.clone(), node.user_connection.conn.clone()))
     }
 
     pub(crate) fn all_primary_connections(
@@ -200,7 +237,7 @@ where
     ) -> Option<ConnectionAndAddress<Connection>> {
         self.connection_map
             .get_key_value(address)
-            .map(|(address, conn)| (address.clone(), conn.user_connection.clone()))
+            .map(|(address, conn)| (address.clone(), conn.user_connection.conn.clone()))
     }
 
     pub(crate) fn random_connections(
@@ -258,10 +295,10 @@ mod tests {
         Connection: Clone,
     {
         pub(crate) fn new_only_with_user_conn(user_connection: Connection) -> Self {
+            let ip = None;
             Self {
-                user_connection,
+                user_connection: (user_connection, ip).into(),
                 management_connection: None,
-                ip: None,
             }
         }
     }
@@ -296,14 +333,14 @@ mod tests {
         connection: usize,
         use_management_connections: bool,
     ) -> ClusterNode<usize> {
+        let ip = None;
         ClusterNode::new(
-            connection,
+            (connection, ip).into(),
             if use_management_connections {
-                Some(connection * 10)
+                Some((connection * 10, ip).into())
             } else {
                 None
             },
-            None,
         )
     }
 

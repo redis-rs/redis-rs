@@ -2,7 +2,6 @@
 #![cfg(feature = "cluster-async")]
 mod support;
 
-use futures_util::FutureExt;
 use redis::{
     cluster_async::testing::{AsyncClusterNode, RefreshConnectionType},
     testing::ClusterParams,
@@ -18,10 +17,11 @@ use support::{
 mod test_connect_and_check {
     use std::sync::atomic::AtomicUsize;
 
-    use crate::support::{get_mock_connection_handler, ShouldReturnConnectionError};
-
     use super::*;
-    use redis::cluster_async::testing::{connect_and_check, ConnectAndCheckResult};
+    use crate::support::{get_mock_connection_handler, ShouldReturnConnectionError};
+    use redis::cluster_async::testing::{
+        connect_and_check, ConnectAndCheckResult, ConnectionWithIp,
+    };
 
     fn assert_partial_result(
         result: ConnectAndCheckResult<MockConnection>,
@@ -77,7 +77,8 @@ mod test_connect_and_check {
         .await;
         let node = assert_full_success(result);
         assert!(node.management_connection.is_some());
-        assert_eq!(node.ip, Some(ip));
+        assert_eq!(node.user_connection.ip, Some(ip));
+        assert_eq!(node.management_connection.unwrap().ip, Some(ip));
     }
 
     #[tokio::test]
@@ -133,9 +134,11 @@ mod test_connect_and_check {
     }
 
     #[tokio::test]
-    async fn test_connect_and_check_all_connections_different_ip_returns_only_user_conn() {
-        // Test that upon refreshing all connections, if the IPs of the new connections differ,
-        // the function selects only the connection with the correct IP as the user connection.
+    async fn test_connect_and_check_all_connections_different_ip_returns_both_connections() {
+        // Test that node's connections (e.g. user and management) can have different IPs for the same DNS endpoint.
+        // It is relevant for cases where the DNS entry holds multiple IPs that routes to the same node, for example with load balancers.
+        // The test verifies that upon refreshing all connections, if the IPs of the new connections differ,
+        // the function uses all connections.
         let name = "all_connections_different_ip";
 
         let _handle = MockConnectionBehavior::register_new(
@@ -149,7 +152,7 @@ mod test_connect_and_check {
             behavior.returned_ip_type = ConnectionIPReturnType::Different(AtomicUsize::new(0));
         });
 
-        // The first connection will have 0.0.0.0 IP
+        // The first connection will have 0.0.0.0 IP, the second 1.0.0.0
         let result = connect_and_check::<MockConnection>(
             &format!("{name}:6379"),
             ClusterParams::default(),
@@ -159,9 +162,16 @@ mod test_connect_and_check {
             None,
         )
         .await;
-        let (node, _) = assert_partial_result(result);
-        assert!(node.management_connection.is_none());
-        assert_eq!(node.ip, Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+        let node = assert_full_success(result);
+        assert!(node.management_connection.is_some());
+        assert_eq!(
+            node.user_connection.ip,
+            Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
+        );
+        assert_eq!(
+            node.management_connection.unwrap().ip,
+            Some(IpAddr::V4(Ipv4Addr::new(1, 0, 0, 0)))
+        );
     }
 
     #[tokio::test]
@@ -222,7 +232,14 @@ mod test_connect_and_check {
             handler: get_mock_connection_handler(name),
             port: 6379,
         };
-        let node = AsyncClusterNode::new(async { user_conn }.boxed().shared(), None, Some(ip));
+        let node = AsyncClusterNode::new(
+            ConnectionWithIp {
+                conn: user_conn,
+                ip: Some(ip),
+            }
+            .into_future(),
+            None,
+        );
 
         let result = connect_and_check::<MockConnection>(
             &format!("{name}:6379"),
@@ -236,50 +253,7 @@ mod test_connect_and_check {
         let node = assert_full_success(result);
         assert!(node.management_connection.is_some());
         // Confirm that the user connection remains unchanged
-        assert_eq!(node.user_connection.await.id, user_conn_id);
-    }
-
-    #[tokio::test]
-    async fn test_connect_and_check_only_management_different_ip_reconnects_both_connections() {
-        // Test that when we try the refresh only the management connection and a new IP is found, both connections are being replaced
-        let name = "only_management_different_ip";
-
-        let _handle = MockConnectionBehavior::register_new(
-            name,
-            Arc::new(|cmd, _| {
-                respond_startup(name, cmd)?;
-                Ok(())
-            }),
-        );
-        let new_ip = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
-        modify_mock_connection_behavior(name, |behavior| {
-            behavior.returned_ip_type = ConnectionIPReturnType::Specified(new_ip)
-        });
-        let user_conn_id: usize = 1000;
-        let user_conn = MockConnection {
-            id: user_conn_id,
-            handler: get_mock_connection_handler(name),
-            port: 6379,
-        };
-        let prev_ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
-        let node = AsyncClusterNode::new(async { user_conn }.boxed().shared(), None, Some(prev_ip));
-
-        let result = connect_and_check::<MockConnection>(
-            &format!("{name}:6379"),
-            ClusterParams::default(),
-            None,
-            RefreshConnectionType::OnlyManagementConnection,
-            Some(node),
-            None,
-        )
-        .await;
-        let node = assert_full_success(result);
-        assert!(node.management_connection.is_some());
-        // Confirm that the user connection was changed
-        assert_ne!(node.user_connection.await.id, user_conn_id);
-        assert!(node.ip.is_some());
-        assert_eq!(node.ip.unwrap().to_string(), *"1.2.3.4");
-        assert_ne!(node.ip, Some(prev_ip));
+        assert_eq!(node.user_connection.conn.await.id, user_conn_id);
     }
 
     #[tokio::test]
@@ -305,7 +279,14 @@ mod test_connect_and_check {
             port: 6379,
         };
         let prev_ip = Some(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)));
-        let node = AsyncClusterNode::new(async { user_conn }.boxed().shared(), None, prev_ip);
+        let node = AsyncClusterNode::new(
+            ConnectionWithIp {
+                conn: user_conn,
+                ip: prev_ip,
+            }
+            .into_future(),
+            None,
+        );
 
         let result = connect_and_check::<MockConnection>(
             &format!("{name}:6379"),
@@ -319,8 +300,8 @@ mod test_connect_and_check {
         let (node, _) = assert_partial_result(result);
         assert!(node.management_connection.is_none());
         // Confirm that the user connection was changed
-        assert_eq!(node.user_connection.await.id, user_conn_id);
-        assert_eq!(node.ip, prev_ip);
+        assert_eq!(node.user_connection.conn.await.id, user_conn_id);
+        assert_eq!(node.user_connection.ip, prev_ip);
     }
 
     #[tokio::test]
@@ -355,9 +336,18 @@ mod test_connect_and_check {
         };
 
         let node = AsyncClusterNode::new(
-            async { old_user_conn }.boxed().shared(),
-            Some(async { management_conn }.boxed().shared()),
-            Some(prev_ip),
+            ConnectionWithIp {
+                conn: old_user_conn,
+                ip: Some(prev_ip),
+            }
+            .into_future(),
+            Some(
+                ConnectionWithIp {
+                    conn: management_conn,
+                    ip: Some(prev_ip),
+                }
+                .into_future(),
+            ),
         );
 
         let result = connect_and_check::<MockConnection>(
@@ -371,65 +361,10 @@ mod test_connect_and_check {
         .await;
         let node = assert_full_success(result);
         // Confirm that a new user connection was created
-        assert_ne!(node.user_connection.await.id, old_user_conn_id);
+        assert_ne!(node.user_connection.conn.await.id, old_user_conn_id);
         // Confirm that the management connection remains unchanged
         assert_eq!(
-            node.management_connection.unwrap().await.id,
-            management_conn_id
-        );
-    }
-
-    #[tokio::test]
-    async fn test_connect_and_check_only_user_connection_new_ip_refreshing_both_connections() {
-        // Test that upon refreshing only the user connection, if the newly created connection has a different IP from the existing one,
-        // the managament connection is being refreshed too
-        let name = "only_user_connection_new_ip";
-
-        let _handle = MockConnectionBehavior::register_new(
-            name,
-            Arc::new(|cmd, _| {
-                respond_startup(name, cmd)?;
-                Ok(())
-            }),
-        );
-        modify_mock_connection_behavior(name, |behavior| {
-            behavior.returned_ip_type = ConnectionIPReturnType::Different(AtomicUsize::new(0));
-        });
-
-        let old_user_conn_id: usize = 1000;
-        let management_conn_id: usize = 2000;
-        let old_user_conn = MockConnection {
-            id: old_user_conn_id,
-            handler: get_mock_connection_handler(name),
-            port: 6379,
-        };
-        let management_conn = MockConnection {
-            id: management_conn_id,
-            handler: get_mock_connection_handler(name),
-            port: 6379,
-        };
-        let prev_ip = Some(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)));
-        let node = AsyncClusterNode::new(
-            async { old_user_conn }.boxed().shared(),
-            Some(async { management_conn }.boxed().shared()),
-            prev_ip,
-        );
-
-        let result = connect_and_check::<MockConnection>(
-            &format!("{name}:6379"),
-            ClusterParams::default(),
-            None,
-            RefreshConnectionType::OnlyUserConnection,
-            Some(node),
-            None,
-        )
-        .await;
-        let node = assert_full_success(result);
-        // Confirm that a new user connection was created
-        assert_ne!(node.user_connection.await.id, old_user_conn_id);
-        // Confirm that a new management connection was created
-        assert_ne!(
-            node.management_connection.unwrap().await.id,
+            node.management_connection.unwrap().conn.await.id,
             management_conn_id
         );
     }
@@ -438,7 +373,24 @@ mod test_connect_and_check {
 mod test_check_node_connections {
 
     use super::*;
-    use redis::cluster_async::testing::check_node_connections;
+    use redis::cluster_async::testing::{check_node_connections, ConnectionWithIp};
+    fn create_node_with_all_connections(name: &str) -> AsyncClusterNode<MockConnection> {
+        let ip = None;
+        AsyncClusterNode::new(
+            ConnectionWithIp {
+                conn: get_mock_connection_with_port(name, 1, 6380),
+                ip,
+            }
+            .into_future(),
+            Some(
+                ConnectionWithIp {
+                    conn: get_mock_connection_with_port(name, 2, 6381),
+                    ip,
+                }
+                .into_future(),
+            ),
+        )
+    }
 
     #[tokio::test]
     async fn test_check_node_connections_find_no_problem() {
@@ -452,12 +404,7 @@ mod test_check_node_connections {
                 Ok(())
             }),
         );
-
-        let node = AsyncClusterNode::new(
-            async { get_mock_connection(name, 1) }.boxed().shared(),
-            Some(async { get_mock_connection(name, 2) }.boxed().shared()),
-            None,
-        );
+        let node = create_node_with_all_connections(name);
         let response = check_node_connections::<MockConnection>(
             &node,
             &ClusterParams::default(),
@@ -484,17 +431,7 @@ mod test_check_node_connections {
             }),
         );
 
-        let node = AsyncClusterNode::new(
-            async { get_mock_connection_with_port(name, 1, 6380) }
-                .boxed()
-                .shared(),
-            Some(
-                async { get_mock_connection_with_port(name, 2, 6381) }
-                    .boxed()
-                    .shared(),
-            ),
-            None,
-        );
+        let node = create_node_with_all_connections(name);
         let response = check_node_connections::<MockConnection>(
             &node,
             &ClusterParams::default(),
@@ -521,9 +458,13 @@ mod test_check_node_connections {
             }),
         );
 
+        let ip = None;
         let node = AsyncClusterNode::new(
-            async { get_mock_connection(name, 1) }.boxed().shared(),
-            None,
+            ConnectionWithIp {
+                conn: get_mock_connection(name, 1),
+                ip,
+            }
+            .into_future(),
             None,
         );
         let response = check_node_connections::<MockConnection>(
@@ -549,17 +490,7 @@ mod test_check_node_connections {
             Arc::new(|_, _| Err(Err((ErrorKind::ClientError, "some error").into()))),
         );
 
-        let node = AsyncClusterNode::new(
-            async { get_mock_connection_with_port(name, 1, 6380) }
-                .boxed()
-                .shared(),
-            Some(
-                async { get_mock_connection_with_port(name, 2, 6381) }
-                    .boxed()
-                    .shared(),
-            ),
-            None,
-        );
+        let node = create_node_with_all_connections(name);
         let response = check_node_connections::<MockConnection>(
             &node,
             &ClusterParams::default(),
@@ -586,17 +517,7 @@ mod test_check_node_connections {
             }),
         );
 
-        let node = AsyncClusterNode::new(
-            async { get_mock_connection_with_port(name, 1, 6380) }
-                .boxed()
-                .shared(),
-            Some(
-                async { get_mock_connection_with_port(name, 2, 6381) }
-                    .boxed()
-                    .shared(),
-            ),
-            None,
-        );
+        let node = create_node_with_all_connections(name);
         let response = check_node_connections::<MockConnection>(
             &node,
             &ClusterParams::default(),
@@ -623,8 +544,11 @@ mod test_check_node_connections {
         );
 
         let node = AsyncClusterNode::new(
-            async { get_mock_connection(name, 1) }.boxed().shared(),
-            None,
+            ConnectionWithIp {
+                conn: get_mock_connection(name, 1),
+                ip: None,
+            }
+            .into_future(),
             None,
         );
         let response = check_node_connections::<MockConnection>(

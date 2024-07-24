@@ -444,6 +444,7 @@ pub(crate) async fn get_socket_addrs(
     }
 }
 
+/// Logs the creation of a connection, including its type, the node, and optionally its IP address.
 fn log_conn_creation<T>(conn_type: &str, node: T, ip: Option<IpAddr>)
 where
     T: std::fmt::Debug,
