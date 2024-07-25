@@ -309,7 +309,7 @@ impl RedisServer {
                 // prepare redis with TLS
                 redis_cmd
                     .arg("--tls-port")
-                    .arg(&port.to_string())
+                    .arg(port.to_string())
                     .arg("--port")
                     .arg("0")
                     .arg("--tls-cert-file")

@@ -40,6 +40,7 @@ mod types {
     /// The `FromRedisValue` trait provides two methods for parsing:
     /// - `fn from_redis_value(&Value) -> Result<T, RedisError>`
     /// - `fn from_owned_redis_value(Value) -> Result<T, RedisError>`
+    ///
     /// The `RedisParseMode` below allows choosing between the two
     /// so that test logic does not need to be duplicated for each.
     enum RedisParseMode {
