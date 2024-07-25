@@ -177,7 +177,7 @@ impl RedisCluster {
                     cmd.arg("--cluster-enabled")
                         .arg("yes")
                         .arg("--cluster-config-file")
-                        .arg(&tempdir.path().join("nodes.conf"))
+                        .arg(tempdir.path().join("nodes.conf"))
                         .arg("--cluster-node-timeout")
                         .arg("5000")
                         .arg("--appendonly")
