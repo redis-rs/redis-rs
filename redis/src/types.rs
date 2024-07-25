@@ -2564,4 +2564,4 @@ pub struct PushInfo {
 #[cfg(feature = "aio")]
 pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
 
-pub(crate) type SyncPushSender = std::sync::mpsc::SyncSender<PushInfo>;
+pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;

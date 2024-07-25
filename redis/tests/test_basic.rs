@@ -810,7 +810,7 @@ mod basic {
 
         // Connection for subscriber api
         let mut pubsub_con = ctx.connection();
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        let (tx, rx) = std::sync::mpsc::channel();
         // Only useful when RESP3 is enabled
         pubsub_con.set_push_sender(tx);
 
@@ -885,7 +885,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        let (tx, rx) = std::sync::mpsc::channel();
         // Only useful when RESP3 is enabled
         con.set_push_sender(tx);
         {
@@ -1736,7 +1736,7 @@ mod basic {
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        let (tx, rx) = std::sync::mpsc::channel();
         con.set_push_sender(tx);
         let _ = cmd("CLIENT")
             .arg("TRACKING")
@@ -1758,7 +1758,7 @@ mod basic {
                 (kind, data)
             );
         }
-        let (new_tx, new_rx) = std::sync::mpsc::sync_channel(100);
+        let (new_tx, new_rx) = std::sync::mpsc::channel();
         con.set_push_sender(new_tx.clone());
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
@@ -1792,7 +1792,7 @@ mod basic {
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        let (tx, rx) = std::sync::mpsc::channel();
         con.set_push_sender(tx.clone());
 
         let _: () = con.set("A", "1").unwrap();
@@ -1815,7 +1815,7 @@ mod basic {
         }
         let mut con = ctx.connection();
 
-        let (tx, rx) = std::sync::mpsc::sync_channel(100);
+        let (tx, rx) = std::sync::mpsc::channel();
         let mut pubsub_con = ctx.connection();
         pubsub_con.set_push_sender(tx);
 
