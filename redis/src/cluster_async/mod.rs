@@ -150,9 +150,9 @@ where
     /// # Arguments
     ///
     /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
-    /// for each subsequent iteration use the returned [`ScanStateRC`].    
+    ///   for each subsequent iteration use the returned [`ScanStateRC`].    
     /// * `count` - An optional count of keys requested,
-    /// the amount returned can vary and not obligated to return exactly count.
+    ///   the amount returned can vary and not obligated to return exactly count.
     /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
     ///
     /// # Returns
@@ -209,10 +209,10 @@ where
     /// # Arguments
     ///
     /// * `scan_state_rc` - A reference to the scan state, For initiating new scan send [`ScanStateRC::new()`],
-    /// for each subsequent iteration use the returned [`ScanStateRC`].
+    ///   for each subsequent iteration use the returned [`ScanStateRC`].
     /// * `match_pattern` - A match pattern of requested keys.
     /// * `count` - An optional count of keys requested,
-    /// the amount returned can vary and not obligated to return exactly count.
+    ///   the amount returned can vary and not obligated to return exactly count.
     /// * `object_type` - An optional [`ObjectType`] enum of requested key redis type.
     ///
     /// # Returns
