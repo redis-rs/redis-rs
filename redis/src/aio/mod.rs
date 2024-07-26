@@ -1,8 +1,10 @@
 //! Adds async IO support to redis.
-use crate::cmd::{cmd, Cmd};
-use crate::connection::get_resp3_hello_command_error;
-use crate::connection::RedisConnectionInfo;
-use crate::types::{ErrorKind, ProtocolVersion, RedisFuture, RedisResult, Value};
+use crate::cmd::Cmd;
+use crate::connection::{
+    check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
+    RedisConnectionInfo,
+};
+use crate::types::{RedisFuture, RedisResult, Value};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
 use futures_util::Future;
@@ -85,73 +87,29 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 }
 
+async fn execute_connection_pipeline(
+    rv: &mut impl ConnectionLike,
+    (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
+) -> RedisResult<AuthResult> {
+    if pipeline.len() == 0 {
+        return Ok(AuthResult::Succeeded);
+    }
+
+    let results = rv.req_packed_commands(&pipeline, 0, pipeline.len()).await?;
+
+    check_connection_setup(results, instructions)
+}
+
 // Initial setup for every connection.
-async fn setup_connection<C>(connection_info: &RedisConnectionInfo, con: &mut C) -> RedisResult<()>
-where
-    C: ConnectionLike,
-{
-    if connection_info.protocol != ProtocolVersion::RESP2 {
-        let hello_cmd = resp3_hello(connection_info);
-        let val: RedisResult<Value> = hello_cmd.query_async(con).await;
-        if let Err(err) = val {
-            return Err(get_resp3_hello_command_error(err));
-        }
-    } else if let Some(password) = &connection_info.password {
-        let mut command = cmd("AUTH");
-        if let Some(username) = &connection_info.username {
-            command.arg(username);
-        }
-        match command.arg(password).query_async(con).await {
-            Ok(Value::Okay) => (),
-            Err(e) => {
-                let err_msg = e.detail().ok_or((
-                    ErrorKind::AuthenticationFailed,
-                    "Password authentication failed",
-                ))?;
-
-                if !err_msg.contains("wrong number of arguments for 'auth' command") {
-                    fail!((
-                        ErrorKind::AuthenticationFailed,
-                        "Password authentication failed",
-                    ));
-                }
-
-                let mut command = cmd("AUTH");
-                match command.arg(password).query_async(con).await {
-                    Ok(Value::Okay) => (),
-                    _ => {
-                        fail!((
-                            ErrorKind::AuthenticationFailed,
-                            "Password authentication failed"
-                        ));
-                    }
-                }
-            }
-            _ => {
-                fail!((
-                    ErrorKind::AuthenticationFailed,
-                    "Password authentication failed"
-                ));
-            }
-        }
+async fn setup_connection(
+    connection_info: &RedisConnectionInfo,
+    con: &mut impl ConnectionLike,
+) -> RedisResult<()> {
+    if execute_connection_pipeline(con, connection_setup_pipeline(connection_info, true)).await?
+        == AuthResult::ShouldRetryWithoutUsername
+    {
+        execute_connection_pipeline(con, connection_setup_pipeline(connection_info, false)).await?;
     }
-
-    if connection_info.db != 0 {
-        match cmd("SELECT").arg(connection_info.db).query_async(con).await {
-            Ok(Value::Okay) => (),
-            _ => fail!((
-                ErrorKind::ResponseError,
-                "Redis server refused to switch database"
-            )),
-        }
-    }
-
-    // result is ignored, as per the command's instructions.
-    // https://redis.io/commands/client-setinfo/
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    let _: RedisResult<()> = crate::connection::client_set_info_pipeline()
-        .query_async(con)
-        .await;
 
     Ok(())
 }
@@ -166,7 +124,6 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
-use crate::commands::resp3_hello;
 pub(super) use runtime::*;
 
 macro_rules! check_resp3 {
