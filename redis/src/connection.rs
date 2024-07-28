@@ -208,7 +208,7 @@ pub struct ConnectionInfo {
     /// A connection address for where to connect to.
     pub addr: ConnectionAddr,
 
-    /// A boxed connection address for where to connect to.
+    /// A redis connection info for how to handshake with redis.
     pub redis: RedisConnectionInfo,
 }
 
