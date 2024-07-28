@@ -4,7 +4,9 @@ use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{AsyncPushSender, RedisError, RedisFuture, RedisResult, Value};
-use crate::{cmd, AsyncConnectionConfig, ConnectionInfo, ProtocolVersion, PushInfo, ToRedisArgs};
+use crate::{
+    cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
+};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
@@ -425,9 +427,9 @@ impl Debug for MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`
+    /// and a `RedisConnectionInfo`
     pub async fn new<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
@@ -437,9 +439,9 @@ impl MultiplexedConnection {
     }
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
+    /// and a `RedisConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
     pub async fn new_with_response_timeout<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
         response_timeout: Option<std::time::Duration>,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
@@ -458,8 +460,10 @@ impl MultiplexedConnection {
         .await
     }
 
+    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
+    /// , a `RedisConnectionInfo` and a `AsyncConnectionConfig`.
     pub(crate) async fn new_with_config<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
         config: AsyncConnectionConfig,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
@@ -475,11 +479,10 @@ impl MultiplexedConnection {
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
-        let redis_connection_info = &connection_info.redis;
         let codec = ValueCodec::default().framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
-                redis_connection_info.protocol,
+                connection_info.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
         }
@@ -487,12 +490,12 @@ impl MultiplexedConnection {
         let driver = boxed(driver);
         let mut con = MultiplexedConnection {
             pipeline,
-            db: connection_info.redis.db,
+            db: connection_info.db,
             response_timeout: config.response_timeout,
-            protocol: redis_connection_info.protocol,
+            protocol: connection_info.protocol,
         };
         let driver = {
-            let auth = setup_connection(&connection_info.redis, &mut con);
+            let auth = setup_connection(connection_info, &mut con);
 
             futures_util::pin_mut!(auth);
 

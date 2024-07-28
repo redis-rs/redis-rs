@@ -663,7 +663,7 @@ impl Client {
     {
         let con = self.get_simple_async_connection::<T>().await?;
         crate::aio::MultiplexedConnection::new_with_config(
-            &self.connection_info,
+            &self.connection_info.redis,
             con,
             config.clone(),
         )
