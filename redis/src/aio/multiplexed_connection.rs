@@ -462,7 +462,7 @@ impl MultiplexedConnection {
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// , a `RedisConnectionInfo` and a `AsyncConnectionConfig`.
-    pub(crate) async fn new_with_config<C>(
+    pub async fn new_with_config<C>(
         connection_info: &RedisConnectionInfo,
         stream: C,
         config: AsyncConnectionConfig,
