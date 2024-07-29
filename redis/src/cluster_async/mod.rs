@@ -1290,6 +1290,11 @@ where
                         _ => crate::cluster_routing::combine_array_results(results),
                     })
             }
+            Some(ResponsePolicy::CombineMaps) => {
+                future::try_join_all(receivers.into_iter().map(get_receiver))
+                    .await
+                    .and_then(crate::cluster_routing::combine_map_results)
+            }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
