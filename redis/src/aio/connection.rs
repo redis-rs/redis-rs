@@ -469,7 +469,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
-                log_conn_creation("TCP", host, Some(socket_addr.ip()));
+                log_conn_creation("TCP", format!("{host}:{port}"), Some(socket_addr.ip()));
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp(socket_addr).await?,
@@ -496,7 +496,11 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             }
             let socket_addrs = get_socket_addrs(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
-                log_conn_creation("TCP with TLS", host, Some(socket_addr.ip()));
+                log_conn_creation(
+                    "TCP with TLS",
+                    format!("{host}:{port}"),
+                    Some(socket_addr.ip()),
+                );
                 Box::pin(async move {
                     Ok::<_, RedisError>((
                         <T>::connect_tcp_tls(host, socket_addr, insecure, tls_params).await?,
