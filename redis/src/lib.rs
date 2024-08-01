@@ -442,6 +442,8 @@ let primary = sentinel.get_connection().unwrap();
 An async API also exists:
 
 ```rust,no_run
+# #[cfg(feature = "aio")]
+# {
 use futures::prelude::*;
 use redis::{ Commands, RedisConnectionInfo };
 use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
@@ -461,7 +463,7 @@ let mut sentinel = SentinelClient::build(
 .unwrap();
 
 let primary = sentinel.get_async_connection().await.unwrap();
-# Ok(()) }
+# Ok(()) }}
 "##
 )]
 //!
