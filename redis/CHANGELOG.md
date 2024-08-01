@@ -1,3 +1,7 @@
+### 0.26.1 (2024-08-02)
+
+* bug: Exported configured-out item ([#1273](https://github.com/redis-rs/redis-rs/pull/1273) @EmilyMatt)
+
 ### 0.26.0 (2024-07-26)
 
 #### Features
