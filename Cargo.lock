@@ -305,9 +305,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bigdecimal"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9324c8014cd04590682b34f1e9448d38f0674d0f7b2dc553331016ef0e4e9ebc"
+checksum = "51d712318a27c7150326677b321a5fa91b55f6d9034ffd67f20319e147d40cee"
 dependencies = [
  "autocfg",
  "libm",
