@@ -112,7 +112,9 @@ use rand::Rng;
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
 
+#[cfg(feature = "aio")]
 use crate::client::AsyncConnectionConfig;
+
 use crate::{
     connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ErrorKind,
     FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
