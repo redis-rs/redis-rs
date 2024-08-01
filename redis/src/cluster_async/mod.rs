@@ -1,9 +1,16 @@
-//! This module provides async functionality for Redis Cluster.
+//! This module provides async functionality for connecting to Redis / Valkey Clusters.
+//!
+//! The cluster connection is meant to abstract the fact that a cluster is composed of multiple nodes,
+//! and to provide an API which is as close as possible to that of a single node connection. In order to do that,
+//! the cluster connection maintains connections to each node in the Redis/ Valkey cluster, and can route
+//! requests automatically to the relevant nodes. In cases that the cluster connection receives indications
+//! that the cluster topology has changed, it will query nodes in order to find the current cluster topology.
+//! If it disconnects from some nodes, it will automatically reconnect to those nodes.
+//!
+//! Note that pubsub & push sending functionality is not currently provided by this module.
 //!
 //! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
 //! of connections to each node in the cluster.
-//!
-//! Also note that pubsub functionality is not currently provided by this module.
 //!
 //! # Example
 //! ```rust,no_run
