@@ -79,7 +79,9 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    aio::{ConnectionLike, MultiplexedConnection},
+    aio::{
+        new_shared_handle, ConnectionLike, MultiplexedConnection, Runtime, SharedHandleContainer,
+    },
     cluster::{get_connection_info, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{
@@ -92,8 +94,6 @@ use crate::{
     Value,
 };
 
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use crate::aio::{async_std::AsyncStd, RedisRuntime};
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
 use rand::{seq::IteratorRandom, thread_rng};
@@ -105,7 +105,10 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
-pub struct ClusterConnection<C = MultiplexedConnection>(mpsc::Sender<Message<C>>);
+pub struct ClusterConnection<C = MultiplexedConnection> {
+    sender: mpsc::Sender<Message<C>>,
+    _task_handle: SharedHandleContainer,
+}
 
 impl<C> ClusterConnection<C>
 where
@@ -118,19 +121,19 @@ where
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
-                let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
+                let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
                 let stream = async move {
-                    let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
+                    let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
                         .map(Ok)
                         .forward(inner)
                         .await;
                 };
-                #[cfg(feature = "tokio-comp")]
-                tokio::spawn(stream);
-                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                AsyncStd::spawn(stream);
+                let _task_handle = new_shared_handle(Runtime::locate().spawn(stream));
 
-                ClusterConnection(tx)
+                ClusterConnection {
+                    sender,
+                    _task_handle,
+                }
             })
     }
 
@@ -138,7 +141,7 @@ where
     pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
-        self.0
+        self.sender
             .send(Message {
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
@@ -176,7 +179,7 @@ where
         route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
-        self.0
+        self.sender
             .send(Message {
                 cmd: CmdArg::Pipeline {
                     pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
@@ -202,6 +205,9 @@ where
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
 type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
 
+/// This is the internal representation of an async Redis Cluster connection. It stores the
+/// underlying connections maintained for each node in the cluster, as well
+/// as common parameters for connecting to nodes and executing commands.
 struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
@@ -211,6 +217,9 @@ struct InnerCore<C> {
 
 type Core<C> = Arc<InnerCore<C>>;
 
+/// This is the sink for requests sent by the user.
+/// It holds the stream of requests which are "in flight", E.G. on their way to the server,
+/// and the inner representation of the connection.
 struct ClusterConnInner<C> {
     inner: Core<C>,
     state: ConnectionState,
