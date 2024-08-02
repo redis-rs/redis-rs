@@ -8,6 +8,11 @@ test:
 	@RUSTFLAGS="-D warnings" cargo build --locked --all-features -p redis -p redis-test
 
 	@echo "===================================================================="
+	@echo "Build Connection Type TCP major features without aio"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" cargo build --locked --features=cluster,sentinel,streams,script -p redis -p redis-test
+
+	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked -p redis --no-default-features -- --nocapture --test-threads=1 --skip test_module
