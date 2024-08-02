@@ -19,8 +19,9 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_owned_redis_value, parse_redis_value, AsyncCommands, Cmd, ErrorKind, InfoDict,
-        IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script, Value,
+        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind,
+        InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult,
+        Script, Value,
     };
 
     use crate::support::*;
@@ -2121,6 +2122,63 @@ mod cluster_async {
         // If you need to change the number here due to a change in the cluster, you probably also need to adjust the test.
         // See the PING counts above to explain why 5 is the target number.
         assert_eq!(ping_attempts.load(Ordering::Acquire), 5);
+    }
+
+    #[test]
+    fn test_kill_connection_on_drop_even_when_blocking() {
+        let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+
+        block_on_all(async move {
+            async fn count_ids(conn: &mut impl redis::aio::ConnectionLike) -> RedisResult<usize> {
+                // we use a pipeline with a fake command in order to ensure that the CLIENT LIST command gets routed to the correct node.
+                // we use LIST as the key, in order to ensure that adding CLIENT LIST doesn't trigger a CROSSSLOTS error.
+                let initial_connections: String = pipe()
+                    .cmd("GET")
+                    .arg("LIST")
+                    .cmd("CLIENT")
+                    .arg("LIST")
+                    .query_async::<Vec<Option<String>>>(conn)
+                    .await?
+                    .pop()
+                    .unwrap()
+                    .unwrap();
+
+                Ok(initial_connections
+                    .as_bytes()
+                    .windows(3)
+                    .filter(|substr| substr == b"id=")
+                    .count())
+            }
+
+            let mut conn = ctx.async_connection().await;
+            let mut connection_to_dispose_of = ctx.async_connection().await;
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 2);
+
+            let mut cmd = cmd("BLPOP");
+            let command_that_blocks = Box::pin(async move {
+                () = cmd
+                    .arg("LIST")
+                    .arg(0)
+                    .exec_async(&mut connection_to_dispose_of)
+                    .await
+                    .unwrap();
+                unreachable!("This shouldn't happen");
+            })
+            .fuse();
+            let timeout =
+                futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).fuse();
+
+            let others = futures::future::select(command_that_blocks, timeout).await;
+            drop(others);
+
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(100)).await;
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
+
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[cfg(feature = "tls-rustls")]
