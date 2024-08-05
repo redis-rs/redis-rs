@@ -1518,6 +1518,29 @@ deref_to_write_redis_args_impl! {
     <T: ?Sized> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
 }
 
+macro_rules! str_as_ref_to_write_redis_args_impl {
+    ($type:ty) => {
+        impl ToRedisArgs for $type {
+            #[inline]
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                self.as_ref().write_redis_args(out)
+            }
+            fn num_of_args(&self) -> usize {
+                self.as_ref().num_of_args()
+            }
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                self.as_ref().describe_numeric_behavior()
+            }
+        }
+    };
+}
+
+str_as_ref_to_write_redis_args_impl!(std::sync::Arc<str>);
+str_as_ref_to_write_redis_args_impl!(std::rc::Rc<str>);
+
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
@@ -1999,6 +2022,39 @@ macro_rules! pointer_from_redis_value_impl {
 pointer_from_redis_value_impl!(T, Box<T>, Box::new);
 pointer_from_redis_value_impl!(T, std::sync::Arc<T>, std::sync::Arc::new);
 pointer_from_redis_value_impl!(T, std::rc::Rc<T>, std::rc::Rc::new);
+
+macro_rules! pointer_str_from_redis_value_impl {
+    ($type:ty) => {
+        impl FromRedisValue for $type {
+            fn from_redis_value(v: &Value) -> RedisResult<Self> {
+                match v {
+                    Value::BulkString(bytes) => Ok(std::str::from_utf8(bytes)?.into()),
+                    Value::Okay => Ok("OK".into()),
+                    Value::SimpleString(v) => Ok(v.as_str().into()),
+                    Value::VerbatimString { format: _, text } => Ok(text.as_str().into()),
+                    Value::Double(val) => Ok(val.to_string().into()),
+                    Value::Int(val) => Ok(val.to_string().into()),
+                    _ => invalid_type_error!(v, "Response type not string compatible."),
+                }
+            }
+            fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+                let v = get_owned_inner_value(v);
+                match v {
+                    Value::BulkString(bytes) => Ok(String::from_utf8(bytes)?.into()),
+                    Value::Okay => Ok("OK".into()),
+                    Value::SimpleString(val) => Ok(val.into()),
+                    Value::VerbatimString { format: _, text } => Ok(text.into()),
+                    Value::Double(val) => Ok(val.to_string().into()),
+                    Value::Int(val) => Ok(val.to_string().into()),
+                    _ => invalid_type_error!(v, "Response type not string compatible."),
+                }
+            }
+        }
+    };
+}
+
+pointer_str_from_redis_value_impl!(std::sync::Arc<str>);
+pointer_str_from_redis_value_impl!(std::rc::Rc<str>);
 
 /// Implement `FromRedisValue` for `$Type` (which should use the generic parameter `$T`).
 ///
