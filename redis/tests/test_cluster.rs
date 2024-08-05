@@ -11,6 +11,7 @@ mod cluster {
     use crate::support::*;
     use redis::{
         cluster::{cluster_pipe, ClusterClient},
+        cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
         Value,
     };
@@ -994,6 +995,110 @@ mod cluster {
 
         let res = connection.req_command(&redis::cmd("PING"));
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_cluster_handle_complete_server_disconnect_without_panicking() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
+
+        let mut connection = cluster.connection();
+        drop(cluster);
+        for _ in 0..5 {
+            let cmd = cmd("PING");
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd.get_packed_command());
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_cluster_reconnect_after_complete_server_disconnect() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+
+        let ports: Vec<_> = cluster
+            .nodes
+            .iter()
+            .map(|info| match info.addr {
+                redis::ConnectionAddr::Tcp(_, port) => port,
+                redis::ConnectionAddr::TcpTls { port, .. } => port,
+                redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+            })
+            .collect();
+
+        let mut connection = cluster.connection();
+        drop(cluster);
+
+        let cmd = cmd("PING");
+
+        let result =
+            connection.route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+        // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+        assert!(result.is_err());
+
+        // This will route to all nodes - different path through the code.
+        let result = connection.req_packed_command(&cmd.get_packed_command());
+        // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+        assert!(result.is_err());
+
+        let _cluster = RedisCluster::new(RedisClusterConfiguration {
+            ports: ports.clone(),
+            ..Default::default()
+        });
+
+        let result = connection
+            .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            .unwrap();
+        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+    }
+
+    #[test]
+    fn test_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
+        let cluster =
+            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+
+        block_on_all(async move {
+            let ports: Vec<_> = cluster
+                .nodes
+                .iter()
+                .map(|info| match info.addr {
+                    redis::ConnectionAddr::Tcp(_, port) => port,
+                    redis::ConnectionAddr::TcpTls { port, .. } => port,
+                    redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
+                })
+                .collect();
+
+            let mut connection = cluster.connection();
+            drop(cluster);
+
+            // recreate cluster
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
+
+            let cmd = cmd("PING");
+            // explicitly route to all primaries and request all succeeded
+            let result = connection
+                .route_command(
+                    &cmd,
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllMasters,
+                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    )),
+                )
+                .unwrap();
+            assert_eq!(result, Value::SimpleString("PONG".to_string()));
+
+            Ok::<_, RedisError>(())
+        })
+        .unwrap();
     }
 
     #[cfg(feature = "tls-rustls")]
