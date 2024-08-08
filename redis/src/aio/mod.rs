@@ -46,7 +46,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self>;
 
-    fn spawn(f: impl Future<Output = ()> + Send + 'static);
+    fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle;
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         Box::pin(self)

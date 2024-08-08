@@ -1,4 +1,4 @@
-use super::{ConnectionLike, Runtime};
+use super::{new_shared_handle, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -404,16 +404,20 @@ impl Pipeline {
 /// A side-effect of this is that the underlying connection won't be closed until all sent requests have been answered,
 /// which means that in case of blocking commands, the underlying connection resource might not be released,
 /// even when all clones of the multiplexed connection have been dropped (see <https://github.com/redis-rs/redis-rs/issues/1236>).
-/// If that is an issue, the user can, instead of using [crate::Client::get_multiplexed_async_connection], use either [MultiplexedConnection::new] or
-/// [crate::Client::create_multiplexed_tokio_connection]/[crate::Client::create_multiplexed_async_std_connection],
-/// manually spawn the returned driver function, keep the spawned task's handle and abort the task whenever they want,
-/// at the cost of effectively closing the clones of the multiplexed connection.
+/// This isn't an issue in a connection that was created in a canonical way, which ensures that `_task_handle` is set, so that
+/// once all of the connection's clones are dropped, the task will also be dropped. If the user creates the connection in
+/// another way and `_task_handle` isn't set, they should manually spawn the returned driver function, keep the spawned task's
+/// handle and abort the task whenever they want, at the risk of effectively closing the clones of the multiplexed connection.
 #[derive(Clone)]
 pub struct MultiplexedConnection {
     pipeline: Pipeline,
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
+    // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
+    // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
+    // task.
+    _task_handle: Option<SharedHandleContainer>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -493,6 +497,7 @@ impl MultiplexedConnection {
             db: connection_info.db,
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
+            _task_handle: None,
         };
         let driver = {
             let auth = setup_connection(connection_info, &mut con);
@@ -513,6 +518,12 @@ impl MultiplexedConnection {
             }
         };
         Ok((con, driver))
+    }
+
+    /// This should be called strictly before the multiplexed connection is cloned - that is, before it is returned to the user.
+    /// Otherwise some clones will be able to kill the backing task, while other clones are still alive.
+    pub(crate) fn set_task_handle(&mut self, handle: TaskHandle) {
+        self._task_handle = Some(new_shared_handle(handle));
     }
 
     /// Sets the time that the multiplexer will wait for responses on operations before failing.

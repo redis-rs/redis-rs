@@ -986,6 +986,45 @@ mod basic_async {
         .unwrap();
     }
 
+    #[test]
+    fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking() {
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut conn = ctx.async_connection().await.unwrap();
+            let mut connection_to_dispose_of = ctx.async_connection().await.unwrap();
+            connection_to_dispose_of.set_response_timeout(Duration::from_millis(1));
+
+            async fn count_ids(conn: &mut impl redis::aio::ConnectionLike) -> RedisResult<usize> {
+                let initial_connections: String =
+                    cmd("CLIENT").arg("LIST").query_async(conn).await?;
+
+                Ok(initial_connections
+                    .as_bytes()
+                    .windows(3)
+                    .filter(|substr| substr == b"id=")
+                    .count())
+            }
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 2);
+
+            let command_that_blocks = cmd("BLPOP")
+                .arg("foo")
+                .arg(0)
+                .exec_async(&mut connection_to_dispose_of)
+                .await;
+
+            let err = command_that_blocks.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::IoError);
+
+            drop(connection_to_dispose_of);
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
+
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[cfg(feature = "tls-rustls")]
     mod mtls_test {
         use super::*;

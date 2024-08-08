@@ -21,6 +21,7 @@ use crate::connection::create_rustls_config;
 #[cfg(feature = "tls-rustls")]
 use futures_rustls::{client::TlsStream, TlsConnector};
 
+use super::TaskHandle;
 use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
@@ -250,8 +251,8 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::Unix(AsyncStdWrapped::new(con)))?)
     }
 
-    fn spawn(f: impl Future<Output = ()> + Send + 'static) {
-        async_std::task::spawn(f);
+    fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
+        TaskHandle::AsyncStd(async_std::task::spawn(f))
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
