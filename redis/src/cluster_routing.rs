@@ -418,17 +418,18 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"PUBSUB CHANNELS"
         | b"PUBSUB NUMSUB"
         | b"PUBSUB SHARDCHANNELS"
-        | b"PUBSUB SHARDNUMSUB" => RouteBy::AllNodes,
+        | b"PUBSUB SHARDNUMSUB"
+        | b"SCRIPT KILL"
+        | b"FUNCTION KILL"
+        | b"FUNCTION STATS" => RouteBy::AllNodes,
 
         b"DBSIZE"
         | b"FLUSHALL"
         | b"FLUSHDB"
         | b"FUNCTION DELETE"
         | b"FUNCTION FLUSH"
-        | b"FUNCTION KILL"
         | b"FUNCTION LOAD"
         | b"FUNCTION RESTORE"
-        | b"FUNCTION STATS"
         | b"INFO"
         | b"KEYS"
         | b"MEMORY DOCTOR"
@@ -437,7 +438,6 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"MEMORY STATS"
         | b"PING"
         | b"SCRIPT EXISTS"
-        | b"SCRIPT KILL"
         | b"UNWATCH"
         | b"WAIT"
         | b"RANDOMKEY"
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(
             RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
             Some(RoutingInfo::MultiNode((
-                MultipleNodeRoutingInfo::AllMasters,
+                MultipleNodeRoutingInfo::AllNodes,
                 Some(ResponsePolicy::OneSucceeded)
             )))
         );
