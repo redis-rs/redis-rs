@@ -104,7 +104,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 
 /// TlsMode indicates use or do not use verification of certification.
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum TlsMode {
     /// Secure verify certification.
     Secure,
@@ -187,6 +187,20 @@ impl ConnectionAddr {
                 cfg!(any(feature = "tls-native-tls", feature = "tls-rustls"))
             }
             ConnectionAddr::Unix(_) => cfg!(unix),
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    pub(crate) fn tls_mode(&self) -> Option<TlsMode> {
+        match self {
+            ConnectionAddr::TcpTls { insecure, .. } => {
+                if *insecure {
+                    Some(TlsMode::Insecure)
+                } else {
+                    Some(TlsMode::Secure)
+                }
+            }
+            _ => None,
         }
     }
 }
