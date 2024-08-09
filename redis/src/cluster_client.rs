@@ -30,7 +30,7 @@ struct BuilderParams {
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
-    protocol: ProtocolVersion,
+    protocol: Option<ProtocolVersion>,
 }
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ pub(crate) struct ClusterParams {
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
-    pub(crate) protocol: ProtocolVersion,
+    pub(crate) protocol: Option<ProtocolVersion>,
 }
 
 impl ClusterParams {
@@ -177,23 +177,21 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
-        if cluster_params.tls.is_none() {
-            cluster_params.tls = match first_node.addr {
-                ConnectionAddr::TcpTls {
-                    host: _,
-                    port: _,
-                    insecure,
-                    tls_params: _,
-                } => Some(match insecure {
-                    false => TlsMode::Secure,
-                    true => TlsMode::Insecure,
-                }),
-                _ => None,
-            };
-        }
+        let tls = if cluster_params.tls.is_none() {
+            cluster_params.tls = first_node.addr.tls_mode();
+            cluster_params.tls
+        } else {
+            None
+        };
+        let protocol = if cluster_params.protocol.is_none() {
+            cluster_params.protocol = Some(first_node.redis.protocol);
+            cluster_params.protocol
+        } else {
+            None
+        };
 
-        let mut nodes = Vec::with_capacity(initial_nodes.len());
-        for mut node in initial_nodes {
+        // verify that the initial nodes match the cluster client's configuration.
+        for node in initial_nodes.iter() {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
@@ -212,12 +210,23 @@ impl ClusterClientBuilder {
                     "Cannot use different username among initial nodes.",
                 )));
             }
-            node.redis.protocol = cluster_params.protocol;
-            nodes.push(node);
+            if protocol.is_some() && Some(node.redis.protocol) != protocol {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different password among initial nodes.",
+                )));
+            }
+
+            if tls.is_some() && node.addr.tls_mode() != tls {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different TLS modes among initial nodes.",
+                )));
+            }
         }
 
         Ok(ClusterClient {
-            initial_nodes: nodes,
+            initial_nodes,
             cluster_params,
         })
     }
@@ -322,7 +331,7 @@ impl ClusterClientBuilder {
 
     /// Sets the protocol with which the client should communicate with the server.
     pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
-        self.builder_params.protocol = protocol;
+        self.builder_params.protocol = Some(protocol);
         self
     }
 
@@ -485,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn give_different_password_by_initial_nodes() {
+    fn fail_if_received_different_password_between_initial_nodes() {
         let result = ClusterClient::new(vec![
             "redis://:password1@127.0.0.1:6379",
             "redis://:password2@127.0.0.1:6378",
@@ -495,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn give_different_username_by_initial_nodes() {
+    fn fail_if_received_different_username_between_initial_nodes() {
         let result = ClusterClient::new(vec![
             "redis://user1:password@127.0.0.1:6379",
             "redis://user2:password@127.0.0.1:6378",
@@ -505,13 +514,33 @@ mod tests {
     }
 
     #[test]
+    fn fail_if_received_different_protocol_between_initial_nodes() {
+        let result = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379/?protocol=3",
+            "redis://127.0.0.1:6378",
+            "redis://127.0.0.1:6377",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fail_if_received_different_tls_between_initial_nodes() {
+        let result = ClusterClient::new(vec![
+            "rediss://127.0.0.1:6379/",
+            "redis://127.0.0.1:6378",
+            "redis://127.0.0.1:6377",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn give_username_password_by_method() {
-        let client = ClusterClientBuilder::new(get_connection_data_with_password())
-            .password("pass".to_string())
+        let client = ClusterClientBuilder::new(get_connection_data_with_username_and_password())
+            .password("password".to_string())
             .username("user1".to_string())
             .build()
             .unwrap();
-        assert_eq!(client.cluster_params.password, Some("pass".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".to_string()));
         assert_eq!(client.cluster_params.username, Some("user1".to_string()));
     }
 
