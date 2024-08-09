@@ -1267,7 +1267,12 @@ impl Connection {
         // shutdown connection on protocol error
         if let Err(e) = &result {
             let shutdown = match e.as_io_error() {
-                Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
+                Some(e) => matches!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                ),
                 None => false,
             };
             if shutdown {

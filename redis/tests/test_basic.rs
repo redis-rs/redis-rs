@@ -1873,4 +1873,26 @@ mod basic {
             (kind, data)
         );
     }
+
+    #[test]
+    fn test_timeout_recycles_connection() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        redis::cmd("SET").arg("key").arg("key").execute(&mut con);
+
+        con.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+
+        let res = redis::cmd("BLPOP").arg("foo").arg(1).query::<()>(&mut con);
+        assert!(res.unwrap_err().is_timeout());
+        assert!(!con.is_open());
+
+        let mut con = ctx.connection();
+        let res = redis::cmd("GET")
+            .arg("key")
+            .query::<String>(&mut con)
+            .unwrap();
+        assert_eq!(res, "key");
+    }
 }
