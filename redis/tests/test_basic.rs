@@ -13,7 +13,8 @@ mod basic {
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
-    use std::thread::{sleep, spawn};
+    use std::io::Read;
+    use std::thread::{self, sleep, spawn};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
 
@@ -1698,6 +1699,105 @@ mod basic {
             .unwrap();
         let expire_time_milliseconds: u64 = con.pexpire_time("foo").unwrap();
         assert_eq!(expire_time_milliseconds, now * 1000 + 12_000);
+    }
+
+    #[test]
+    fn test_timeout_leaves_usable_connection() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        () = con.set("key", "value").unwrap();
+
+        con.set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+
+        // send multiple requests that timeout.
+        for _ in 0..3 {
+            let res = con.blpop::<_, Value>("foo", 0.03);
+            assert!(res.unwrap_err().is_timeout());
+            assert!(con.is_open());
+        }
+
+        sleep(Duration::from_millis(100));
+
+        // we might need to flush temporary errors from the system
+        for _ in 0..100 {
+            if cmd("PING").exec(&mut con).is_ok() {
+                break;
+            }
+            sleep(Duration::from_millis(1));
+        }
+
+        let res: String = con.get("key").unwrap();
+        assert_eq!(res, "value");
+    }
+
+    #[test]
+    fn test_timeout_in_middle_of_message_leaves_connection_usable() {
+        use std::io::Write;
+
+        fn fake_redis(listener: std::net::TcpListener) {
+            let mut stream = listener.incoming().next().unwrap().unwrap();
+
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+
+            // handle initial handshake if sent
+            #[cfg(not(feature = "disable-client-setinfo"))]
+            {
+                let mut pipeline = redis::pipe();
+                pipeline
+                    .cmd("CLIENT")
+                    .arg("SETINFO")
+                    .arg("LIB-NAME")
+                    .arg("redis-rs");
+                pipeline
+                    .cmd("CLIENT")
+                    .arg("SETINFO")
+                    .arg("LIB-VER")
+                    .arg(env!("CARGO_PKG_VERSION"));
+                let expected_length = pipeline.get_packed_pipeline().len();
+                let mut buf = vec![0; expected_length];
+                reader.read_exact(&mut buf).unwrap();
+                stream.write_all(b"$2\r\nOK\r\n$2\r\nOK\r\n").unwrap();
+            }
+
+            // reply with canned responses to known requests.
+            loop {
+                let expected_length = cmd("GET").arg("key1").get_packed_command().len();
+                let mut buf = vec![0; expected_length];
+                reader.read_exact(&mut buf).unwrap();
+
+                if buf == cmd("GET").arg("key1").get_packed_command() {
+                    // split the response so half is sent before the timeout
+                    stream.write_all(b"$4\r\nk").unwrap();
+                    sleep(Duration::from_millis(100));
+                    stream.write_all(b"ey1\r\n").unwrap();
+                } else if buf == cmd("GET").arg("key2").get_packed_command() {
+                    stream.write_all(b"$4\r\nkey2\r\n").unwrap();
+                    return;
+                } else {
+                    panic!("Invalid command {}", String::from_utf8(buf).unwrap());
+                }
+            }
+        }
+
+        let listener = get_listener_on_free_port();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || fake_redis(listener));
+
+        let client = redis::Client::open(format!("redis://127.0.0.1:{port}/")).unwrap();
+        let mut con = client.get_connection().unwrap();
+        con.set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+
+        let res = con.get::<_, Value>("key1");
+        assert!(res.unwrap_err().is_timeout());
+        assert!(con.is_open());
+
+        sleep(Duration::from_millis(100));
+
+        let value = con.get::<_, String>("key2").unwrap();
+        assert_eq!(value, "key2");
     }
 
     #[test]
