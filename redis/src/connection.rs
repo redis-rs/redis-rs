@@ -1354,31 +1354,24 @@ impl Connection {
     fn read_response(&mut self) -> RedisResult<Value> {
         let result = match self.con {
             ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+                self.parser.parse_value(reader)
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+                self.parser.parse_value(reader)
             }
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
                 let reader = &mut boxed_tls_connection.reader;
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+                self.parser.parse_value(reader)
             }
             #[cfg(unix)]
             ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
-                let result = self.parser.parse_value(sock);
-                self.try_send(&result);
-                result
+                self.parser.parse_value(sock)
             }
         };
+        self.try_send(&result);
         // shutdown connection on protocol error
         if let Err(e) = &result {
             let shutdown = match e.as_io_error() {
@@ -1410,6 +1403,7 @@ impl Connection {
                     }
                 }
             }
+            let non_redis_error = !matches!(e.)
         }
         result
     }
