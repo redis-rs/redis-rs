@@ -1868,7 +1868,7 @@ where
                         //   (e.g., sending management command to a different node than the user asked for); instead, raise the error.
                         let routable_cmd = cmd.and_then(|cmd| Routable::command(&*cmd));
                         if routable_cmd.is_some()
-                            && !RoutingInfo::is_key_based_cmd(&routable_cmd.unwrap())
+                            && !RoutingInfo::is_key_routing_command(&routable_cmd.unwrap())
                         {
                             return Err((
                                 ErrorKind::ClusterConnectionNotFound,

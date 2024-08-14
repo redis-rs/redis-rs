@@ -550,8 +550,10 @@ impl RoutingInfo {
         matches!(base_routing(cmd), RouteBy::AllNodes)
     }
 
-    /// Returns true if the `cmd` is a key-based command.
-    pub fn is_key_based_cmd(cmd: &[u8]) -> bool {
+    /// Returns true if the `cmd` is a key-based command that triggers MOVED errors.
+    /// A key-based command is one that will be accepted only by the slot owner,
+    /// while other nodes will respond with a MOVED error redirecting to the relevant primary owner.
+    pub fn is_key_routing_command(cmd: &[u8]) -> bool {
         match base_routing(cmd) {
             RouteBy::FirstKey
             | RouteBy::SecondArg
@@ -560,7 +562,18 @@ impl RoutingInfo {
             | RouteBy::SecondArgSlot
             | RouteBy::StreamsIndex
             | RouteBy::MultiShardNoValues
-            | RouteBy::MultiShardWithValues => true,
+            | RouteBy::MultiShardWithValues => {
+                if matches!(cmd, b"SPUBLISH") {
+                    // SPUBLISH does not return MOVED errors within the slot's shard. This means that even if READONLY wasn't sent to a replica,
+                    // executing SPUBLISH FOO BAR on that replica will succeed. This behavior differs from true key-based commands,
+                    // such as SET FOO BAR, where a non-readonly replica would return a MOVED error if READONLY is off.
+                    // Consequently, SPUBLISH does not meet the requirement of being a command that triggers MOVED errors.
+                    // TODO: remove this when PRIMARY_PREFERRED route for SPUBLISH is added
+                    false
+                } else {
+                    true
+                }
+            }
             RouteBy::AllNodes | RouteBy::AllPrimaries | RouteBy::Random | RouteBy::Undefined => {
                 false
             }
