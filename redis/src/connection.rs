@@ -944,9 +944,9 @@ pub fn connect(
 }
 
 pub(crate) struct ConnectionSetupComponents {
-    authenticate_with_resp3_cmd_index: Option<usize>,
-    authenticate_with_resp2_cmd_index: Option<usize>,
-    select_db_cmd_index: Option<usize>,
+    resp3_auth_cmd_idx: Option<usize>,
+    resp2_auth_cmd_idx: Option<usize>,
+    select_cmd_idx: Option<usize>,
 }
 
 pub(crate) fn connection_setup_pipeline(
@@ -1007,21 +1007,16 @@ pub(crate) fn connection_setup_pipeline(
     (
         pipeline,
         ConnectionSetupComponents {
-            authenticate_with_resp3_cmd_index,
-            authenticate_with_resp2_cmd_index,
-            select_db_cmd_index,
+            resp3_auth_cmd_idx: authenticate_with_resp3_cmd_index,
+            resp2_auth_cmd_idx: authenticate_with_resp2_cmd_index,
+            select_cmd_idx: select_db_cmd_index,
         },
     )
 }
 
-fn check_resp3_auth(
-    results: &[Value],
-    instructions: &ConnectionSetupComponents,
-) -> RedisResult<()> {
-    if let Some(index) = instructions.authenticate_with_resp3_cmd_index {
-        if let Some(Value::ServerError(err)) = results.get(index) {
-            return Err(get_resp3_hello_command_error(err.clone().into()));
-        }
+fn check_resp3_auth(results: &[Value], result_idx: usize) -> RedisResult<()> {
+    if let Some(Value::ServerError(err)) = results.get(result_idx) {
+        return Err(get_resp3_hello_command_error(err.clone().into()));
     }
     Ok(())
 }
@@ -1032,70 +1027,81 @@ pub(crate) enum AuthResult {
     ShouldRetryWithoutUsername,
 }
 
-fn check_resp2_auth(
-    results: &[Value],
-    instructions: &ConnectionSetupComponents,
-) -> RedisResult<AuthResult> {
-    if let Some(index) = instructions.authenticate_with_resp2_cmd_index {
-        let err = match results.get(index).unwrap() {
-            Value::Okay => {
-                return Ok(AuthResult::Succeeded);
-            }
-            Value::ServerError(err) => err,
-            _ => {
-                return Err((
-                    ErrorKind::ResponseError,
-                    "Redis server refused to authenticate, returns Ok() != Value::Okay",
-                )
-                    .into());
-            }
-        };
-        let err_msg = err.details().ok_or((
-            ErrorKind::AuthenticationFailed,
-            "Password authentication failed",
-        ))?;
-        if !err_msg.contains("wrong number of arguments for 'auth' command") {
+fn check_resp2_auth(results: &[Value], result_idx: usize) -> RedisResult<AuthResult> {
+    let Some(result) = results.get(result_idx) else {
+        return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
+    };
+
+    let err = match result {
+        Value::Okay => {
+            return Ok(AuthResult::Succeeded);
+        }
+        Value::ServerError(err) => err,
+        _ => {
             return Err((
-                ErrorKind::AuthenticationFailed,
-                "Password authentication failed",
+                ErrorKind::ResponseError,
+                "Redis server refused to authenticate, returns Ok() != Value::Okay",
             )
                 .into());
         }
-        return Ok(AuthResult::ShouldRetryWithoutUsername);
+    };
+
+    let err_msg = err.details().ok_or((
+        ErrorKind::AuthenticationFailed,
+        "Password authentication failed",
+    ))?;
+    if !err_msg.contains("wrong number of arguments for 'auth' command") {
+        return Err((
+            ErrorKind::AuthenticationFailed,
+            "Password authentication failed",
+        )
+            .into());
     }
-    Ok(AuthResult::Succeeded)
+    Ok(AuthResult::ShouldRetryWithoutUsername)
 }
 
-fn check_db_select(results: &[Value], instructions: &ConnectionSetupComponents) -> RedisResult<()> {
-    if let Some(index) = instructions.select_db_cmd_index {
-        if let Some(Value::ServerError(err)) = results.get(index) {
-            return match err.details() {
-                Some(err_msg) => Err((
-                    ErrorKind::ResponseError,
-                    "Redis server refused to switch database",
-                    err_msg.to_string(),
-                )
-                    .into()),
-                None => Err((
-                    ErrorKind::ResponseError,
-                    "Redis server refused to switch database",
-                )
-                    .into()),
-            };
-        }
+fn check_db_select(results: &[Value], result_idx: usize) -> RedisResult<()> {
+    let Some(Value::ServerError(err)) = results.get(result_idx) else {
+        return Ok(());
+    };
+
+    match err.details() {
+        Some(err_msg) => Err((
+            ErrorKind::ResponseError,
+            "Redis server refused to switch database",
+            err_msg.to_string(),
+        )
+            .into()),
+        None => Err((
+            ErrorKind::ResponseError,
+            "Redis server refused to switch database",
+        )
+            .into()),
     }
-    Ok(())
 }
 
 pub(crate) fn check_connection_setup(
     results: Vec<Value>,
-    instructions: ConnectionSetupComponents,
+    ConnectionSetupComponents {
+        resp3_auth_cmd_idx,
+        resp2_auth_cmd_idx,
+        select_cmd_idx,
+    }: ConnectionSetupComponents,
 ) -> RedisResult<AuthResult> {
-    check_resp3_auth(&results, &instructions)?;
-    if check_resp2_auth(&results, &instructions)? == AuthResult::ShouldRetryWithoutUsername {
-        return Ok(AuthResult::ShouldRetryWithoutUsername);
+    // can't have both values set
+    assert!(!(resp2_auth_cmd_idx.is_some() && resp3_auth_cmd_idx.is_some()));
+
+    if let Some(index) = resp3_auth_cmd_idx {
+        check_resp3_auth(&results, index)?;
+    } else if let Some(index) = resp2_auth_cmd_idx {
+        if check_resp2_auth(&results, index)? == AuthResult::ShouldRetryWithoutUsername {
+            return Ok(AuthResult::ShouldRetryWithoutUsername);
+        }
     }
-    check_db_select(&results, &instructions)?;
+
+    if let Some(index) = select_cmd_idx {
+        check_db_select(&results, index)?;
+    }
     Ok(AuthResult::Succeeded)
 }
 
