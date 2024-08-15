@@ -2400,7 +2400,7 @@ mod cluster_async {
             .block_on(cmd.query_async::<_, Vec<String>>(&mut connection))
             .unwrap_err();
         assert!(
-            matches!(result.kind(), ErrorKind::ClusterConnectionNotFound)
+            matches!(result.kind(), ErrorKind::ConnectionNotFoundForRoute)
                 || result.is_connection_dropped()
         );
     }
@@ -4031,7 +4031,7 @@ mod cluster_async {
             handler: _handler,
             ..
         } = MockEnv::with_client_builder(
-            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(1),
             name,
             move |received_cmd: &[u8], _| {
                 let slots_config_vec = vec![
@@ -4071,7 +4071,7 @@ mod cluster_async {
                 let res_err = res.unwrap_err();
                 assert_eq!(
                     res_err.kind(),
-                    ErrorKind::ClusterConnectionNotFound,
+                    ErrorKind::ConnectionNotFoundForRoute,
                     "{:?}",
                     res_err
                 );

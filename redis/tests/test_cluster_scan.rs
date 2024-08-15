@@ -164,7 +164,12 @@ mod test_cluster_scan_async {
 
     #[tokio::test] // test cluster scan with node fail in the middle
     async fn test_async_cluster_scan_with_fail() {
-        let cluster = TestClusterContext::new(3, 0);
+        let cluster = TestClusterContext::new_with_cluster_client_builder(
+            3,
+            0,
+            |builder| builder.retries(1),
+            false,
+        );
         let mut connection = cluster.async_connection(None).await;
         // Set some keys
         for i in 0..1000 {
@@ -224,7 +229,11 @@ mod test_cluster_scan_async {
         let cluster = TestClusterContext::new_with_cluster_client_builder(
             6,
             1,
-            |builder| builder.slots_refresh_rate_limit(Duration::from_secs(0), 0),
+            |builder| {
+                builder
+                    .slots_refresh_rate_limit(Duration::from_secs(0), 0)
+                    .retries(1)
+            },
             false,
         );
 
@@ -374,7 +383,11 @@ mod test_cluster_scan_async {
         let cluster = TestClusterContext::new_with_cluster_client_builder(
             6,
             1,
-            |builder| builder.slots_refresh_rate_limit(Duration::from_secs(0), 0),
+            |builder| {
+                builder
+                    .slots_refresh_rate_limit(Duration::from_secs(0), 0)
+                    .retries(1)
+            },
             false,
         );
 
@@ -772,7 +785,12 @@ mod test_cluster_scan_async {
     // Testing cluster scan when connection fails in the middle and we get an error
     // then cluster up again and scanning can continue without any problem
     async fn test_async_cluster_scan_failover() {
-        let mut cluster = TestClusterContext::new(3, 0);
+        let mut cluster = TestClusterContext::new_with_cluster_client_builder(
+            3,
+            0,
+            |builder| builder.retries(1),
+            false,
+        );
         let mut connection = cluster.async_connection(None).await;
         let mut i = 0;
         loop {

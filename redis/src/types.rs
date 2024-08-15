@@ -133,8 +133,10 @@ pub enum ErrorKind {
     EmptySentinelList,
     /// Attempted to kill a script/function while they werent' executing
     NotBusy,
-    /// Used when a cluster connection cannot find a connection to a valid node.
-    ClusterConnectionNotFound,
+    /// Used when no valid node connections remain in the cluster connection
+    AllConnectionsUnavailable,
+    /// Used when a connection is not found for the specified route.
+    ConnectionNotFoundForRoute,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -875,7 +877,8 @@ impl RedisError {
             ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
             ErrorKind::NotBusy => "not busy",
-            ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
+            ErrorKind::AllConnectionsUnavailable => "no valid connections remain in the cluster",
+            ErrorKind::ConnectionNotFoundForRoute => "No connection found for the requested route",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
@@ -1046,7 +1049,8 @@ impl RedisError {
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ClusterConnectionNotFound => RetryMethod::Reconnect,
+            ErrorKind::AllConnectionsUnavailable => RetryMethod::Reconnect,
+            ErrorKind::ConnectionNotFoundForRoute => RetryMethod::Reconnect,
 
             ErrorKind::IoError => match &self.repr {
                 ErrorRepr::IoError(err) => match err.kind() {

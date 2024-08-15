@@ -808,7 +808,7 @@ impl<C> Future for Request<C> {
                 let request = this.request.as_mut().unwrap();
                 // TODO - would be nice if we didn't need to repeat this code twice, with & without retries.
                 if request.retry >= this.retry_params.number_of_retries {
-                    let next = if err.kind() == ErrorKind::ClusterConnectionNotFound {
+                    let next = if err.kind() == ErrorKind::AllConnectionsUnavailable {
                         Next::ReconnectToInitialNodes { request: None }.into()
                     } else if matches!(err.retry_method(), crate::types::RetryMethod::MovedRedirect)
                         || matches!(target, OperationTarget::NotFound)
@@ -836,7 +836,7 @@ impl<C> Future for Request<C> {
                 }
                 request.retry = request.retry.saturating_add(1);
 
-                if err.kind() == ErrorKind::ClusterConnectionNotFound {
+                if err.kind() == ErrorKind::AllConnectionsUnavailable {
                     return Next::ReconnectToInitialNodes {
                         request: Some(this.request.take().unwrap()),
                     }
@@ -1132,12 +1132,7 @@ where
                 }
             };
             let mut write_lock = inner.conn_lock.write().await;
-            *write_lock = ConnectionsContainer::new(
-                Default::default(),
-                connection_map,
-                inner.cluster_params.read_from_replicas,
-                0,
-            );
+            write_lock.extend_connection_map(connection_map);
             drop(write_lock);
             if let Err(err) = Self::refresh_slots_and_subscriptions_with_retries(
                 inner.clone(),
@@ -1260,7 +1255,7 @@ where
                 } else {
                     Err(last_err.unwrap_or_else(|| {
                         (
-                            ErrorKind::ClusterConnectionNotFound,
+                            ErrorKind::AllConnectionsUnavailable,
                             "Couldn't find any connection",
                         )
                             .into()
@@ -1656,7 +1651,7 @@ where
             return OperationResult::Err((
                 OperationTarget::FanOut,
                 (
-                    ErrorKind::ClusterConnectionNotFound,
+                    ErrorKind::AllConnectionsUnavailable,
                     "No connections found for multi-node operation",
                 )
                     .into(),
@@ -1700,7 +1695,7 @@ where
                         )
                     } else {
                         let _ = sender.send(Err((
-                            ErrorKind::ClusterConnectionNotFound,
+                            ErrorKind::ConnectionNotFoundForRoute,
                             "Connection not found",
                         )
                             .into()));
@@ -1871,7 +1866,7 @@ where
                             && !RoutingInfo::is_key_routing_command(&routable_cmd.unwrap())
                         {
                             return Err((
-                                ErrorKind::ClusterConnectionNotFound,
+                                ErrorKind::ConnectionNotFoundForRoute,
                                 "Requested connection not found for route",
                                 format!("{route:?}"),
                             )
@@ -1892,7 +1887,7 @@ where
                     return Ok((address, conn.await));
                 } else {
                     return Err((
-                        ErrorKind::ClusterConnectionNotFound,
+                        ErrorKind::ConnectionNotFoundForRoute,
                         "Requested connection not found",
                         address,
                     )
@@ -1938,7 +1933,7 @@ where
                     .random_connections(1, ConnectionType::User)
                     .next()
                     .ok_or(RedisError::from((
-                        ErrorKind::ClusterConnectionNotFound,
+                        ErrorKind::AllConnectionsUnavailable,
                         "No random connection found",
                     )))?;
                 return Ok((random_address, random_conn_future.await));

@@ -451,7 +451,9 @@ where
             // the connection to the address cant be reached from different reasons, we will check we want to check if
             // the problem is problem that we can recover from like failover or scale down or some network issue
             // that we can retry the scan command to an address that own the next slot we are at.
-            ErrorKind::IoError | ErrorKind::ClusterConnectionNotFound => {
+            ErrorKind::IoError
+            | ErrorKind::AllConnectionsUnavailable
+            | ErrorKind::ConnectionNotFoundForRoute => {
                 let retry =
                     retry_scan(&scan_state, &core, match_pattern, count, object_type).await?;
                 (from_redis_value(&retry.0?)?, retry.1)
