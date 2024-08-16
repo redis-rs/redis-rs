@@ -1014,8 +1014,8 @@ pub(crate) fn connection_setup_pipeline(
     )
 }
 
-fn check_resp3_auth(results: &[Value], result_idx: usize) -> RedisResult<()> {
-    if let Some(Value::ServerError(err)) = results.get(result_idx) {
+fn check_resp3_auth(result: &Value) -> RedisResult<()> {
+    if let Value::ServerError(err) = result {
         return Err(get_resp3_hello_command_error(err.clone().into()));
     }
     Ok(())
@@ -1027,11 +1027,7 @@ pub(crate) enum AuthResult {
     ShouldRetryWithoutUsername,
 }
 
-fn check_resp2_auth(results: &[Value], result_idx: usize) -> RedisResult<AuthResult> {
-    let Some(result) = results.get(result_idx) else {
-        return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
-    };
-
+fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
     let err = match result {
         Value::Okay => {
             return Ok(AuthResult::Succeeded);
@@ -1060,8 +1056,8 @@ fn check_resp2_auth(results: &[Value], result_idx: usize) -> RedisResult<AuthRes
     Ok(AuthResult::ShouldRetryWithoutUsername)
 }
 
-fn check_db_select(results: &[Value], result_idx: usize) -> RedisResult<()> {
-    let Some(Value::ServerError(err)) = results.get(result_idx) else {
+fn check_db_select(value: &Value) -> RedisResult<()> {
+    let Value::ServerError(err) = value else {
         return Ok(());
     };
 
@@ -1092,16 +1088,26 @@ pub(crate) fn check_connection_setup(
     assert!(!(resp2_auth_cmd_idx.is_some() && resp3_auth_cmd_idx.is_some()));
 
     if let Some(index) = resp3_auth_cmd_idx {
-        check_resp3_auth(&results, index)?;
+        let Some(value) = results.get(index) else {
+            return Err((ErrorKind::ClientError, "Missing RESP3 auth response").into());
+        };
+        check_resp3_auth(value)?;
     } else if let Some(index) = resp2_auth_cmd_idx {
-        if check_resp2_auth(&results, index)? == AuthResult::ShouldRetryWithoutUsername {
+        let Some(value) = results.get(index) else {
+            return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
+        };
+        if check_resp2_auth(value)? == AuthResult::ShouldRetryWithoutUsername {
             return Ok(AuthResult::ShouldRetryWithoutUsername);
         }
     }
 
     if let Some(index) = select_cmd_idx {
-        check_db_select(&results, index)?;
+        let Some(value) = results.get(index) else {
+            return Err((ErrorKind::ClientError, "Missing SELECT DB response").into());
+        };
+        check_db_select(value)?;
     }
+
     Ok(AuthResult::Succeeded)
 }
 
