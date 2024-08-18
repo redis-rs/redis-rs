@@ -196,6 +196,7 @@ impl ConnectionManager {
                 response_timeout,
                 connection_timeout,
                 None,
+                None,
             )
         })
         .await
@@ -300,5 +301,10 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.client.connection_info().redis.db
+    }
+
+    fn is_closed(&self) -> bool {
+        // always return false due to automatic reconnect
+        false
     }
 }

@@ -288,6 +288,10 @@ impl AioConnectionLike for MockRedisConnection {
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn is_closed(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

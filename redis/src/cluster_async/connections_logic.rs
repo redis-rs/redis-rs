@@ -5,7 +5,7 @@ use super::{
     Connect,
 };
 use crate::{
-    aio::{ConnectionLike, Runtime},
+    aio::{ConnectionLike, Runtime, DisconnectNotifier},
     cluster::get_connection_info,
     cluster_client::ClusterParams,
     push_manager::PushInfo,
@@ -57,6 +57,7 @@ pub(crate) async fn get_or_create_conn<C>(
     params: &ClusterParams,
     conn_type: RefreshConnectionType,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> RedisResult<AsyncClusterNode<C>>
 where
     C: ConnectionLike + Send + Clone + Sync + Connect + 'static,
@@ -73,12 +74,13 @@ where
                 conn_type,
                 Some(node),
                 push_sender,
+                disconnect_notifier,
             )
             .await
             .get_node(),
         }
     } else {
-        connect_and_check(addr, params.clone(), None, conn_type, None, push_sender)
+        connect_and_check(addr, params.clone(), None, conn_type, None, push_sender, disconnect_notifier)
             .await
             .get_node()
     }
@@ -102,6 +104,7 @@ pub(crate) async fn connect_and_check_all_connections<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
@@ -113,8 +116,9 @@ where
             socket_addr,
             push_sender.clone(),
             false,
+            disconnect_notifier.clone(),
         ),
-        create_connection(addr, params.clone(), socket_addr, push_sender, true),
+        create_connection(addr, params.clone(), socket_addr, push_sender, true, disconnect_notifier),
     )
     .await
     {
@@ -160,11 +164,12 @@ async fn connect_and_check_only_management_conn<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     prev_node: AsyncClusterNode<C>,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
 {
-    match create_connection::<C>(addr, params.clone(), socket_addr, None, true).await {
+    match create_connection::<C>(addr, params.clone(), socket_addr, None, true, disconnect_notifier).await {
         Err(conn_err) => failed_management_connection(addr, prev_node.user_connection, conn_err),
 
         Ok(mut connection) => {
@@ -241,6 +246,7 @@ pub async fn connect_and_check<C>(
     conn_type: RefreshConnectionType,
     node: Option<AsyncClusterNode<C>>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> ConnectAndCheckResult<C>
 where
     C: ConnectionLike + Connect + Send + Sync + 'static + Clone,
@@ -252,6 +258,7 @@ where
                 params.clone(),
                 socket_addr,
                 push_sender,
+                disconnect_notifier,
             )
             .await
             {
@@ -265,15 +272,15 @@ where
             // Refreshing only the management connection requires the node to exist alongside a user connection. Otherwise, refresh all connections.
             match node {
                 Some(node) => {
-                    connect_and_check_only_management_conn(addr, params, socket_addr, node).await
+                    connect_and_check_only_management_conn(addr, params, socket_addr, node, disconnect_notifier).await
                 }
                 None => {
-                    connect_and_check_all_connections(addr, params, socket_addr, push_sender).await
+                    connect_and_check_all_connections(addr, params, socket_addr, push_sender, disconnect_notifier).await
                 }
             }
         }
         RefreshConnectionType::AllConnections => {
-            connect_and_check_all_connections(addr, params, socket_addr, push_sender).await
+            connect_and_check_all_connections(addr, params, socket_addr, push_sender, disconnect_notifier).await
         }
     }
 }
@@ -283,12 +290,13 @@ async fn create_and_setup_user_connection<C>(
     params: ClusterParams,
     socket_addr: Option<SocketAddr>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> RedisResult<ConnectionWithIp<C>>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let mut connection: ConnectionWithIp<C> =
-        create_connection(node, params.clone(), socket_addr, push_sender, false).await?;
+        create_connection(node, params.clone(), socket_addr, push_sender, false, disconnect_notifier).await?;
     setup_user_connection(&mut connection.conn, params).await?;
     Ok(connection)
 }
@@ -328,6 +336,7 @@ async fn create_connection<C>(
     socket_addr: Option<SocketAddr>,
     push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
     is_management: bool,
+    disconnect_notifier: Option<Box<dyn DisconnectNotifier>>,
 ) -> RedisResult<ConnectionWithIp<C>>
 where
     C: ConnectionLike + Connect + Send + 'static,
@@ -339,12 +348,14 @@ where
         params.pubsub_subscriptions = None;
     }
     let info = get_connection_info(node, params)?;
+    // management connection does not require notifications or disconnect notifications
     C::connect(
         info,
         response_timeout,
         connection_timeout,
         socket_addr,
         if !is_management { push_sender } else { None },
+        if !is_management { disconnect_notifier } else { None },
     )
     .await
     .map(|conn| conn.into())

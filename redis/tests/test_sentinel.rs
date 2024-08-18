@@ -283,7 +283,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
             let mut replica_con = replica_client
-                .get_multiplexed_async_connection(None)
+                .get_multiplexed_async_connection(None, None)
                 .await
                 .unwrap();
 
@@ -316,7 +316,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
             let mut replica_con = replica_client
-                .get_multiplexed_async_connection(None)
+                .get_multiplexed_async_connection(None, None)
                 .await
                 .unwrap();
 
@@ -338,12 +338,12 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None, None).await?;
 
             let mut replica_con = sentinel
                 .async_replica_for(master_name, Some(&node_conn_info))
                 .await?
-                .get_multiplexed_async_connection(None)
+                .get_multiplexed_async_connection(None, None)
                 .await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
@@ -367,7 +367,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None, None).await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -408,7 +408,7 @@ pub mod async_tests {
             let master_client = sentinel
                 .async_master_for(master_name, Some(&node_conn_info))
                 .await?;
-            let mut master_con = master_client.get_multiplexed_async_connection(None).await?;
+            let mut master_con = master_client.get_multiplexed_async_connection(None, None).await?;
 
             async_assert_is_connection_to_master(&mut master_con).await;
 

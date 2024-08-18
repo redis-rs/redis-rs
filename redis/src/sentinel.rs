@@ -301,7 +301,7 @@ fn find_valid_master(
 #[cfg(feature = "aio")]
 async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
     if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_multiplexed_async_connection(None).await {
+        if let Ok(mut conn) = client.get_multiplexed_async_connection(None, None).await {
             let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
             return check_role_result(&result, target_role);
         }
@@ -366,7 +366,7 @@ async fn async_reconnect(
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let new_connection = sentinel_client
-        .get_multiplexed_async_connection(None)
+        .get_multiplexed_async_connection(None, None)
         .await?;
     connection.replace(new_connection);
     Ok(())
@@ -768,6 +768,6 @@ impl SentinelClient {
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     pub async fn get_async_connection(&mut self) -> RedisResult<AsyncConnection> {
         let client = self.async_get_client().await?;
-        client.get_multiplexed_async_connection(None).await
+        client.get_multiplexed_async_connection(None, None).await
     }
 }

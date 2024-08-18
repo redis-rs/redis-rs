@@ -501,7 +501,7 @@ impl TestContext {
 
     #[cfg(feature = "aio")]
     pub async fn async_connection(&self) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_connection(None).await
+        self.client.get_multiplexed_async_connection(None, None).await
     }
 
     #[cfg(feature = "aio")]
@@ -513,7 +513,7 @@ impl TestContext {
     pub async fn async_connection_async_std(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection(None).await
+        self.client.get_multiplexed_async_std_connection(None, None).await
     }
 
     pub fn stop_server(&mut self) {
@@ -531,14 +531,14 @@ impl TestContext {
     pub async fn multiplexed_async_connection_tokio(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_tokio_connection(None).await
+        self.client.get_multiplexed_tokio_connection(None, None).await
     }
 
     #[cfg(feature = "async-std-comp")]
     pub async fn multiplexed_async_connection_async_std(
         &self,
     ) -> redis::RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection(None).await
+        self.client.get_multiplexed_async_std_connection(None, None).await
     }
 
     pub fn get_version(&self) -> Version {

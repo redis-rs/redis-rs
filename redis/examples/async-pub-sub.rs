@@ -5,7 +5,7 @@ use redis::AsyncCommands;
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    let mut publish_conn = client.get_multiplexed_async_connection(None).await?;
+    let mut publish_conn = client.get_multiplexed_async_connection(None, None).await?;
     let mut pubsub_conn = client.get_async_pubsub().await?;
 
     pubsub_conn.subscribe("wavephone").await?;

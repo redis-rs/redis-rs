@@ -42,6 +42,8 @@ struct BuilderParams {
     #[cfg(feature = "cluster-async")]
     topology_checks_interval: Option<Duration>,
     #[cfg(feature = "cluster-async")]
+    connections_validation_interval: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
     slots_refresh_rate_limit: SlotsRefreshRateLimit,
     client_name: Option<String>,
     response_timeout: Option<Duration>,
@@ -138,6 +140,8 @@ pub struct ClusterParams {
     pub(crate) topology_checks_interval: Option<Duration>,
     #[cfg(feature = "cluster-async")]
     pub(crate) slots_refresh_rate_limit: SlotsRefreshRateLimit,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) connections_validation_interval: Option<Duration>,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) client_name: Option<String>,
     pub(crate) connection_timeout: Duration,
@@ -169,6 +173,8 @@ impl ClusterParams {
             topology_checks_interval: value.topology_checks_interval,
             #[cfg(feature = "cluster-async")]
             slots_refresh_rate_limit: value.slots_refresh_rate_limit,
+            #[cfg(feature = "cluster-async")]
+            connections_validation_interval: value.connections_validation_interval,
             tls_params,
             client_name: value.client_name,
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
@@ -390,6 +396,16 @@ impl ClusterClientBuilder {
     #[cfg(feature = "cluster-async")]
     pub fn periodic_topology_checks(mut self, interval: Duration) -> ClusterClientBuilder {
         self.builder_params.topology_checks_interval = Some(interval);
+        self
+    }
+
+    /// Enables periodic connections checks for this client.
+    /// If enabled, the conenctions to the cluster nodes will be validated periodicatly, per configured interval.
+    /// In addition, for tokio runtime, passive disconnections could be detected instantly,
+    /// triggering reestablishemnt, w/o waiting for the next periodic check.
+    #[cfg(feature = "cluster-async")]
+    pub fn periodic_connections_checks(mut self, interval: Duration) -> ClusterClientBuilder {
+        self.builder_params.connections_validation_interval = Some(interval);
         self
     }
 

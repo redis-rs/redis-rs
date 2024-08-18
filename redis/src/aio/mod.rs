@@ -85,6 +85,24 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+
+    /// Returns the state of the connection
+    fn is_closed(&self) -> bool;
+}
+
+/// Implements ability to notify about disconnection events
+pub trait DisconnectNotifier : Send + Sync {
+    /// Notify about disconnect event
+    fn notify_disconnect(&mut self);
+
+    /// Inteded to be used with Box
+    fn clone_box(&self) -> Box<dyn DisconnectNotifier>;
+}
+
+impl Clone for Box<dyn DisconnectNotifier> {
+    fn clone(&self) -> Box<dyn DisconnectNotifier> {
+        self.clone_box()
+    }
 }
 
 // Initial setup for every connection.
