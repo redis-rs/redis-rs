@@ -12,6 +12,9 @@ use std::pin::Pin;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{inner_build_with_tls, TlsCertificates};
 
+#[cfg(feature = "cache")]
+use crate::caching::CacheConfig;
+
 /// The client type.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -77,6 +80,8 @@ pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
     pub(crate) push_sender: Option<AsyncPushSender>,
+    #[cfg(feature = "cache")]
+    pub(crate) cache_config: CacheConfig,
 }
 
 #[cfg(feature = "aio")]
@@ -101,6 +106,13 @@ impl AsyncConnectionConfig {
     /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
     pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
         self.push_sender = Some(sender);
+        self
+    }
+
+    /// Sets cache config for MultiplexedConnection, check CacheConfig for more details.
+    #[cfg(feature = "cache")]
+    pub fn set_cache_config(mut self, cache_config: CacheConfig) -> Self {
+        self.cache_config = cache_config;
         self
     }
 }

@@ -23,6 +23,9 @@ use futures::future;
 #[cfg(feature = "cluster-async")]
 use tokio::runtime::Runtime;
 
+#[cfg(feature = "cache")]
+use redis::caching::CacheConfig;
+
 type Handler = Arc<dyn Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync>;
 
 static HANDLERS: Lazy<RwLock<HashMap<String, Handler>>> = Lazy::new(Default::default);
@@ -39,6 +42,7 @@ impl cluster_async::Connect for MockConnection {
         info: T,
         _response_timeout: Duration,
         _connection_timeout: Duration,
+        #[cfg(feature = "cache")] _cache_config: CacheConfig,
     ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,

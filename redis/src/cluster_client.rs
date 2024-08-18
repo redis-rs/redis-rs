@@ -16,6 +16,9 @@ use crate::cluster_async;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 
+#[cfg(feature = "cache")]
+use crate::caching::CacheConfig;
+
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
 /// than final ClusterParams
@@ -388,8 +391,33 @@ impl ClusterClient {
     /// An error is returned if there is a failure while creating connections or slots.
     #[cfg(feature = "cluster-async")]
     pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
-            .await
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            #[cfg(feature = "cache")]
+            CacheConfig::disabled(),
+        )
+        .await
+    }
+
+    /// Creates new connections to Redis Cluster nodes and returns a
+    /// [`cluster_async::ClusterConnection`].
+    /// It will enable Client Side Caching by using provided `CacheConfig`.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if there is a failure while creating connections or slots.
+    #[cfg(all(feature = "cluster-async", feature = "cache"))]
+    pub async fn get_async_connection_with_cache_config(
+        &self,
+        cache_config: CacheConfig,
+    ) -> RedisResult<cluster_async::ClusterConnection> {
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            cache_config,
+        )
+        .await
     }
 
     #[doc(hidden)]
@@ -414,8 +442,13 @@ impl ClusterClient {
             + Unpin
             + 'static,
     {
-        cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
-            .await
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone(),
+            #[cfg(feature = "cache")]
+            CacheConfig::disabled(),
+        )
+        .await
     }
 
     /// Use `new()`.

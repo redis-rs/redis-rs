@@ -24,7 +24,8 @@ use super::{build_single_client, load_certs_from_file};
 use super::use_protocol;
 use super::RedisServer;
 use super::TlsFilePaths;
-
+#[cfg(feature = "cache")]
+use redis::caching::CacheConfig;
 const LOCALHOST: &str = "127.0.0.1";
 
 enum ClusterType {
@@ -467,6 +468,13 @@ impl TestClusterContext {
     #[cfg(feature = "cluster-async")]
     pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
         self.client.get_async_connection().await.unwrap()
+    }
+    #[cfg(all(feature = "cluster-async", feature = "cache"))]
+    pub async fn async_connection_with_cache(&self) -> redis::cluster_async::ClusterConnection {
+        self.client
+            .get_async_connection_with_cache_config(CacheConfig::enabled())
+            .await
+            .unwrap()
     }
 
     #[cfg(feature = "cluster-async")]

@@ -104,11 +104,30 @@ async fn execute_connection_pipeline(
 async fn setup_connection(
     connection_info: &RedisConnectionInfo,
     con: &mut impl ConnectionLike,
+    #[cfg(feature = "cache")] cache_config: crate::caching::CacheConfig,
 ) -> RedisResult<()> {
-    if execute_connection_pipeline(con, connection_setup_pipeline(connection_info, true)).await?
+    if execute_connection_pipeline(
+        con,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache")]
+            cache_config,
+        ),
+    )
+    .await?
         == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(con, connection_setup_pipeline(connection_info, false)).await?;
+        execute_connection_pipeline(
+            con,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache")]
+                cache_config,
+            ),
+        )
+        .await?;
     }
 
     Ok(())

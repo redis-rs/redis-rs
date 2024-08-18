@@ -4,6 +4,8 @@
 use super::async_std;
 use super::ConnectionLike;
 use super::{setup_connection, AsyncStream, RedisRuntime};
+#[cfg(feature = "cache")]
+use crate::caching::CacheConfig;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
@@ -90,7 +92,13 @@ where
             pubsub: false,
             protocol: connection_info.protocol,
         };
-        setup_connection(connection_info, &mut rv).await?;
+        setup_connection(
+            connection_info,
+            &mut rv,
+            #[cfg(feature = "cache")]
+            CacheConfig::disabled(),
+        )
+        .await?;
         Ok(rv)
     }
 

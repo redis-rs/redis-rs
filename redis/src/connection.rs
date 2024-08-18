@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::Duration;
 
+#[cfg(feature = "cache")]
+use crate::caching::CacheConfig;
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
@@ -940,7 +942,12 @@ pub fn connect(
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
     let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, &connection_info.redis)
+    setup_connection(
+        con,
+        &connection_info.redis,
+        #[cfg(feature = "cache")]
+        CacheConfig::disabled(),
+    )
 }
 
 pub(crate) struct ConnectionSetupComponents {
@@ -952,6 +959,7 @@ pub(crate) struct ConnectionSetupComponents {
 pub(crate) fn connection_setup_pipeline(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
+    #[cfg(feature = "cache")] cache_config: crate::caching::CacheConfig,
 ) -> (crate::Pipeline, ConnectionSetupComponents) {
     let mut last_cmd_index = 0;
 
@@ -1004,6 +1012,8 @@ pub(crate) fn connection_setup_pipeline(
         .arg(env!("CARGO_PKG_VERSION"))
         .ignore();
 
+    #[cfg(feature = "cache")]
+    client_caching_setup(connection_info, cache_config, &mut pipeline);
     (
         pipeline,
         ConnectionSetupComponents {
@@ -1012,6 +1022,31 @@ pub(crate) fn connection_setup_pipeline(
             select_cmd_idx: select_db_cmd_index,
         },
     )
+}
+
+#[cfg(feature = "cache")]
+fn client_caching_setup(
+    connection_info: &RedisConnectionInfo,
+    cache_config: crate::caching::CacheConfig,
+    pipeline: &mut Pipeline,
+) {
+    if connection_info.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    match cache_config.mode {
+        crate::caching::CacheMode::None => {}
+        crate::caching::CacheMode::All => {
+            pipeline.cmd("CLIENT").arg("TRACKING").arg("ON").ignore();
+        }
+        crate::caching::CacheMode::OptIn => {
+            pipeline
+                .cmd("CLIENT")
+                .arg("TRACKING")
+                .arg("ON")
+                .arg("OPTIN")
+                .ignore();
+        }
+    }
 }
 
 fn check_resp3_auth(result: &Value) -> RedisResult<()> {
@@ -1126,6 +1161,7 @@ fn execute_connection_pipeline(
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
+    #[cfg(feature = "cache")] cache_config: crate::caching::CacheConfig,
 ) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
@@ -1136,10 +1172,25 @@ fn setup_connection(
         push_sender: None,
     };
 
-    if execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, true))?
-        == AuthResult::ShouldRetryWithoutUsername
+    if execute_connection_pipeline(
+        &mut rv,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache")]
+            cache_config,
+        ),
+    )? == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, false))?;
+        execute_connection_pipeline(
+            &mut rv,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache")]
+                cache_config,
+            ),
+        )?;
     }
 
     Ok(rv)

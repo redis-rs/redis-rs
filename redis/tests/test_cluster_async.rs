@@ -25,6 +25,9 @@ mod cluster_async {
 
     use crate::support::*;
 
+    #[cfg(feature = "cache")]
+    use redis::caching::CacheConfig;
+
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
             std::io::ErrorKind::BrokenPipe,
@@ -474,14 +477,20 @@ mod cluster_async {
             info: T,
             response_timeout: std::time::Duration,
             connection_timeout: std::time::Duration,
+            #[cfg(feature = "cache")] cache_config: CacheConfig,
         ) -> RedisFuture<'a, Self>
         where
             T: IntoConnectionInfo + Send + 'a,
         {
             Box::pin(async move {
-                let inner =
-                    MultiplexedConnection::connect(info, response_timeout, connection_timeout)
-                        .await?;
+                let inner = MultiplexedConnection::connect(
+                    info,
+                    response_timeout,
+                    connection_timeout,
+                    #[cfg(feature = "cache")]
+                    cache_config,
+                )
+                .await?;
                 Ok(ErrorConnection { inner })
             })
         }

@@ -6,6 +6,8 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+#[cfg(feature = "cache")]
+use std::time::Duration;
 use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
@@ -21,6 +23,27 @@ pub enum Arg<D> {
     Cursor,
 }
 
+#[cfg(feature = "cache")]
+pub(crate) struct CommandCacheInformationByRef<'a> {
+    pub(crate) redis_key: &'a [u8],
+    pub(crate) cmd: &'a [u8],
+    pub(crate) client_side_ttl: Option<Duration>,
+    pub(crate) is_mget: bool,
+}
+
+#[cfg(feature = "cache")]
+pub(crate) struct CommandCacheInformation {
+    pub(crate) redis_key: Vec<u8>,
+    pub(crate) cmd: Vec<u8>,
+    pub(crate) client_side_ttl: Option<Duration>,
+}
+
+#[cfg(feature = "cache")]
+#[derive(Clone)]
+pub(crate) struct CommandCacheOptions {
+    pub(crate) client_side_ttl: Option<Duration>,
+}
+
 /// Represents redis commands.
 #[derive(Clone)]
 pub struct Cmd {
@@ -30,6 +53,8 @@ pub struct Cmd {
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    #[cfg(feature = "cache")]
+    cache: Option<CommandCacheOptions>,
 }
 
 /// Represents a redis iterator.
@@ -321,6 +346,8 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache")]
+            cache: None,
         }
     }
 
@@ -331,6 +358,8 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache")]
+            cache: None,
         }
     }
 
@@ -565,7 +594,7 @@ impl Cmd {
     }
 
     // Get a reference to the argument at `idx`
-    #[cfg(feature = "cluster")]
+    #[cfg(any(feature = "cluster", feature = "cache"))]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         if idx >= self.args.len() {
             return None;
@@ -600,6 +629,63 @@ impl Cmd {
     #[inline]
     pub fn is_no_response(&self) -> bool {
         self.no_response
+    }
+
+    /// It marks command as triable for client side caching.
+    /// Useful when `CacheMode` is set to `CacheMode::OptIn`
+    #[cfg(feature = "cache")]
+    pub fn cache(&mut self) -> &mut Cmd {
+        self.cache = Some(CommandCacheOptions {
+            client_side_ttl: None,
+        });
+        self
+    }
+    /// It marks command as triable for client side caching with custom Client Side TTL for cache.
+    /// Useful when `CacheMode` is set to `CacheMode::OptIn`
+    #[cfg(feature = "cache")]
+    pub fn cache_with_client_side_ttl(&mut self, client_side_ttl: Duration) -> &mut Cmd {
+        self.cache = Some(CommandCacheOptions {
+            client_side_ttl: Some(client_side_ttl),
+        });
+        self
+    }
+    #[cfg(feature = "cache")]
+    #[inline]
+    pub(crate) fn compute_cache_information(&self) -> Option<CommandCacheInformationByRef> {
+        let mut is_mget = false;
+        let x: &[u8] = &[];
+        if self.args.len() >= 2 {
+            if let Some(command_name) = self.arg_idx(0) {
+                let cache_key = match command_name {
+                    b"GET" | b"HEXISTS" | b"HGET" | b"HMGET" | b"HGETALL" | b"PTTL" => {
+                        Some(self.arg_idx(1).unwrap())
+                    }
+                    b"MGET" => {
+                        is_mget = true;
+                        Some(x)
+                    }
+                    _ => return None,
+                };
+                if let Some(key) = cache_key {
+                    return Some(CommandCacheInformationByRef {
+                        client_side_ttl: self.cache.as_ref().and_then(|x| x.client_side_ttl),
+                        redis_key: key,
+                        cmd: if is_mget { x } else { self.data.as_slice() },
+                        is_mget,
+                    });
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+        None
+    }
+    #[cfg(feature = "cache")]
+    #[inline]
+    pub(crate) fn has_opt_in_cache(&self) -> bool {
+        self.cache.is_some()
     }
 }
 

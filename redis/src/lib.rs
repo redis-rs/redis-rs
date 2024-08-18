@@ -604,3 +604,6 @@ mod connection;
 mod parser;
 mod script;
 mod types;
+
+#[cfg(feature = "cache")]
+pub mod caching;

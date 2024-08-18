@@ -90,6 +90,9 @@ log = { version = "0.4", optional = true }
 # Optional uuid support
 uuid = { version = "1.10.0", optional = true }
 
+once_cell = { version = "1", optional = true }
+lru = {version =  "0.12.3", optional = true}
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
@@ -119,6 +122,7 @@ bigdecimal = ["dep:bigdecimal"]
 num-bigint = []
 uuid = ["dep:uuid"]
 disable-client-setinfo = []
+cache = ["aio", "lru", "once_cell"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -183,6 +187,12 @@ required-features = ["cluster"]
 name = "bench_cluster_async"
 harness = false
 required-features = ["cluster-async", "tokio-comp"]
+
+[[bench]]
+name = "bench_cache"
+harness = false
+required-features = ["tokio-comp", "aio", "cache"]
+
 
 [[example]]
 name = "async-multiplexed"

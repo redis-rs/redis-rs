@@ -86,13 +86,14 @@ use crate::{
 
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use crate::aio::{async_std::AsyncStd, RedisRuntime};
+#[cfg(feature = "cache")]
+use crate::caching::CacheConfig;
 use futures::{future::BoxFuture, prelude::*, ready};
 use log::{trace, warn};
 use rand::{seq::IteratorRandom, thread_rng};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
-
 /// This represents an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
@@ -106,24 +107,30 @@ where
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisResult<ClusterConnection<C>> {
-        ClusterConnInner::new(initial_nodes, cluster_params)
-            .await
-            .map(|inner| {
-                let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
-                let stream = async move {
-                    let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
-                        .map(Ok)
-                        .forward(inner)
-                        .await;
-                };
-                #[cfg(feature = "tokio-comp")]
-                tokio::spawn(stream);
-                #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-                AsyncStd::spawn(stream);
+        ClusterConnInner::new(
+            initial_nodes,
+            cluster_params,
+            #[cfg(feature = "cache")]
+            cache_config,
+        )
+        .await
+        .map(|inner| {
+            let (tx, mut rx) = mpsc::channel::<Message<_>>(100);
+            let stream = async move {
+                let _ = stream::poll_fn(move |cx| rx.poll_recv(cx))
+                    .map(Ok)
+                    .forward(inner)
+                    .await;
+            };
+            #[cfg(feature = "tokio-comp")]
+            tokio::spawn(stream);
+            #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+            AsyncStd::spawn(stream);
 
-                ClusterConnection(tx)
-            })
+            ClusterConnection(tx)
+        })
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
@@ -199,6 +206,8 @@ struct InnerCore<C> {
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
+    #[cfg(feature = "cache")]
+    cache_config: CacheConfig,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -209,6 +218,8 @@ struct ClusterConnInner<C> {
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
     refresh_error: Option<RedisError>,
+    #[cfg(feature = "cache")]
+    cache_config: CacheConfig,
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
@@ -273,19 +284,30 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let connections = Self::create_initial_connections(
+            initial_nodes,
+            &cluster_params,
+            #[cfg(feature = "cache")]
+            cache_config,
+        )
+        .await?;
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
+            #[cfg(feature = "cache")]
+            cache_config,
         });
         let connection = ClusterConnInner {
             inner,
             in_flight_requests: Default::default(),
             refresh_error: None,
             state: ConnectionState::PollComplete,
+            #[cfg(feature = "cache")]
+            cache_config,
         };
         Self::refresh_slots(connection.inner.clone()).await?;
         Ok(connection)
@@ -294,13 +316,22 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisResult<ConnectionMap<C>> {
         let connections = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
+                #[cfg(feature = "cache")]
+                let cc = cache_config;
                 async move {
                     let addr = info.addr.to_string();
-                    let result = connect_and_check(&addr, params).await;
+                    let result = connect_and_check(
+                        &addr,
+                        params,
+                        #[cfg(feature = "cache")]
+                        cc,
+                    )
+                    .await;
                     match result {
                         Ok(conn) => Some((addr, async { conn }.boxed().shared())),
                         Err(e) => {
@@ -331,16 +362,20 @@ where
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
-            let connection_map =
-                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await
-                {
-                    Ok(map) => map,
-                    Err(err) => {
-                        warn!("Can't reconnect to initial nodes: `{err}`");
-                        return;
-                    }
-                };
+            let connection_map = match Self::create_initial_connections(
+                &inner.initial_nodes,
+                &inner.cluster_params,
+                #[cfg(feature = "cache")]
+                inner.cache_config,
+            )
+            .await
+            {
+                Ok(map) => map,
+                Err(err) => {
+                    warn!("Can't reconnect to initial nodes: `{err}`");
+                    return;
+                }
+            };
             let mut write_lock = inner.conn_lock.write().await;
             *write_lock = (
                 connection_map,
@@ -355,6 +390,8 @@ where
 
     fn refresh_connections(&mut self, addrs: Vec<String>) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
+        #[cfg(feature = "cache")]
+        let cache_config = self.cache_config;
         async move {
             let mut write_guard = inner.conn_lock.write().await;
             let mut connections = stream::iter(addrs)
@@ -365,6 +402,8 @@ where
                             &addr,
                             connections.remove(&addr),
                             &inner.cluster_params,
+                            #[cfg(feature = "cache")]
+                            cache_config,
                         )
                         .await;
                         if let Ok(conn) = conn {
@@ -425,8 +464,14 @@ where
             .fold(
                 HashMap::with_capacity(nodes_len),
                 |mut connections, (addr, connection)| async {
-                    let conn =
-                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
+                    let conn = Self::get_or_create_conn(
+                        addr,
+                        connection,
+                        &inner.cluster_params,
+                        #[cfg(feature = "cache")]
+                        inner.cache_config,
+                    )
+                    .await;
                     if let Ok(conn) = conn {
                         connections.insert(addr.to_string(), async { conn }.boxed().shared());
                     }
@@ -901,15 +946,30 @@ where
         addr: &str,
         conn_option: Option<ConnectionFuture<C>>,
         params: &ClusterParams,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisResult<C> {
         if let Some(conn) = conn_option {
             let mut conn = conn.await;
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+                Err(_) => {
+                    connect_and_check(
+                        addr,
+                        params.clone(),
+                        #[cfg(feature = "cache")]
+                        cache_config,
+                    )
+                    .await
+                }
             }
         } else {
-            connect_and_check(addr, params.clone()).await
+            connect_and_check(
+                addr,
+                params.clone(),
+                #[cfg(feature = "cache")]
+                cache_config,
+            )
+            .await
         }
     }
 }
@@ -1068,6 +1128,7 @@ pub trait Connect: Sized {
         info: T,
         response_timeout: Duration,
         connection_timeout: Duration,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a;
@@ -1078,6 +1139,7 @@ impl Connect for MultiplexedConnection {
         info: T,
         response_timeout: Duration,
         connection_timeout: Duration,
+        #[cfg(feature = "cache")] cache_config: CacheConfig,
     ) -> RedisFuture<'a, MultiplexedConnection>
     where
         T: IntoConnectionInfo + Send + 'a,
@@ -1088,6 +1150,8 @@ impl Connect for MultiplexedConnection {
             let config = crate::AsyncConnectionConfig::new()
                 .set_connection_timeout(connection_timeout)
                 .set_response_timeout(response_timeout);
+            #[cfg(feature = "cache")]
+            let config = config.clone().set_cache_config(cache_config);
             client
                 .get_multiplexed_async_connection_with_config(&config)
                 .await
@@ -1100,7 +1164,14 @@ async fn connect_check_and_add<C>(core: Core<C>, addr: String) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + Clone + 'static,
 {
-    match connect_and_check::<C>(&addr, core.cluster_params.clone()).await {
+    match connect_and_check::<C>(
+        &addr,
+        core.cluster_params.clone(),
+        #[cfg(feature = "cache")]
+        core.cache_config,
+    )
+    .await
+    {
         Ok(conn) => {
             let conn_clone = conn.clone();
             core.conn_lock
@@ -1114,7 +1185,11 @@ where
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &str,
+    params: ClusterParams,
+    #[cfg(feature = "cache")] cache_config: CacheConfig,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
@@ -1122,7 +1197,14 @@ where
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
     let info = get_connection_info(node, params)?;
-    let mut conn: C = C::connect(info, response_timeout, connection_timeout).await?;
+    let mut conn: C = C::connect(
+        info,
+        response_timeout,
+        connection_timeout,
+        #[cfg(feature = "cache")]
+        cache_config,
+    )
+    .await?;
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
