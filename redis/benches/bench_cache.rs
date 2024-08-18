@@ -11,6 +11,7 @@ use rand::{
     Rng,
 };
 use redis::caching::CacheConfig;
+use std::env;
 fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cmd> {
     let mut cmds = vec![];
     let mut rng = rand::thread_rng();
@@ -25,7 +26,7 @@ fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cm
             cmds.push(
                 redis::cmd("SET")
                     .arg(&key)
-                    .arg(&mut rng.gen_range(1..1000))
+                    .arg(rng.gen_range(1..1000))
                     .clone(),
             );
         }
@@ -92,7 +93,10 @@ fn prepare_benchmark(
 }
 
 fn bench_cache(c: &mut Criterion) {
-    for tnum in vec![1, 4, 16, 32] {
+    if env::var("PROTOCOL").unwrap_or_default() != "RESP3" {
+        return;
+    }
+    for tnum in [1, 4, 16, 32] {
         let test_cases: Vec<(f32, u32, u32)> = vec![
             (0.99, 100, 10_000),
             (0.90, 100, 10_000),
@@ -109,7 +113,7 @@ fn bench_cache(c: &mut Criterion) {
             ));
             group.sample_size(10);
 
-            for is_cache_enabled in vec![true, false] {
+            for is_cache_enabled in [true, false] {
                 group.bench_function(format!("cache={is_cache_enabled}"), |b| {
                     prepare_benchmark(
                         b,

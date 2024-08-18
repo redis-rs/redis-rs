@@ -157,7 +157,7 @@ fn test_guards_and_different_types() {
         let mut con = ctx
             .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
             .await?;
-        con.set("KEY", "77").await?;
+        let _: () = con.set("KEY", "77").await?;
         redis::caching::reset_global_statistics();
         let mut v = vec![];
         for _ in 0..5 {
