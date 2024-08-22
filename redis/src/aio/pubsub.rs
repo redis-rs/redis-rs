@@ -4,10 +4,10 @@ use crate::connection::{
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisResult, Value};
-use crate::{cmd, ConnectionInfo, Msg, RedisConnectionInfo, ToRedisArgs};
+use crate::{cmd, Msg, RedisConnectionInfo, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot},
+    sync::oneshot,
 };
 use futures_util::{
     future::{Future, FutureExt},
@@ -35,7 +35,7 @@ struct PipelineMessage {
 
 /// A sender to an async task passing the messages to a `Stream + Sink`.
 pub struct PubSubSink {
-    sender: mpsc::Sender<PipelineMessage>,
+    sender: UnboundedSender<PipelineMessage>,
 }
 
 impl Clone for PubSubSink {
@@ -233,8 +233,7 @@ impl PubSubSink {
         T::Error: Send,
         T::Error: ::std::fmt::Debug,
     {
-        const BUFFER_SIZE: usize = 50;
-        let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let (sender, mut receiver) = unbounded_channel();
         let sink = PipelineSink::new(sink_stream, messages_sender);
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
@@ -251,7 +250,6 @@ impl PubSubSink {
                 input,
                 output: sender,
             })
-            .await
             .map_err(|_| closed_connection_error())?;
         match receiver.await {
             Ok(result) => result,
@@ -350,27 +348,20 @@ impl PubSub {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
     pub async fn new<C>(
-        connection_info: &ConnectionInfo,
+        connection_info: &RedisConnectionInfo,
         stream: C,
     ) -> RedisResult<(Self, impl Future<Output = ()>)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        fn boxed(
-            f: impl Future<Output = ()> + Send + 'static,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            Box::pin(f)
-        }
-
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
-        let redis_connection_info = &connection_info.redis;
         let mut codec = ValueCodec::default().framed(stream);
-        setup_connection(&mut codec, redis_connection_info).await?;
+        setup_connection(&mut codec, connection_info).await?;
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
-        let driver = boxed(driver);
+        let driver = driver.boxed();
         let con = PubSub { sink, receiver };
         Ok((con, driver))
     }
@@ -413,7 +404,8 @@ impl PubSub {
         stream::poll_fn(move |cx| self.receiver.poll_recv(cx))
     }
 
-    /// Splits the PubSub into separate sink and stream components, so that subscriptions could be updated through the `Sink` while concurrently waiting for new messages on the `Stream`.
+    /// Splits the PubSub into separate sink and stream components, so that subscriptions could be
+    /// updated through the `Sink` while concurrently waiting for new messages on the `Stream`.
     pub fn split(mut self) -> (PubSubSink, impl Stream<Item = Msg>) {
         (
             self.sink,

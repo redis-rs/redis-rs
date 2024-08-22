@@ -794,7 +794,7 @@ impl Client {
         };
 
         let (connection, driver) =
-            crate::aio::PubSub::new(&self.connection_info, connection).await?;
+            crate::aio::PubSub::new(&self.connection_info.redis, connection).await?;
         rt.spawn(driver);
         Ok(connection)
     }
