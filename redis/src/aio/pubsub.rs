@@ -33,7 +33,7 @@ struct PipelineMessage {
     output: RequestCompletedSignal,
 }
 
-/// A sender to an async task passing the messages to a a `Stream + Sink`.
+/// A sender to an async task passing the messages to a `Stream + Sink`.
 pub struct PubSubSink {
     sender: mpsc::Sender<PipelineMessage>,
 }
