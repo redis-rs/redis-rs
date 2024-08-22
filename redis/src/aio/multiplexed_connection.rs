@@ -471,12 +471,6 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        fn boxed(
-            f: impl Future<Output = ()> + Send + 'static,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            Box::pin(f)
-        }
-
         #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
@@ -488,7 +482,7 @@ impl MultiplexedConnection {
             );
         }
         let (pipeline, driver) = Pipeline::new(codec, config.push_sender);
-        let driver = boxed(driver);
+        let driver = driver.boxed();
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
