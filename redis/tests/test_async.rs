@@ -1314,6 +1314,36 @@ mod basic_async {
         #[rstest]
         #[case::tokio(RuntimeType::Tokio)]
         #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        fn non_transaction_errors_do_not_affect_other_results_in_pipeline(
+            #[case] runtime: RuntimeType,
+        ) {
+            test_with_all_connection_types(
+                |mut conn| async move {
+                    conn.lpush::<&str, &str, ()>("key", "value").await?;
+
+                    let mut results: Vec<Value> = conn
+                        .req_packed_commands(
+                            redis::pipe()
+                                .get("key") // WRONGTYPE
+                                .llen("key"),
+                            0,
+                            2,
+                        )
+                        .await
+                        .unwrap();
+
+                    assert_eq!(results.pop().unwrap(), Value::Int(1));
+                    assert!(results.pop().unwrap().extract_error().is_err());
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            );
+        }
+
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
         fn pub_sub_multiple(#[case] runtime: RuntimeType) {
             use redis::RedisError;
 
