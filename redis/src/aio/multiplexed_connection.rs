@@ -34,26 +34,30 @@ type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 enum ResponseAggregate {
     SingleCommand,
     Pipeline {
-        // The number of responses to skip before starting to save responses in the buffer.
-        skipped_response_count: usize,
-        // The number of responses to keep in the buffer
-        expected_response_count: usize,
         buffer: Vec<Value>,
         first_err: Option<RedisError>,
+        expectation: PipelineResponseExpectation,
     },
 }
 
+// TODO - this is a really bad name.
+struct PipelineResponseExpectation {
+    // The number of responses to skip before starting to save responses in the buffer.
+    skipped_response_count: usize,
+    // The number of responses to keep in the buffer
+    expected_response_count: usize,
+    // whether the pipelined request is a transaction
+    is_transaction: bool,
+}
+
 impl ResponseAggregate {
-    fn new(pipeline_response_counts: Option<(usize, usize)>) -> Self {
-        match pipeline_response_counts {
-            Some((skipped_response_count, expected_response_count)) => {
-                ResponseAggregate::Pipeline {
-                    expected_response_count,
-                    skipped_response_count,
-                    buffer: Vec::new(),
-                    first_err: None,
-                }
-            }
+    fn new(expectation: Option<PipelineResponseExpectation>) -> Self {
+        match expectation {
+            Some(expectation) => ResponseAggregate::Pipeline {
+                buffer: Vec::new(),
+                first_err: None,
+                expectation,
+            },
             None => ResponseAggregate::SingleCommand,
         }
     }
@@ -69,8 +73,9 @@ struct PipelineMessage {
     input: Vec<u8>,
     output: PipelineOutput,
     // If `None`, this is a single request, not a pipeline of multiple requests.
-    // If `Some`, the first value is the number of responses to skip, and the second is the number of responses to keep.
-    pipeline_response_counts: Option<(usize, usize)>,
+    // If `Some`, the first value is the number of responses to skip,
+    // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
+    expectation: Option<PipelineResponseExpectation>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -192,16 +197,19 @@ where
                 entry.output.send(result).ok();
             }
             ResponseAggregate::Pipeline {
-                expected_response_count,
-                skipped_response_count,
                 buffer,
                 first_err,
+                expectation:
+                    PipelineResponseExpectation {
+                        expected_response_count,
+                        skipped_response_count,
+                        is_transaction,
+                    },
             } => {
                 if *skipped_response_count > 0 {
-                    // errors in skipped values are still counted for errors, since they're errors that will cause the transaction to fail,
+                    // errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    // TODO - the unified pipeline/transaction flows make this confusing. consider splitting them.
-                    if first_err.is_none() {
+                    if first_err.is_none() && *is_transaction {
                         *first_err = result.and_then(Value::extract_error).err();
                     }
 
@@ -266,7 +274,7 @@ where
         PipelineMessage {
             input,
             output,
-            pipeline_response_counts,
+            expectation,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
@@ -285,7 +293,7 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
-                let response_aggregate = ResponseAggregate::new(pipeline_response_counts);
+                let response_aggregate = ResponseAggregate::new(expectation);
                 let entry = InFlight {
                     output,
                     response_aggregate,
@@ -368,8 +376,8 @@ impl Pipeline {
         &mut self,
         input: Vec<u8>,
         // If `None`, this is a single request, not a pipeline of multiple requests.
-        // If `Some`, the first value is the number of responses to skip, and the second is the number of responses to keep.
-        pipeline_response_counts: Option<(usize, usize)>,
+        // If `Some`, the value inside defines how the response should look like
+        expectation: Option<PipelineResponseExpectation>,
         timeout: Option<Duration>,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
@@ -377,7 +385,7 @@ impl Pipeline {
         self.sender
             .send(PipelineMessage {
                 input,
-                pipeline_response_counts,
+                expectation,
                 output: sender,
             })
             .await
@@ -544,7 +552,11 @@ impl MultiplexedConnection {
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
-                Some((offset, count)),
+                Some(PipelineResponseExpectation {
+                    skipped_response_count: offset,
+                    expected_response_count: count,
+                    is_transaction: cmd.is_transaction(),
+                }),
                 self.response_timeout,
             )
             .await

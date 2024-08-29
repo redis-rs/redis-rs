@@ -70,6 +70,11 @@ impl Pipeline {
         self
     }
 
+    #[cfg(feature = "aio")]
+    pub(crate) fn is_transaction(&self) -> bool {
+        self.transaction_mode
+    }
+
     /// Returns the encoded pipeline commands.
     pub fn get_packed_pipeline(&self) -> Vec<u8> {
         encode_pipeline(&self.commands, self.transaction_mode)

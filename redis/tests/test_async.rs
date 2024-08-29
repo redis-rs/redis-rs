@@ -794,6 +794,29 @@ mod basic_async {
         }
 
         #[test]
+        fn non_transaction_errors_do_not_affect_other_results_in_pipeline() {
+            test_with_all_connection_types(|mut conn| async move {
+                conn.lpush::<&str, &str, ()>("key", "value").await?;
+
+                let mut results: Vec<Value> = conn
+                    .req_packed_commands(
+                        redis::pipe()
+                .get("key") // WRONGTYPE
+                .llen("key"),
+                        0,
+                        2,
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(results.pop().unwrap(), Value::Int(1));
+                assert!(results.pop().unwrap().extract_error().is_err());
+
+                Ok::<_, RedisError>(())
+            });
+        }
+
+        #[test]
         fn pub_sub_multiple() {
             use redis::RedisError;
 
