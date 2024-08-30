@@ -1,8 +1,8 @@
-use super::RedisFuture;
+use super::{AsyncPushSender, RedisFuture};
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
-    types::{AsyncPushSender, RedisError, RedisResult, Value},
+    types::{RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
@@ -15,7 +15,7 @@ use futures_util::future::BoxFuture;
 use std::sync::Arc;
 
 /// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
@@ -33,7 +33,37 @@ pub struct ConnectionManagerConfig {
     /// Each connection attempt to the server will time out after `connection_timeout`.
     connection_timeout: Option<std::time::Duration>,
     /// sender channel for push values
-    push_sender: Option<AsyncPushSender>,
+    push_sender: Option<Arc<dyn AsyncPushSender>>,
+}
+
+impl std::fmt::Debug for ConnectionManagerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let &Self {
+            exponent_base,
+            factor,
+            number_of_retries,
+            max_delay,
+            response_timeout,
+            connection_timeout,
+            push_sender,
+        } = &self;
+        f.debug_struct("ConnectionManagerConfig")
+            .field("exponent_base", &exponent_base)
+            .field("factor", &factor)
+            .field("number_of_retries", &number_of_retries)
+            .field("max_delay", &max_delay)
+            .field("response_timeout", &response_timeout)
+            .field("connection_timeout", &connection_timeout)
+            .field(
+                "push_sender",
+                if push_sender.is_some() {
+                    &"set"
+                } else {
+                    &"not set"
+                },
+            )
+            .finish()
+    }
 }
 
 impl ConnectionManagerConfig {
@@ -93,11 +123,33 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// Sets sender channel for push values.
+    /// Sets sender sender for push values.
     ///
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [RedisConnectionInfo::protocol] field.
-    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
-        self.push_sender = Some(sender);
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::aio::ConnectionManagerConfig;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = ConnectionManagerConfig::new().set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::aio::ConnectionManagerConfig;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = ConnectionManagerConfig::new().set_push_sender(move |msg|{
+    ///     let Ok(mut messages) = messages.lock() else {
+    ///         return Err(redis::aio::SendError);
+    ///     };
+    ///     messages.push(msg);
+    ///     Ok(())
+    /// });
+    /// ```
+    pub fn set_push_sender(mut self, sender: impl AsyncPushSender) -> Self {
+        self.push_sender = Some(Arc::new(sender));
         self
     }
 }
@@ -291,7 +343,7 @@ impl ConnectionManager {
                 client.connection_info.redis.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
-            connection_config = connection_config.set_push_sender(push_sender);
+            connection_config = connection_config.set_push_sender_internal(push_sender);
         }
 
         let connection =

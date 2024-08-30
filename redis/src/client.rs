@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 #[cfg(feature = "aio")]
-use crate::types::AsyncPushSender;
+use crate::aio::AsyncPushSender;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
@@ -164,7 +164,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) response_timeout: Option<std::time::Duration>,
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
-    pub(crate) push_sender: Option<AsyncPushSender>,
+    pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
 }
 
 #[cfg(feature = "aio")]
@@ -186,10 +186,39 @@ impl AsyncConnectionConfig {
         self
     }
 
-    /// Sets sender channel for push values.
+    /// Sets sender sender for push values.
     ///
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [RedisConnectionInfo::protocol] field.
-    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::AsyncConnectionConfig;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = AsyncConnectionConfig::new().set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::AsyncConnectionConfig;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = AsyncConnectionConfig::new().set_push_sender(move |msg|{
+    ///     let Ok(mut messages) = messages.lock() else {
+    ///         return Err(redis::aio::SendError);
+    ///     };
+    ///     messages.push(msg);
+    ///     Ok(())
+    /// });
+    /// ```
+    pub fn set_push_sender(self, sender: impl AsyncPushSender) -> Self {
+        self.set_push_sender_internal(std::sync::Arc::new(sender))
+    }
+
+    pub(crate) fn set_push_sender_internal(
+        mut self,
+        sender: std::sync::Arc<dyn AsyncPushSender>,
+    ) -> Self {
         self.push_sender = Some(sender);
         self
     }
