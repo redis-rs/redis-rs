@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 #[cfg(feature = "aio")]
-use crate::types::AsyncPushSender;
+use crate::aio::AsyncPushSender;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
@@ -76,7 +76,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) response_timeout: Option<std::time::Duration>,
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
-    pub(crate) push_sender: Option<AsyncPushSender>,
+    pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
 }
 
 #[cfg(feature = "aio")]
@@ -99,7 +99,14 @@ impl AsyncConnectionConfig {
     }
 
     /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
+    pub fn set_push_sender(self, sender: impl AsyncPushSender) -> Self {
+        self.set_push_sender_internal(std::sync::Arc::new(sender))
+    }
+
+    pub(crate) fn set_push_sender_internal(
+        mut self,
+        sender: std::sync::Arc<dyn AsyncPushSender>,
+    ) -> Self {
         self.push_sender = Some(sender);
         self
     }

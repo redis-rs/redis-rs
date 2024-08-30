@@ -1,8 +1,8 @@
-use super::RedisFuture;
+use super::{AsyncPushSender, RedisFuture};
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
-    types::{AsyncPushSender, RedisError, RedisResult, Value},
+    types::{RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
@@ -18,7 +18,7 @@ use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
 /// ConnectionManager is the configuration for reconnect mechanism and request timing
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
@@ -36,7 +36,7 @@ pub struct ConnectionManagerConfig {
     /// Each connection attempt to the server will time out after `connection_timeout`.
     connection_timeout: std::time::Duration,
     /// sender channel for push values
-    push_sender: Option<AsyncPushSender>,
+    push_sender: Option<Arc<dyn AsyncPushSender>>,
 }
 
 impl ConnectionManagerConfig {
@@ -105,8 +105,8 @@ impl ConnectionManagerConfig {
     }
 
     /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
-        self.push_sender = Some(sender);
+    pub fn set_push_sender(mut self, sender: impl AsyncPushSender) -> Self {
+        self.push_sender = Some(Arc::new(sender));
         self
     }
 }
@@ -279,7 +279,7 @@ impl ConnectionManager {
                 client.connection_info.redis.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
-            connection_config = connection_config.set_push_sender(push_sender);
+            connection_config = connection_config.set_push_sender_internal(push_sender);
         }
 
         let connection = Self::new_connection(

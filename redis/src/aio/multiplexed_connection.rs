@@ -1,9 +1,9 @@
-use super::{ConnectionLike, Runtime};
+use super::{AsyncPushSender, ConnectionLike, Runtime};
 use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{AsyncPushSender, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{RedisError, RedisFuture, RedisResult, Value};
 use crate::{
     cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
 };
@@ -23,6 +23,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -94,11 +95,11 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        push_sender: Option<AsyncPushSender>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
     }
 }
 
-fn send_push(push_sender: &Option<AsyncPushSender>, info: PushInfo) {
+fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     match push_sender {
         Some(sender) => {
             let _ = sender.send(info);
@@ -107,7 +108,7 @@ fn send_push(push_sender: &Option<AsyncPushSender>, info: PushInfo) {
     };
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<AsyncPushSender>) {
+pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
     send_push(
         push_sender,
         PushInfo {
@@ -121,7 +122,7 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new(sink_stream: T, push_sender: Option<AsyncPushSender>) -> Self
+    fn new(sink_stream: T, push_sender: Option<Arc<dyn AsyncPushSender>>) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -335,7 +336,7 @@ where
 impl Pipeline {
     fn new<T>(
         sink_stream: T,
-        push_sender: Option<AsyncPushSender>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
     ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,

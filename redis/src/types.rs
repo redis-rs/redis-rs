@@ -2561,7 +2561,4 @@ pub struct PushInfo {
     pub data: Vec<Value>,
 }
 
-#[cfg(feature = "aio")]
-pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
-
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;

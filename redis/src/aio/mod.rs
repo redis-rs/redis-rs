@@ -5,6 +5,7 @@ use crate::connection::{
     RedisConnectionInfo,
 };
 use crate::types::{RedisFuture, RedisResult, Value};
+use crate::PushInfo;
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use async_trait::async_trait;
 use futures_util::Future;
@@ -149,3 +150,51 @@ macro_rules! check_resp3 {
 }
 
 pub(crate) use check_resp3;
+
+/// An error showing that the receiver
+pub struct SendError;
+
+/// A trait for sender parts of a channel that can be used for sending push messages from async
+/// connection.
+pub trait AsyncPushSender: Send + Sync + 'static {
+    /// The sender must send without blocking, otherwise it will block the sending connection.
+    /// Should error when the receiver was closed.
+    fn send(&self, info: PushInfo) -> Result<(), SendError>;
+}
+
+impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
+impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
+// TODO enable once our MSRV is 1.72 or above
+// impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
+//     fn send(&self, info: PushInfo) -> Result<(), SendError> {
+//         match self.send(info) {
+//             Ok(_) => Ok(()),
+//             Err(_) => Err(SendError),
+//         }
+//     }
+// }
+
+impl<T> AsyncPushSender for std::sync::Arc<T>
+where
+    T: AsyncPushSender,
+{
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        self.as_ref().send(info)
+    }
+}
