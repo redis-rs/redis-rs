@@ -20,9 +20,10 @@ use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnection
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
 
+#[cfg(feature = "cache-aio")]
+use redis::caching::CacheConfig;
 use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
-
 pub fn use_protocol() -> ProtocolVersion {
     if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
         ProtocolVersion::RESP3
@@ -541,6 +542,39 @@ impl TestContext {
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_tokio_connection().await
+    }
+
+    #[cfg(all(feature = "tokio-comp", feature = "cache-aio"))]
+    pub fn multiplexed_async_connection_tokio_with_cache(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        use redis::AsyncConnectionConfig;
+
+        let client = self.client.clone();
+        async move {
+            client
+                .get_multiplexed_async_connection_with_config(
+                    &AsyncConnectionConfig::new().set_cache_config(CacheConfig::enabled()),
+                )
+                .await
+        }
+    }
+
+    #[cfg(all(feature = "tokio-comp", feature = "cache-aio"))]
+    pub fn multiplexed_async_connection_tokio_with_cache_config(
+        &self,
+        cache_config: CacheConfig,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        use redis::AsyncConnectionConfig;
+
+        let client = self.client.clone();
+        async move {
+            client
+                .get_multiplexed_async_connection_with_config(
+                    &AsyncConnectionConfig::new().set_cache_config(cache_config),
+                )
+                .await
+        }
     }
 
     #[cfg(feature = "async-std-comp")]
