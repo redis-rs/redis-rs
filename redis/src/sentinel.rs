@@ -103,11 +103,11 @@
 //! ```
 //!
 
-use std::{collections::HashMap, num::NonZeroUsize};
-
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
 use rand::Rng;
+use std::sync::Mutex;
+use std::{collections::HashMap, num::NonZeroUsize};
 
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
@@ -691,6 +691,26 @@ pub enum SentinelServerType {
     Master,
     /// Replica connections only
     Replica,
+}
+
+/// LockedSentinelClient is a wrapper around SentinelClient since
+/// it SentinelClient requires &mut ref for get_connection()
+/// and we can't use it like this inside the r2d2 Manager
+#[cfg(feature = "r2d2")]
+pub struct LockedSentinelClient(pub(crate) Mutex<SentinelClient>);
+
+#[cfg(feature = "r2d2")]
+impl LockedSentinelClient {
+    /// new creates a LockedSentinelClient by wrapping a new Mutex around the SentinelClient
+    pub fn new(client: SentinelClient) -> Self {
+        LockedSentinelClient(Mutex::new(client))
+    }
+
+    /// get_connection is the override for LockedSentinelClient to make it possible to
+    /// use LockedSentinelClient with r2d2 macro.
+    pub fn get_connection(&self) -> RedisResult<Connection> {
+        self.0.lock().unwrap().get_connection()
+    }
 }
 
 /// An alternative to the Client type which creates connections from clients created
