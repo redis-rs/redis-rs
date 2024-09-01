@@ -1,6 +1,6 @@
-use std::io;
-
+use crate::sentinel::{LockedSentinelClient};
 use crate::{ConnectionLike, RedisError};
+use std::io;
 
 macro_rules! impl_manage_connection {
     ($client:ty, $connection:ty) => {
@@ -34,3 +34,6 @@ impl_manage_connection!(
     crate::cluster::ClusterClient,
     crate::cluster::ClusterConnection
 );
+
+#[cfg(feature = "sentinel")]
+impl_manage_connection!(LockedSentinelClient, crate::Connection);
