@@ -361,7 +361,6 @@ impl PubSub {
         setup_connection(&mut codec, connection_info).await?;
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
-        let driver = driver.boxed();
         let con = PubSub { sink, receiver };
         Ok((con, driver))
     }
