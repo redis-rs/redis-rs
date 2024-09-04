@@ -18,7 +18,7 @@ use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
 /// ConnectionManager is the configuration for reconnect mechanism and request timing
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
@@ -48,15 +48,7 @@ impl ConnectionManagerConfig {
 
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
-        Self {
-            exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
-            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
-            max_delay: None,
-            response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
-            connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
-            push_sender: None,
-        }
+        Self::default()
     }
 
     /// A multiplicative factor that will be applied to the retry delay.
@@ -110,6 +102,21 @@ impl ConnectionManagerConfig {
         self
     }
 }
+
+impl Default for ConnectionManagerConfig {
+    fn default() -> Self {
+        Self {
+            exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
+            factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+            number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
+            max_delay: None,
+            response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
+            connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+            push_sender: None,
+        }
+    }
+}
+
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
 /// connection][multiplexed-connection] and automatically reconnects to the
 /// server when necessary.
