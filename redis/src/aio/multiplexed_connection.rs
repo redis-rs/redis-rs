@@ -482,7 +482,6 @@ impl MultiplexedConnection {
             );
         }
         let (pipeline, driver) = Pipeline::new(codec, config.push_sender);
-        let driver = driver.boxed();
         let mut con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
