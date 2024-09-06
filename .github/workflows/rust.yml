@@ -22,25 +22,59 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        redis:
-          - 6.2.13
-          - 7.2.0
-        rust:
-          - stable
-          - beta
-          - nightly
-          - 1.70.0
+        config:
+          [
+            # Different DB cases:
+            {
+              rust: stable,
+              db-org: redis,
+              db-name: redis,
+              db-version: 6.2.13
+            },
+            {
+              rust: stable,
+              db-org: redis,
+              db-name: redis,
+              db-version: 7.2.4
+            },
+            {
+              rust: stable,
+              db-org: valkey-io,
+              db-name: valkey,
+              db-version: 7.2.6
+            },
+
+            # Different rust cases
+            {
+              rust: beta,
+              db-org: redis,
+              db-name: redis,
+              db-version: 7.2.4
+            },
+            {
+              rust: nightly,
+              db-org: redis,
+              db-name: redis,
+              db-version: 7.2.4
+            },
+            {
+              rust: 1.70.0,
+              db-org: redis,
+              db-name: redis,
+              db-version: 7.2.4
+            }
+          ]
 
     steps:
 
-    - name: Cache redis
+    - name: Cache DB
       id: cache-redis
       uses: actions/cache@v4
       with:
         path: |
           ~/redis-cli
           ~/redis-server
-        key: ${{ runner.os }}-${{ matrix.redis }}-redis
+        key: ${{ runner.os }}-${{ matrix.config.db-name }}-${{ matrix.config.db-version }}
 
     - name: Cache RedisJSON
       id: cache-redisjson
@@ -50,13 +84,17 @@ jobs:
           /tmp/librejson.so
         key: ${{ runner.os }}-redisjson
 
-    - name: Install redis
+    - name: Install DB
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        wget https://github.com/redis/redis/archive/${{ matrix.redis }}.tar.gz;
-        tar -xzvf ${{ matrix.redis }}.tar.gz;
-        pushd redis-${{ matrix.redis }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli $HOME && popd;
+        wget https://github.com/${{ matrix.config.db-org }}/${{ matrix.config.db-name }}/archive/${{ matrix.config.db-version }}.tar.gz;
+        tar -xzvf ${{ matrix.config.db-version }}.tar.gz;
+        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} && 
+        BUILD_TLS=yes make install && 
+        sudo mv src/${{ matrix.config.db-name }}-server $HOME/redis-server &&
+        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli && 
+        popd;
         echo $PATH
 
     - name: set PATH
@@ -66,7 +104,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain/@master
       with:
-        toolchain: ${{ matrix.rust }}
+        toolchain: ${{ matrix.config.rust }}
         components: rustfmt
 
     - uses: Swatinem/rust-cache@v2
@@ -77,7 +115,7 @@ jobs:
       run: make test
 
     - name: Checkout RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.13'
+      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       uses: actions/checkout@v4
       with:
         repository: "RedisJSON/RedisJSON"
@@ -98,7 +136,7 @@ jobs:
       # This shouldn't cause issues in the future so long as no profiles or patches
       # are applied to the workspace Cargo.toml file
     - name: Compile RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.13'
+      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       run: |
         cp ./Cargo.toml ./Cargo.toml.actual
         echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
@@ -108,10 +146,10 @@ jobs:
         rm -rf ./__ci/redis-json
 
     - name: Run module-specific tests
-      if: matrix.redis != '6.2.13'
+      if: matrix.config.db-version != '6.2.13'
       run: make test-module
       env:
-        REDIS_VERSION: ${{ matrix.redis }}
+        REDIS_VERSION: ${{ matrix.config.db-version }}
 
     - name: Check features
       run: |
