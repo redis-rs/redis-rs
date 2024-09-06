@@ -17,9 +17,10 @@ use tempfile::TempDir;
 
 use crate::support::{build_keys_and_certs_for_tls, Module};
 
+use super::build_single_client;
 use super::get_random_available_port;
 #[cfg(feature = "tls-rustls")]
-use super::{build_single_client, load_certs_from_file};
+use super::load_certs_from_file;
 
 use super::use_protocol;
 use super::RedisServer;
@@ -203,7 +204,7 @@ impl RedisCluster {
                 Ok(Some(status)) => {
                     let log_file_contents = server.log_file_contents();
                     let err =
-                                    format!("redis server creation failed with status {status:?}.\nlog file: {log_file_contents}");
+                                    format!("redis server creation failed with status {status:?}.\nlog file: {log_file_contents:?}");
                     Err(err)
                 }
                 Ok(None) => {
@@ -213,7 +214,7 @@ impl RedisCluster {
                     loop {
                         if cur_attempts == max_attempts {
                             let log_file_contents = server.log_file_contents();
-                            break Err(format!("redis server creation failed: Address {} closed. {log_file_contents}", server.addr));
+                            break Err(format!("redis server creation failed: Address {} closed. {log_file_contents:?}", server.addr));
                         } else if port_in_use(&server.addr.to_string()) {
                             break Ok(());
                         }
@@ -329,12 +330,9 @@ impl RedisCluster {
                 conn_info.addr
             );
 
-            #[cfg(feature = "tls-rustls")]
             let client =
                 build_single_client(server.connection_info(), &self.tls_paths, _mtls_enabled)
                     .unwrap();
-            #[cfg(not(feature = "tls-rustls"))]
-            let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
 
@@ -500,15 +498,12 @@ impl TestClusterContext {
 
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
-            #[cfg(feature = "tls-rustls")]
             let client = build_single_client(
                 server.connection_info(),
                 &self.cluster.tls_paths,
                 self.mtls_enabled,
             )
             .unwrap();
-            #[cfg(not(feature = "tls-rustls"))]
-            let client = redis::Client::open(server.connection_info()).unwrap();
 
             let mut con = client.get_connection().unwrap();
             redis::cmd("ACL")

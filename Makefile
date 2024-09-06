@@ -43,14 +43,19 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo test --locked -p redis --all-features -- --test-threads=1 --skip test_cluster --skip cluster_async --skip test_module
 
 	@echo "===================================================================="
+	@echo "Testing async-std without TLS"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked -p redis --features=async-std-comp,cluster-async,sentinel -- --nocapture --test-threads=1 --skip test_module
+
+	@echo "===================================================================="
 	@echo "Testing async-std with Rustls"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked -p redis --features=async-std-rustls-comp,cluster-async -- --nocapture --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test --locked -p redis --features=async-std-rustls-comp,cluster-async,sentinel,tls-rustls-insecure -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing async-std with native-TLS"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test --locked -p redis --features=async-std-native-tls-comp,cluster-async -- --nocapture --test-threads=1 --skip test_module
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo test --locked -p redis --features=async-std-native-tls-comp,cluster-async,sentinel -- --nocapture --test-threads=1 --skip test_module
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"
