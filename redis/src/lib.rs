@@ -281,10 +281,8 @@
 //!
 //! # PubSub
 //!
-//! Pubsub is currently work in progress but provided through the `PubSub`
-//! connection object.  Due to the fact that Rust does not have support
-//! for async IO in libnative yet, the API does not provide a way to
-//! read messages with any form of timeout yet.
+//! Pubsub is provided through the `PubSub` connection object for sync usage, or the `aio::PubSub`
+//! for async usage.
 //!
 //! Example usage:
 //!
@@ -302,6 +300,24 @@
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
 //! # }
+//! ```
+//! In order to update subscriptions while concurrently waiting for messages, the async PubSub can be split into separate sink & stream components. The sink can be receive subscription requests while the stream is awaited for messages.
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "aio")]
+//! # use futures_util::StreamExt;
+//! # #[cfg(feature = "aio")]
+//! # async fn do_something() -> redis::RedisResult<()> {
+//! let client = redis::Client::open("redis://127.0.0.1/")?;
+//! let (mut sink, mut stream) = client.get_async_pubsub().await?.split();
+//! sink.subscribe("channel_1").await?;
+//!
+//! loop {
+//!     let msg = stream.next().await.unwrap();
+//!     let payload : String = msg.get_payload().unwrap();
+//!     println!("channel '{}': {}", msg.get_channel_name(), payload);
+//! }
+//! # Ok(()) }
 //! ```
 //!
 //! ## RESP3 async pubsub

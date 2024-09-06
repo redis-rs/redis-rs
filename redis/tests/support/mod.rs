@@ -509,6 +509,12 @@ impl TestContext {
     }
 
     #[cfg(feature = "aio")]
+    #[allow(deprecated)]
+    pub async fn deprecated_async_connection(&self) -> redis::RedisResult<redis::aio::Connection> {
+        self.client.get_async_connection().await
+    }
+
+    #[cfg(feature = "aio")]
     pub async fn async_connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_connection().await
     }
@@ -655,7 +661,7 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
             .arg("genrsa")
             .arg("-out")
             .arg(name)
-            .arg(&format!("{size}"))
+            .arg(format!("{size}"))
             .stdout(process::Stdio::piped())
             .stderr(process::Stdio::piped())
             .spawn()
