@@ -1,4 +1,4 @@
-use crate::sentinel::{LockedSentinelClient};
+use crate::sentinel::LockedSentinelClient;
 use crate::{ConnectionLike, RedisError};
 use std::io;
 
