@@ -14,8 +14,10 @@ use std::{
 #[cfg(feature = "aio")]
 use futures::Future;
 #[cfg(feature = "aio")]
-use redis::{aio, cmd, RedisResult};
-use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, Value};
+use redis::{aio, cmd};
+use redis::{
+    ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisConnectionInfo, RedisResult, Value,
+};
 
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
@@ -175,8 +177,8 @@ impl RedisServer {
         RedisServer::with_modules(&[], true)
     }
 
-    pub fn log_file_contents(&self) -> String {
-        std::fs::read_to_string(self.log_file.clone()).unwrap()
+    pub fn log_file_contents(&self) -> Option<String> {
+        std::fs::read_to_string(self.log_file.clone()).ok()
     }
 
     pub fn get_addr(port: u16) -> ConnectionAddr {
@@ -458,11 +460,8 @@ impl TestContext {
             },
         );
 
-        #[cfg(feature = "tls-rustls")]
         let client =
             build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
-        #[cfg(not(feature = "tls-rustls"))]
-        let client = redis::Client::open(server.connection_info()).unwrap();
 
         let mut con;
 
@@ -476,13 +475,13 @@ impl TestContext {
                         retries += 1;
                         if retries > 100000 {
                             panic!(
-                                "Tried to connect too many times, last error: {err}, logfile: {}",
+                                "Tried to connect too many times, last error: {err}, logfile: {:?}",
                                 server.log_file_contents()
                             );
                         }
                     } else {
                         panic!(
-                            "Could not connect: {err}, logfile: {}",
+                            "Could not connect: {err}, logfile: {:?}",
                             server.log_file_contents()
                         );
                     }
@@ -508,7 +507,7 @@ impl TestContext {
 
     #[cfg(feature = "aio")]
     #[allow(deprecated)]
-    pub async fn deprecated_async_connection(&self) -> redis::RedisResult<redis::aio::Connection> {
+    pub async fn deprecated_async_connection(&self) -> RedisResult<redis::aio::Connection> {
         self.client.get_async_connection().await
     }
 
@@ -824,6 +823,15 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     } else {
         redis::Client::open(connection_info)
     }
+}
+
+#[cfg(not(feature = "tls-rustls"))]
+pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    _tls_file_params: &Option<TlsFilePaths>,
+    _mtls_enabled: bool,
+) -> RedisResult<redis::Client> {
+    redis::Client::open(connection_info)
 }
 
 #[cfg(feature = "tls-rustls")]
