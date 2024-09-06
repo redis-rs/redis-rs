@@ -10,6 +10,14 @@ use redis::{
 
 use crate::support::*;
 
+fn parse_client_info(value: &str) -> HashMap<&str, &str> {
+    let info_map: std::collections::HashMap<&str, &str> = value
+        .split(" ")
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    info_map
+}
+
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
     let info_map: std::collections::HashMap<&str, &str> = value
         .split("\r\n")
@@ -648,5 +656,64 @@ pub mod async_tests {
             Ok::<(), RedisError>(())
         })
         .unwrap();
+    }
+}
+
+#[cfg(feature = "r2d2")]
+pub mod pool_tests {
+    use crate::support::TestSentinelContext;
+    use crate::{assert_is_connection_to_master, parse_client_info};
+    use r2d2::Pool;
+    use redis::sentinel::{LockedSentinelClient, SentinelClient};
+    use std::collections::HashSet;
+    use std::ops::DerefMut;
+
+    #[test]
+    fn test_sentinel_client() {
+        let master_name = "master1";
+        let context = TestSentinelContext::new(2, 3, 3);
+        let master_client = SentinelClient::build(
+            context.sentinels_connection_info().clone(),
+            String::from(master_name),
+            Some(context.sentinel_node_connection_info()),
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap();
+
+        let pool = Pool::builder()
+            .max_size(5)
+            .build(LockedSentinelClient::new(master_client))
+            .unwrap();
+
+        let mut conns = Vec::new();
+        for _ in 0..5 {
+            let conn = pool.get().unwrap();
+
+            conns.push(conn);
+        }
+
+        // since max_size is 5 and we haven't freed any connection this try should fail
+        let try_conn = pool.try_get();
+        assert!(try_conn.is_none());
+
+        let mut client_id_set = HashSet::new();
+
+        for mut conn in conns {
+            let client_info_str: String = redis::cmd("CLIENT")
+                .arg("INFO")
+                .query(conn.deref_mut())
+                .unwrap();
+
+            let client_info_parsed = parse_client_info(client_info_str.as_str());
+
+            // assert if all connections have different IDs
+            assert!(client_id_set.insert(client_info_parsed.get("id").unwrap().to_string()));
+
+            assert_is_connection_to_master(conn.deref_mut());
+        }
+
+        // since previous connections are freed, this should work
+        let try_conn = pool.try_get();
+        assert!(try_conn.is_some());
     }
 }
