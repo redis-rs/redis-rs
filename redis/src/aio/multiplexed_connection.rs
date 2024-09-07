@@ -510,6 +510,7 @@ impl MultiplexedConnection {
                 "Can only pass push sender to a connection using RESP3"
             );
         }
+      
         #[cfg(feature = "cache-aio")]
         let cache_manager_opt = if let Some(config) = config.cache_config {
             check_resp3!(
@@ -533,7 +534,7 @@ impl MultiplexedConnection {
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
             #[cfg(feature = "cache-aio")]
-            cache_manager: cache_manager_opt.clone(),
+            cache_manager: cache_manager_opt,
         };
         let driver = {
             let auth = setup_connection(
