@@ -35,7 +35,6 @@ pub(crate) struct CommandCacheInformationByRef<'a> {
 pub(crate) struct CommandCacheInformation {
     pub(crate) redis_key: Vec<u8>,
     pub(crate) cmd: Vec<u8>,
-    pub(crate) client_side_ttl: Option<Duration>,
 }
 
 #[cfg(feature = "cache-aio")]
@@ -640,6 +639,7 @@ impl Cmd {
         });
         self
     }
+
     /// It marks command as triable for client side caching with custom Client Side TTL for cache.
     /// Useful when `CacheMode` is set to `CacheMode::OptIn`
     #[cfg(feature = "cache-aio")]
@@ -649,22 +649,22 @@ impl Cmd {
         });
         self
     }
+
     #[cfg(feature = "cache-aio")]
-    #[inline]
     pub(crate) fn compute_cache_information(&self) -> Option<CommandCacheInformationByRef> {
+        use crate::commands::is_readonly_cmd;
+
         let mut is_mget = false;
         let x: &[u8] = &[];
         if self.args.len() >= 2 {
             if let Some(command_name) = self.arg_idx(0) {
-                let cache_key = match command_name {
-                    b"GET" | b"HEXISTS" | b"HGET" | b"HMGET" | b"HGETALL" | b"PTTL" => {
-                        Some(self.arg_idx(1).unwrap())
-                    }
-                    b"MGET" => {
-                        is_mget = true;
-                        Some(x)
-                    }
-                    _ => return None,
+                let cache_key = if command_name == b"MGET" {
+                    is_mget = true;
+                    Some(x)
+                } else if is_readonly_cmd(command_name) {
+                    Some(self.arg_idx(1).unwrap())
+                } else {
+                    None
                 };
                 if let Some(key) = cache_key {
                     return Some(CommandCacheInformationByRef {
@@ -674,14 +674,11 @@ impl Cmd {
                         is_mget,
                     });
                 }
-            } else {
-                return None;
             }
-        } else {
-            return None;
-        };
+        }
         None
     }
+
     #[cfg(feature = "cache-aio")]
     #[inline]
     pub(crate) fn has_opt_in_cache(&self) -> bool {

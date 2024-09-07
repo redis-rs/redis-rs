@@ -94,7 +94,7 @@ where
             connection_info,
             &mut rv,
             #[cfg(feature = "cache-aio")]
-            crate::caching::CacheConfig::disabled(),
+            None,
         )
         .await?;
         Ok(rv)

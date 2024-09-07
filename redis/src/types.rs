@@ -1499,23 +1499,23 @@ macro_rules! deref_to_write_redis_args_impl {
 }
 
 deref_to_write_redis_args_impl! {
-    <'a, T: ?Sized> ToRedisArgs for &'a T where T: ToRedisArgs
+    <'a, T> ToRedisArgs for &'a T where T: ToRedisArgs
 }
 
 deref_to_write_redis_args_impl! {
-    <'a, T: ?Sized> ToRedisArgs for &'a mut T where T: ToRedisArgs
+    <'a, T> ToRedisArgs for &'a mut T where T: ToRedisArgs
 }
 
 deref_to_write_redis_args_impl! {
-    <T: ?Sized> ToRedisArgs for Box<T> where T: ToRedisArgs
+    <T> ToRedisArgs for Box<T> where T: ToRedisArgs
 }
 
 deref_to_write_redis_args_impl! {
-    <T: ?Sized> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
+    <T> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
 }
 
 deref_to_write_redis_args_impl! {
-    <T: ?Sized> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
+    <T> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
 }
 
 /// @note: Redis cannot store empty sets so the application has to
@@ -1678,7 +1678,7 @@ fn vec_to_array<T, const N: usize>(items: Vec<T>, original_value: &Value) -> Red
     }
 }
 
-impl<T: ?Sized + FromRedisValue, const N: usize> FromRedisValue for [T; N] {
+impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
     fn from_redis_value(value: &Value) -> RedisResult<[T; N]> {
         match *value {
             Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
@@ -1983,7 +1983,7 @@ macro_rules! pointer_from_redis_value_impl {
         $id:ident, $ty:ty, $func:expr
     ) => {
         $(#[$attr])*
-        impl<$id: ?Sized + FromRedisValue> FromRedisValue for $ty {
+        impl<$id:  FromRedisValue> FromRedisValue for $ty {
             fn from_redis_value(v: &Value) -> RedisResult<Self>
             {
                 FromRedisValue::from_redis_value(v).map($func)
@@ -2565,3 +2565,9 @@ pub struct PushInfo {
 pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
+
+// A consistent error value for connections closed without a reason.
+#[cfg(feature = "aio")]
+pub(crate) fn closed_connection_error() -> RedisError {
+    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}

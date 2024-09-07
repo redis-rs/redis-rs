@@ -1,7 +1,7 @@
 use crate::caching::statistics::Statistics;
-use crate::caching::{CacheConfig, CacheStatistics};
-use crate::cmd::{CommandCacheInformation, CommandCacheInformationByRef};
-use crate::Value;
+use crate::caching::{CacheConfig, CacheMode, CacheStatistics};
+use crate::cmd::{Cmd, CommandCacheInformation, CommandCacheInformationByRef};
+use crate::{PushKind, RedisResult, Value};
 use lru::LruCache;
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
@@ -27,9 +27,23 @@ struct CacheItem {
     value_list: Vec<CacheCmdEntry>,
 }
 
+impl CacheItem {
+    pub fn handle_server_side_ttl(&mut self, ss_ttl_value: &Value) -> RedisResult<()> {
+        let pttl: i64 = crate::FromRedisValue::from_redis_value(ss_ttl_value)?;
+        if pttl >= 0 {
+            let server_side_ttl = Instant::now().add(Duration::from_millis(pttl as u64));
+            if self.ttl > server_side_ttl {
+                self.ttl = server_side_ttl;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
 }
+
 impl ShardedLRU {
     const MAX_SHARD_SIZE: usize = 32;
     fn new(total_key_size: NonZeroUsize) -> Self {
@@ -122,13 +136,14 @@ impl CacheManager {
                 self.statistics.increase_miss(1);
                 let (tx, rx) = channel(Value::Nil);
                 //Here we are putting guard in cache and marking the `RedisKey`
-                let old_value = lru_cache_better.push(
+                // Ignoring the return value is because at this point there must be no value with the key
+                let _ = lru_cache_better.push(
                     cache_information.redis_key.to_vec(),
                     CacheItem {
-                        ttl: get_ttl(
+                        ttl: get_min_ttl(
                             cache_information.client_side_ttl,
                             self.cache_config.default_client_ttl,
-                        ),
+                        ), // This value will be compared with server side TTL.
                         value_list: vec![CacheCmdEntry {
                             cmd: cache_information.cmd.to_vec(),
                             value: None,
@@ -136,10 +151,6 @@ impl CacheManager {
                         }],
                     },
                 );
-                if let Some(old_value) = old_value {
-                    self.statistics
-                        .increase_invalidate(old_value.1.value_list.len());
-                }
                 return Err(tx);
             }
         };
@@ -151,18 +162,20 @@ impl CacheManager {
         self.statistics.increase_miss(1);
         Ok(None)
     }
+
     pub(crate) fn insert_with_guard_by_ref(
         &self,
         cache_information: &CommandCacheInformationByRef,
         sender: &Sender<Value>,
         value: Value,
+        server_side_ttl_value: &Value,
     ) {
         self.insert_with_guard_inner(
             cache_information.redis_key,
             cache_information.cmd,
-            cache_information.client_side_ttl,
             sender,
             value,
+            server_side_ttl_value,
         );
     }
 
@@ -171,52 +184,109 @@ impl CacheManager {
         cache_information: &CommandCacheInformation,
         sender: &Sender<Value>,
         value: Value,
+        server_side_ttl_value: &Value,
     ) {
         self.insert_with_guard_inner(
             &cache_information.redis_key,
             &cache_information.cmd,
-            cache_information.client_side_ttl,
             sender,
             value,
+            server_side_ttl_value,
         );
     }
+
     fn insert_with_guard_inner(
         &self,
         redis_key: &[u8],
         redis_cmd: &[u8],
-        client_side_ttl: Option<Duration>,
         sender: &Sender<Value>,
         value: Value,
+        server_side_ttl_value: &Value,
     ) {
         let mut lru_cache = self.lru.get_shard(redis_key).lock().unwrap();
         if let Some(ch) = lru_cache.peek_mut(redis_key) {
             for entry in &mut ch.value_list {
                 if entry.cmd == redis_cmd {
-                    ch.ttl = get_ttl(client_side_ttl, self.cache_config.default_client_ttl);
                     entry.value = Some(value.clone());
                     // The error response of `send` means waiters has been dropped, it's okay!
                     let _ = sender.send(value);
-                    return;
+                    break;
                 }
             }
+            // It will change TTL of the key
+            ch.handle_server_side_ttl(server_side_ttl_value).unwrap();
         }
     }
+
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
         if let Some(cache_holder) = self.lru.get_shard(cache_key).lock().unwrap().pop(cache_key) {
             self.statistics
                 .increase_invalidate(cache_holder.value_list.len());
         }
     }
+
     pub(crate) fn statistics(&self) -> CacheStatistics {
         self.statistics.clone().into()
     }
+
     pub(crate) fn increase_sent_command_count(&self, val: usize) {
         self.statistics.increase_sent_command_count(val)
+    }
+
+    pub(crate) fn compute_cache_information<'a>(
+        &self,
+        cmd: &'a Cmd,
+    ) -> Option<CommandCacheInformationByRef<'a>> {
+        match self.cache_config.mode {
+            CacheMode::All => cmd.compute_cache_information(),
+            CacheMode::OptIn => {
+                if cmd.has_opt_in_cache() {
+                    cmd.compute_cache_information()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+    pub(crate) fn pack_single_command(
+        &self,
+        cmd: &Cmd,
+        ci: &CommandCacheInformationByRef,
+    ) -> (Vec<u8>, usize) {
+        let mut request = vec![];
+        let mut cmd_count = 1;
+        if self.cache_config.mode == CacheMode::OptIn {
+            Cmd::new()
+                .arg("CLIENT")
+                .arg("CACHING")
+                .arg("YES")
+                .write_packed_command(&mut request);
+            cmd_count += 1;
+        }
+        Cmd::new()
+            .arg("PTTL")
+            .arg(ci.redis_key)
+            .write_packed_command(&mut request);
+        cmd.write_packed_command(&mut request);
+        cmd_count += 1;
+        (request, cmd_count)
+    }
+
+    pub(crate) fn handle_push_value(&self, kind: &PushKind, data: &[Value]) {
+        if kind == &PushKind::Invalidate {
+            if let Some(Value::Array(redis_key)) = data.first() {
+                if let Some(redis_key) = redis_key.first() {
+                    if let Ok(redis_key) = crate::FromRedisValue::from_redis_value(redis_key) {
+                        self.invalidate(&redis_key)
+                    }
+                }
+            }
+        }
     }
 }
 
 #[inline]
-fn get_ttl(p_ttl: Option<Duration>, default_client_ttl: Duration) -> Instant {
+fn get_min_ttl(p_ttl: Option<Duration>, default_client_ttl: Duration) -> Instant {
     let ttl_duration = if let Some(p_ttl) = p_ttl {
         min(p_ttl, default_client_ttl)
     } else {

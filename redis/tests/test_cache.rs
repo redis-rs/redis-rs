@@ -124,7 +124,7 @@ fn test_cache_drops_and_guards() {
 
     block_on_all(async move {
         let con = ctx
-            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
+            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::default())
             .await?;
 
         let mut v = vec![];
@@ -154,7 +154,7 @@ fn test_cache_guards_and_different_types() {
 
     block_on_all(async move {
         let mut con = ctx
-            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
+            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::default())
             .await?;
         let _: () = con.set("KEY", "77").await?;
         let mut v = vec![];
@@ -199,7 +199,7 @@ fn test_cache_guards_and_nil_values() {
 
     block_on_all(async move {
         let con = ctx
-            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
+            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::default())
             .await?;
         let mut v = vec![];
         for _ in 0..5 {
@@ -243,7 +243,7 @@ fn test_cache_verify() {
 
     block_on_all(async move {
         let mut con = ctx
-            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
+            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::default())
             .await?;
         let c2 = con.clone();
         let join_handle = tokio::spawn(async move {
@@ -260,6 +260,45 @@ fn test_cache_verify() {
         });
         for _ in 0..10000 {
             let _: Option<u32> = con.get("KEY").await.unwrap();
+        }
+        join_handle.await.unwrap();
+        Ok::<_, RedisError>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_cache_mget_verify() {
+    // Verifies notifiers are working fine with MGET
+    use redis::ProtocolVersion;
+
+    let ctx = TestContext::new();
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+
+    block_on_all(async move {
+        let mut con = ctx
+            .multiplexed_async_connection_tokio_with_cache_config(CacheConfig::default())
+            .await?;
+        let c2 = con.clone();
+        let _: () = con.set("KEY", "77").await?;
+        let _: () = con.set("KEY2", "44").await?;
+        let join_handle = tokio::spawn(async move {
+            let con = c2.clone();
+            let mut v = vec![];
+            for i in 0..100000 {
+                let mut c = con.clone();
+                v.push(async move {
+                    let x: RedisFuture<u32> = c.get("KEY");
+                    let _ = tokio::time::timeout(Duration::from_micros(i * 10), x).await;
+                })
+            }
+            futures::future::join_all(v).await;
+        });
+        for _ in 0..10000 {
+            let nums: (u32, u32) = con.mget(vec!["KEY", "KEY2"]).await.unwrap();
+            assert_eq!(nums, (77, 44));
         }
         join_handle.await.unwrap();
         Ok::<_, RedisError>(())

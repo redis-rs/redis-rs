@@ -1,7 +1,13 @@
 //! This module extends the library to support Redis Cluster.
 //!
-//! Note that this module does not currently provide pubsub
-//! functionality.
+//! The cluster connection is meant to abstract the fact that a cluster is composed of multiple nodes,
+//! and to provide an API which is as close as possible to that of a single node connection. In order to do that,
+//! the cluster connection maintains connections to each node in the Redis/ Valkey cluster, and can route
+//! requests automatically to the relevant nodes. In cases that the cluster connection receives indications
+//! that the cluster topology has changed, it will query nodes in order to find the current cluster topology.
+//! If it disconnects from some nodes, it will automatically reconnect to those nodes.
+//!
+//! Note that pubsub & push sending functionality is not currently provided by this module.
 //!
 //! # Example
 //! ```rust,no_run

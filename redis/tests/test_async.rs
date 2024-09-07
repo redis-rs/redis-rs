@@ -686,6 +686,30 @@ mod basic_async {
                 let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
                 assert_eq!("banana".to_string(), msg_payload);
 
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn pub_sub_subscription_to_multiple_channels() {
+            use redis::RedisError;
+
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let mut pubsub_conn = ctx.async_pubsub().await?;
+                let _: () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                let mut pubsub_stream = pubsub_conn.on_message();
+                let mut publish_conn = ctx.async_connection().await?;
+                let _: () = publish_conn.publish("phonewave", "banana").await?;
+
+                let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+                assert_eq!("banana".to_string(), msg_payload);
+
+                let _: () = publish_conn.publish("foo", "foobar").await?;
+                let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
+                assert_eq!("foobar".to_string(), msg_payload);
+
                 Ok::<_, RedisError>(())
             })
             .unwrap();
@@ -710,7 +734,62 @@ mod basic_async {
                 let subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
                 assert_eq!(subscription_count, 0);
 
-                Ok::<_, RedisError>(())
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn can_receive_messages_while_sending_requests_from_split_pub_sub() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+                let mut publish_conn = ctx.async_connection().await?;
+                let spawned_read = tokio::spawn(async move { stream.next().await });
+
+                let _: () = sink.subscribe("phonewave").await?;
+                let _: () = publish_conn.publish("phonewave", "banana").await?;
+
+                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+
+                assert_eq!("banana".to_string(), message);
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn can_receive_messages_from_split_pub_sub_after_sink_was_dropped() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+                let mut publish_conn = ctx.async_connection().await?;
+                let spawned_read = tokio::spawn(async move { stream.next().await });
+
+                let _: () = sink.subscribe("phonewave").await?;
+                drop(sink);
+                let _: () = publish_conn.publish("phonewave", "banana").await?;
+
+                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+
+                assert_eq!("banana".to_string(), message);
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn cannot_subscribe_on_split_pub_sub_after_stream_was_dropped() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+                drop(stream);
+
+                assert!(sink.subscribe("phonewave").await.is_err());
+
+                Ok(())
             })
             .unwrap();
         }
@@ -752,7 +831,7 @@ mod basic_async {
         fn pub_sub_conn_reuse() {
             let ctx = TestContext::new();
             block_on_all(async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+                let mut pubsub_conn = ctx.deprecated_async_connection().await?.into_pubsub();
                 pubsub_conn.subscribe("phonewave").await?;
                 pubsub_conn.psubscribe("*").await?;
 
@@ -777,13 +856,11 @@ mod basic_async {
             test_with_all_connection_types(|mut conn| async move {
                 conn.lpush::<&str, &str, ()>("key", "value").await?;
 
-                let res: Result<(String, usize), redis::RedisError> = redis::pipe()
+                redis::pipe()
                 .get("key") // WRONGTYPE
                 .llen("key")
-                .query_async(&mut conn)
-                .await;
-
-                assert!(res.is_err());
+                .exec_async(&mut conn)
+                .await.unwrap_err();
 
                 let list: Vec<String> = conn.lrange("key", 0, -1).await?;
 
@@ -791,6 +868,39 @@ mod basic_async {
 
                 Ok::<_, RedisError>(())
             });
+        }
+
+        #[test]
+        fn multiplexed_pub_sub_subscribe_on_multiple_channels() {
+            let ctx = TestContext::new();
+            if ctx.protocol == ProtocolVersion::RESP2 {
+                return;
+            }
+            block_on_all(async move {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+                let mut conn = ctx
+                    .client
+                    .get_multiplexed_async_connection_with_config(&config)
+                    .await?;
+                let _: () = conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                let mut publish_conn = ctx.async_connection().await?;
+
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+
+                let _: () = publish_conn.publish("foo", "foobar").await?;
+
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Subscribe);
+                let msg_payload = rx.recv().await.unwrap();
+                assert_eq!(msg_payload.kind, PushKind::Message);
+
+                Ok(())
+            })
+            .unwrap();
         }
 
         #[test]
