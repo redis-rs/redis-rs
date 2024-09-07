@@ -192,7 +192,6 @@ name = "bench_cache"
 harness = false
 required-features = ["tokio-comp", "cache-aio"]
 
-
 [[example]]
 name = "async-multiplexed"
 required-features = ["tokio-comp"]

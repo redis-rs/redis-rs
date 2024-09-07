@@ -73,6 +73,20 @@ impl ShardedLRU {
     }
 }
 
+pub(crate) enum GetWithGuardResponse {
+    /// Value exists in cache and usable.
+    Ok(Value),
+    /// Value doesn't exists in cache or not usable and it won't be written back to cache.
+    None,
+    /// Value doesn't exists in cache or not usable but it can be written back to cache with guard.
+    Guard(Sender<Value>),
+}
+
+enum InternalGuardResponse {
+    GuardReceiver(Receiver<Value>),
+    Ok(GetWithGuardResponse),
+}
+
 #[derive(Clone)]
 pub(crate) struct CacheManager {
     lru: Arc<ShardedLRU>,
@@ -89,80 +103,104 @@ impl CacheManager {
         }
     }
 
-    pub(crate) async fn get_with_guard_new<'a>(
+    pub(crate) async fn get_with_guard<'a>(
         &self,
         cache_information: &CommandCacheInformationByRef<'a>,
-    ) -> Result<Option<Value>, Sender<Value>> {
-        let mut receiver = {
+    ) -> GetWithGuardResponse {
+        let internal_response = {
             let mut lru_cache = self
                 .lru
                 .get_shard(cache_information.redis_key)
                 .lock()
                 .unwrap();
-            if let Some(ch) = lru_cache.get_mut(cache_information.redis_key) {
-                if Instant::now() > ch.expire_time {
+            if let Some(cache_item) = lru_cache.get_mut(cache_information.redis_key) {
+                if Instant::now() > cache_item.expire_time {
                     // Key is expired.
                     // It's a cold path, it could be optimized with guard in return of more complex code.
-                    self.statistics.increase_invalidate(ch.value_list.len());
+                    self.statistics
+                        .increase_invalidate(cache_item.value_list.len());
                     lru_cache.pop(cache_information.redis_key);
-                    return Ok(None);
+                    return GetWithGuardResponse::None;
                 };
-                // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
-                let mut receiver: Option<Receiver<Value>> = None;
-                for entry in &ch.value_list {
-                    if entry.cmd == cache_information.cmd {
-                        if let Some(val) = entry.value.as_ref() {
-                            self.statistics.increase_hit(1);
-                            let v = val.clone();
-                            return Ok(Some(v));
-                        } else {
-                            // Value is not ready yet, request will wait with this receiver.
-                            receiver = Some(entry.receiver.clone())
-                        }
-                    }
-                }
-                match receiver {
-                    Some(receiver) => receiver,
-                    None => {
-                        self.statistics.increase_miss(1);
-                        let (tx, rx) = channel(Value::Nil);
-                        ch.value_list.push(CacheCmdEntry {
-                            cmd: cache_information.cmd.to_vec(),
-                            value: None,
-                            receiver: rx,
-                        });
-                        return Err(tx);
-                    }
-                }
+                self.get_with_guard_existing_key(cache_item, cache_information)
             } else {
-                self.statistics.increase_miss(1);
-                let (tx, rx) = channel(Value::Nil);
-                //Here we are putting guard in cache and marking the `RedisKey`
-                // Ignoring the return value is because at this point there must be no value with the key
-                let _ = lru_cache.push(
-                    cache_information.redis_key.to_vec(),
-                    CacheItem {
-                        expire_time: get_min_expire_time(
-                            cache_information.client_side_ttl,
-                            self.cache_config.default_client_ttl,
-                        ), // This value will be compared with server side expire time.
-                        value_list: vec![CacheCmdEntry {
-                            cmd: cache_information.cmd.to_vec(),
-                            value: None,
-                            receiver: rx,
-                        }],
-                    },
-                );
-                return Err(tx);
+                self.get_with_guard_non_existing_key(&mut lru_cache, cache_information)
             }
         };
-        if receiver.changed().await.is_ok() {
-            self.statistics.increase_hit(1);
-            return Ok(Some(receiver.borrow().clone()));
+        match internal_response {
+            InternalGuardResponse::Ok(resp) => resp,
+            InternalGuardResponse::GuardReceiver(mut receiver) => {
+                if receiver.changed().await.is_ok() {
+                    self.statistics.increase_hit(1);
+                    return GetWithGuardResponse::Ok(receiver.borrow().clone());
+                }
+                // Sender was dropped.
+                // Now function will return None and response of request won't be filled back to the cache.
+                // This can be improved in the future.
+                self.statistics.increase_miss(1);
+                GetWithGuardResponse::None
+            }
         }
-        // the entry we waited for is dropped...
+    }
+
+    fn get_with_guard_existing_key(
+        &self,
+        cache_item: &mut CacheItem,
+        cache_information: &CommandCacheInformationByRef,
+    ) -> InternalGuardResponse {
+        // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
+        let mut receiver: Option<Receiver<Value>> = None;
+        for entry in &cache_item.value_list {
+            if entry.cmd == cache_information.cmd {
+                if let Some(val) = entry.value.as_ref() {
+                    self.statistics.increase_hit(1);
+                    let v = val.clone();
+                    return InternalGuardResponse::Ok(GetWithGuardResponse::Ok(v));
+                } else {
+                    // Value is not ready yet, request will wait with this receiver.
+                    receiver = Some(entry.receiver.clone());
+                    break;
+                }
+            }
+        }
+        match receiver {
+            Some(receiver) => InternalGuardResponse::GuardReceiver(receiver),
+            None => {
+                // There was no entry about this specific command, now it will be created, and sender guard will be given to the caller.
+                self.statistics.increase_miss(1);
+                let (tx, rx) = channel(Value::Nil);
+                cache_item.value_list.push(CacheCmdEntry {
+                    cmd: cache_information.cmd.to_vec(),
+                    value: None,
+                    receiver: rx,
+                });
+                InternalGuardResponse::Ok(GetWithGuardResponse::Guard(tx))
+            }
+        }
+    }
+
+    fn get_with_guard_non_existing_key(
+        &self,
+        lru_cache: &mut LRUCacheShard,
+        cache_information: &CommandCacheInformationByRef,
+    ) -> InternalGuardResponse {
         self.statistics.increase_miss(1);
-        Ok(None)
+        let (tx, rx) = channel(Value::Nil);
+        // Putting guard in cache and marking the `RedisKey`, caller will fill the key using the guard.
+        let cache_item = CacheItem {
+            expire_time: get_min_expire_time(
+                cache_information.client_side_ttl,
+                self.cache_config.default_client_ttl,
+            ), // This value will be compared with server side expire time.
+            value_list: vec![CacheCmdEntry {
+                cmd: cache_information.cmd.to_vec(),
+                value: None,
+                receiver: rx,
+            }],
+        };
+        // Ignoring the return value, because at this point there must be no value with the key
+        let _ = lru_cache.push(cache_information.redis_key.to_vec(), cache_item);
+        InternalGuardResponse::Ok(GetWithGuardResponse::Guard(tx))
     }
 
     pub(crate) fn insert_with_guard_by_ref(

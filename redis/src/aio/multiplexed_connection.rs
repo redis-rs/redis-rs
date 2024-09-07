@@ -1,7 +1,7 @@
 use super::{ConnectionLike, Runtime};
 use crate::aio::{check_resp3, setup_connection};
 #[cfg(feature = "cache-aio")]
-use crate::caching::{CacheManager, CacheMode, CacheStatistics};
+use crate::caching::{CacheManager, CacheMode, CacheStatistics, GetWithGuardResponse};
 use crate::cmd::Cmd;
 #[cfg(feature = "cache-aio")]
 use crate::cmd::{CommandCacheInformation, CommandCacheInformationByRef};
@@ -615,13 +615,13 @@ impl MultiplexedConnection {
                         redis_key,
                         is_mget: false,
                     };
-                    let sender = match cache_manager.get_with_guard_new(&new_ci).await {
-                        Ok(Some(value)) => {
+                    let sender = match cache_manager.get_with_guard(&new_ci).await {
+                        GetWithGuardResponse::Ok(value) => {
                             mget_response.push(value);
                             continue;
                         }
-                        Ok(None) => None,
-                        Err(g) => Some(g),
+                        GetWithGuardResponse::None => None,
+                        GetWithGuardResponse::Guard(sender) => Some(sender),
                     };
                     pipeline.arg(redis_key);
                     missing_key_indexes.push(i);
@@ -675,10 +675,10 @@ impl MultiplexedConnection {
                 if cache_information.is_mget {
                     return self.handle_cached_mget(cmd, &cache_information).await;
                 }
-                match cache_manager.get_with_guard_new(&cache_information).await {
-                    Ok(Some(value)) => return Ok(value),
-                    Ok(None) => (),
-                    Err(notifier) => {
+                match cache_manager.get_with_guard(&cache_information).await {
+                    GetWithGuardResponse::Ok(value) => return Ok(value),
+                    GetWithGuardResponse::None => (),
+                    GetWithGuardResponse::Guard(sender) => {
                         let (cmd_bytes, cmd_count) =
                             cache_manager.pack_single_command(cmd, &cache_information);
                         let result = self
@@ -693,7 +693,7 @@ impl MultiplexedConnection {
                             let pttl = v.pop().unwrap();
                             cache_manager.insert_with_guard_by_ref(
                                 &cache_information,
-                                &notifier,
+                                &sender,
                                 reply.clone(),
                                 &pttl,
                             );

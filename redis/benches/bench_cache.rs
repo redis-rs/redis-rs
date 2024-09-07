@@ -42,7 +42,7 @@ async fn benchmark_executer(
 ) {
     let ctx = TestContext::new();
     let con = if is_cache_enabled {
-        ctx.multiplexed_async_connection_tokio_with_cache_config(CacheConfig::enabled())
+        ctx.multiplexed_async_connection_tokio_with_cache_config(CacheConfig::new())
             .await
             .unwrap()
     } else {

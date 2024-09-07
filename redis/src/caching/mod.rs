@@ -6,6 +6,6 @@ mod statistics;
 mod cache_manager;
 mod config;
 
-pub(crate) use cache_manager::CacheManager;
+pub(crate) use cache_manager::{CacheManager, GetWithGuardResponse};
 pub use config::{CacheConfig, CacheMode};
 pub use statistics::CacheStatistics;
