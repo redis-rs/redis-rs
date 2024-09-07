@@ -1,5 +1,5 @@
 //! This module provides Server-assisted client-side caching in Redis.
-//! https://redis.io/docs/manual/client-side-caching/
+//! <https://redis.io/docs/manual/client-side-caching/>
 
 mod statistics;
 

@@ -214,6 +214,7 @@ where
             Some(entry) => entry,
             None => return,
         };
+
         match &mut entry.response_aggregate {
             ResponseAggregate::SingleCommand => {
                 entry.output.send(result).ok();
@@ -438,7 +439,6 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
-
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
 }
@@ -482,7 +482,6 @@ impl MultiplexedConnection {
                 response_timeout,
                 connection_timeout: None,
                 push_sender: None,
-
                 #[cfg(feature = "cache-aio")]
                 cache_config: None,
             },
@@ -510,7 +509,7 @@ impl MultiplexedConnection {
                 "Can only pass push sender to a connection using RESP3"
             );
         }
-      
+
         #[cfg(feature = "cache-aio")]
         let cache_manager_opt = if let Some(config) = config.cache_config {
             check_resp3!(

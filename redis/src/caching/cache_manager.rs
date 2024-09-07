@@ -23,7 +23,7 @@ struct CacheCmdEntry {
 }
 
 struct CacheItem {
-    ttl: Instant,
+    expire_time: Instant,
     value_list: Vec<CacheCmdEntry>,
 }
 
@@ -31,9 +31,9 @@ impl CacheItem {
     pub fn handle_server_side_ttl(&mut self, ss_ttl_value: &Value) -> RedisResult<()> {
         let pttl: i64 = crate::FromRedisValue::from_redis_value(ss_ttl_value)?;
         if pttl >= 0 {
-            let server_side_ttl = Instant::now().add(Duration::from_millis(pttl as u64));
-            if self.ttl > server_side_ttl {
-                self.ttl = server_side_ttl;
+            let server_side_expire_time = Instant::now().add(Duration::from_millis(pttl as u64));
+            if self.expire_time > server_side_expire_time {
+                self.expire_time = server_side_expire_time;
             }
         }
         Ok(())
@@ -45,25 +45,27 @@ struct ShardedLRU {
 }
 
 impl ShardedLRU {
-    const MAX_SHARD_SIZE: usize = 32;
+    const MAX_SHARD_COUNT: usize = 32;
+
     fn new(total_key_size: NonZeroUsize) -> Self {
         // If total cache size is smaller than max shard size then it won't use sharding.
-        let (shard_size, per_lru_size) = if total_key_size.get() >= Self::MAX_SHARD_SIZE {
+        let (shard_count, shard_size) = if total_key_size.get() >= Self::MAX_SHARD_COUNT {
             (
-                Self::MAX_SHARD_SIZE,
-                total_key_size.get() / Self::MAX_SHARD_SIZE,
+                Self::MAX_SHARD_COUNT,
+                total_key_size.get() / Self::MAX_SHARD_COUNT,
             )
         } else {
             (1, total_key_size.get())
         };
 
-        let mut shards = Vec::with_capacity(shard_size);
-        for _ in 0..shard_size {
-            let shard = LruCache::new(NonZeroUsize::new(per_lru_size).unwrap());
+        let mut shards = Vec::with_capacity(shard_count);
+        for _ in 0..shard_count {
+            let shard = LruCache::new(NonZeroUsize::new(shard_size).unwrap());
             shards.push(std::sync::Mutex::new(shard));
         }
         ShardedLRU { shards }
     }
+
     fn get_shard(&self, key: &[u8]) -> &std::sync::Mutex<LRUCacheShard> {
         let mut s = DefaultHasher::new();
         s.write(key);
@@ -92,20 +94,20 @@ impl CacheManager {
         cache_information: &CommandCacheInformationByRef<'a>,
     ) -> Result<Option<Value>, Sender<Value>> {
         let mut receiver = {
-            let mut lru_cache_better = self
+            let mut lru_cache = self
                 .lru
                 .get_shard(cache_information.redis_key)
                 .lock()
                 .unwrap();
-            if let Some(ch) = lru_cache_better.get_mut(cache_information.redis_key) {
-                // We have found redis key in cache, but we need to make sure redis cmd is also here.
-                if Instant::now() > ch.ttl {
+            if let Some(ch) = lru_cache.get_mut(cache_information.redis_key) {
+                if Instant::now() > ch.expire_time {
                     // Key is expired.
                     // It's a cold path, it could be optimized with guard in return of more complex code.
                     self.statistics.increase_invalidate(ch.value_list.len());
-                    lru_cache_better.pop(cache_information.redis_key);
+                    lru_cache.pop(cache_information.redis_key);
                     return Ok(None);
                 };
+                // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
                 let mut receiver: Option<Receiver<Value>> = None;
                 for entry in &ch.value_list {
                     if entry.cmd == cache_information.cmd {
@@ -114,7 +116,7 @@ impl CacheManager {
                             let v = val.clone();
                             return Ok(Some(v));
                         } else {
-                            // Value is not ready yet, we will wait for it.
+                            // Value is not ready yet, request will wait with this receiver.
                             receiver = Some(entry.receiver.clone())
                         }
                     }
@@ -137,13 +139,13 @@ impl CacheManager {
                 let (tx, rx) = channel(Value::Nil);
                 //Here we are putting guard in cache and marking the `RedisKey`
                 // Ignoring the return value is because at this point there must be no value with the key
-                let _ = lru_cache_better.push(
+                let _ = lru_cache.push(
                     cache_information.redis_key.to_vec(),
                     CacheItem {
-                        ttl: get_min_ttl(
+                        expire_time: get_min_expire_time(
                             cache_information.client_side_ttl,
                             self.cache_config.default_client_ttl,
-                        ), // This value will be compared with server side TTL.
+                        ), // This value will be compared with server side expire time.
                         value_list: vec![CacheCmdEntry {
                             cmd: cache_information.cmd.to_vec(),
                             value: None,
@@ -213,7 +215,7 @@ impl CacheManager {
                     break;
                 }
             }
-            // It will change TTL of the key
+            // It will change expire time of the key
             ch.handle_server_side_ttl(server_side_ttl_value).unwrap();
         }
     }
@@ -286,7 +288,7 @@ impl CacheManager {
 }
 
 #[inline]
-fn get_min_ttl(p_ttl: Option<Duration>, default_client_ttl: Duration) -> Instant {
+fn get_min_expire_time(p_ttl: Option<Duration>, default_client_ttl: Duration) -> Instant {
     let ttl_duration = if let Some(p_ttl) = p_ttl {
         min(p_ttl, default_client_ttl)
     } else {
