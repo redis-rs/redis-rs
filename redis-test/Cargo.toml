@@ -1,19 +1,19 @@
 [package]
 name = "redis-test"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "Testing helpers for the `redis` crate"
 homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
-rust-version = "1.65"
+rust-version = "1.70"
 
 [lib]
 bench = false
 
 [dependencies]
-redis = { version = "0.26.0", path = "../redis" }
+redis = { version = "0.27.0", path = "../redis" }
 
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
@@ -22,5 +22,5 @@ futures = { version = "0.3", optional = true }
 aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
-redis = { version = "0.26.0", path = "../redis", features = ["aio", "tokio-comp"] }
+redis = { version = "0.27.0", path = "../redis", features = ["aio", "tokio-comp"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
