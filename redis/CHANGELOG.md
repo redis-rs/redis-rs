@@ -1,3 +1,20 @@
+### 0.27.0 (2024-09-07)
+
+#### Features
+
+* **Breaking change**: Abort backing task to multiplexed connection on drop ([#1264](https://github.com/redis-rs/redis-rs/pull/1264))
+* Add r2d2 support for SentinelClient ([#1297](https://github.com/redis-rs/redis-rs/pull/1297) @smf8)
+* Xinfo groups lag and entries-read support ([#837](https://github.com/redis-rs/redis-rs/pull/837) @massimiliano-mantione)
+* Improve cluster documentation. [#1263](https://github.com/redis-rs/redis-rs/pull/1263)
+* Allow splitting async PubSub to Sink &  Stream. [#1144](https://github.com/redis-rs/redis-rs/pull/1144)
+* Default for ConnectionManagerConfig ([#1308](https://github.com/redis-rs/redis-rs/pull/1308) @feelingsonice)
+
+#### Changes & Bug fixes
+
+* Fix new lints [#1310](https://github.com/redis-rs/redis-rs/pull/1310)
+* Use pipelines to setup connections [#1250](https://github.com/redis-rs/redis-rs/pull/1250)
+* Bump MSRV to 1.70 [#1286](https://github.com/redis-rs/redis-rs/pull/1286)
+
 ### 0.26.1 (2024-08-02)
 
 * bug: Exported configured-out item ([#1273](https://github.com/redis-rs/redis-rs/pull/1273) @EmilyMatt)
@@ -7,10 +24,10 @@
 #### Features
 
 * **Breaking change**: Add RESP3 support ([#1058](https://github.com/redis-rs/redis-rs/pull/1058) @altanozlu)
-* **Breaking change**: Expose Errors in `Value` [1093](https://github.com/redis-rs/redis-rs/pull/1093)
+* **Breaking change**: Expose Errors in `Value` [#1093](https://github.com/redis-rs/redis-rs/pull/1093)
 * Add max retry delay for every reconnect ([#1194](https://github.com/redis-rs/redis-rs/pull/1194) tonynguyen-sotatek)
 * Add support for routing by node address. [#1062](https://github.com/redis-rs/redis-rs/pull/1062)
-*  **Breaking change**: Deprecate function that erroneously use tokio in its name. [1087](https://github.com/redis-rs/redis-rs/pull/1087)
+* **Breaking change**: Deprecate function that erroneously use tokio in its name. [1087](https://github.com/redis-rs/redis-rs/pull/1087)
 * **Breaking change**: Change is_single_arg to num_of_args in ToRedisArgs trait ([1238](https://github.com/redis-rs/redis-rs/pull/1238) @git-hulk)
 * feat: add implementation of `ToRedisArgs`,`FromRedisValue` traits for `Arc<T>`,`Box<T>`,`Rc<T>` ([1088](https://github.com/redis-rs/redis-rs/pull/1088) @xoac)
 * MultiplexedConnection: Relax type requirements for pubsub functions. [1129](https://github.com/redis-rs/redis-rs/pull/1129)

@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.26.1"
+version = "0.27.0"
 dependencies = [
  "ahash 0.8.11",
  "anyhow",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "redis-test"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "futures",
