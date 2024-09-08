@@ -779,25 +779,21 @@ impl Client {
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
-        let (rt, connection) = match Runtime::locate() {
+        let connection = match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
-            rt @ Runtime::Tokio => (
-                rt,
+            Runtime::Tokio => {
                 self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
-                    .await?,
-            ),
+                    .await?
+            }
+
             #[cfg(feature = "async-std-comp")]
-            rt @ Runtime::AsyncStd => (
-                rt,
+            Runtime::AsyncStd => {
                 self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
-                    .await?,
-            ),
+                    .await?
+            }
         };
 
-        let (connection, driver) =
-            crate::aio::PubSub::new(&self.connection_info.redis, connection).await?;
-        rt.spawn(driver);
-        Ok(connection)
+        crate::aio::PubSub::new(&self.connection_info.redis, connection).await
     }
 
     /// Returns an async receiver for monitor messages.

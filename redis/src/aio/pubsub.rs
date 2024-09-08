@@ -1,3 +1,4 @@
+use crate::aio::{new_shared_handle, Runtime};
 use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
 };
@@ -24,6 +25,8 @@ use tokio::sync::mpsc::UnboundedSender;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
+use super::SharedHandleContainer;
+
 // A signal that a un/subscribe request has completed.
 type RequestCompletedSignal = oneshot::Sender<RedisResult<()>>;
 
@@ -36,6 +39,15 @@ struct PipelineMessage {
 /// A sender to an async task passing the messages to a `Stream + Sink`.
 pub struct PubSubSink {
     sender: UnboundedSender<PipelineMessage>,
+}
+
+pin_project! {
+    pub struct PubSubStream {
+        #[pin]
+        receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
+        // This handle ensures that once the stream will be dropped, the underlying task will stop.
+        _task_handle: Option<SharedHandleContainer>,
+    }
 }
 
 impl Clone for PubSubSink {
@@ -289,7 +301,7 @@ impl PubSubSink {
 /// A connection dedicated to pubsub messages.
 pub struct PubSub {
     sink: PubSubSink,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
+    stream: PubSubStream,
 }
 
 async fn execute_connection_pipeline<T>(
@@ -347,10 +359,7 @@ where
 impl PubSub {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
-    pub async fn new<C>(
-        connection_info: &RedisConnectionInfo,
-        stream: C,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)>
+    pub async fn new<C>(connection_info: &RedisConnectionInfo, stream: C) -> RedisResult<Self>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
@@ -361,8 +370,14 @@ impl PubSub {
         setup_connection(&mut codec, connection_info).await?;
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
-        let con = PubSub { sink, receiver };
-        Ok((con, driver))
+        let handle = Runtime::locate().spawn(driver);
+        let _task_handle = Some(new_shared_handle(handle));
+        let stream = PubSubStream {
+            receiver,
+            _task_handle,
+        };
+        let con = PubSub { sink, stream };
+        Ok(con)
     }
 
     /// Subscribes to a new channel.
@@ -390,7 +405,7 @@ impl PubSub {
     /// The message itself is still generic and can be converted into an appropriate type through
     /// the helper methods on it.
     pub fn on_message(&mut self) -> impl Stream<Item = Msg> + '_ {
-        stream::poll_fn(move |cx| self.receiver.poll_recv(cx))
+        &mut self.stream
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions consuming it.
@@ -399,16 +414,21 @@ impl PubSub {
     /// the helper methods on it.
     /// This can be useful in cases where the stream needs to be returned or held by something other
     /// than the [`PubSub`].
-    pub fn into_on_message(mut self) -> impl Stream<Item = Msg> {
-        stream::poll_fn(move |cx| self.receiver.poll_recv(cx))
+    pub fn into_on_message(self) -> PubSubStream {
+        self.stream
     }
 
     /// Splits the PubSub into separate sink and stream components, so that subscriptions could be
     /// updated through the `Sink` while concurrently waiting for new messages on the `Stream`.
-    pub fn split(mut self) -> (PubSubSink, impl Stream<Item = Msg>) {
-        (
-            self.sink,
-            stream::poll_fn(move |cx| self.receiver.poll_recv(cx)),
-        )
+    pub fn split(self) -> (PubSubSink, PubSubStream) {
+        (self.sink, self.stream)
+    }
+}
+
+impl Stream for PubSubStream {
+    type Item = Msg;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().receiver.poll_recv(cx)
     }
 }
