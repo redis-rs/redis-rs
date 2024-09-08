@@ -188,7 +188,7 @@ quickcheck! {
         let mut partial_reader = PartialAsyncRead { inner: &mut reader, ops: Box::new(seq.into_iter()) };
         let mut decoder = combine::stream::Decoder::new();
 
-        let result = block_on_all(redis::parse_redis_value_async(&mut decoder, &mut partial_reader));
+        let result = block_on_all(redis::parse_redis_value_async(&mut decoder, &mut partial_reader), support::RuntimeType::Tokio);
         assert!(result.as_ref().is_ok(), "{}", result.unwrap_err());
         assert_eq!(
             result.unwrap(),

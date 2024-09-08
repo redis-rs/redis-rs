@@ -45,7 +45,14 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 }
 
 #[cfg(feature = "aio")]
-pub fn block_on_all<F, V>(f: F) -> F::Output
+pub enum RuntimeType {
+    Tokio,
+    #[cfg(feature = "async-std-comp")]
+    AsyncStd,
+}
+
+#[cfg(feature = "aio")]
+pub fn block_on_all<F, V>(f: F, runtime: RuntimeType) -> F::Output
 where
     F: Future<Output = RedisResult<V>>,
 {
@@ -74,9 +81,15 @@ where
     let f = futures_util::FutureExt::fuse(f);
     futures::pin_mut!(f, check_future);
 
-    let res = current_thread_runtime().block_on(async {
-        futures::select! {res = f => res, err = check_future => err}
-    });
+    let res = match runtime {
+        RuntimeType::Tokio => current_thread_runtime().block_on(async {
+            futures::select! {res = f => res, err = check_future => err}
+        }),
+        #[cfg(feature = "async-std-comp")]
+        RuntimeType::AsyncStd => block_on_all_using_async_std(async move {
+            futures::select! {res = f => res, err = check_future => err}
+        }),
+    };
 
     let _ = panic::take_hook();
     if CHECK.swap(false, Ordering::Relaxed) {
@@ -87,21 +100,26 @@ where
 }
 
 #[cfg(feature = "aio")]
-#[test]
+#[rstest::rstest]
+#[case::tokio(RuntimeType::Tokio)]
+#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
 #[should_panic]
-fn test_block_on_all_panics_from_spawns() {
-    let _ = block_on_all(async {
-        tokio::task::spawn(async {
-            futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
-            panic!("As it should");
-        });
-        futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
-        Ok(())
-    });
+fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
+    let _ = block_on_all(
+        async {
+            tokio::task::spawn(async {
+                futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
+                panic!("As it should");
+            });
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
+            Ok(())
+        },
+        runtime,
+    );
 }
 
 #[cfg(feature = "async-std-comp")]
-pub fn block_on_all_using_async_std<F>(f: F) -> F::Output
+fn block_on_all_using_async_std<F>(f: F) -> F::Output
 where
     F: Future,
 {
@@ -521,22 +539,8 @@ impl TestContext {
         self.client.get_async_pubsub().await
     }
 
-    #[cfg(feature = "async-std-comp")]
-    pub async fn async_connection_async_std(
-        &self,
-    ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection().await
-    }
-
     pub fn stop_server(&mut self) {
         self.server.stop();
-    }
-
-    #[cfg(feature = "tokio-comp")]
-    pub async fn multiplexed_async_connection(
-        &self,
-    ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.multiplexed_async_connection_tokio().await
     }
 
     #[cfg(feature = "tokio-comp")]
@@ -544,13 +548,6 @@ impl TestContext {
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_tokio_connection().await
-    }
-
-    #[cfg(feature = "async-std-comp")]
-    pub async fn multiplexed_async_connection_async_std(
-        &self,
-    ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_std_connection().await
     }
 
     pub fn get_version(&self) -> Version {
@@ -920,4 +917,17 @@ pub async fn kill_client_async(
         .unwrap();
 
     Ok(())
+}
+
+pub async fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static) -> T
+where
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(tokio_runtime) => tokio_runtime.spawn(fut).await.unwrap(),
+        #[cfg(feature = "async-std-comp")]
+        Err(_) => async_std::task::spawn(fut).await,
+        #[cfg(not(feature = "async-std-comp"))]
+        Err(_) => unreachable!(),
+    }
 }
