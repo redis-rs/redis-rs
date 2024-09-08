@@ -672,6 +672,8 @@ mod basic_async {
     mod pub_sub {
         use std::time::Duration;
 
+        use futures_time::task::sleep;
+
         use super::*;
 
         #[test]
@@ -822,6 +824,52 @@ mod basic_async {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 assert_eq!(subscription_count, 0);
+
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn automatic_unsubscription_on_split() {
+            const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription-on-split";
+
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+                sink.subscribe(SUBSCRIPTION_KEY).await?;
+                let mut conn = ctx.async_connection().await?;
+                sleep(Duration::from_millis(100).into()).await;
+
+                let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                    .arg("NUMSUB")
+                    .arg(SUBSCRIPTION_KEY)
+                    .query_async(&mut conn)
+                    .await?;
+                let mut subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+                assert_eq!(subscription_count, 1);
+
+                drop(stream);
+
+                // Allow for the unsubscription to occur within 5 seconds
+                for _ in 0..100 {
+                    let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                        .arg("NUMSUB")
+                        .arg(SUBSCRIPTION_KEY)
+                        .query_async(&mut conn)
+                        .await?;
+                    subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+                    if subscription_count == 0 {
+                        break;
+                    }
+
+                    sleep(Duration::from_millis(50).into()).await;
+                }
+                assert_eq!(subscription_count, 0);
+
+                // verify that the sink is unusable after the stream is dropped.
+                let err = sink.subscribe(SUBSCRIPTION_KEY).await.unwrap_err();
+                assert!(err.is_unrecoverable_error(), "{err:?}");
 
                 Ok::<_, RedisError>(())
             })
