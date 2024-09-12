@@ -1,4 +1,4 @@
-use crate::aio::{new_shared_handle, Runtime};
+use crate::aio::Runtime;
 use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
 };
@@ -371,7 +371,7 @@ impl PubSub {
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
         let handle = Runtime::locate().spawn(driver);
-        let _task_handle = Some(new_shared_handle(handle));
+        let _task_handle = Some(SharedHandleContainer::new(handle));
         let stream = PubSubStream {
             receiver,
             _task_handle,

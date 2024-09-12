@@ -79,9 +79,7 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    aio::{
-        new_shared_handle, ConnectionLike, MultiplexedConnection, Runtime, SharedHandleContainer,
-    },
+    aio::{ConnectionLike, MultiplexedConnection, Runtime, SharedHandleContainer},
     cluster::{get_connection_info, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{
@@ -128,7 +126,7 @@ where
                         .forward(inner)
                         .await;
                 };
-                let _task_handle = new_shared_handle(Runtime::locate().spawn(stream));
+                let _task_handle = SharedHandleContainer::new(Runtime::locate().spawn(stream));
 
                 ClusterConnection {
                     sender,
