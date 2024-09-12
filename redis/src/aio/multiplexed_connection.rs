@@ -1,4 +1,4 @@
-use super::{new_shared_handle, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
+use super::{ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -517,7 +517,7 @@ impl MultiplexedConnection {
     /// This should be called strictly before the multiplexed connection is cloned - that is, before it is returned to the user.
     /// Otherwise some clones will be able to kill the backing task, while other clones are still alive.
     pub(crate) fn set_task_handle(&mut self, handle: TaskHandle) {
-        self._task_handle = Some(new_shared_handle(handle));
+        self._task_handle = Some(SharedHandleContainer::new(handle));
     }
 
     /// Sets the time that the multiplexer will wait for responses on operations before failing.

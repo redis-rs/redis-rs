@@ -47,10 +47,15 @@ impl Drop for HandleContainer {
     }
 }
 
-pub(crate) type SharedHandleContainer = Arc<HandleContainer>;
+#[derive(Clone)]
+// we allow dead code here because the container isn't used directly, only in the derived drop.
+#[allow(dead_code)]
+pub(crate) struct SharedHandleContainer(Arc<HandleContainer>);
 
-pub(crate) fn new_shared_handle(handle: TaskHandle) -> SharedHandleContainer {
-    Arc::new(HandleContainer::new(handle))
+impl SharedHandleContainer {
+    pub(crate) fn new(handle: TaskHandle) -> Self {
+        Self(Arc::new(HandleContainer::new(handle)))
+    }
 }
 
 impl Runtime {
