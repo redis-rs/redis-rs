@@ -1,10 +1,10 @@
 use super::{ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 use crate::aio::{check_resp3, setup_connection};
 #[cfg(feature = "cache-aio")]
+use crate::caching::cmd::{CommandCacheInformationByRef, MultipleCommandCacheInformation};
+#[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheMode, CacheStatistics, GetWithGuardResponse};
 use crate::cmd::Cmd;
-#[cfg(feature = "cache-aio")]
-use crate::cmd::{CommandCacheInformation, CommandCacheInformationByRef};
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{
@@ -590,66 +590,65 @@ impl MultiplexedConnection {
         let mut pipeline = Pipeline::new();
         pipeline.atomic();
 
-        let mut senders = vec![];
         let mut cache_information_vec = vec![];
-        let mut missing_key_indexes = vec![];
         let mut tail_commands = Vec::new();
 
-        {
-            let cache_manager = self.cache_manager.as_ref().unwrap();
+        let cache_manager = self
+            .cache_manager
+            .as_ref()
+            .expect("handle_cached_mget function shouldn't be called without cache_manager");
 
-            if cache_manager.cache_config.mode == CacheMode::OptIn {
-                //https://redis.io/docs/latest/commands/client-caching/
-                //It's required for next command (MGET) to be tracked by redis
-                pipeline.cmd("CLIENT").arg("CACHING").arg("YES").ignore();
-            }
+        if cache_manager.cache_config.mode == CacheMode::OptIn {
+            //https://redis.io/docs/latest/commands/client-caching/
+            //It's required for next command (MGET) to be tracked by redis
+            pipeline.cmd("CLIENT").arg("CACHING").arg("YES").ignore();
+        }
 
-            let mut key_test_buffer: Vec<u8> = Vec::new(); //This vector is re-used to check if key exists in cache
-            pipeline.cmd("MGET");
-            // Here it iterates all args except first one which is command name
-            // then it creates CommandCacheInformationByRef for each key with "GET" command to check if key is already cached.
-            // If key doesn't exists in cache, add it as an arg into  MGET command,
-            // push key's position in missing_key_indexes to fill mget_response later on
-            // save CommandCacheInformation so it can be saved into cache later on,
-            // add pttl about key into tail command vectr, which will be sent after MGET
-            // push Value::Nil to mget_response (it will be filled later on)
-            // add sender (guard) to serve other request(s) for the same key.
+        let mut key_test_buffer: Vec<u8> = Vec::new(); //This vector is re-used to check if key exists in cache
+        pipeline.cmd("MGET");
+        // Here it iterates all args except first one which is command name
+        // then it creates CommandCacheInformationByRef for each key with "GET" command to check if key is already cached.
+        // If key doesn't exists in cache, add it as an arg into  MGET command,
+        // push key's position in missing_key_indexes to fill mget_response later on
+        // save CommandCacheInformation so it can be saved into cache later on,
+        // add pttl about key into tail command vectr, which will be sent after MGET
+        // push Value::Nil to mget_response (it will be filled later on)
+        // add sender (guard) to serve other request(s) for the same key.
 
-            for (i, x) in cmd.args_iter().skip(1).enumerate() {
-                if let crate::cmd::Arg::Simple(redis_key) = x {
-                    key_test_buffer.clear();
-                    key_test_buffer.extend_from_slice(b"GET");
-                    key_test_buffer.extend_from_slice(redis_key);
-                    let new_ci = CommandCacheInformationByRef {
-                        client_side_ttl: ci.client_side_ttl,
-                        cmd: &key_test_buffer,
-                        redis_key,
-                        is_mget: false,
-                    };
-                    let sender = match cache_manager.get_with_guard(&new_ci).await {
-                        GetWithGuardResponse::Ok(value) => {
-                            mget_response.push(value);
-                            continue;
-                        }
-                        GetWithGuardResponse::None => None,
-                        GetWithGuardResponse::Guard(sender) => Some(sender),
-                    };
-                    pipeline.arg(redis_key);
-                    missing_key_indexes.push(i);
-                    cache_information_vec.push(CommandCacheInformation {
-                        redis_key: redis_key.to_vec(),
-                        cmd: key_test_buffer.clone(),
-                    });
-                    tail_commands.push(Cmd::pttl(redis_key));
-                    mget_response.push(Value::Nil);
-                    senders.push(sender);
-                }
+        for (i, x) in cmd.args_iter().skip(1).enumerate() {
+            if let crate::cmd::Arg::Simple(redis_key) = x {
+                key_test_buffer.clear();
+                key_test_buffer.extend_from_slice(b"GET");
+                key_test_buffer.extend_from_slice(redis_key);
+                let new_ci = CommandCacheInformationByRef {
+                    client_side_ttl: ci.client_side_ttl,
+                    cmd: &key_test_buffer,
+                    redis_key,
+                    is_mget: false,
+                };
+                let sender = match cache_manager.get_with_guard(&new_ci).await {
+                    GetWithGuardResponse::Ok(value) => {
+                        mget_response.push(value);
+                        continue;
+                    }
+                    GetWithGuardResponse::None => None,
+                    GetWithGuardResponse::Guard(sender) => Some(sender),
+                };
+                pipeline.arg(redis_key); // Adding to MGET
+                cache_information_vec.push(MultipleCommandCacheInformation {
+                    redis_key: redis_key.to_vec(),
+                    cmd: key_test_buffer.clone(),
+                    sender,
+                    key_index: i,
+                });
+                tail_commands.push(Cmd::pttl(redis_key));
+                mget_response.push(Value::Nil);
             }
         }
-        // If everything is in cache already, there is nothing to do
-        if !missing_key_indexes.is_empty() {
-            for cmd in tail_commands {
-                pipeline.add_command(cmd);
+        // If everything isn't in cache server must be queried.
+        if !cache_information_vec.is_empty() {
+            for tail_cmd in tail_commands {
+                pipeline.add_command(tail_cmd);
             }
 
             let cmd_count = pipeline.len() + 2; // Plus two is for MULTI,EXEC
@@ -657,26 +656,35 @@ impl MultiplexedConnection {
             let response: Vec<Value> = pipeline.query_async(self).await?;
             let mut replies = response.into_iter();
 
-            let cache_manager = self.cache_manager.as_ref().unwrap();
+            // cache_manager has to be defined here again, because `self` is borrowed in query_async.
+            let cache_manager = self
+                .cache_manager
+                .as_ref()
+                .expect("handle_cached_mget function shouldn't be called without cache_manager");
             cache_manager.increase_sent_command_count(cmd_count);
 
             // first value is MGET's response which is also Vec<Value> then zip this with rest of replies
             // now it has corresponding value and ttl, now missing index is required to do something with those values
             // also zip with `missing_key_indexes` now it has everything it needs to handle MGET caching.
             if let Some(Value::Array(mget_values)) = replies.next() {
-                for ((key_value, pttl_value), key_index) in
-                    zip(zip(mget_values, replies), missing_key_indexes)
+                for ((key_value, pttl_value), ci) in
+                    zip(zip(mget_values, replies), cache_information_vec)
                 {
-                    if let Some(Some(sender)) = senders.get(key_index) {
-                        let ci = cache_information_vec.get_mut(key_index).unwrap();
-                        cache_manager.insert_with_guard(ci, sender, key_value.clone(), &pttl_value);
+                    if let Some(sender) = &ci.sender {
+                        cache_manager.insert_with_guard(
+                            &ci,
+                            sender,
+                            key_value.clone(),
+                            &pttl_value,
+                        );
                     }
-                    mget_response[key_index] = key_value;
+                    mget_response[ci.key_index] = key_value;
                 }
             }
         }
         Ok(Value::Array(mget_response))
     }
+
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
@@ -696,22 +704,19 @@ impl MultiplexedConnection {
                             .pipeline
                             .send_recv(cmd_bytes, Some((0, cmd_count)), self.response_timeout)
                             .await
-                            .map_err(|err| err.unwrap_or_else(closed_connection_error));
+                            .map_err(|err| err.unwrap_or_else(closed_connection_error))?;
 
                         cache_manager.increase_sent_command_count(cmd_count);
-                        if let Ok(Value::Array(mut v)) = result {
-                            let reply = v.pop().unwrap();
-                            let pttl = v.pop().unwrap();
-                            cache_manager.insert_with_guard_by_ref(
-                                &cache_information,
-                                &sender,
-                                reply.clone(),
-                                &pttl,
-                            );
+                        let (pttl, reply): (Value, Value) =
+                            crate::types::from_owned_redis_value(result)?;
+                        cache_manager.insert_with_guard_by_ref(
+                            &cache_information,
+                            &sender,
+                            reply.clone(),
+                            &pttl,
+                        );
 
-                            return Ok(reply);
-                        }
-                        return result;
+                        return Ok(reply);
                     }
                 };
             }
@@ -747,6 +752,7 @@ impl MultiplexedConnection {
             _ => Ok(vec![value]),
         }
     }
+
     #[cfg(feature = "cache-aio")]
     /// Gets `CacheStatistics` for this `MultiplexedConnection`.
     pub fn get_cache_statistics(&self) -> CacheStatistics {

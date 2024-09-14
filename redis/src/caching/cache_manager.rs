@@ -1,6 +1,7 @@
+use crate::caching::cmd::{CommandCacheInformationByRef, MultipleCommandCacheInformation};
 use crate::caching::statistics::Statistics;
 use crate::caching::{CacheConfig, CacheMode, CacheStatistics};
-use crate::cmd::{Cmd, CommandCacheInformation, CommandCacheInformationByRef};
+use crate::cmd::Cmd;
 use crate::{PushKind, RedisResult, Value};
 use lru::LruCache;
 use std::cmp::min;
@@ -19,9 +20,11 @@ type LRUCacheShard = LruCache<RedisKey, CacheItem>;
 struct CacheCmdEntry {
     cmd: RedisCmd,
     value: Option<Value>,
+    // Receiver is used for completion when two different command queries same key, command pair.
     receiver: Receiver<Value>,
 }
 
+// CacheItem keeps information about a key's expiry time and cached response for each key, command pair.
 struct CacheItem {
     expire_time: Instant,
     value_list: Vec<CacheCmdEntry>,
@@ -221,7 +224,7 @@ impl CacheManager {
 
     pub(crate) fn insert_with_guard(
         &self,
-        cache_information: &CommandCacheInformation,
+        cache_information: &MultipleCommandCacheInformation,
         sender: &Sender<Value>,
         value: Value,
         server_side_ttl_value: &Value,
@@ -288,6 +291,7 @@ impl CacheManager {
             }
         }
     }
+
     pub(crate) fn pack_single_command(
         &self,
         cmd: &Cmd,

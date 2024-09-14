@@ -14,6 +14,8 @@ use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
+#[cfg(feature = "cache-aio")]
+use crate::caching::cmd::CommandCacheInformationByRef;
 /// An argument to a redis command
 #[derive(Clone)]
 pub enum Arg<D> {
@@ -21,20 +23,6 @@ pub enum Arg<D> {
     Simple(D),
     /// A cursor argument created from `cursor_arg()`
     Cursor,
-}
-
-#[cfg(feature = "cache-aio")]
-pub(crate) struct CommandCacheInformationByRef<'a> {
-    pub(crate) redis_key: &'a [u8],
-    pub(crate) cmd: &'a [u8],
-    pub(crate) client_side_ttl: Option<Duration>,
-    pub(crate) is_mget: bool,
-}
-
-#[cfg(feature = "cache-aio")]
-pub(crate) struct CommandCacheInformation {
-    pub(crate) redis_key: Vec<u8>,
-    pub(crate) cmd: Vec<u8>,
 }
 
 #[cfg(feature = "cache-aio")]
@@ -658,7 +646,7 @@ impl Cmd {
         let x: &[u8] = &[];
         if self.args.len() >= 2 {
             if let Some(command_name) = self.arg_idx(0) {
-                let cache_key = if command_name == b"MGET" {
+                let cache_key = if command_name == b"MGET" || command_name == b"JSON.MGET" {
                     is_mget = true;
                     Some(x)
                 } else if is_readonly_cmd(command_name) {
