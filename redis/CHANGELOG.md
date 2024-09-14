@@ -1,4 +1,10 @@
-### 0.27.0 (2024-09-14)
+### 0.27.2 (2024-09-14)
+
+#### Changes & Bug fixes
+
+* Pubsub: Keep stream running after sink was closed. ([#1330](https://github.com/redis-rs/redis-rs/pull/1330))
+
+### 0.27.1 (2024-09-14)
 
 #### Changes & Bug fixes
 
