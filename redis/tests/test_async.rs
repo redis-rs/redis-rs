@@ -686,8 +686,17 @@ mod basic_async {
                 let mut publish_conn = ctx.async_connection().await?;
                 let _: () = publish_conn.publish("phonewave", "banana").await?;
 
-                let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
-                assert_eq!("banana".to_string(), msg_payload);
+                let repeats = 6;
+                for _ in 0..repeats {
+                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                }
+
+                for _ in 0..repeats {
+                    let message: String =
+                        pubsub_stream.next().await.unwrap().get_payload().unwrap();
+
+                    assert_eq!("banana".to_string(), message);
+                }
 
                 Ok(())
             })
@@ -748,14 +757,18 @@ mod basic_async {
             block_on_all(async move {
                 let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
                 let mut publish_conn = ctx.async_connection().await?;
-                let spawned_read = tokio::spawn(async move { stream.next().await });
 
                 let _: () = sink.subscribe("phonewave").await?;
-                let _: () = publish_conn.publish("phonewave", "banana").await?;
+                let repeats = 6;
+                for _ in 0..repeats {
+                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                }
 
-                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+                for _ in 0..repeats {
+                    let message: String = stream.next().await.unwrap().get_payload().unwrap();
 
-                assert_eq!("banana".to_string(), message);
+                    assert_eq!("banana".to_string(), message);
+                }
 
                 Ok(())
             })
@@ -768,15 +781,19 @@ mod basic_async {
             block_on_all(async move {
                 let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
                 let mut publish_conn = ctx.async_connection().await?;
-                let spawned_read = tokio::spawn(async move { stream.next().await });
 
                 let _: () = sink.subscribe("phonewave").await?;
                 drop(sink);
-                let _: () = publish_conn.publish("phonewave", "banana").await?;
+                let repeats = 6;
+                for _ in 0..repeats {
+                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                }
 
-                let message: String = spawned_read.await.unwrap().unwrap().get_payload().unwrap();
+                for _ in 0..repeats {
+                    let message: String = stream.next().await.unwrap().get_payload().unwrap();
 
-                assert_eq!("banana".to_string(), message);
+                    assert_eq!("banana".to_string(), message);
+                }
 
                 Ok(())
             })
@@ -792,11 +809,18 @@ mod basic_async {
 
                 let _: () = pubsub.subscribe("phonewave").await?;
                 let mut stream = pubsub.into_on_message();
-                let _: () = publish_conn.publish("phonewave", "banana").await?;
+                // wait a bit
+                sleep(Duration::from_secs(2).into()).await;
+                let repeats = 6;
+                for _ in 0..repeats {
+                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                }
 
-                let message: String = stream.next().await.unwrap().get_payload().unwrap();
+                for _ in 0..repeats {
+                    let message: String = stream.next().await.unwrap().get_payload().unwrap();
 
-                assert_eq!("banana".to_string(), message);
+                    assert_eq!("banana".to_string(), message);
+                }
 
                 Ok(())
             })

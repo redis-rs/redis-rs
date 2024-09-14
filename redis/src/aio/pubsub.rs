@@ -247,10 +247,17 @@ impl PubSubSink {
     {
         let (sender, mut receiver) = unbounded_channel();
         let sink = PipelineSink::new(sink_stream, messages_sender);
-        let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
-            .map(Ok)
-            .forward(sink)
-            .map(|_| ());
+        let f = stream::poll_fn(move |cx| {
+            let res = receiver.poll_recv(cx);
+            match res {
+                // We don't want to stop the backing task for the stream, even if the sink was closed.
+                Poll::Ready(None) => Poll::Pending,
+                _ => res,
+            }
+        })
+        .map(Ok)
+        .forward(sink)
+        .map(|_| ());
         (PubSubSink { sender }, f)
     }
 
