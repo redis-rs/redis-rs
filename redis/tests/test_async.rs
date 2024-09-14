@@ -5,6 +5,7 @@ mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
     use futures::{prelude::*, StreamExt};
+    use futures_time::task::sleep;
     #[cfg(feature = "connection-manager")]
     use redis::aio::ConnectionManager;
     use redis::{
@@ -671,6 +672,8 @@ mod basic_async {
     mod pub_sub {
         use std::time::Duration;
 
+        use futures_time::task::sleep;
+
         use super::*;
 
         #[test]
@@ -821,6 +824,52 @@ mod basic_async {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 assert_eq!(subscription_count, 0);
+
+                Ok::<_, RedisError>(())
+            })
+            .unwrap();
+        }
+
+        #[test]
+        fn automatic_unsubscription_on_split() {
+            const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription-on-split";
+
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+                sink.subscribe(SUBSCRIPTION_KEY).await?;
+                let mut conn = ctx.async_connection().await?;
+                sleep(Duration::from_millis(100).into()).await;
+
+                let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                    .arg("NUMSUB")
+                    .arg(SUBSCRIPTION_KEY)
+                    .query_async(&mut conn)
+                    .await?;
+                let mut subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+                assert_eq!(subscription_count, 1);
+
+                drop(stream);
+
+                // Allow for the unsubscription to occur within 5 seconds
+                for _ in 0..100 {
+                    let subscriptions_counts: HashMap<String, u32> = redis::cmd("PUBSUB")
+                        .arg("NUMSUB")
+                        .arg(SUBSCRIPTION_KEY)
+                        .query_async(&mut conn)
+                        .await?;
+                    subscription_count = *subscriptions_counts.get(SUBSCRIPTION_KEY).unwrap();
+                    if subscription_count == 0 {
+                        break;
+                    }
+
+                    sleep(Duration::from_millis(50).into()).await;
+                }
+                assert_eq!(subscription_count, 0);
+
+                // verify that the sink is unusable after the stream is dropped.
+                let err = sink.subscribe(SUBSCRIPTION_KEY).await.unwrap_err();
+                assert!(err.is_unrecoverable_error(), "{err:?}");
 
                 Ok::<_, RedisError>(())
             })
@@ -1091,6 +1140,47 @@ mod basic_async {
             if ctx.protocol != ProtocolVersion::RESP2 {
                 assert!(rx.try_recv().is_err());
             }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking() {
+        let ctx = TestContext::new();
+        block_on_all(async move {
+            let mut conn = ctx.async_connection().await.unwrap();
+            let mut connection_to_dispose_of = ctx.async_connection().await.unwrap();
+            connection_to_dispose_of.set_response_timeout(Duration::from_millis(1));
+
+            async fn count_ids(conn: &mut impl redis::aio::ConnectionLike) -> RedisResult<usize> {
+                let initial_connections: String =
+                    cmd("CLIENT").arg("LIST").query_async(conn).await?;
+
+                Ok(initial_connections
+                    .as_bytes()
+                    .windows(3)
+                    .filter(|substr| substr == b"id=")
+                    .count())
+            }
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 2);
+
+            let command_that_blocks = cmd("BLPOP")
+                .arg("foo")
+                .arg(0)
+                .exec_async(&mut connection_to_dispose_of)
+                .await;
+
+            let err = command_that_blocks.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::IoError);
+
+            drop(connection_to_dispose_of);
+
+            sleep(Duration::from_millis(10).into()).await;
+
+            assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
+
             Ok(())
         })
         .unwrap();
