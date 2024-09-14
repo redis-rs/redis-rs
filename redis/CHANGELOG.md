@@ -1,3 +1,9 @@
+### 0.27.0 (2024-09-14)
+
+#### Changes & Bug fixes
+
+* fix sentinel feature error and update dependency ([#1323](https://github.com/redis-rs/redis-rs/pull/1323) @MokerWill)
+
 ### 0.27.0 (2024-09-07)
 
 #### Features
