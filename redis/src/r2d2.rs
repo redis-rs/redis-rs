@@ -1,3 +1,4 @@
+#[cfg(feature = "sentinel")]
 use crate::sentinel::LockedSentinelClient;
 use crate::{ConnectionLike, RedisError};
 use std::io;
