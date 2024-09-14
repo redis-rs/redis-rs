@@ -784,6 +784,26 @@ mod basic_async {
         }
 
         #[test]
+        fn can_receive_messages_from_split_pub_sub_after_into_on_message() {
+            let ctx = TestContext::new();
+            block_on_all(async move {
+                let mut pubsub = ctx.async_pubsub().await?;
+                let mut publish_conn = ctx.async_connection().await?;
+
+                let _: () = pubsub.subscribe("phonewave").await?;
+                let mut stream = pubsub.into_on_message();
+                let _: () = publish_conn.publish("phonewave", "banana").await?;
+
+                let message: String = stream.next().await.unwrap().get_payload().unwrap();
+
+                assert_eq!("banana".to_string(), message);
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        #[test]
         fn cannot_subscribe_on_split_pub_sub_after_stream_was_dropped() {
             let ctx = TestContext::new();
             block_on_all(async move {
