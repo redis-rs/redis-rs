@@ -585,10 +585,17 @@ mod cluster_client;
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 mod cluster_pipeline;
 
+#[cfg(feature = "cluster")]
+mod cluster_connections_map;
+
 /// Routing information for cluster commands.
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub mod cluster_routing;
+
+/// Map for cluster slot management.
+#[cfg(feature = "cluster")]
+pub mod cluster_slotmap;
 
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
