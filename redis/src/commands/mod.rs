@@ -2262,7 +2262,7 @@ impl ScanOptions {
         self
     }
     
-    // Limit the results to those with the given Redis type
+    /// Limit the results to those with the given Redis type
     pub fn with_type(mut self, t: impl Into<String>) -> Self {
         self.scan_type = Some(t.into());
         self
