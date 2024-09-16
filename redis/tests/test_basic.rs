@@ -534,6 +534,7 @@ mod basic {
             let _: () = con.append(format!("test/{i}"), i).unwrap();
             let _: () = con.append(format!("other/{i}"), i).unwrap();
         }
+        let _: () = con.hset("test-hset", "test-field", "test-value").unwrap();
 
         // scan with pattern
         let opts = ScanOptions::default().with_count(20).with_pattern("test/*");
@@ -544,7 +545,17 @@ mod basic {
         let opts = ScanOptions::default();
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
+        assert_eq!(values.len(), 41);
+        // scan with type string
+        let opts = ScanOptions::default().with_type("string");
+        let values = con.scan_options::<String>(opts).unwrap();
+        let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 40);
+        // scan with type hash
+        let opts = ScanOptions::default().with_type("hash");
+        let values = con.scan_options::<String>(opts).unwrap();
+        let values: Vec<_> = values.collect();
+        assert_eq!(values.len(), 1);
     }
 
     #[test]

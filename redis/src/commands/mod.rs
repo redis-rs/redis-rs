@@ -2246,6 +2246,7 @@ impl PubSubCommands for Connection {
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
+    scan_type: Option<String>,
 }
 
 impl ScanOptions {
@@ -2258,6 +2259,12 @@ impl ScanOptions {
     /// Pattern for scan
     pub fn with_pattern(mut self, p: impl Into<String>) -> Self {
         self.pattern = Some(p.into());
+        self
+    }
+
+    /// Limit the results to those with the given Redis type
+    pub fn with_type(mut self, t: impl Into<String>) -> Self {
+        self.scan_type = Some(t.into());
         self
     }
 }
@@ -2276,6 +2283,11 @@ impl ToRedisArgs for ScanOptions {
             out.write_arg(b"COUNT");
             out.write_arg_fmt(n);
         }
+
+        if let Some(t) = &self.scan_type {
+            out.write_arg(b"TYPE");
+            out.write_arg_fmt(t);
+        }
     }
 
     fn num_of_args(&self) -> usize {
@@ -2284,6 +2296,9 @@ impl ToRedisArgs for ScanOptions {
             len += 2;
         }
         if self.count.is_some() {
+            len += 2;
+        }
+        if self.scan_type.is_some() {
             len += 2;
         }
         len
