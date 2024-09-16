@@ -2261,7 +2261,7 @@ impl ScanOptions {
         self.pattern = Some(p.into());
         self
     }
-    
+
     /// Limit the results to those with the given Redis type
     pub fn with_type(mut self, t: impl Into<String>) -> Self {
         self.scan_type = Some(t.into());
@@ -2283,7 +2283,7 @@ impl ToRedisArgs for ScanOptions {
             out.write_arg(b"COUNT");
             out.write_arg_fmt(n);
         }
-        
+
         if let Some(t) = &self.scan_type {
             out.write_arg(b"TYPE");
             out.write_arg_fmt(t);
