@@ -238,7 +238,7 @@ where
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
             auto_reconnect: RefCell::new(true),
-            read_timeout: RefCell::new(None),
+            read_timeout: RefCell::new(Some(cluster_params.response_timeout)),
             write_timeout: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
@@ -410,7 +410,7 @@ where
         let params = self.cluster_params.clone();
         let info = get_connection_info(node, params)?;
 
-        let mut conn = C::connect(info, None)?;
+        let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
         if self.cluster_params.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").exec(&mut conn)?;
