@@ -706,6 +706,7 @@ impl SlotMap {
         }
     }
 
+    #[cfg(feature = "cluster-async")]
     pub fn fill_slots(&mut self, slots: Vec<Slot>) {
         for slot in slots {
             self.slots.insert(slot.end, SlotMapValue::from_slot(slot));
@@ -730,6 +731,7 @@ impl SlotMap {
             })
     }
 
+    #[cfg(feature = "cluster-async")]
     pub fn clear(&mut self) {
         self.slots.clear();
     }
