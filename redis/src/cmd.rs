@@ -6,12 +6,16 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+#[cfg(feature = "cache-aio")]
+use std::time::Duration;
 use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
+#[cfg(feature = "cache-aio")]
+use crate::caching::cmd::CommandCacheInformationByRef;
 /// An argument to a redis command
 #[derive(Clone)]
 pub enum Arg<D> {
@@ -19,6 +23,12 @@ pub enum Arg<D> {
     Simple(D),
     /// A cursor argument created from `cursor_arg()`
     Cursor,
+}
+
+#[cfg(feature = "cache-aio")]
+#[derive(Clone)]
+pub(crate) struct CommandCacheOptions {
+    pub(crate) client_side_ttl: Option<Duration>,
 }
 
 /// Represents redis commands.
@@ -30,6 +40,8 @@ pub struct Cmd {
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    #[cfg(feature = "cache-aio")]
+    cache: Option<CommandCacheOptions>,
 }
 
 /// Represents a redis iterator.
@@ -321,6 +333,8 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -331,6 +345,8 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -565,7 +581,7 @@ impl Cmd {
     }
 
     // Get a reference to the argument at `idx`
-    #[cfg(feature = "cluster")]
+    #[cfg(any(feature = "cluster", feature = "cache-aio"))]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         if idx >= self.args.len() {
             return None;
@@ -600,6 +616,61 @@ impl Cmd {
     #[inline]
     pub fn is_no_response(&self) -> bool {
         self.no_response
+    }
+
+    /// It marks command as triable for client side caching.
+    /// Useful when `CacheMode` is set to `CacheMode::OptIn`
+    #[cfg(feature = "cache-aio")]
+    pub fn cache(&mut self) -> &mut Cmd {
+        self.cache = Some(CommandCacheOptions {
+            client_side_ttl: None,
+        });
+        self
+    }
+
+    /// It marks command as triable for client side caching with custom Client Side TTL for cache.
+    /// Useful when `CacheMode` is set to `CacheMode::OptIn`
+    #[cfg(feature = "cache-aio")]
+    pub fn cache_with_client_side_ttl(&mut self, client_side_ttl: Duration) -> &mut Cmd {
+        self.cache = Some(CommandCacheOptions {
+            client_side_ttl: Some(client_side_ttl),
+        });
+        self
+    }
+
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn compute_cache_information(&self) -> Option<CommandCacheInformationByRef> {
+        use crate::commands::is_readonly_cmd;
+
+        let mut is_mget = false;
+        let x: &[u8] = &[];
+        if self.args.len() >= 2 {
+            if let Some(command_name) = self.arg_idx(0) {
+                let cache_key = if command_name == b"MGET" || command_name == b"JSON.MGET" {
+                    is_mget = true;
+                    Some(x)
+                } else if is_readonly_cmd(command_name) {
+                    Some(self.arg_idx(1).unwrap())
+                } else {
+                    None
+                };
+                if let Some(key) = cache_key {
+                    return Some(CommandCacheInformationByRef {
+                        client_side_ttl: self.cache.as_ref().and_then(|x| x.client_side_ttl),
+                        redis_key: key,
+                        cmd: if is_mget { x } else { self.data.as_slice() },
+                        is_mget,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(feature = "cache-aio")]
+    #[inline]
+    pub(crate) fn has_opt_in_cache(&self) -> bool {
+        self.cache.is_some()
     }
 }
 

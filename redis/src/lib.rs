@@ -68,6 +68,7 @@
 //! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
+//! * `cache-aio`: enables client side caching for MultiplexedConnection and ConnectionManager (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -612,6 +613,10 @@ mod tls;
 #[cfg(feature = "tls-rustls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
+
+#[cfg(feature = "cache-aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+pub mod caching;
 
 mod client;
 mod cmd;
