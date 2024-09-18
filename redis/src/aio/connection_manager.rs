@@ -5,8 +5,6 @@ use crate::{
     types::{AsyncPushSender, RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use arc_swap::ArcSwap;
 use futures::{
     future::{self, Shared},
