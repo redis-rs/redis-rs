@@ -744,7 +744,7 @@ fn patch_with_tls_certificates(
             port: _,
             insecure: _,
             ref mut tls_params,
-        } = &mut node.addr
+        } = node.addr
         {
             *tls_params = Some(new_tls_params.clone());
         }
