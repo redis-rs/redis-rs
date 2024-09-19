@@ -731,6 +731,27 @@ impl LockedSentinelClient {
     }
 }
 
+#[cfg(feature = "tls-rustls")]
+fn patch_with_tls_certificates(
+    mut params: Vec<ConnectionInfo>,
+    certs: TlsCertificates,
+) -> RedisResult<Vec<ConnectionInfo>> {
+    let new_tls_params = retrieve_tls_certificates(certs)?;
+
+    for node in params.iter_mut() {
+        if let crate::ConnectionAddr::TcpTls {
+            host: _,
+            port: _,
+            insecure: _,
+            ref mut tls_params,
+        } = &mut node.addr
+        {
+            *tls_params = Some(new_tls_params.clone());
+        }
+    }
+    Ok(params)
+}
+
 /// A utility wrapping `Sentinel` with an interface similar to [Client].
 ///
 /// Uses the Sentinel type internally. This is a utility to help make it easier
@@ -757,6 +778,31 @@ impl SentinelClient {
     ) -> RedisResult<Self> {
         Ok(SentinelClient {
             sentinel: Sentinel::build(params)?,
+            service_name,
+            node_connection_info: node_connection_info.unwrap_or_default(),
+            server_type,
+        })
+    }
+
+    /// Creates a SentinelClient that uses certificates in certs_for_sentinel_connection for connection to sentinels
+    /// Performs the same checks as build
+    #[cfg(feature = "tls-rustls")]
+    pub fn build_with_certs<T: IntoConnectionInfo>(
+        params: Vec<T>,
+        service_name: String,
+        node_connection_info: Option<SentinelNodeConnectionInfo>,
+        server_type: SentinelServerType,
+        certs_for_sentinel_connection: TlsCertificates,
+    ) -> RedisResult<Self> {
+        let connection_info_params = params
+            .into_iter()
+            .map(|node| node.into_connection_info())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(SentinelClient {
+            sentinel: Sentinel::build(patch_with_tls_certificates(
+                connection_info_params,
+                certs_for_sentinel_connection,
+            )?)?,
             service_name,
             node_connection_info: node_connection_info.unwrap_or_default(),
             server_type,
