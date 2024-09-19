@@ -60,6 +60,7 @@
 //!                 password: Some(String::from("bar")),
 //!                 ..Default::default()
 //!             }),
+//!             certs: None
 //!         }),
 //!     )
 //!     .unwrap()
@@ -72,6 +73,7 @@
 //!         Some(&SentinelNodeConnectionInfo {
 //!             tls_mode: Some(redis::TlsMode::Secure),
 //!             redis_connection_info: None,
+//!             certs: None
 //!         }),
 //!     )
 //!     .unwrap()
@@ -96,7 +98,7 @@
 //!             password: Some(String::from("pass")),
 //!             ..Default::default()
 //!         }),
-//!     }),
+//!     certs: None,}),
 //!     redis::sentinel::SentinelServerType::Master,
 //! )
 //! .unwrap();
@@ -121,6 +123,12 @@ use crate::{
     FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
 };
 
+#[cfg(feature = "tls-rustls")]
+use crate::TlsCertificates;
+
+#[cfg(feature = "tls-rustls")]
+use crate::tls::retrieve_tls_certificates;
+
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
 pub struct Sentinel {
@@ -141,6 +149,10 @@ pub struct SentinelNodeConnectionInfo {
 
     /// The Redis specific/connection independent information to be used.
     pub redis_connection_info: Option<RedisConnectionInfo>,
+
+    /// Certificates to be used, or none if we want to use certificates from local truststore
+    #[cfg(feature = "tls-rustls")]
+    pub certs: Option<TlsCertificates>,
 }
 
 impl SentinelNodeConnectionInfo {
@@ -151,7 +163,10 @@ impl SentinelNodeConnectionInfo {
                 host: ip,
                 port,
                 insecure: false,
+                #[cfg(not(feature = "tls-rustls"))]
                 tls_params: None,
+                #[cfg(feature = "tls-rustls")]
+                tls_params: Some(retrieve_tls_certificates(self.certs.clone().unwrap()).unwrap()),
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -173,6 +188,8 @@ impl Default for &SentinelNodeConnectionInfo {
         static DEFAULT_VALUE: SentinelNodeConnectionInfo = SentinelNodeConnectionInfo {
             tls_mode: None,
             redis_connection_info: None,
+            #[cfg(feature = "tls-rustls")]
+            certs: None,
         };
         &DEFAULT_VALUE
     }
