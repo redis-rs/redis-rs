@@ -447,6 +447,7 @@ let mut sentinel = SentinelClient::build(
     Some(SentinelNodeConnectionInfo {
         tls_mode: Some(redis::TlsMode::Insecure),
         redis_connection_info: None,
+        certs: None
     }),
     redis::sentinel::SentinelServerType::Master,
 )
@@ -471,6 +472,7 @@ let mut sentinel = SentinelClient::build(
     Some(SentinelNodeConnectionInfo {
         tls_mode: Some(redis::TlsMode::Insecure),
         redis_connection_info: None,
+        certs: None,
     }),
     redis::sentinel::SentinelServerType::Master,
 )

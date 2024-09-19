@@ -384,6 +384,7 @@ impl TestSentinelContext {
                 None
             },
             redis_connection_info: None,
+            certs: None,
         }
     }
 
