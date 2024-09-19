@@ -47,7 +47,7 @@ socket2 = { version = "0.5", default-features = false, optional = true }
 # Only needed for the connection manager
 arc-swap = { version = "1.7.1" }
 futures = { version = "0.3.30", optional = true }
-tokio-retry2 = { version = "0.5.3", optional = true }
+tokio-retry2 = { version = "0.5.3", optional = true, features = ["jitter"]}
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.10", optional = true }
