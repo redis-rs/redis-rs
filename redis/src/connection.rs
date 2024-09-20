@@ -90,8 +90,9 @@ fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpSt
 }
 
 /// This function takes a redis URL string and parses it into a URL
-/// as used by rust-url.  This is necessary as the default parser does
-/// not understand how redis URLs function.
+/// as used by rust-url.
+///
+/// This is necessary as the default parser does not understand how redis URLs function.
 pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
@@ -103,6 +104,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 }
 
 /// TlsMode indicates use or do not use verification of certification.
+///
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
 #[derive(Clone, Copy)]
 pub enum TlsMode {
@@ -1146,9 +1148,10 @@ fn setup_connection(
 }
 
 /// Implements the "stateless" part of the connection interface that is used by the
-/// different objects in redis-rs.  Primarily it obviously applies to `Connection`
-/// object but also some other objects implement the interface (for instance
-/// whole clients or certain redis results).
+/// different objects in redis-rs.
+///
+/// Primarily it obviously applies to `Connection` object but also some other objects
+///  implement the interface (for instance whole clients or certain redis results).
 ///
 /// Generally clients and connections (as well as redis results of those) implement
 /// this trait.  Actual connections provide more functionality which can be used

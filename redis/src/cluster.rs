@@ -213,9 +213,10 @@ impl Connect for Connection {
     }
 }
 
-/// This represents a Redis Cluster connection. It stores the
-/// underlying connections maintained for each node in the cluster, as well
-/// as common parameters for connecting to nodes and executing commands.
+/// This represents a Redis Cluster connection.
+///
+/// It stores the underlying connections maintained for each node in the cluster,
+/// as well as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
     connections: RefCell<HashMap<String, C>>,

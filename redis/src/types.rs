@@ -576,9 +576,10 @@ impl fmt::Debug for Value {
     }
 }
 
-/// Represents a redis error.  For the most part you should be using
-/// the Error trait to interact with this rather than the actual
-/// struct.
+/// Represents a redis error.
+///
+/// For the most part you should be using the Error trait to interact with this
+/// rather than the actual struct.
 pub struct RedisError {
     repr: ErrorRepr,
 }
@@ -1702,7 +1703,9 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
 }
 
 /// This trait is used to convert a redis value into a more appropriate
-/// type.  While a redis `Value` can represent any response that comes
+/// type.  
+///
+/// While a redis `Value` can represent any response that comes
 /// back from the redis server, usually you want to map this into something
 /// that works better in rust.  For instance you might want to convert the
 /// return value into a `String` or an integer.
@@ -2511,8 +2514,10 @@ pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> RedisResult<T> {
     FromRedisValue::from_owned_redis_value(v)
 }
 
-/// Enum representing the communication protocol with the server. This enum represents the types
-/// of data that the server can send to the client, and the capabilities that the client can use.
+/// Enum representing the communication protocol with the server.
+///
+/// This enum represents the types of data that the server can send to the client,
+/// and the capabilities that the client can use.
 #[derive(Clone, Eq, PartialEq, Default, Debug, Copy)]
 pub enum ProtocolVersion {
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP2.md>

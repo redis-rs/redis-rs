@@ -340,7 +340,7 @@ impl ClusterClientBuilder {
     }
 }
 
-/// This is a Redis Cluster client.
+/// A Redis Cluster client, used to create connections.
 #[derive(Clone)]
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
