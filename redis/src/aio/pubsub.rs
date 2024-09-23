@@ -5,7 +5,7 @@ use crate::connection::{
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisResult, Value};
-use crate::{cmd, Msg, RedisConnectionInfo, ToRedisArgs};
+use crate::{cmd, from_owned_redis_value, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::oneshot,
@@ -28,12 +28,12 @@ use tokio_util::codec::Decoder;
 use super::SharedHandleContainer;
 
 // A signal that a un/subscribe request has completed.
-type RequestCompletedSignal = oneshot::Sender<RedisResult<()>>;
+type RequestResultSender = oneshot::Sender<RedisResult<Value>>;
 
 // A single message sent through the pipeline
 struct PipelineMessage {
     input: Vec<u8>,
-    output: RequestCompletedSignal,
+    output: RequestResultSender,
 }
 
 /// The sink part of a split async Pubsub.
@@ -81,7 +81,7 @@ pin_project! {
         #[pin]
         sink_stream: T,
         // The requests that were sent and are awaiting a response.
-        in_flight: VecDeque<RequestCompletedSignal>,
+        in_flight: VecDeque<RequestResultSender>,
         // A sender for the push messages received from the server.
         sender: UnboundedSender<Msg>,
     }
@@ -128,10 +128,10 @@ where
                 if let Some(Value::BulkString(kind)) = value.first() {
                     if matches!(
                         kind.as_slice(),
-                        b"subscribe" | b"psubscribe" | b"unsubscribe" | b"punsubscribe"
+                        b"subscribe" | b"psubscribe" | b"unsubscribe" | b"punsubscribe" | b"pong"
                     ) {
                         if let Some(entry) = self_.in_flight.pop_front() {
-                            let _ = entry.send(Ok(()));
+                            let _ = entry.send(Ok(Value::Array(value)));
                         };
                         return Ok(());
                     }
@@ -148,7 +148,7 @@ where
             Ok(Value::Push { kind, data }) => {
                 if kind.has_reply() {
                     if let Some(entry) = self_.in_flight.pop_front() {
-                        let _ = entry.send(Ok(()));
+                        let _ = entry.send(Ok(Value::Push { kind, data }));
                     };
                     return Ok(());
                 }
@@ -165,7 +165,7 @@ where
 
             _ => {
                 if let Some(entry) = self_.in_flight.pop_front() {
-                    let _ = entry.send(result.map(|_| ()));
+                    let _ = entry.send(result);
                     Ok(())
                 } else {
                     Err(())
@@ -278,7 +278,7 @@ impl PubSubSink {
         (PubSubSink { sender }, f)
     }
 
-    async fn send_recv(&mut self, input: Vec<u8>) -> Result<(), RedisError> {
+    async fn send_recv(&mut self, input: Vec<u8>) -> Result<Value, RedisError> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
@@ -297,28 +297,44 @@ impl PubSubSink {
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name);
-        self.send_recv(cmd.get_packed_command()).await
+        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
     /// Unsubscribes from channel.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel_name);
-        self.send_recv(cmd.get_packed_command()).await
+        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
     /// Subscribes to a new channel with pattern.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern);
-        self.send_recv(cmd.get_packed_command()).await
+        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
-        self.send_recv(cmd.get_packed_command()).await
+        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
+    }
+
+    /// Sends a ping with a message to the server
+    pub async fn ping_message<T: FromRedisValue>(
+        &mut self,
+        message: impl ToRedisArgs,
+    ) -> RedisResult<T> {
+        let mut cmd = cmd("PING");
+        cmd.arg(message);
+        from_owned_redis_value(self.send_recv(cmd.get_packed_command()).await?)
+    }
+
+    /// Sends a ping to the server
+    pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
+        let cmd = cmd("PING");
+        from_owned_redis_value(self.send_recv(cmd.get_packed_command()).await?)
     }
 }
 
@@ -422,6 +438,19 @@ impl PubSub {
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.punsubscribe(channel_pattern).await
+    }
+
+    /// Sends a ping to the server
+    pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
+        self.sink.ping().await
+    }
+
+    /// Sends a ping with a message to the server
+    pub async fn ping_message<T: FromRedisValue>(
+        &mut self,
+        message: impl ToRedisArgs,
+    ) -> RedisResult<T> {
+        self.sink.ping_message(message).await
     }
 
     /// Returns [`Stream`] of [`Msg`]s from this [`PubSub`]s subscriptions.
