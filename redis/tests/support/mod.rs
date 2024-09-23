@@ -923,7 +923,7 @@ pub async fn kill_client_async(
     Ok(())
 }
 
-pub async fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static) -> T
+pub async fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + 'static) -> T
 where
     T: Send + 'static,
 {
