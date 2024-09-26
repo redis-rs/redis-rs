@@ -71,7 +71,7 @@ rustls-native-certs = { version = "0.7", optional = true }
 tokio-rustls = { version = "0.26", optional = true, default-features = false }
 futures-rustls = { version = "0.26", optional = true, default-features = false }
 rustls-pemfile = { version = "2", optional = true }
-rustls-pki-types = { version = "1", optional = true }
+rustls-pki-types = { version = "1.8", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.209", optional = true }
@@ -102,12 +102,17 @@ tls-native-tls = ["native-tls"]
 tls-rustls = ["rustls/std", "rustls/aws_lc_rs", "rustls-native-certs", "rustls-pemfile", "rustls-pki-types"]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
+tls-rustls-ring = ["rustls/std", "rustls/ring", "rustls-native-certs", "rustls-pemfile", "rustls-pki-types"]
+tls-rustls-ring-insecure = ["tls-rustls-ring"]
+tls-rustls-ring-webpki-roots = ["tls-rustls-ring", "webpki-roots"]
 async-std-comp = ["aio", "async-std"]
 async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
 async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
+async-std-rustls-ring-comp = ["async-std-comp", "futures-rustls", "tls-rustls-ring"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
-tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls"]
+tokio-rustls-comp = ["tokio-comp", "tls-rustls", "tokio-rustls", "tokio-rustls/aws_lc_rs"]
+tokio-rustls-ring-comp = ["tokio-comp", "tls-rustls-ring", "tokio-rustls", "tokio-rustls/ring"]
 connection-manager = ["futures", "aio", "tokio-retry2"]
 streams = []
 cluster-async = ["cluster", "futures", "futures-util", "log"]

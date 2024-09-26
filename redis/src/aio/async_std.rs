@@ -139,7 +139,8 @@ impl AsyncWrite for AsyncStd {
             AsyncStd::Tcp(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(any(
                 feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
+                feature = "async-std-rustls-comp",
+                feature = "async-std-rustls-ring-comp",
             ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
@@ -152,7 +153,8 @@ impl AsyncWrite for AsyncStd {
             AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
             #[cfg(any(
                 feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
+                feature = "async-std-rustls-comp",
+                feature = "async-std-rustls-ring-comp",
             ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
@@ -165,7 +167,8 @@ impl AsyncWrite for AsyncStd {
             AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(any(
                 feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
+                feature = "async-std-rustls-comp",
+                feature = "async-std-rustls-ring-comp",
             ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
@@ -184,7 +187,8 @@ impl AsyncRead for AsyncStd {
             AsyncStd::Tcp(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(any(
                 feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
+                feature = "async-std-rustls-comp",
+                feature = "async-std-rustls-ring-comp",
             ))]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
@@ -260,7 +264,8 @@ impl RedisRuntime for AsyncStd {
             AsyncStd::Tcp(x) => Box::pin(x),
             #[cfg(any(
                 feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
+                feature = "async-std-rustls-comp",
+                feature = "async-std-rustls-ring-comp",
             ))]
             AsyncStd::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]

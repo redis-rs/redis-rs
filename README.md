@@ -94,8 +94,9 @@ redis = { version = "0.27.0", features = ["async-std-rustls-comp"] }
 
 With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
 
--   `tls-rustls-insecure`: Allow insecure TLS connections
--   `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
+-   `tls-rustls-insecure` or `tls-rustls-ring-insecure`: Allow insecure TLS connections
+-   `tls-rustls-webpki-roots` or `tls-rustls-ring-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
+
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 

@@ -34,7 +34,8 @@ use crate::PushInfo;
 #[cfg(all(
     feature = "tls-rustls",
     not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
+    not(feature = "tls-rustls-webpki-roots"),
+    not(feature = "tls-rustls-ring-webpki-roots"),
 ))]
 use rustls_native_certs::load_native_certs;
 
@@ -480,12 +481,12 @@ enum ActualConnection {
     Unix(UnixConnection),
 }
 
-#[cfg(feature = "tls-rustls-insecure")]
+#[cfg(any(feature = "tls-rustls-insecure", feature = "tls-rustls-ring-insecure"))]
 struct NoCertificateVerification {
     supported: rustls::crypto::WebPkiSupportedAlgorithms,
 }
 
-#[cfg(feature = "tls-rustls-insecure")]
+#[cfg(any(feature = "tls-rustls-insecure", feature = "tls-rustls-ring-insecure"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
@@ -521,7 +522,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     }
 }
 
-#[cfg(feature = "tls-rustls-insecure")]
+#[cfg(any(feature = "tls-rustls-insecure", feature = "tls-rustls-ring-insecure"))]
 impl fmt::Debug for NoCertificateVerification {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NoCertificateVerification").finish()
@@ -857,12 +858,16 @@ pub(crate) fn create_rustls_config(
 
     #[allow(unused_mut)]
     let mut root_store = RootCertStore::empty();
-    #[cfg(feature = "tls-rustls-webpki-roots")]
+    #[cfg(any(
+        feature = "tls-rustls-webpki-roots",
+        feature = "tls-rustls-ring-webpki-roots"
+    ))]
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     #[cfg(all(
         feature = "tls-rustls",
         not(feature = "tls-native-tls"),
-        not(feature = "tls-rustls-webpki-roots")
+        not(feature = "tls-rustls-webpki-roots"),
+        not(feature = "tls-rustls-ring-webpki-roots"),
     ))]
     for cert in load_native_certs()? {
         root_store.add(cert)?;
@@ -896,16 +901,28 @@ pub(crate) fn create_rustls_config(
             .with_no_client_auth()
     };
 
-    match (insecure, cfg!(feature = "tls-rustls-insecure")) {
+    match (
+        insecure,
+        cfg!(any(
+            feature = "tls-rustls-insecure",
+            feature = "tls-rustls-ring-insecure"
+        )),
+    ) {
         #[cfg(feature = "tls-rustls-insecure")]
         (true, true) => {
+            #[cfg(all(
+                not(feature = "tls-rustls-insecure"),
+                feature = "tls-rustls-ring-insecure"
+            ))]
+            let crypto_provider = rustls::crypto::ring::default_provider();
+            #[cfg(feature = "tls-rustls-insecure")]
+            let crypto_provider = rustls::crypto::aws_lc_rs::default_provider();
             let mut config = config;
             config.enable_sni = false;
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification {
-                    supported: rustls::crypto::ring::default_provider()
-                        .signature_verification_algorithms,
+                    supported: crypto_provider.signature_verification_algorithms,
                 }));
 
             Ok(config)
