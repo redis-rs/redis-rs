@@ -305,7 +305,7 @@
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "aio")]
-//! # use futures_util::StreamExt;
+//! use futures_util::StreamExt;
 //! # #[cfg(feature = "aio")]
 //! # async fn do_something() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/")?;
