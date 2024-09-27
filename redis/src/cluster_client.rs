@@ -191,7 +191,7 @@ impl ClusterClientBuilder {
         };
 
         // Verify that the initial nodes match the cluster client's configuration.
-        for node in initial_nodes.iter() {
+        for node in &initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
