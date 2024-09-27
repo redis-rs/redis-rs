@@ -213,7 +213,7 @@ impl ClusterClientBuilder {
             if protocol.is_some() && Some(node.redis.protocol) != protocol {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
-                    "Cannot use different password among initial nodes.",
+                    "Cannot use different protocol among initial nodes.",
                 )));
             }
 
