@@ -190,7 +190,7 @@ impl ClusterClientBuilder {
             None
         };
 
-        // verify that the initial nodes match the cluster client's configuration.
+        // Verify that the initial nodes match the cluster client's configuration.
         for node in initial_nodes.iter() {
             if let ConnectionAddr::Unix(_) = node.addr {
                 return Err(RedisError::from((ErrorKind::InvalidClientConfig,
