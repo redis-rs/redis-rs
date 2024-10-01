@@ -1,3 +1,20 @@
+### 0.27.3 (2024-10-01)
+
+#### Changes & Bug fixes
+
+* Add support for [TYPE type] in SCAN commands ([#1332](https://github.com/redis-rs/redis-rs/pull/1332) @Reiuji-ch)
+* Align default timeouts on cluster client. ([#1333](https://github.com/redis-rs/redis-rs/pull/1333))
+* Updates unmaintained tokio-retry to tokio-retry2 ([#1334](https://github.com/redis-rs/redis-rs/pull/1334) @naomijub)
+* Align verification of protocol & TLS during cluster creation. ([#1289](https://github.com/redis-rs/redis-rs/pull/1289))
+* Include the StreamExt use statement in docs ([#1345](https://github.com/redis-rs/redis-rs/pull/1345) @joshrotenberg)
+* Further limit parser recursion ([#1346](https://github.com/redis-rs/redis-rs/pull/1346))
+
+#### CI improvements
+
+* Improve testing async-std ([#1314](https://github.com/redis-rs/redis-rs/pull/1314))
+* Test against Valkey in CI. ([#1315](https://github.com/redis-rs/redis-rs/pull/1315))
+* Add CI action to test whether feature combinations compile. ([#1328](https://github.com/redis-rs/redis-rs/pull/1328))
+
 ### 0.27.2 (2024-09-14)
 
 #### Changes & Bug fixes
