@@ -1536,6 +1536,22 @@ impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
     }
 }
 
+#[cfg(feature = "hashbrown")]
+impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
+    for hashbrown::HashSet<T, S>
+{
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+    }
+
+    fn num_of_args(&self) -> usize {
+        self.len()
+    }
+}
+
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
@@ -1595,6 +1611,25 @@ impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<
 impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
     for std::collections::HashMap<T, V>
 {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        for (key, value) in self {
+            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
+
+            key.write_redis_args(out);
+            value.write_redis_args(out);
+        }
+    }
+
+    fn num_of_args(&self) -> usize {
+        self.len()
+    }
+}
+
+#[cfg(feature = "hashbrown")]
+impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for hashbrown::HashMap<T, V> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -2105,6 +2140,36 @@ impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default>
     }
 }
 
+#[cfg(feature = "hashbrown")]
+impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
+    for hashbrown::HashMap<K, V, S>
+{
+    fn from_redis_value(v: &Value) -> RedisResult<hashbrown::HashMap<K, V, S>> {
+        let v = get_inner_value(v);
+        match *v {
+            Value::Nil => Ok(Default::default()),
+            _ => v
+                .as_map_iter()
+                .ok_or_else(|| {
+                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
+                })?
+                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                .collect(),
+        }
+    }
+    fn from_owned_redis_value(v: Value) -> RedisResult<hashbrown::HashMap<K, V, S>> {
+        let v = get_owned_inner_value(v);
+        match v {
+            Value::Nil => Ok(Default::default()),
+            _ => v
+                .into_map_iter()
+                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
+                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
+                .collect(),
+        }
+    }
+}
+
 #[cfg(feature = "ahash")]
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash::AHashMap<K, V> {
     fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V>> {
@@ -2164,6 +2229,29 @@ impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
         items.iter().map(|item| from_redis_value(item)).collect()
     }
     fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashSet<T, S>> {
+        let v = get_owned_inner_value(v);
+        let items = v
+            .into_sequence()
+            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
+        items
+            .into_iter()
+            .map(|item| from_owned_redis_value(item))
+            .collect()
+    }
+}
+
+#[cfg(feature = "hashbrown")]
+impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
+    for hashbrown::HashSet<T, S>
+{
+    fn from_redis_value(v: &Value) -> RedisResult<hashbrown::HashSet<T, S>> {
+        let v = get_inner_value(v);
+        let items = v
+            .as_sequence()
+            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
+        items.iter().map(|item| from_redis_value(item)).collect()
+    }
+    fn from_owned_redis_value(v: Value) -> RedisResult<hashbrown::HashSet<T, S>> {
         let v = get_owned_inner_value(v);
         let items = v
             .into_sequence()
