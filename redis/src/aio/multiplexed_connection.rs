@@ -400,6 +400,7 @@ impl Pipeline {
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
 /// on the same underlying connection (tcp/unix socket).
+///
 /// This connection object is cancellation-safe, and the user can drop request future without polling them to completion,
 /// but this doesn't mean that the actual request sent to the server is cancelled.
 /// A side-effect of this is that the underlying connection won't be closed until all sent requests have been answered,

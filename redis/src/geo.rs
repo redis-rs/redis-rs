@@ -43,8 +43,9 @@ impl ToRedisArgs for Unit {
     }
 }
 
-/// A coordinate (longitude, latitude). Can be used with [`geo_pos`][1]
-/// to parse response from Redis.
+/// A coordinate (longitude, latitude).
+///
+/// Can be used with [`geo_pos`][1] to parse response from Redis.
 ///
 /// [1]: ../trait.Commands.html#method.geo_pos
 ///
