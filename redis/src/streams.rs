@@ -44,6 +44,163 @@ impl ToRedisArgs for StreamMaxlen {
     }
 }
 
+/// Utility enum for passing the trim mode`[=|~]`
+/// arguments into `StreamCommands`.
+#[derive(Debug)]
+pub enum StreamTrimmingMode {
+    /// Match an exact count
+    Exact,
+    /// Match an approximate count
+    Approx,
+}
+
+impl ToRedisArgs for StreamTrimmingMode {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            Self::Exact => out.write_arg(b"="),
+            Self::Approx => out.write_arg(b"~"),
+        };
+    }
+}
+
+/// Utility enum for passing `<MAXLEN|MINID> [=|~] threshold [LIMIT count]`
+/// arguments into `StreamCommands`.
+/// The enum values the trimming mode (=|~), the threshold, and the optional limit
+#[derive(Debug)]
+pub enum StreamTrimStrategy {
+    /// Evicts entries as long as the streams length exceeds threshold.  With an optional limit.
+    MaxLen(StreamTrimmingMode, usize, Option<usize>),
+    /// Evicts entries with IDs lower than threshold, where threshold is a stream ID With an optional limit.
+    MinId(StreamTrimmingMode, String, Option<usize>),
+}
+
+impl StreamTrimStrategy {
+    /// Define a MAXLEN trim strategy with the given maximum number of entries
+    pub fn maxlen(trim: StreamTrimmingMode, max_entries: usize) -> Self {
+        Self::MaxLen(trim, max_entries, None)
+    }
+
+    /// Defines a MINID trim strategy with the given minimum stream ID
+    pub fn minid(trim: StreamTrimmingMode, stream_id: impl Into<String>) -> Self {
+        Self::MinId(trim, stream_id.into(), None)
+    }
+
+    /// Set a limit to the number of records to trim in a single operation
+    pub fn limit(self, limit: usize) -> Self {
+        match self {
+            StreamTrimStrategy::MaxLen(m, t, _) => StreamTrimStrategy::MaxLen(m, t, Some(limit)),
+            StreamTrimStrategy::MinId(m, t, _) => StreamTrimStrategy::MinId(m, t, Some(limit)),
+        }
+    }
+}
+
+impl ToRedisArgs for StreamTrimStrategy {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        let limit = match self {
+            StreamTrimStrategy::MaxLen(m, t, limit) => {
+                out.write_arg(b"MAXLEN");
+                m.write_redis_args(out);
+                t.write_redis_args(out);
+                limit
+            }
+            StreamTrimStrategy::MinId(m, t, limit) => {
+                out.write_arg(b"MINID");
+                m.write_redis_args(out);
+                t.write_redis_args(out);
+                limit
+            }
+        };
+        if let Some(limit) = limit {
+            out.write_arg(b"LIMIT");
+            limit.write_redis_args(out);
+        }
+    }
+}
+
+/// Builder options for [`xtrim_options`] command
+///
+/// [`xtrim_options`]: ../trait.Commands.html#method.xtrim_options
+///
+#[derive(Debug)]
+pub struct StreamTrimOptions {
+    strategy: StreamTrimStrategy,
+}
+
+impl StreamTrimOptions {
+    /// Define a MAXLEN trim strategy with the given maximum number of entries
+    pub fn maxlen(mode: StreamTrimmingMode, max_entries: usize) -> Self {
+        Self {
+            strategy: StreamTrimStrategy::maxlen(mode, max_entries),
+        }
+    }
+
+    /// Defines a MINID trim strategy with the given minimum stream ID
+    pub fn minid(mode: StreamTrimmingMode, stream_id: impl Into<String>) -> Self {
+        Self {
+            strategy: StreamTrimStrategy::minid(mode, stream_id),
+        }
+    }
+
+    /// Set a limit to the number of records to trim in a single operation
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.strategy = self.strategy.limit(limit);
+        self
+    }
+}
+
+impl ToRedisArgs for StreamTrimOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        self.strategy.write_redis_args(out);
+    }
+}
+
+/// Builder options for [`xadd_options`] command
+///
+/// [`xadd_options`]: ../trait.Commands.html#method.xadd_options
+///
+#[derive(Default, Debug)]
+pub struct StreamAddOptions {
+    nomkstream: bool,
+    trim: Option<StreamTrimStrategy>,
+}
+
+impl StreamAddOptions {
+    /// Set the NOMKSTREAM flag on which prevents creating a stream for the XADD operation
+    pub fn nomkstream(mut self) -> Self {
+        self.nomkstream = true;
+        self
+    }
+
+    /// Enable trimming when adding using the given trim strategy
+    pub fn trim(mut self, trim: StreamTrimStrategy) -> Self {
+        self.trim = Some(trim);
+        self
+    }
+}
+
+impl ToRedisArgs for StreamAddOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.nomkstream {
+            out.write_arg(b"NOMKSTREAM");
+        }
+        if let Some(strategy) = self.trim.as_ref() {
+            strategy.write_redis_args(out);
+        }
+    }
+}
+
 /// Builder options for [`xautoclaim_options`] command.
 ///
 /// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
@@ -811,7 +968,24 @@ impl FromRedisValue for StreamInfoGroupsReply {
 mod tests {
     use super::*;
 
-    mod stream_auto_claim_options {
+    fn assert_command_eq(object: impl ToRedisArgs, expected: &[u8]) {
+        let mut out: Vec<Vec<u8>> = Vec::new();
+
+        object.write_redis_args(&mut out);
+
+        let mut cmd: Vec<u8> = Vec::new();
+
+        out.iter_mut().for_each(|item| {
+            cmd.append(item);
+            cmd.push(b' ');
+        });
+
+        cmd.pop();
+
+        assert_eq!(cmd, expected);
+    }
+
+    mod stream_auto_claim_reply {
         use super::*;
         use crate::Value;
 
@@ -978,6 +1152,72 @@ mod tests {
             assert!(ids.contains(&"1713465533411-0"));
             assert!(ids.contains(&"1713465536069-0"));
             assert_eq!(reply.deleted_ids.len(), 0);
+        }
+    }
+
+    mod stream_trim_options {
+        use super::*;
+
+        #[test]
+        fn maxlen_trim() {
+            let options = StreamTrimOptions::maxlen(StreamTrimmingMode::Approx, 10);
+
+            assert_command_eq(options, b"MAXLEN ~ 10");
+        }
+
+        #[test]
+        fn maxlen_exact_trim() {
+            let options = StreamTrimOptions::maxlen(StreamTrimmingMode::Exact, 10);
+
+            assert_command_eq(options, b"MAXLEN = 10");
+        }
+
+        #[test]
+        fn maxlen_trim_limit() {
+            let options = StreamTrimOptions::maxlen(StreamTrimmingMode::Approx, 10).limit(5);
+
+            assert_command_eq(options, b"MAXLEN ~ 10 LIMIT 5");
+        }
+        #[test]
+        fn minid_trim_limit() {
+            let options = StreamTrimOptions::minid(StreamTrimmingMode::Exact, "123456-7").limit(5);
+
+            assert_command_eq(options, b"MINID = 123456-7 LIMIT 5");
+        }
+    }
+
+    mod stream_add_options {
+        use super::*;
+
+        #[test]
+        fn the_default() {
+            let options = StreamAddOptions::default();
+
+            assert_command_eq(options, b"");
+        }
+
+        #[test]
+        fn with_maxlen_trim() {
+            let options = StreamAddOptions::default()
+                .trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 10));
+
+            assert_command_eq(options, b"MAXLEN = 10");
+        }
+
+        #[test]
+        fn with_nomkstream() {
+            let options = StreamAddOptions::default().nomkstream();
+
+            assert_command_eq(options, b"NOMKSTREAM");
+        }
+
+        #[test]
+        fn with_nomkstream_and_maxlen_trim() {
+            let options = StreamAddOptions::default()
+                .nomkstream()
+                .trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 10));
+
+            assert_command_eq(options, b"NOMKSTREAM MAXLEN = 10");
         }
     }
 }
