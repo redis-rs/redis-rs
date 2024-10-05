@@ -1420,6 +1420,53 @@ implement_commands! {
         cmd("XADD").arg(key).arg(id).arg(map)
     }
 
+
+    /// Add a stream message with options.
+    ///
+    /// ```text
+    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_options<
+        K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs
+    >(
+        key: K,
+        id: ID,
+        items: &'a [(F, V)],
+        options: &'a streams::StreamAddOptions
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(options)
+            .arg(id)
+            .arg(items)
+    }
+
+
+    /// Add a stream message with options.
+    ///
+    /// ```text
+    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_map_options<
+        K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs
+    >(
+        key: K,
+        id: ID,
+        map: BTM,
+        options: &'a streams::StreamAddOptions
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(options)
+            .arg(id)
+            .arg(map)
+    }
+
+
     /// Add a stream message while capping the stream at a maxlength.
     ///
     /// ```text
@@ -2083,6 +2130,20 @@ implement_commands! {
         maxlen: streams::StreamMaxlen
     ) {
         cmd("XTRIM").arg(key).arg(maxlen)
+    }
+
+     /// Trim a stream `key` with full options
+     ///
+     /// ```text
+     /// XTRIM <key> <MAXLEN|MINID> [~|=] <threshold> [LIMIT <count>]  (Same as XADD MAXID|MINID options)
+     /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xtrim_options<K: ToRedisArgs>(
+        key: K,
+        options: &'a streams::StreamTrimOptions
+    ) {
+        cmd("XTRIM").arg(key).arg(options)
     }
 
     // script commands

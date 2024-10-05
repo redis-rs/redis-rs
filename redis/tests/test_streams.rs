@@ -422,6 +422,62 @@ fn test_xadd_maxlen_map() {
 }
 
 #[test]
+fn test_xadd_options() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // NoMKStream will cause this command to fail
+    let result: RedisResult<String> = con.xadd_options(
+        "k1",
+        "*",
+        &[("h", "w")],
+        &StreamAddOptions::default().nomkstream(),
+    );
+    assert!(result.is_err());
+
+    fn setup_stream(con: &mut Connection) {
+        let _: RedisResult<()> = con.del("k1");
+
+        for i in 0..10 {
+            let _: RedisResult<String> = con.xadd_options(
+                "k1",
+                format!("1-{i}"),
+                &[("h", "w")],
+                &StreamAddOptions::default(),
+            );
+        }
+    }
+
+    // test trim by maxlen
+    setup_stream(&mut con);
+
+    let _: RedisResult<String> = con.xadd_options(
+        "k1",
+        "2-1",
+        &[("h", "w")],
+        &StreamAddOptions::default().trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 4)),
+    );
+
+    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    assert_eq!(info.length, 4);
+    assert_eq!(info.first_entry.id, "1-7");
+
+    // test with trim by minid
+    setup_stream(&mut con);
+
+    let _: RedisResult<String> = con.xadd_options(
+        "k1",
+        "2-1",
+        &[("h", "w")],
+        &StreamAddOptions::default()
+            .trim(StreamTrimStrategy::minid(StreamTrimmingMode::Exact, "1-5")),
+    );
+    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    assert_eq!(info.length, 6);
+    assert_eq!(info.first_entry.id, "1-5");
+}
+
+#[test]
 fn test_xread_options_deleted_pel_entry() {
     // Test xread_options behaviour with deleted entry
     let ctx = TestContext::new();
@@ -754,6 +810,52 @@ fn test_xtrim() {
     // we should end up with 40 after this call
     let result: RedisResult<i32> = con.xtrim("k1", StreamMaxlen::Equals(10));
     assert_eq!(result, Ok(40));
+}
+
+#[test]
+fn test_xtrim_options() {
+    // Tests the following commands....
+    // xtrim_options
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // add some keys
+    xadd_keyrange(&mut con, "k1", 0, 100);
+
+    // trim key to 50
+    // returns the number of items deleted from the stream
+    let result: RedisResult<i32> = con.xtrim_options(
+        "k1",
+        &StreamTrimOptions::maxlen(StreamTrimmingMode::Exact, 50),
+    );
+    assert_eq!(result, Ok(50));
+
+    // we should end up with 40 deleted this call
+    let result: RedisResult<i32> = con.xtrim_options(
+        "k1",
+        &StreamTrimOptions::maxlen(StreamTrimmingMode::Exact, 10),
+    );
+    assert_eq!(result, Ok(40));
+
+    let _: RedisResult<()> = con.del("k1");
+
+    for i in 1..100 {
+        let _: RedisResult<String> = con.xadd("k1", format!("1-{i}"), &[("h", "w")]);
+    }
+
+    // Trim to id 1-26
+    let result: RedisResult<i32> = con.xtrim_options(
+        "k1",
+        &StreamTrimOptions::minid(StreamTrimmingMode::Exact, "1-26"),
+    );
+    assert_eq!(result, Ok(25));
+
+    // we should end up with 50 deleted this call
+    let result: RedisResult<i32> = con.xtrim_options(
+        "k1",
+        &StreamTrimOptions::minid(StreamTrimmingMode::Exact, "1-76"),
+    );
+    assert_eq!(result, Ok(50));
 }
 
 #[test]
