@@ -1423,17 +1423,29 @@ implement_commands! {
 
     /// Add a stream message with options.
     ///
+    /// Items can be any list type, e.g.
+    /// ```rust
+    /// // static items
+    /// let items = &[("key", "val"), ("key2", "val2")];
+    /// # use std::collections::BTreeMap;
+    /// // A map (Can be BTreeMap, HashMap, etc)
+    /// let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+    /// map.insert("ab", "cd");
+    /// map.insert("ef", "gh");
+    /// map.insert("ij", "kl");
+    /// ```
+    ///
     /// ```text
     /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd_options<
-        K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs
+        K: ToRedisArgs, ID: ToRedisArgs, I: ToRedisArgs
     >(
         key: K,
         id: ID,
-        items: &'a [(F, V)],
+        items: I,
         options: &'a streams::StreamAddOptions
     ) {
         cmd("XADD")
@@ -1441,29 +1453,6 @@ implement_commands! {
             .arg(options)
             .arg(id)
             .arg(items)
-    }
-
-
-    /// Add a stream message with options.
-    ///
-    /// ```text
-    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
-    /// ```
-    #[cfg(feature = "streams")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    fn xadd_map_options<
-        K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs
-    >(
-        key: K,
-        id: ID,
-        map: BTM,
-        options: &'a streams::StreamAddOptions
-    ) {
-        cmd("XADD")
-            .arg(key)
-            .arg(options)
-            .arg(id)
-            .arg(map)
     }
 
 
