@@ -171,7 +171,11 @@ fn test_xgroup_create() {
 
     // no key exists... this call breaks the connection pipe for some reason
     let reply: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k10");
-    assert!(reply.is_err());
+    assert!(
+        matches!(&reply, Err(e) if e.kind() == redis::ErrorKind::ResponseError
+            && e.code() == Some("ERR")
+            && e.detail() == Some("no such key"))
+    );
 
     // redo the connection because the above error
     con = ctx.connection();
@@ -426,14 +430,21 @@ fn test_xadd_options() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    // NoMKStream will cause this command to fail
-    let result: RedisResult<String> = con.xadd_options(
+    // NoMKStream will return a nil when the stream does not exist
+    let result: RedisResult<redis::Value> = con.xadd_options(
         "k1",
         "*",
         &[("h", "w")],
         &StreamAddOptions::default().nomkstream(),
     );
-    assert!(result.is_err());
+    assert_eq!(result, Ok(redis::Value::Nil));
+
+    let result: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k1");
+    assert!(
+        matches!(&result, Err(e) if e.kind() == redis::ErrorKind::ResponseError
+            && e.code() == Some("ERR")
+            && e.detail() == Some("no such key"))
+    );
 
     fn setup_stream(con: &mut Connection) {
         let _: RedisResult<()> = con.del("k1");
@@ -475,6 +486,18 @@ fn test_xadd_options() {
     let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
     assert_eq!(info.length, 6);
     assert_eq!(info.first_entry.id, "1-5");
+
+    // test adding from a map
+    let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+    map.insert("ab", "cd");
+    map.insert("ef", "gh");
+    map.insert("ij", "kl");
+    let _: RedisResult<String> = con.xadd_options("k1", "3-1", map, &StreamAddOptions::default());
+
+    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    assert_eq!(info.length, 7);
+    assert_eq!(info.first_entry.id, "1-5");
+    assert_eq!(info.last_entry.id, "3-1");
 }
 
 #[test]
