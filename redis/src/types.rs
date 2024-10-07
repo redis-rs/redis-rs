@@ -2072,116 +2072,56 @@ from_vec_from_redis_value!(<T> Vec<T>);
 from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
 from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
-////////////////////////////////////////////////////////////////////////////////
+macro_rules! impl_from_redis_value_for_map {
+    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+), err_msg: $err_msg:expr ) => {
+        impl< $($TypeParam),+ > FromRedisValue for $MapType
+        where
+            $($WhereClause)+
+        {
+            fn from_redis_value(v: &Value) -> RedisResult<$MapType> {
+                let v = get_inner_value(v);
+                v.as_map_iter()
+                    .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?
+                    .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
+                    .collect()
+            }
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for std::collections::HashMap<K, V, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        let v = get_inner_value(v);
-        match *v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .as_map_iter()
-                .ok_or_else(|| {
-                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
-                })?
-                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                .collect(),
+            fn from_owned_redis_value(v: Value) -> RedisResult<$MapType> {
+                let v = get_owned_inner_value(v);
+                v.into_map_iter()
+                    .map_err(|v| invalid_type_error_inner!(v, $err_msg))?
+                    .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
+                    .collect()
+            }
         }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        let v = get_owned_inner_value(v);
-        match v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .into_map_iter()
-                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                .collect(),
-        }
-    }
+    };
 }
+
+impl_from_redis_value_for_map!(
+    for <K, V, S> std::collections::HashMap<K, V, S>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
+    err_msg: "Response type not std::collections::HashMap compatible"
+);
 
 #[cfg(feature = "hashbrown")]
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for hashbrown::HashMap<K, V, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<hashbrown::HashMap<K, V, S>> {
-        let v = get_inner_value(v);
-        match *v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .as_map_iter()
-                .ok_or_else(|| {
-                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
-                })?
-                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                .collect(),
-        }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<hashbrown::HashMap<K, V, S>> {
-        let v = get_owned_inner_value(v);
-        match v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .into_map_iter()
-                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                .collect(),
-        }
-    }
-}
+impl_from_redis_value_for_map!(
+    for <K, V, S> hashbrown::HashMap<K, V, S>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
+    err_msg: "Response type not hashbrown::HashMap compatible"
+);
 
 #[cfg(feature = "ahash")]
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash::AHashMap<K, V> {
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V>> {
-        let v = get_inner_value(v);
-        match *v {
-            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
-            _ => v
-                .as_map_iter()
-                .ok_or_else(|| {
-                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
-                })?
-                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                .collect(),
-        }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashMap<K, V>> {
-        let v = get_owned_inner_value(v);
-        match v {
-            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
-            _ => v
-                .into_map_iter()
-                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                .collect(),
-        }
-    }
-}
+impl_from_redis_value_for_map!(
+    for <K, V> ahash::AHashMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue),
+    err_msg: "Response type not hashmap compatible"
+);
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for BTreeMap<K, V>
-where
-    K: Ord,
-{
-    fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
-        let v = get_inner_value(v);
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<BTreeMap<K, V>> {
-        let v = get_owned_inner_value(v);
-        v.into_map_iter()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
-            .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-            .collect()
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
+impl_from_redis_value_for_map!(
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue),
+    err_msg: "Response type not std::collections::BTreeMap compatible"
+);
 
 macro_rules! impl_from_redis_value_for_set {
     (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+), err_msg: $err_msg:expr ) => {
