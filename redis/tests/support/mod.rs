@@ -139,10 +139,6 @@ pub struct TestContext {
     pub protocol: ProtocolVersion,
 }
 
-pub(crate) fn is_tls_enabled() -> bool {
-    cfg!(all(feature = "tls-rustls", not(feature = "tls-native-tls")))
-}
-
 pub(crate) fn start_tls_crypto_provider() {
     #[cfg(feature = "rustls")]
     if rustls::crypto::CryptoProvider::get_default().is_none() {
