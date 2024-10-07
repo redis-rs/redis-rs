@@ -336,6 +336,91 @@ mod types {
         }
     }
 
+    #[cfg(feature = "hashbrown")]
+    #[test]
+    fn test_hashbrown_hashmap() {
+        use fnv::FnvHasher;
+        use hashbrown::HashMap;
+        use std::hash::BuildHasherDefault;
+
+        type Hm = HashMap<String, i32>;
+
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let v: Result<Hm, _> = parse_mode.parse_redis_value(Value::Array(vec![
+                Value::BulkString("a".into()),
+                Value::BulkString("1".into()),
+                Value::BulkString("b".into()),
+                Value::BulkString("2".into()),
+                Value::BulkString("c".into()),
+                Value::BulkString("3".into()),
+            ]));
+            let mut e: Hm = HashMap::new();
+            e.insert("a".into(), 1);
+            e.insert("b".into(), 2);
+            e.insert("c".into(), 3);
+            assert_eq!(v, Ok(e));
+
+            type Hasher = BuildHasherDefault<FnvHasher>;
+            type HmHasher = HashMap<String, i32, Hasher>;
+            let v: Result<HmHasher, _> = parse_mode.parse_redis_value(Value::Array(vec![
+                Value::BulkString("a".into()),
+                Value::BulkString("1".into()),
+                Value::BulkString("b".into()),
+                Value::BulkString("2".into()),
+                Value::BulkString("c".into()),
+                Value::BulkString("3".into()),
+            ]));
+
+            let fnv = Hasher::default();
+            let mut e: HmHasher = HashMap::with_hasher(fnv);
+            e.insert("a".into(), 1);
+            e.insert("b".into(), 2);
+            e.insert("c".into(), 3);
+            assert_eq!(v, Ok(e));
+
+            let v: Result<Hm, _> =
+                parse_mode.parse_redis_value(Value::Array(vec![Value::BulkString("a".into())]));
+            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        }
+    }
+
+    #[cfg(feature = "hashbrown")]
+    #[test]
+    fn test_hashbrown_hashset() {
+        use hashbrown::HashSet;
+
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let v: Result<HashSet<String>, _> = parse_mode.parse_redis_value(Value::Array(vec![
+                Value::BulkString("a".into()),
+                Value::BulkString("b".into()),
+                Value::BulkString("c".into()),
+            ]));
+
+            let mut expected = HashSet::new();
+            expected.insert("a".to_string());
+            expected.insert("b".to_string());
+            expected.insert("c".to_string());
+
+            assert_eq!(v, Ok(expected));
+
+            let v: Result<HashSet<i32>, _> = parse_mode.parse_redis_value(Value::Int(42));
+            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+
+            let mut set = HashSet::new();
+            set.insert("x".to_string());
+            set.insert("y".to_string());
+            set.insert("z".to_string());
+
+            let args = set.to_redis_args();
+            assert_eq!(args.len(), 3);
+
+            let args_set: HashSet<Vec<u8>> = args.into_iter().collect();
+            assert!(args_set.contains(&b"x"[..].to_vec()));
+            assert!(args_set.contains(&b"y"[..].to_vec()));
+            assert!(args_set.contains(&b"z"[..].to_vec()));
+        }
+    }
+
     #[test]
     fn test_bool() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
