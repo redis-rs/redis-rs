@@ -1522,7 +1522,7 @@ deref_to_write_redis_args_impl! {
 /// check whether the set is empty and if so, not attempt to use that
 /// result
 macro_rules! impl_to_redis_args_for_set {
-    (for <$($TypeParam:ident),+> $SetType:ty, where $($WhereClause:tt)+ ) => {
+    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+) ) => {
         impl< $($TypeParam),+ > ToRedisArgs for $SetType
         where
             $($WhereClause)+
@@ -1543,28 +1543,28 @@ macro_rules! impl_to_redis_args_for_set {
 
 impl_to_redis_args_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
 );
 
 impl_to_redis_args_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where T: ToRedisArgs + Hash + Eq + Ord
+    where (T: ToRedisArgs + Hash + Eq + Ord)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_set!(
     for <T, S> ahash::AHashSet<T, S>,
-    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
 );
 
 macro_rules! impl_to_redis_args_for_map {
-    (for <$($TypeParam:ident),+> $MapType:ty, where $($WhereClause:tt)+ ) => {
+    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+) ) => {
         impl< $($TypeParam),+ > ToRedisArgs for $MapType
         where
             $($WhereClause)+
@@ -1574,7 +1574,6 @@ macro_rules! impl_to_redis_args_for_map {
                 W: ?Sized + RedisWrite,
             {
                 for (key, value) in self {
-                    // Ensure key and value produce a single argument each
                     assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
                     key.write_redis_args(out);
                     value.write_redis_args(out);
@@ -1582,7 +1581,7 @@ macro_rules! impl_to_redis_args_for_map {
             }
 
             fn num_of_args(&self) -> usize {
-                self.len()
+                self.len() * 2
             }
         }
     };
@@ -1590,7 +1589,7 @@ macro_rules! impl_to_redis_args_for_map {
 
 impl_to_redis_args_for_map!(
     for <K, V> std::collections::HashMap<K, V>,
-    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
 /// this flattens BTreeMap into something that goes well with HMSET
@@ -1599,13 +1598,13 @@ impl_to_redis_args_for_map!(
 /// result
 impl_to_redis_args_for_map!(
     for <K, V> std::collections::BTreeMap<K, V>,
-    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_map!(
     for <K, V> hashbrown::HashMap<K, V>,
-    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
 macro_rules! to_redis_args_for_tuple {
