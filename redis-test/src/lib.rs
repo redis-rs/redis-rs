@@ -23,6 +23,7 @@
 //! assert_eq!(result, true);
 //! ```
 
+pub mod sentinel;
 pub mod server;
 pub mod utils;
 
