@@ -2072,6 +2072,8 @@ from_vec_from_redis_value!(<T> Vec<T>);
 from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
 from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
+////////////////////////////////////////////////////////////////////////////////
+
 impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
     for std::collections::HashMap<K, V, S>
 {
@@ -2179,95 +2181,61 @@ where
     }
 }
 
-impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
-    for std::collections::HashSet<T, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashSet<T, S>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashSet<T, S>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
+////////////////////////////////////////////////////////////////////////////////
+
+macro_rules! impl_from_redis_value_for_set {
+    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+), err_msg: $err_msg:expr ) => {
+        impl< $($TypeParam),+ > FromRedisValue for $SetType
+        where
+            $($WhereClause)+
+        {
+            fn from_redis_value(v: &Value) -> RedisResult<$SetType> {
+                let v = get_inner_value(v);
+                let items = v
+                    .as_sequence()
+                    .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?;
+                items.iter().map(|item| from_redis_value(item)).collect()
+            }
+
+            fn from_owned_redis_value(v: Value) -> RedisResult<$SetType> {
+                let v = get_owned_inner_value(v);
+                let items = v
+                    .into_sequence()
+                    .map_err(|v| invalid_type_error_inner!(v, $err_msg))?;
+                items
+                    .into_iter()
+                    .map(|item| from_owned_redis_value(item))
+                    .collect()
+            }
+        }
+    };
 }
+
+impl_from_redis_value_for_set!(
+    for <T, S> std::collections::HashSet<T, S>,
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default),
+    err_msg: "Response type not std::collections::HashSet compatible"
+);
+
+impl_from_redis_value_for_set!(
+    for <T> std::collections::BTreeSet<T>,
+    where (T: FromRedisValue + Eq + Ord),
+    err_msg: "Response type not std::collections::BTreeSet compatible"
+);
 
 #[cfg(feature = "hashbrown")]
-impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
-    for hashbrown::HashSet<T, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<hashbrown::HashSet<T, S>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<hashbrown::HashSet<T, S>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
+impl_from_redis_value_for_set!(
+    for <T, S> hashbrown::HashSet<T, S>,
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default),
+    err_msg: "Response type not hashbrown::HashSet compatible"
+);
 
 #[cfg(feature = "ahash")]
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for ahash::AHashSet<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-
-    fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashSet<T>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
-
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for BTreeSet<T>
-where
-    T: Ord,
-{
-    fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<BTreeSet<T>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
+impl_from_redis_value_for_set!(
+    for <T> ahash::AHashSet<T>,
+    where (T: FromRedisValue + Eq + Hash),
+    err_msg: "Response type not hashset compatible"
+);
 
 impl FromRedisValue for Value {
     fn from_redis_value(v: &Value) -> RedisResult<Value> {
