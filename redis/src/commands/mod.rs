@@ -1420,6 +1420,42 @@ implement_commands! {
         cmd("XADD").arg(key).arg(id).arg(map)
     }
 
+
+    /// Add a stream message with options.
+    ///
+    /// Items can be any list type, e.g.
+    /// ```rust
+    /// // static items
+    /// let items = &[("key", "val"), ("key2", "val2")];
+    /// # use std::collections::BTreeMap;
+    /// // A map (Can be BTreeMap, HashMap, etc)
+    /// let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+    /// map.insert("ab", "cd");
+    /// map.insert("ef", "gh");
+    /// map.insert("ij", "kl");
+    /// ```
+    ///
+    /// ```text
+    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xadd_options<
+        K: ToRedisArgs, ID: ToRedisArgs, I: ToRedisArgs
+    >(
+        key: K,
+        id: ID,
+        items: I,
+        options: &'a streams::StreamAddOptions
+    ) {
+        cmd("XADD")
+            .arg(key)
+            .arg(options)
+            .arg(id)
+            .arg(items)
+    }
+
+
     /// Add a stream message while capping the stream at a maxlength.
     ///
     /// ```text
@@ -1563,7 +1599,7 @@ implement_commands! {
     /// ```text
     /// XCLAIM <key> <group> <consumer> <min-idle-time> <ID-1> <ID-2>
     ///     [IDLE <milliseconds>] [TIME <mstime>] [RETRYCOUNT <count>]
-    ///     [FORCE] [JUSTID]
+    ///     [FORCE] [JUSTID] [LASTID <lastid>]
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
@@ -2083,6 +2119,20 @@ implement_commands! {
         maxlen: streams::StreamMaxlen
     ) {
         cmd("XTRIM").arg(key).arg(maxlen)
+    }
+
+     /// Trim a stream `key` with full options
+     ///
+     /// ```text
+     /// XTRIM <key> <MAXLEN|MINID> [~|=] <threshold> [LIMIT <count>]  (Same as XADD MAXID|MINID options)
+     /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xtrim_options<K: ToRedisArgs>(
+        key: K,
+        options: &'a streams::StreamTrimOptions
+    ) {
+        cmd("XTRIM").arg(key).arg(options)
     }
 
     // script commands
