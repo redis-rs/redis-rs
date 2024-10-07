@@ -1553,6 +1553,7 @@ dependencies = [
  "quickcheck",
  "r2d2",
  "rand",
+ "redis-test",
  "rstest",
  "rust_decimal",
  "rustls",
@@ -1576,11 +1577,14 @@ dependencies = [
 
 [[package]]
 name = "redis-test"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "futures",
+ "rand",
  "redis",
+ "socket2 0.5.7",
+ "tempfile",
  "tokio",
 ]
 

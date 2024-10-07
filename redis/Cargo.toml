@@ -138,6 +138,7 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "test-ut
 tempfile = "=3.14.0"
 once_cell = "1"
 anyhow = "1"
+redis-test = { path = "../redis-test" }
 rstest = "0.23"
 
 [[test]]

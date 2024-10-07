@@ -7,24 +7,19 @@ use std::process;
 use std::thread::sleep;
 use std::time::Duration;
 
+use crate::support::{build_single_client, start_tls_crypto_provider};
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
+use redis_test::server::{use_protocol, Module, RedisServer};
+use redis_test::utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths};
 use tempfile::TempDir;
 
-use crate::support::{build_keys_and_certs_for_tls, Module};
-
-use super::build_single_client;
-use super::get_random_available_port;
 #[cfg(feature = "tls-rustls")]
 use super::load_certs_from_file;
-
-use super::use_protocol;
-use super::RedisServer;
-use super::TlsFilePaths;
 
 const LOCALHOST: &str = "127.0.0.1";
 
@@ -429,6 +424,7 @@ impl TestClusterContext {
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
+        start_tls_crypto_provider();
         let mtls_enabled = cluster_config.mtls_enabled;
         let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster

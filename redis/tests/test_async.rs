@@ -13,6 +13,7 @@ mod basic_async {
         cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
+    use redis_test::server::use_protocol;
     use rstest::rstest;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -1654,7 +1655,7 @@ mod basic_async {
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
-        let tls_files = build_keys_and_certs_for_tls(&tempdir);
+        let tls_files = redis_test::utils::build_keys_and_certs_for_tls(&tempdir);
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
         let protocol = ctx.protocol;
@@ -1677,7 +1678,8 @@ mod basic_async {
                     assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
                 }
 
-                let _server = RedisServer::new_with_addr_and_modules(addr, &[], false);
+                let _server =
+                    redis_test::server::RedisServer::new_with_addr_and_modules(addr, &[], false);
 
                 for _ in 0..5 {
                     let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {

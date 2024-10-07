@@ -10,17 +10,15 @@ use redis::ConnectionInfo;
 use redis::FromRedisValue;
 use redis::RedisResult;
 use redis::TlsMode;
+use redis_test::utils::{build_keys_and_certs_for_tls, get_random_available_port};
 use tempfile::TempDir;
 
-use crate::support::build_single_client;
+use crate::support::{build_single_client, start_tls_crypto_provider};
 
-use super::build_keys_and_certs_for_tls;
-use super::get_random_available_port;
 use super::Module;
 use super::RedisServer;
 use super::TlsFilePaths;
 
-const LOCALHOST: &str = "127.0.0.1";
 const MTLS_NOT_ENABLED: bool = false;
 
 pub struct RedisSentinelCluster {
@@ -340,6 +338,7 @@ impl TestSentinelContext {
         replicas: u16,
         sentinels: u16,
     ) -> TestSentinelContext {
+        start_tls_crypto_provider();
         let cluster = RedisSentinelCluster::new(nodes, replicas, sentinels);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_sentinel_servers()
