@@ -125,8 +125,6 @@ tls = ["tls-native-tls"] # use "tls-native-tls" instead
 async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
 
 [dev-dependencies]
-rand = "0.8"
-socket2 = "0.5"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"

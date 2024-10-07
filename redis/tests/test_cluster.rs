@@ -15,7 +15,10 @@ mod cluster {
         cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
         Value,
     };
-    use redis_test::server::use_protocol;
+    use redis_test::{
+        cluster::{RedisCluster, RedisClusterConfiguration},
+        server::use_protocol,
+    };
 
     #[test]
     fn test_cluster_basics() {

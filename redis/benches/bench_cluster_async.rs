@@ -4,6 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use futures_util::{stream, TryStreamExt};
 use redis::RedisError;
 
+use redis_test::cluster::RedisClusterConfiguration;
 use support::*;
 use tokio::runtime::Runtime;
 
