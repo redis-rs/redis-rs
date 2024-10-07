@@ -504,7 +504,10 @@ mod basic_async {
         );
     }
 
-    fn test_async_scanning(batch_size: usize, runtime: RuntimeType) {
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_async_scanning(#[values(2, 1000)] batch_size: usize, #[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
                 let mut unseen = std::collections::HashSet::new();
@@ -527,13 +530,11 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(x) = iter.next_item().await {
-                    // type inference limitations
-                    let x: usize = x;
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&x));
                 }
 
-                assert_eq!(unseen.len(), 0);
+                assert!(unseen.is_empty());
                 Ok(())
             },
             runtime,
@@ -543,15 +544,90 @@ mod basic_async {
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn test_async_scanning_big_batch(#[case] runtime: RuntimeType) {
-        test_async_scanning(1000, runtime)
+    fn test_async_scanning_iterative(
+        #[values(2, 1000)] batch_size: usize,
+        #[case] runtime: RuntimeType,
+    ) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                let mut unseen = std::collections::HashSet::new();
+
+                for x in 0..batch_size {
+                    let key_name = format!("key.{}", x);
+                    redis::cmd("SET")
+                        .arg(key_name.clone())
+                        .arg("foo")
+                        .exec_async(&mut con)
+                        .await?;
+                    unseen.insert(key_name.clone());
+                }
+
+                let mut iter = redis::cmd("SCAN")
+                    .cursor_arg(0)
+                    .arg("MATCH")
+                    .arg("key*")
+                    .arg("COUNT")
+                    .arg(1)
+                    .clone()
+                    .iter_async::<String>(&mut con)
+                    .await
+                    .unwrap();
+
+                while let Some(item) = iter.next_item().await {
+                    // if this assertion fails, too many items were returned by the iterator.
+                    assert!(unseen.remove(&item));
+                }
+
+                assert!(unseen.is_empty());
+                Ok(())
+            },
+            runtime,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn test_async_scanning_small_batch(#[case] runtime: RuntimeType) {
-        test_async_scanning(2, runtime)
+    fn test_async_scanning_stream(
+        #[values(2, 1000)] batch_size: usize,
+        #[case] runtime: RuntimeType,
+    ) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                let mut unseen = std::collections::HashSet::new();
+
+                for x in 0..batch_size {
+                    let key_name = format!("key.{}", x);
+                    redis::cmd("SET")
+                        .arg(key_name.clone())
+                        .arg("foo")
+                        .exec_async(&mut con)
+                        .await?;
+                    unseen.insert(key_name.clone());
+                }
+
+                let iter = redis::cmd("SCAN")
+                    .cursor_arg(0)
+                    .arg("MATCH")
+                    .arg("key*")
+                    .arg("COUNT")
+                    .arg(1)
+                    .clone()
+                    .iter_async::<String>(&mut con)
+                    .await
+                    .unwrap();
+
+                let collection: Vec<String> = iter.collect().await;
+                for item in collection {
+                    // if this assertion fails, too many items were returned by the iterator.
+                    assert!(unseen.remove(&item));
+                }
+
+                assert!(unseen.is_empty());
+                Ok(())
+            },
+            runtime,
+        );
     }
 
     #[rstest]
