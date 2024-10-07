@@ -13,6 +13,7 @@ mod basic_async {
         cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
+    use redis_test::server::use_protocol;
     use rstest::rstest;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -1441,6 +1442,7 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
         use redis::ProtocolVersion;
+        use redis_test::utils::build_keys_and_certs_for_tls;
 
         let max_delay_between_attempts = 50;
 
