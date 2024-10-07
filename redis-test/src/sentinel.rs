@@ -115,9 +115,11 @@ fn spawn_sentinel_server(
     )
 }
 
+pub struct SentinelError;
+
 pub fn wait_for_master_server(
     mut get_client_fn: impl FnMut() -> RedisResult<Client>,
-) -> Result<(), ()> {
+) -> Result<(), SentinelError> {
     let rolecmd = redis::cmd("ROLE");
     for _ in 0..100 {
         let master_client = get_client_fn();
@@ -144,10 +146,12 @@ pub fn wait_for_master_server(
         sleep(Duration::from_millis(25));
     }
 
-    Err(())
+    Err(SentinelError)
 }
 
-pub fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) -> Result<(), ()> {
+pub fn wait_for_replica(
+    mut get_client_fn: impl FnMut() -> RedisResult<Client>,
+) -> Result<(), SentinelError> {
     let rolecmd = redis::cmd("ROLE");
     for _ in 0..200 {
         let replica_client = get_client_fn();
@@ -175,7 +179,7 @@ pub fn wait_for_replica(mut get_client_fn: impl FnMut() -> RedisResult<Client>) 
         sleep(Duration::from_millis(25));
     }
 
-    Err(())
+    Err(SentinelError)
 }
 
 fn wait_for_replicas_to_sync(servers: &[RedisServer], masters: u16) {
