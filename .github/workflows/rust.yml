@@ -43,6 +43,12 @@ jobs:
               db-name: valkey,
               db-version: 7.2.6
             },
+            {
+              rust: stable,
+              db-org: valkey-io,
+              db-name: valkey,
+              db-version: 8.0.1
+            },            
 
             # Different rust cases
             {
