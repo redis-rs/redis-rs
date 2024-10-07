@@ -2,7 +2,6 @@
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use num_bigint::BigInt;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::default::Default;
