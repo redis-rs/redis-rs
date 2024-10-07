@@ -1563,8 +1563,16 @@ impl_to_redis_args_for_set!(
     where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
 );
 
+/// @note: Redis cannot store empty sets so the application has to
+/// check whether the set is empty and if so, not attempt to use that
+/// result
 macro_rules! impl_to_redis_args_for_map {
-    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+) ) => {
+    (
+        $(#[$meta:meta])*
+        for <$($TypeParam:ident),+> $MapType:ty,
+        where ($($WhereClause:tt)+)
+    ) => {
+        $(#[$meta])*
         impl< $($TypeParam),+ > ToRedisArgs for $MapType
         where
             $($WhereClause)+
@@ -1574,6 +1582,7 @@ macro_rules! impl_to_redis_args_for_map {
                 W: ?Sized + RedisWrite,
             {
                 for (key, value) in self {
+                    // Ensure key and value produce a single argument each
                     assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
                     key.write_redis_args(out);
                     value.write_redis_args(out);
@@ -1581,22 +1590,18 @@ macro_rules! impl_to_redis_args_for_map {
             }
 
             fn num_of_args(&self) -> usize {
-                self.len() * 2
+                self.len()
             }
         }
     };
 }
-
 impl_to_redis_args_for_map!(
     for <K, V> std::collections::HashMap<K, V>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
-/// this flattens BTreeMap into something that goes well with HMSET
-/// @note: Redis cannot store empty sets so the application has to
-/// check whether the set is empty and if so, not attempt to use that
-/// result
 impl_to_redis_args_for_map!(
+    /// this flattens BTreeMap into something that goes well with HMSET
     for <K, V> std::collections::BTreeMap<K, V>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
@@ -2079,18 +2084,30 @@ macro_rules! impl_from_redis_value_for_map {
         {
             fn from_redis_value(v: &Value) -> RedisResult<$MapType> {
                 let v = get_inner_value(v);
-                v.as_map_iter()
-                    .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?
-                    .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                    .collect()
+                match *v {
+                    Value::Nil => Ok(Default::default()),
+                    _ => v
+                        .as_map_iter()
+                        .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?
+                        .map(|(k, v)| {
+                            Ok((from_redis_value(k)?, from_redis_value(v)?))
+                        })
+                        .collect(),
+                }
             }
 
             fn from_owned_redis_value(v: Value) -> RedisResult<$MapType> {
                 let v = get_owned_inner_value(v);
-                v.into_map_iter()
-                    .map_err(|v| invalid_type_error_inner!(v, $err_msg))?
-                    .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                    .collect()
+                match v {
+                    Value::Nil => Ok(Default::default()),
+                    _ => v
+                        .into_map_iter()
+                        .map_err(|v| invalid_type_error_inner!(v, $err_msg))?
+                        .map(|(k, v)| {
+                            Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
+                        })
+                        .collect(),
+                }
             }
         }
     };
