@@ -1521,131 +1521,92 @@ deref_to_write_redis_args_impl! {
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
-    for std::collections::HashSet<T, S>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+macro_rules! impl_to_redis_args_for_set {
+    (for <$($TypeParam:ident),+> $SetType:ty, where $($WhereClause:tt)+ ) => {
+        impl< $($TypeParam),+ > ToRedisArgs for $SetType
+        where
+            $($WhereClause)+
+        {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+            }
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
+            fn num_of_args(&self) -> usize {
+                self.len()
+            }
+        }
+    };
 }
+
+impl_to_redis_args_for_set!(
+    for <T, S> std::collections::HashSet<T, S>,
+    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+);
+
+impl_to_redis_args_for_set!(
+    for <T> std::collections::BTreeSet<T>,
+    where T: ToRedisArgs + Hash + Eq + Ord
+);
 
 #[cfg(feature = "hashbrown")]
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
-    for hashbrown::HashSet<T, S>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+impl_to_redis_args_for_set!(
+    for <T, S> hashbrown::HashSet<T, S>,
+    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+);
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
-
-/// @note: Redis cannot store empty sets so the application has to
-/// check whether the set is empty and if so, not attempt to use that
-/// result
 #[cfg(feature = "ahash")]
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for ahash::AHashSet<T, S> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+impl_to_redis_args_for_set!(
+    for <T, S> ahash::AHashSet<T, S>,
+    where T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default
+);
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
+macro_rules! impl_to_redis_args_for_map {
+    (for <$($TypeParam:ident),+> $MapType:ty, where $($WhereClause:tt)+ ) => {
+        impl< $($TypeParam),+ > ToRedisArgs for $MapType
+        where
+            $($WhereClause)+
+        {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                for (key, value) in self {
+                    // Ensure key and value produce a single argument each
+                    assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
+                    key.write_redis_args(out);
+                    value.write_redis_args(out);
+                }
+            }
+
+            fn num_of_args(&self) -> usize {
+                self.len()
+            }
+        }
+    };
 }
 
-/// @note: Redis cannot store empty sets so the application has to
-/// check whether the set is empty and if so, not attempt to use that
-/// result
-impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
+impl_to_redis_args_for_map!(
+    for <K, V> std::collections::HashMap<K, V>,
+    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+);
 
 /// this flattens BTreeMap into something that goes well with HMSET
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<T, V> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self {
-            // otherwise things like HMSET will simply NOT work
-            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
-
-            key.write_redis_args(out);
-            value.write_redis_args(out);
-        }
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
-    for std::collections::HashMap<T, V>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self {
-            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
-
-            key.write_redis_args(out);
-            value.write_redis_args(out);
-        }
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
+impl_to_redis_args_for_map!(
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+);
 
 #[cfg(feature = "hashbrown")]
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for hashbrown::HashMap<T, V> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self {
-            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
-
-            key.write_redis_args(out);
-            value.write_redis_args(out);
-        }
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
+impl_to_redis_args_for_map!(
+    for <K, V> hashbrown::HashMap<K, V>,
+    where K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs
+);
 
 macro_rules! to_redis_args_for_tuple {
     () => ();
