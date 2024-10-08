@@ -30,7 +30,7 @@ use crate::connection::TlsConnParams;
 pub mod tokio;
 
 mod pubsub;
-pub use pubsub::PubSub;
+pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
