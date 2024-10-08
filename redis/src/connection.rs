@@ -13,7 +13,7 @@ use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    SyncPushSender, ToRedisArgs, Value,
+    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
@@ -1308,31 +1308,60 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        if self.protocol != ProtocolVersion::RESP2 {
-            while let Value::Push { kind, data } = from_owned_redis_value(self.recv_response()?)? {
-                if data.len() >= 2 {
-                    if let Value::Int(num) = data[1] {
-                        if resp3_is_pub_sub_state_cleared(
-                            &mut received_unsub,
-                            &mut received_punsub,
-                            &kind,
-                            num as isize,
-                        ) {
-                            break;
+
+        loop {
+            let resp = self.recv_response()?;
+
+            match resp {
+                Value::Push { kind, data } => {
+                    if data.len() >= 2 {
+                        if let Value::Int(num) = data[1] {
+                            if resp3_is_pub_sub_state_cleared(
+                                &mut received_unsub,
+                                &mut received_punsub,
+                                &kind,
+                                num as isize,
+                            ) {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        } else {
-            loop {
-                let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
-                if resp2_is_pub_sub_state_cleared(
-                    &mut received_unsub,
-                    &mut received_punsub,
-                    &res.0,
-                    res.2,
-                ) {
-                    break;
+                Value::ServerError(err) => {
+                    // a new error behavior, introduced in valkey 8.
+                    // https://github.com/valkey-io/valkey/pull/759
+                    if err.kind() == Some(ServerErrorKind::NoSub) {
+                        if no_sub_err_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &err,
+                        ) {
+                            break;
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    return Err(err.into());
+                }
+                Value::Array(vec) => {
+                    let res: (Vec<u8>, (), isize) = from_owned_redis_value(Value::Array(vec))?;
+                    if resp2_is_pub_sub_state_cleared(
+                        &mut received_unsub,
+                        &mut received_punsub,
+                        &res.0,
+                        res.2,
+                    ) {
+                        break;
+                    }
+                }
+                _ => {
+                    return Err((
+                        ErrorKind::ClientError,
+                        "Unexpected unsubscribe response",
+                        format!("{resp:?}"),
+                    )
+                        .into())
                 }
             }
         }
@@ -1894,6 +1923,23 @@ pub fn resp3_is_pub_sub_state_cleared(
         _ => (),
     };
     *received_unsub && *received_punsub && num == 0
+}
+
+pub fn no_sub_err_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    err: &ServerError,
+) -> bool {
+    let details = err.details();
+    *received_unsub = *received_unsub
+        || details
+            .map(|details| details.starts_with("'unsub"))
+            .unwrap_or_default();
+    *received_punsub = *received_punsub
+        || details
+            .map(|details| details.starts_with("'punsub"))
+            .unwrap_or_default();
+    *received_unsub && *received_punsub
 }
 
 /// Common logic for checking real cause of hello3 command error
