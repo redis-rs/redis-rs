@@ -1,3 +1,15 @@
+### 0.27.4 (2024-10-09)
+
+#### Changes & Bug fixes
+
+* Add lastid option to xclaim ([#1360](https://github.com/redis-rs/redis-rs/pull/1360) @urkle)
+* Add xadd_options and xtrim_options ([#1361](https://github.com/redis-rs/redis-rs/pull/1361) @urkle)
+* Sync connection: Handle timed-out responses by ignoring them. ([#1290](https://github.com/redis-rs/redis-rs/pull/1290))
+* Expose the sink and stream parts of an async pubsub to the user. ([#1366](https://github.com/redis-rs/redis-rs/pull/1366))
+
+#### CI improvements
+* Add async iterator tests. ([#1364](https://github.com/redis-rs/redis-rs/pull/1364))
+
 ### 0.27.3 (2024-10-01)
 
 #### Changes & Bug fixes
