@@ -103,11 +103,11 @@ where
 #[rstest::rstest]
 #[case::tokio(RuntimeType::Tokio)]
 #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-#[should_panic]
+#[should_panic(expected = "Internal thread panicked")]
 fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
     let _ = block_on_all(
         async {
-            tokio::task::spawn(async {
+            spawn(async {
                 futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
                 panic!("As it should");
             });
@@ -923,14 +923,18 @@ pub async fn kill_client_async(
     Ok(())
 }
 
-pub async fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static) -> T
+fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
 where
     T: Send + 'static,
 {
     match tokio::runtime::Handle::try_current() {
-        Ok(tokio_runtime) => tokio_runtime.spawn(fut).await.unwrap(),
+        Ok(tokio_runtime) => {
+            tokio_runtime.spawn(fut);
+        }
         #[cfg(feature = "async-std-comp")]
-        Err(_) => async_std::task::spawn(fut).await,
+        Err(_) => {
+            async_std::task::spawn(fut);
+        }
         #[cfg(not(feature = "async-std-comp"))]
         Err(_) => unreachable!(),
     }
