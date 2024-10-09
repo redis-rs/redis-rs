@@ -112,7 +112,7 @@ impl Runtime {
         }
     }
 
-    #[cfg(feature = "connection-manager")]
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
     pub(crate) async fn sleep(&self, duration: Duration) {
         match self {
             #[cfg(feature = "tokio-comp")]
@@ -124,6 +124,11 @@ impl Runtime {
                 async_std::task::sleep(duration).await;
             }
         }
+    }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async fn locate_and_sleep(duration: Duration) {
+        Self::locate().sleep(duration).await
     }
 }
 
