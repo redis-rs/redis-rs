@@ -227,11 +227,7 @@ struct ClusterConnInner<C> {
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
-    #[cfg(feature = "tokio-comp")]
-    return Box::pin(tokio::time::sleep(duration));
-
-    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-    return Box::pin(async_std::task::sleep(duration));
+    Box::pin(Runtime::sleep(duration))
 }
 
 #[derive(Debug, PartialEq)]
