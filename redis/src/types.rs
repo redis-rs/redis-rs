@@ -135,6 +135,8 @@ pub enum ErrorKind {
     NotBusy,
     /// Used when a cluster connection cannot find a connection to a valid node.
     ClusterConnectionNotFound,
+    /// Attempted to unsubscribe on a connection that is not in subscribed mode.
+    NoSub,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -159,6 +161,7 @@ pub enum ServerErrorKind {
     MasterDown,
     ReadOnly,
     NotBusy,
+    NoSub,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -197,6 +200,7 @@ impl ServerError {
                 ServerErrorKind::MasterDown => "MASTERDOWN",
                 ServerErrorKind::ReadOnly => "READONLY",
                 ServerErrorKind::NotBusy => "NOTBUSY",
+                ServerErrorKind::NoSub => "NOSUB",
             },
         }
     }
@@ -229,6 +233,7 @@ impl From<ServerError> for RedisError {
                     ServerErrorKind::MasterDown => ErrorKind::MasterDown,
                     ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
                     ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+                    ServerErrorKind::NoSub => ErrorKind::NoSub,
                 };
                 match detail {
                     Some(detail) => RedisError::from((kind, desc, detail)),
@@ -854,6 +859,9 @@ impl RedisError {
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
+            ErrorKind::NoSub => {
+                "Server declined unsubscribe related command in non-subscribed mode"
+            }
         }
     }
 
@@ -1015,6 +1023,7 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
+            ErrorKind::NoSub => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
