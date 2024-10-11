@@ -145,6 +145,10 @@ name = "test_async"
 required-features = ["tokio-comp"]
 
 [[test]]
+name = "test_async_pubsub"
+required-features = ["tokio-comp"]
+
+[[test]]
 name = "parser"
 required-features = ["aio"]
 
