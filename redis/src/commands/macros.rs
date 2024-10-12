@@ -8,9 +8,10 @@ macro_rules! implement_commands {
         )*
     ) =>
     (
-        /// Implements common redis commands for connection like objects.  This
-        /// allows you to send commands straight to a connection or client.  It
-        /// is also implemented for redis results of clients which makes for
+        /// Implements common redis commands for connection like objects.
+        ///
+        /// This allows you to send commands straight to a connection or client.
+        /// It is also implemented for redis results of clients which makes for
         /// very convenient access in some basic cases.
         ///
         /// This allows you to use nicer syntax for some common operations.
@@ -133,8 +134,9 @@ macro_rules! implement_commands {
             )*
         }
 
-        /// Implements common redis commands over asynchronous connections. This
-        /// allows you to send commands straight to a connection or client.
+        /// Implements common redis commands over asynchronous connections.
+        ///
+        /// This allows you to send commands straight to a connection or client.
         ///
         /// This allows you to use nicer syntax for some common operations.
         /// For instance this code:
