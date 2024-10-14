@@ -1,8 +1,9 @@
 #![cfg(feature = "acl")]
 
+use std::collections::HashSet;
+
 use redis::acl::{AclInfo, Rule};
 use redis::{Commands, Value};
-use std::collections::HashSet;
 
 mod support;
 use crate::support::*;
