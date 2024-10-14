@@ -1,9 +1,8 @@
 #![cfg(feature = "acl")]
 
-use std::collections::HashSet;
-
 use redis::acl::{AclInfo, Rule};
 use redis::{Commands, Value};
+use std::collections::HashSet;
 
 mod support;
 use crate::support::*;
@@ -152,4 +151,18 @@ fn test_acl_log() {
     let logs: Vec<Value> = con.acl_log(1).expect("Got logs");
     assert_eq!(logs.len(), 0);
     assert_eq!(con.acl_log_reset(), Ok(()));
+}
+
+#[test]
+fn test_acl_dryrun() {
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+    assert!(redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("VIRGINIA")
+        .arg("+SET")
+        .arg("~*")
+        .exec(&mut con)
+        .is_ok());
+    assert_eq!(con.acl_dryrun("VIRGINIA", "SET", &["foo", "bar"]), Ok(()));
 }
