@@ -32,9 +32,9 @@ pub struct ConnectionManagerConfig {
     /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
     max_delay: Option<u64>,
     /// The new connection will time out operations after `response_timeout` has passed.
-    response_timeout: std::time::Duration,
+    response_timeout: Option<std::time::Duration>,
     /// Each connection attempt to the server will time out after `connection_timeout`.
-    connection_timeout: std::time::Duration,
+    connection_timeout: Option<std::time::Duration>,
     /// sender channel for push values
     push_sender: Option<AsyncPushSender>,
 }
@@ -43,8 +43,8 @@ impl ConnectionManagerConfig {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
     const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
-    const DEFAULT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
-    const DEFAULT_CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::MAX;
+    const DEFAULT_RESPONSE_TIMEOUT: Option<std::time::Duration> = None;
+    const DEFAULT_CONNECTION_TIMEOUT: Option<std::time::Duration> = None;
 
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
@@ -83,7 +83,7 @@ impl ConnectionManagerConfig {
         mut self,
         duration: std::time::Duration,
     ) -> ConnectionManagerConfig {
-        self.response_timeout = duration;
+        self.response_timeout = Some(duration);
         self
     }
 
@@ -92,7 +92,7 @@ impl ConnectionManagerConfig {
         mut self,
         duration: std::time::Duration,
     ) -> ConnectionManagerConfig {
-        self.connection_timeout = duration;
+        self.connection_timeout = Some(duration);
         self
     }
 
@@ -277,9 +277,13 @@ impl ConnectionManager {
             retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
         }
 
-        let mut connection_config = AsyncConnectionConfig::new()
-            .set_connection_timeout(config.connection_timeout)
-            .set_response_timeout(config.response_timeout);
+        let mut connection_config = AsyncConnectionConfig::new();
+        if let Some(connection_timeout) = config.connection_timeout {
+            connection_config = connection_config.set_connection_timeout(connection_timeout);
+        }
+        if let Some(response_timeout) = config.response_timeout {
+            connection_config = connection_config.set_response_timeout(response_timeout);
+        }
 
         if let Some(push_sender) = config.push_sender.clone() {
             check_resp3!(
