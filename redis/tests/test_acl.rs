@@ -158,8 +158,8 @@ fn test_acl_log() {
 fn test_acl_dryrun() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let key: Option<String> = con.get("foo").unwrap();
-    assert_eq!(key, None);
+    let v: Option<String> = con.get("foo").unwrap();
+    assert_eq!(v, None);
     assert!(redis::cmd("ACL")
         .arg("SETUSER")
         .arg("VIRGINIA")
@@ -168,6 +168,6 @@ fn test_acl_dryrun() {
         .exec(&mut con)
         .is_ok());
     assert_eq!(con.acl_dryrun("VIRGINIA", "SET", &["foo", "bar"]), Ok(()));
-    let key: String = con.get("foo").unwrap();
-    assert_eq!(key, "bar");
+    let v: String = con.get("foo").unwrap();
+    assert_eq!(v, "bar");
 }
