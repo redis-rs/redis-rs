@@ -1112,7 +1112,7 @@ implement_commands! {
     /// Simulate the execution of a given command by a given user.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-    fn acl_dryrun<K: ToRedisArgs, C: ToRedisArgs, A: ToRedisArgs>(username: K, command: C, args: &'a [A]) {
+    fn acl_dryrun<K: ToRedisArgs, C: ToRedisArgs, A: ToRedisArgs>(username: K, command: C, args: A) {
         cmd("ACL").arg("DRYRUN").arg(username).arg(command).arg(args)
     }
 
