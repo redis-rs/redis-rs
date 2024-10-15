@@ -157,6 +157,10 @@ fn test_acl_log() {
 #[test]
 fn test_acl_dryrun() {
     let ctx = TestContext::new();
+    if ctx.get_version() < (7, 0, 0) {
+        return;
+    }
+
     let mut con = ctx.connection();
     let v: Option<String> = con.get("foo").unwrap();
     assert_eq!(v, None);
@@ -167,7 +171,11 @@ fn test_acl_dryrun() {
         .arg("~*")
         .exec(&mut con)
         .is_ok());
-    assert_eq!(con.acl_dryrun("VIRGINIA", "SET", &["foo", "bar"]), Ok(()));
+
+    assert_eq!(
+        con.acl_dryrun(b"VIRGINIA", String::from("SET"), &["foo", "bar"]),
+        Ok(())
+    );
     let v: String = con.get("foo").unwrap();
     assert_eq!(v, "bar");
 }
