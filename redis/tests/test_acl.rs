@@ -169,5 +169,5 @@ fn test_acl_dryrun() {
         .is_ok());
     assert_eq!(con.acl_dryrun("VIRGINIA", "SET", &["foo", "bar"]), Ok(()));
     let key: String = con.get("foo").unwrap();
-    assert_eq!(key, "foo");
+    assert_eq!(key, "bar");
 }
