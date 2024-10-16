@@ -220,7 +220,7 @@ implement_commands! {
     }
 
     /// Returns message.
-    fn echo<K: ToRedisArgs>(message: K){
+    fn echo<K: ToRedisArgs>(message: K) {
         cmd("ECHO").arg(message)
     }
 
