@@ -219,7 +219,7 @@ implement_commands! {
         cmd("EXISTS").arg(key)
     }
 
-    /// Returns message
+    /// Returns message.
     fn echo<K: ToRedisArgs>(message: K){
         cmd("ECHO").arg(message)
     }
