@@ -2015,4 +2015,23 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_auth_command() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("alice")
+            .arg("on")
+            .arg(">p1pp0")
+            .arg("+ACL")
+            .exec(&mut con)
+            .unwrap();
+
+        assert_eq!(con.auth(Some("alice"), "p1pp0"), Ok(()));
+        let r: String = con.acl_whoami().unwrap();
+        assert_eq!(r, "alice");
+    }
 }
