@@ -219,6 +219,11 @@ implement_commands! {
         cmd("EXISTS").arg(key)
     }
 
+    /// Returns message
+    fn echo<K: ToRedisArgs>(message: K){
+        cmd("ECHO").arg(message)
+    }
+
     /// Determine the type of a key.
     fn key_type<K: ToRedisArgs>(key: K) {
         cmd("TYPE").arg(key)
