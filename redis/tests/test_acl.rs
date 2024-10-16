@@ -153,3 +153,34 @@ fn test_acl_log() {
     assert_eq!(logs.len(), 0);
     assert_eq!(con.acl_log_reset(), Ok(()));
 }
+
+#[test]
+fn test_acl_dryrun() {
+    let ctx = TestContext::new();
+    if ctx.get_version() < (7, 0, 0) {
+        return;
+    }
+
+    let mut con = ctx.connection();
+
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("VIRGINIA")
+        .arg("+SET")
+        .arg("~*")
+        .exec(&mut con)
+        .unwrap();
+
+    assert_eq!(
+        con.acl_dryrun(b"VIRGINIA", String::from("SET"), &["foo", "bar"]),
+        Ok(())
+    );
+
+    let res: String = con
+        .acl_dryrun(b"VIRGINIA", String::from("GET"), "foo")
+        .unwrap();
+    assert_eq!(
+        res,
+        "User VIRGINIA has no permissions to run the 'get' command"
+    );
+}
