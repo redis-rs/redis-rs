@@ -162,20 +162,25 @@ fn test_acl_dryrun() {
     }
 
     let mut con = ctx.connection();
-    let v: Option<String> = con.get("foo").unwrap();
-    assert_eq!(v, None);
-    assert!(redis::cmd("ACL")
+
+    redis::cmd("ACL")
         .arg("SETUSER")
         .arg("VIRGINIA")
         .arg("+SET")
         .arg("~*")
         .exec(&mut con)
-        .is_ok());
+        .unwrap();
 
     assert_eq!(
         con.acl_dryrun(b"VIRGINIA", String::from("SET"), &["foo", "bar"]),
         Ok(())
     );
-    let v: String = con.get("foo").unwrap();
-    assert_eq!(v, "bar");
+
+    let res: String = con
+        .acl_dryrun(b"VIRGINIA", String::from("GET"), "foo")
+        .unwrap();
+    assert_eq!(
+        res,
+        "User VIRGINIA has no permissions to run the 'get' command"
+    );
 }
