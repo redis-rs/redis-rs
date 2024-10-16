@@ -2015,4 +2015,12 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_client_help() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let res: Vec<String> = con.client_help().expect("Got client-help manual");
+        assert!(!res.is_empty());
+    }
 }
