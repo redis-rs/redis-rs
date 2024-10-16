@@ -2015,4 +2015,13 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_echo_command() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let hw: String = con.echo("Hello World!").unwrap();
+        assert_eq!(hw, "Hello World!");
+    }
 }
