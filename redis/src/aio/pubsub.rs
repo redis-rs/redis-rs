@@ -36,12 +36,29 @@ struct PipelineMessage {
     output: RequestCompletedSignal,
 }
 
-/// A sender to an async task passing the messages to a `Stream + Sink`.
+/// The sink part of a split async Pubsub.
+///
+/// The sink is used to subscribe and unsubscribe from
+/// channels.
+/// The stream part is independent from the sink,
+/// and dropping the sink doesn't cause the stream part to
+/// stop working.
+/// The sink isn't independent from the stream - dropping
+/// the stream will cause the sink to return errors on requests.
 pub struct PubSubSink {
     sender: UnboundedSender<PipelineMessage>,
 }
 
 pin_project! {
+    /// The stream part of a split async Pubsub.
+    ///
+    /// The sink is used to subscribe and unsubscribe from
+    /// channels.
+    /// The stream part is independent from the sink,
+    /// and dropping the sink doesn't cause the stream part to
+    /// stop working.
+    /// The sink isn't independent from the stream - dropping
+    /// the stream will cause the sink to return errors on requests.
     pub struct PubSubStream {
         #[pin]
         receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,

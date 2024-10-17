@@ -403,6 +403,15 @@ impl RedisServer {
     }
 }
 
+pub fn get_listener_on_free_port() -> TcpListener {
+    let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(addr).unwrap();
+    socket.listen(1).unwrap();
+    TcpListener::from(socket)
+}
+
 /// Finds a random open port available for listening at, by spawning a TCP server with
 /// port "zero" (which prompts the OS to just use any available port). Between calling
 /// this function and trying to bind to this port, the port may be given to another
@@ -410,12 +419,7 @@ impl RedisServer {
 /// mostly okay).
 pub fn get_random_available_port() -> u16 {
     for _ in 0..10000 {
-        let addr = &"127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-        socket.set_reuse_address(true).unwrap();
-        socket.bind(addr).unwrap();
-        socket.listen(1).unwrap();
-        let listener = TcpListener::from(socket);
+        let listener = get_listener_on_free_port();
         let port = listener.local_addr().unwrap().port();
         if port < 55535 {
             return port;

@@ -559,6 +559,10 @@ pub struct Connection {
 
     /// This is used to manage Push messages in RESP3 mode.
     push_sender: Option<SyncPushSender>,
+
+    /// The number of messages that are expected to be returned from the server,
+    /// but the user no longer waits for - answers for requests that already returned a transient error.
+    messages_to_skip: usize,
 }
 
 /// Represents a pubsub connection.
@@ -1148,6 +1152,7 @@ fn setup_connection(
         pubsub: false,
         protocol: connection_info.protocol,
         push_sender: None,
+        messages_to_skip: 0,
     };
 
     if execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, true))?
@@ -1364,68 +1369,79 @@ impl Connection {
         })
     }
 
-    /// Fetches a single response from the connection.
-    fn read_response(&mut self) -> RedisResult<Value> {
-        let result = match self.con {
-            ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+    fn close_connection(&mut self) {
+        // Notify the PushManager that the connection was lost
+        self.send_disconnect();
+        match self.con {
+            ActualConnection::Tcp(ref mut connection) => {
+                let _ = connection.reader.shutdown(net::Shutdown::Both);
+                connection.open = false;
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
-                let reader = &mut boxed_tls_connection.reader;
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+            ActualConnection::TcpNativeTls(ref mut connection) => {
+                let _ = connection.reader.shutdown();
+                connection.open = false;
             }
             #[cfg(feature = "tls-rustls")]
-            ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
-                let reader = &mut boxed_tls_connection.reader;
-                let result = self.parser.parse_value(reader);
-                self.try_send(&result);
-                result
+            ActualConnection::TcpRustls(ref mut connection) => {
+                let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
+                connection.open = false;
             }
             #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
-                let result = self.parser.parse_value(sock);
-                self.try_send(&result);
-                result
-            }
-        };
-        // shutdown connection on protocol error
-        if let Err(e) = &result {
-            let shutdown = match e.as_io_error() {
-                Some(e) => e.kind() == io::ErrorKind::UnexpectedEof,
-                None => false,
-            };
-            if shutdown {
-                // Notify the PushManager that the connection was lost
-                self.send_disconnect();
-                match self.con {
-                    ActualConnection::Tcp(ref mut connection) => {
-                        let _ = connection.reader.shutdown(net::Shutdown::Both);
-                        connection.open = false;
-                    }
-                    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-                    ActualConnection::TcpNativeTls(ref mut connection) => {
-                        let _ = connection.reader.shutdown();
-                        connection.open = false;
-                    }
-                    #[cfg(feature = "tls-rustls")]
-                    ActualConnection::TcpRustls(ref mut connection) => {
-                        let _ = connection.reader.get_mut().shutdown(net::Shutdown::Both);
-                        connection.open = false;
-                    }
-                    #[cfg(unix)]
-                    ActualConnection::Unix(ref mut connection) => {
-                        let _ = connection.sock.shutdown(net::Shutdown::Both);
-                        connection.open = false;
-                    }
-                }
+            ActualConnection::Unix(ref mut connection) => {
+                let _ = connection.sock.shutdown(net::Shutdown::Both);
+                connection.open = false;
             }
         }
-        result
+    }
+
+    /// Fetches a single response from the connection.
+    fn read_response(&mut self) -> RedisResult<Value> {
+        loop {
+            let result = match self.con {
+                ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
+                    self.parser.parse_value(reader)
+                }
+                #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+                ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
+                    let reader = &mut boxed_tls_connection.reader;
+                    self.parser.parse_value(reader)
+                }
+                #[cfg(feature = "tls-rustls")]
+                ActualConnection::TcpRustls(ref mut boxed_tls_connection) => {
+                    let reader = &mut boxed_tls_connection.reader;
+                    self.parser.parse_value(reader)
+                }
+                #[cfg(unix)]
+                ActualConnection::Unix(UnixConnection { ref mut sock, .. }) => {
+                    self.parser.parse_value(sock)
+                }
+            };
+            self.try_send(&result);
+
+            let Err(err) = &result else {
+                if self.messages_to_skip > 0 {
+                    self.messages_to_skip -= 1;
+                    continue;
+                }
+                return result;
+            };
+            let Some(io_error) = err.as_io_error() else {
+                if self.messages_to_skip > 0 {
+                    self.messages_to_skip -= 1;
+                    continue;
+                }
+                return result;
+            };
+            // shutdown connection on protocol error
+            if io_error.kind() == io::ErrorKind::UnexpectedEof {
+                self.close_connection();
+            } else {
+                self.messages_to_skip += 1;
+            }
+
+            return result;
+        }
     }
 
     /// Sets sender channel for push values.

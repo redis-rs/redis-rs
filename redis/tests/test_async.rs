@@ -81,6 +81,7 @@ mod basic_async {
     }
 
     fn test_with_all_connection_types_with_context<Fut, T>(
+        setup: impl Fn(),
         test: impl Fn(TestContext, Wrapper) -> Fut,
         runtime: RuntimeType,
     ) where
@@ -88,6 +89,7 @@ mod basic_async {
     {
         block_on_all(
             async move {
+                setup();
                 let ctx = TestContext::new();
                 let conn = ctx.async_connection().await.unwrap().into();
                 test(ctx, conn).await.unwrap();
@@ -107,11 +109,15 @@ mod basic_async {
         .unwrap();
     }
 
-    fn test_with_all_connection_types<Fut, T>(test: impl Fn(Wrapper) -> Fut, runtime: RuntimeType)
-    where
+    fn test_with_all_connection_types_with_setup<Fut, T>(
+        setup: impl Fn(),
+        test: impl Fn(Wrapper) -> Fut,
+        runtime: RuntimeType,
+    ) where
         Fut: Future<Output = redis::RedisResult<T>>,
     {
         test_with_all_connection_types_with_context(
+            setup,
             |_ctx, conn| async {
                 let res = test(conn).await;
                 // we drop it here in order to ensure that the context isn't dropped before `test` completes.
@@ -120,6 +126,13 @@ mod basic_async {
             },
             runtime,
         )
+    }
+
+    fn test_with_all_connection_types<Fut, T>(test: impl Fn(Wrapper) -> Fut, runtime: RuntimeType)
+    where
+        Fut: Future<Output = redis::RedisResult<T>>,
+    {
+        test_with_all_connection_types_with_setup(|| {}, test, runtime)
     }
 
     #[rstest]
@@ -143,6 +156,36 @@ mod basic_async {
                     .await;
                 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
                 result
+            },
+            runtime,
+        );
+    }
+
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    fn test_works_with_paused_time(#[case] runtime: RuntimeType) {
+        test_with_all_connection_types_with_setup(
+            || tokio::time::pause(),
+            |mut conn| async move {
+                // Force the Redis command to take enough time that we have to park the task.  If
+                // any timeouts have been created, Tokio will then auto-advance the paused clock to
+                // the timeout's expiry time, resulting in a "timed out" error.
+                redis::cmd("EVAL")
+                    .arg(
+                        r#"
+                          local function now()
+                             local t = redis.call("TIME")
+                             return t[1] + 0.000001 * t[2]
+                          end
+                          local t = now() + 0.5
+                          while now() < t do end
+                        "#,
+                    )
+                    .arg(0)
+                    .exec_async(&mut conn)
+                    .await
+                    .unwrap();
+                Ok(())
             },
             runtime,
         );
@@ -504,7 +547,10 @@ mod basic_async {
         );
     }
 
-    fn test_async_scanning(batch_size: usize, runtime: RuntimeType) {
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_async_scanning(#[values(2, 1000)] batch_size: usize, #[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
                 let mut unseen = std::collections::HashSet::new();
@@ -527,13 +573,11 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(x) = iter.next_item().await {
-                    // type inference limitations
-                    let x: usize = x;
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&x));
                 }
 
-                assert_eq!(unseen.len(), 0);
+                assert!(unseen.is_empty());
                 Ok(())
             },
             runtime,
@@ -543,15 +587,90 @@ mod basic_async {
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn test_async_scanning_big_batch(#[case] runtime: RuntimeType) {
-        test_async_scanning(1000, runtime)
+    fn test_async_scanning_iterative(
+        #[values(2, 1000)] batch_size: usize,
+        #[case] runtime: RuntimeType,
+    ) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                let mut unseen = std::collections::HashSet::new();
+
+                for x in 0..batch_size {
+                    let key_name = format!("key.{}", x);
+                    redis::cmd("SET")
+                        .arg(key_name.clone())
+                        .arg("foo")
+                        .exec_async(&mut con)
+                        .await?;
+                    unseen.insert(key_name.clone());
+                }
+
+                let mut iter = redis::cmd("SCAN")
+                    .cursor_arg(0)
+                    .arg("MATCH")
+                    .arg("key*")
+                    .arg("COUNT")
+                    .arg(1)
+                    .clone()
+                    .iter_async::<String>(&mut con)
+                    .await
+                    .unwrap();
+
+                while let Some(item) = iter.next_item().await {
+                    // if this assertion fails, too many items were returned by the iterator.
+                    assert!(unseen.remove(&item));
+                }
+
+                assert!(unseen.is_empty());
+                Ok(())
+            },
+            runtime,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn test_async_scanning_small_batch(#[case] runtime: RuntimeType) {
-        test_async_scanning(2, runtime)
+    fn test_async_scanning_stream(
+        #[values(2, 1000)] batch_size: usize,
+        #[case] runtime: RuntimeType,
+    ) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                let mut unseen = std::collections::HashSet::new();
+
+                for x in 0..batch_size {
+                    let key_name = format!("key.{}", x);
+                    redis::cmd("SET")
+                        .arg(key_name.clone())
+                        .arg("foo")
+                        .exec_async(&mut con)
+                        .await?;
+                    unseen.insert(key_name.clone());
+                }
+
+                let iter = redis::cmd("SCAN")
+                    .cursor_arg(0)
+                    .arg("MATCH")
+                    .arg("key*")
+                    .arg("COUNT")
+                    .arg(1)
+                    .clone()
+                    .iter_async::<String>(&mut con)
+                    .await
+                    .unwrap();
+
+                let collection: Vec<String> = iter.collect().await;
+                for item in collection {
+                    // if this assertion fails, too many items were returned by the iterator.
+                    assert!(unseen.remove(&item));
+                }
+
+                assert!(unseen.is_empty());
+                Ok(())
+            },
+            runtime,
+        );
     }
 
     #[rstest]
