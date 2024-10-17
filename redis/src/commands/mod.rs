@@ -1044,6 +1044,11 @@ implement_commands! {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
+    /// Returns the ID of the current connection.
+    fn client_id<>() {
+        cmd("CLIENT").arg("ID")
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
