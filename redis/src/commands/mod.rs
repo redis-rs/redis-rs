@@ -1044,7 +1044,7 @@ implement_commands! {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
-    /// Returns a helpful text describing the different subcommands.
+    /// Returns a helpful text describing the different CLIENT subcommands.
     fn client_help<>() {
         cmd("CLIENT").arg("HELP")
     }
