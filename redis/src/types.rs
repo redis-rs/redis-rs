@@ -1562,7 +1562,7 @@ impl_to_redis_args_for_set!(
     where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
 );
 
-/// @note: Redis cannot store empty sets so the application has to
+/// @note: Redis cannot store empty maps so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
 macro_rules! impl_to_redis_args_for_map {
