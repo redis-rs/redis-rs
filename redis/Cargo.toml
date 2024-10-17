@@ -90,6 +90,9 @@ log = { version = "0.4", optional = true }
 # Optional uuid support
 uuid = { version = "1.10.0", optional = true }
 
+# Optional hashbrown support
+hashbrown = { version = "0.14", optional = true }
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
@@ -119,6 +122,7 @@ bigdecimal = ["dep:bigdecimal"]
 num-bigint = []
 uuid = ["dep:uuid"]
 disable-client-setinfo = []
+hashbrown = ["dep:hashbrown"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead

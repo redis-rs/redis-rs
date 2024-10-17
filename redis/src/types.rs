@@ -2,7 +2,6 @@
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use num_bigint::BigInt;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -1521,96 +1520,96 @@ deref_to_write_redis_args_impl! {
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs
-    for std::collections::HashSet<T, S>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+macro_rules! impl_to_redis_args_for_set {
+    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+) ) => {
+        impl< $($TypeParam),+ > ToRedisArgs for $SetType
+        where
+            $($WhereClause)+
+        {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                ToRedisArgs::make_arg_iter_ref(self.iter(), out)
+            }
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
+            fn num_of_args(&self) -> usize {
+                self.len()
+            }
+        }
+    };
 }
 
-/// @note: Redis cannot store empty sets so the application has to
-/// check whether the set is empty and if so, not attempt to use that
-/// result
+impl_to_redis_args_for_set!(
+    for <T, S> std::collections::HashSet<T, S>,
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+);
+
+impl_to_redis_args_for_set!(
+    for <T> std::collections::BTreeSet<T>,
+    where (T: ToRedisArgs + Hash + Eq + Ord)
+);
+
+#[cfg(feature = "hashbrown")]
+impl_to_redis_args_for_set!(
+    for <T, S> hashbrown::HashSet<T, S>,
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+);
+
 #[cfg(feature = "ahash")]
-impl<T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default> ToRedisArgs for ahash::AHashSet<T, S> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+impl_to_redis_args_for_set!(
+    for <T, S> ahash::AHashSet<T, S>,
+    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+);
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
-
-/// @note: Redis cannot store empty sets so the application has to
+/// @note: Redis cannot store empty maps so the application has to
 /// check whether the set is empty and if so, not attempt to use that
 /// result
-impl<T: ToRedisArgs + Hash + Eq + Ord> ToRedisArgs for BTreeSet<T> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::make_arg_iter_ref(self.iter(), out)
-    }
+macro_rules! impl_to_redis_args_for_map {
+    (
+        $(#[$meta:meta])*
+        for <$($TypeParam:ident),+> $MapType:ty,
+        where ($($WhereClause:tt)+)
+    ) => {
+        $(#[$meta])*
+        impl< $($TypeParam),+ > ToRedisArgs for $MapType
+        where
+            $($WhereClause)+
+        {
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                for (key, value) in self {
+                    // Ensure key and value produce a single argument each
+                    assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
+                    key.write_redis_args(out);
+                    value.write_redis_args(out);
+                }
+            }
 
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
-
-/// this flattens BTreeMap into something that goes well with HMSET
-/// @note: Redis cannot store empty sets so the application has to
-/// check whether the set is empty and if so, not attempt to use that
-/// result
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs for BTreeMap<T, V> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self {
-            // otherwise things like HMSET will simply NOT work
-            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
-
-            key.write_redis_args(out);
-            value.write_redis_args(out);
+            fn num_of_args(&self) -> usize {
+                self.len()
+            }
         }
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
+    };
 }
+impl_to_redis_args_for_map!(
+    for <K, V> std::collections::HashMap<K, V>,
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+);
 
-impl<T: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs> ToRedisArgs
-    for std::collections::HashMap<T, V>
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        for (key, value) in self {
-            assert!(key.num_of_args() <= 1 && value.num_of_args() <= 1);
+impl_to_redis_args_for_map!(
+    /// this flattens BTreeMap into something that goes well with HMSET
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+);
 
-            key.write_redis_args(out);
-            value.write_redis_args(out);
-        }
-    }
-
-    fn num_of_args(&self) -> usize {
-        self.len()
-    }
-}
+#[cfg(feature = "hashbrown")]
+impl_to_redis_args_for_map!(
+    for <K, V> hashbrown::HashMap<K, V>,
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+);
 
 macro_rules! to_redis_args_for_tuple {
     () => ();
@@ -2076,149 +2075,114 @@ from_vec_from_redis_value!(<T> Vec<T>);
 from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
 from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default> FromRedisValue
-    for std::collections::HashMap<K, V, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        let v = get_inner_value(v);
-        match *v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .as_map_iter()
-                .ok_or_else(|| {
-                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
-                })?
-                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                .collect(),
+macro_rules! impl_from_redis_value_for_map {
+    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+)) => {
+        impl< $($TypeParam),+ > FromRedisValue for $MapType
+        where
+            $($WhereClause)+
+        {
+            fn from_redis_value(v: &Value) -> RedisResult<$MapType> {
+                let v = get_inner_value(v);
+                match *v {
+                    Value::Nil => Ok(Default::default()),
+                    _ => v
+                        .as_map_iter()
+                        .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .map(|(k, v)| {
+                            Ok((from_redis_value(k)?, from_redis_value(v)?))
+                        })
+                        .collect(),
+                }
+            }
+
+            fn from_owned_redis_value(v: Value) -> RedisResult<$MapType> {
+                let v = get_owned_inner_value(v);
+                match v {
+                    Value::Nil => Ok(Default::default()),
+                    _ => v
+                        .into_map_iter()
+                        .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .map(|(k, v)| {
+                            Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
+                        })
+                        .collect(),
+                }
+            }
         }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashMap<K, V, S>> {
-        let v = get_owned_inner_value(v);
-        match v {
-            Value::Nil => Ok(Default::default()),
-            _ => v
-                .into_map_iter()
-                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                .collect(),
-        }
-    }
+    };
 }
+
+impl_from_redis_value_for_map!(
+    for <K, V, S> std::collections::HashMap<K, V, S>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
+);
+
+#[cfg(feature = "hashbrown")]
+impl_from_redis_value_for_map!(
+    for <K, V, S> hashbrown::HashMap<K, V, S>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
+);
 
 #[cfg(feature = "ahash")]
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for ahash::AHashMap<K, V> {
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashMap<K, V>> {
-        let v = get_inner_value(v);
-        match *v {
-            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
-            _ => v
-                .as_map_iter()
-                .ok_or_else(|| {
-                    invalid_type_error_inner!(v, "Response type not hashmap compatible")
-                })?
-                .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-                .collect(),
+impl_from_redis_value_for_map!(
+    for <K, V> ahash::AHashMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
+);
+
+impl_from_redis_value_for_map!(
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+);
+
+macro_rules! impl_from_redis_value_for_set {
+    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+)) => {
+        impl< $($TypeParam),+ > FromRedisValue for $SetType
+        where
+            $($WhereClause)+
+        {
+            fn from_redis_value(v: &Value) -> RedisResult<$SetType> {
+                let v = get_inner_value(v);
+                let items = v
+                    .as_sequence()
+                    .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                items.iter().map(|item| from_redis_value(item)).collect()
+            }
+
+            fn from_owned_redis_value(v: Value) -> RedisResult<$SetType> {
+                let v = get_owned_inner_value(v);
+                let items = v
+                    .into_sequence()
+                    .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                items
+                    .into_iter()
+                    .map(|item| from_owned_redis_value(item))
+                    .collect()
+            }
         }
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashMap<K, V>> {
-        let v = get_owned_inner_value(v);
-        match v {
-            Value::Nil => Ok(ahash::AHashMap::with_hasher(Default::default())),
-            _ => v
-                .into_map_iter()
-                .map_err(|v| invalid_type_error_inner!(v, "Response type not hashmap compatible"))?
-                .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-                .collect(),
-        }
-    }
+    };
 }
 
-impl<K: FromRedisValue + Eq + Hash, V: FromRedisValue> FromRedisValue for BTreeMap<K, V>
-where
-    K: Ord,
-{
-    fn from_redis_value(v: &Value) -> RedisResult<BTreeMap<K, V>> {
-        let v = get_inner_value(v);
-        v.as_map_iter()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
-            .map(|(k, v)| Ok((from_redis_value(k)?, from_redis_value(v)?)))
-            .collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<BTreeMap<K, V>> {
-        let v = get_owned_inner_value(v);
-        v.into_map_iter()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not btreemap compatible"))?
-            .map(|(k, v)| Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?)))
-            .collect()
-    }
-}
+impl_from_redis_value_for_set!(
+    for <T, S> std::collections::HashSet<T, S>,
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
+);
 
-impl<T: FromRedisValue + Eq + Hash, S: BuildHasher + Default> FromRedisValue
-    for std::collections::HashSet<T, S>
-{
-    fn from_redis_value(v: &Value) -> RedisResult<std::collections::HashSet<T, S>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<std::collections::HashSet<T, S>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
+impl_from_redis_value_for_set!(
+    for <T> std::collections::BTreeSet<T>,
+    where (T: FromRedisValue + Eq + Ord)
+);
+
+#[cfg(feature = "hashbrown")]
+impl_from_redis_value_for_set!(
+    for <T, S> hashbrown::HashSet<T, S>,
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
+);
 
 #[cfg(feature = "ahash")]
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for ahash::AHashSet<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<ahash::AHashSet<T>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-
-    fn from_owned_redis_value(v: Value) -> RedisResult<ahash::AHashSet<T>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not hashset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
-
-impl<T: FromRedisValue + Eq + Hash> FromRedisValue for BTreeSet<T>
-where
-    T: Ord,
-{
-    fn from_redis_value(v: &Value) -> RedisResult<BTreeSet<T>> {
-        let v = get_inner_value(v);
-        let items = v
-            .as_sequence()
-            .ok_or_else(|| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
-        items.iter().map(|item| from_redis_value(item)).collect()
-    }
-    fn from_owned_redis_value(v: Value) -> RedisResult<BTreeSet<T>> {
-        let v = get_owned_inner_value(v);
-        let items = v
-            .into_sequence()
-            .map_err(|v| invalid_type_error_inner!(v, "Response type not btreeset compatible"))?;
-        items
-            .into_iter()
-            .map(|item| from_owned_redis_value(item))
-            .collect()
-    }
-}
+impl_from_redis_value_for_set!(
+    for <T> ahash::AHashSet<T>,
+    where (T: FromRedisValue + Eq + Hash)
+);
 
 impl FromRedisValue for Value {
     fn from_redis_value(v: &Value) -> RedisResult<Value> {
