@@ -893,6 +893,29 @@ mod basic {
     }
 
     #[test]
+    fn test_pubsub_handles_timeout() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Connection for subscriber api
+        let mut pubsub_con = ctx.connection();
+        pubsub_con
+            .set_read_timeout(Some(Duration::from_millis(5)))
+            .unwrap();
+        let mut pubsub_con = pubsub_con.as_pubsub();
+
+        pubsub_con.subscribe("foo").unwrap();
+        let err = pubsub_con.get_message().unwrap_err();
+        assert!(err.is_timeout());
+
+        let _: () = con.publish("foo", "bar").unwrap();
+
+        let msg = pubsub_con.get_message().unwrap();
+        assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+        assert_eq!(msg.get_payload(), Ok("bar".to_string()));
+    }
+
+    #[test]
     fn pub_sub_subscription_to_multiple_channels() {
         let ctx = TestContext::new();
         let mut conn = ctx.connection();

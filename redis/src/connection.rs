@@ -1217,7 +1217,7 @@ pub trait ConnectionLike {
 
     /// Returns the connection status.
     ///
-    /// The connection is open until any `read_response` call received an
+    /// The connection is open until any `read` call received an
     /// invalid response from the server (most likely a closed or dropped
     /// connection, otherwise a Redis protocol error). When using unix
     /// sockets the connection is open until writing a command failed with a
@@ -1245,7 +1245,7 @@ impl Connection {
     /// Fetches a single response from the connection.  This is useful
     /// if used in combination with `send_packed_command`.
     pub fn recv_response(&mut self) -> RedisResult<Value> {
-        self.read_response()
+        self.read(true)
     }
 
     /// Sets the write timeout for the connection.
@@ -1395,8 +1395,9 @@ impl Connection {
         }
     }
 
-    /// Fetches a single response from the connection.
-    fn read_response(&mut self) -> RedisResult<Value> {
+    /// Fetches a single message from the connection. If the message is a response,
+    /// increment `messages_to_skip` if it wasn't received before a timeout.
+    fn read(&mut self, is_response: bool) -> RedisResult<Value> {
         loop {
             let result = match self.con {
                 ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
@@ -1436,7 +1437,7 @@ impl Connection {
             // shutdown connection on protocol error
             if io_error.kind() == io::ErrorKind::UnexpectedEof {
                 self.close_connection();
-            } else {
+            } else if is_response {
                 self.messages_to_skip += 1;
             }
 
@@ -1475,7 +1476,7 @@ impl ConnectionLike for Connection {
             return Ok(Value::Nil);
         }
         loop {
-            match self.read_response()? {
+            match self.read(true)? {
                 Value::Push {
                     kind: _kind,
                     data: _data,
@@ -1491,7 +1492,7 @@ impl ConnectionLike for Connection {
 
         self.send_bytes(cmd)?;
         loop {
-            match self.read_response()? {
+            match self.read(true)? {
                 Value::Push {
                     kind: _kind,
                     data: _data,
@@ -1520,7 +1521,7 @@ impl ConnectionLike for Connection {
             // We need to keep processing the rest of the responses in that case,
             // so bailing early with `?` would not be correct.
             // See: https://github.com/redis-rs/redis-rs/issues/436
-            let response = self.read_response();
+            let response = self.read(true);
             match response {
                 Ok(Value::ServerError(err)) => {
                     if idx < offset {
@@ -1683,7 +1684,7 @@ impl<'a> PubSub<'a> {
             return Ok(msg);
         }
         loop {
-            if let Some(msg) = Msg::from_owned_value(self.con.recv_response()?) {
+            if let Some(msg) = Msg::from_owned_value(self.con.read(false)?) {
                 return Ok(msg);
             } else {
                 continue;
