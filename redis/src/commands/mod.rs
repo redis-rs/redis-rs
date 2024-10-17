@@ -1044,6 +1044,12 @@ implement_commands! {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
+    /// Performs a full reset of the connection's server-side context,
+    /// mimicking the effect of disconnecting and reconnecting again.
+    fn reset<>() {
+        Cmd::new().arg("RESET")
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
