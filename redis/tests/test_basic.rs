@@ -2015,4 +2015,12 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_reset() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let res: String = con.reset().unwrap();
+        assert_eq!(res, "RESET");
+    }
 }
