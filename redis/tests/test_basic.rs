@@ -2020,7 +2020,6 @@ mod basic {
     fn test_client_id() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
-        let num: i64 = con.client_id().unwrap();
-        assert_eq!(num * 0, 0);
+        let _num: i64 = con.client_id().unwrap();
     }
 }
