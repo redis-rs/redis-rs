@@ -1044,6 +1044,11 @@ implement_commands! {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
+    /// Ask the server to close the connection.
+    fn quit<>() {
+        Cmd::new().arg("QUIT")
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
