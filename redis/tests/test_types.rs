@@ -345,15 +345,16 @@ mod types {
 
         type Hm = HashMap<String, i32>;
 
+        let test_arr = vec![
+            Value::BulkString("a".into()),
+            Value::BulkString("1".into()),
+            Value::BulkString("b".into()),
+            Value::BulkString("2".into()),
+            Value::BulkString("c".into()),
+            Value::BulkString("3".into()),
+        ];
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let v: Result<Hm, _> = parse_mode.parse_redis_value(Value::Array(vec![
-                Value::BulkString("a".into()),
-                Value::BulkString("1".into()),
-                Value::BulkString("b".into()),
-                Value::BulkString("2".into()),
-                Value::BulkString("c".into()),
-                Value::BulkString("3".into()),
-            ]));
+            let v: Result<Hm, _> = parse_mode.parse_redis_value(Value::Array(test_arr.clone()));
             let mut e: Hm = HashMap::new();
             e.insert("a".into(), 1);
             e.insert("b".into(), 2);
@@ -362,14 +363,8 @@ mod types {
 
             type Hasher = BuildHasherDefault<FnvHasher>;
             type HmHasher = HashMap<String, i32, Hasher>;
-            let v: Result<HmHasher, _> = parse_mode.parse_redis_value(Value::Array(vec![
-                Value::BulkString("a".into()),
-                Value::BulkString("1".into()),
-                Value::BulkString("b".into()),
-                Value::BulkString("2".into()),
-                Value::BulkString("c".into()),
-                Value::BulkString("3".into()),
-            ]));
+            let v: Result<HmHasher, _> =
+                parse_mode.parse_redis_value(Value::Array(test_arr.clone()));
 
             let fnv = Hasher::default();
             let mut e: HmHasher = HashMap::with_hasher(fnv);

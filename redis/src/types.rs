@@ -2076,7 +2076,7 @@ from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
 from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
 macro_rules! impl_from_redis_value_for_map {
-    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+), err_msg: $err_msg:expr ) => {
+    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+)) => {
         impl< $($TypeParam),+ > FromRedisValue for $MapType
         where
             $($WhereClause)+
@@ -2087,7 +2087,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .as_map_iter()
-                        .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?
+                        .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_redis_value(k)?, from_redis_value(v)?))
                         })
@@ -2101,7 +2101,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .into_map_iter()
-                        .map_err(|v| invalid_type_error_inner!(v, $err_msg))?
+                        .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
                         })
@@ -2114,32 +2114,28 @@ macro_rules! impl_from_redis_value_for_map {
 
 impl_from_redis_value_for_map!(
     for <K, V, S> std::collections::HashMap<K, V, S>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
-    err_msg: "Response type not std::collections::HashMap compatible"
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_from_redis_value_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
-    err_msg: "Response type not hashbrown::HashMap compatible"
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_map!(
     for <K, V> ahash::AHashMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue),
-    err_msg: "Response type not hashmap compatible"
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
 );
 
 impl_from_redis_value_for_map!(
     for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue),
-    err_msg: "Response type not std::collections::BTreeMap compatible"
+    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
 );
 
 macro_rules! impl_from_redis_value_for_set {
-    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+), err_msg: $err_msg:expr ) => {
+    (for <$($TypeParam:ident),+> $SetType:ty, where ($($WhereClause:tt)+)) => {
         impl< $($TypeParam),+ > FromRedisValue for $SetType
         where
             $($WhereClause)+
@@ -2148,7 +2144,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_inner_value(v);
                 let items = v
                     .as_sequence()
-                    .ok_or_else(|| invalid_type_error_inner!(v, $err_msg))?;
+                    .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items.iter().map(|item| from_redis_value(item)).collect()
             }
 
@@ -2156,7 +2152,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_owned_inner_value(v);
                 let items = v
                     .into_sequence()
-                    .map_err(|v| invalid_type_error_inner!(v, $err_msg))?;
+                    .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items
                     .into_iter()
                     .map(|item| from_owned_redis_value(item))
@@ -2168,28 +2164,24 @@ macro_rules! impl_from_redis_value_for_set {
 
 impl_from_redis_value_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default),
-    err_msg: "Response type not std::collections::HashSet compatible"
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
 );
 
 impl_from_redis_value_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where (T: FromRedisValue + Eq + Ord),
-    err_msg: "Response type not std::collections::BTreeSet compatible"
+    where (T: FromRedisValue + Eq + Ord)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_from_redis_value_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default),
-    err_msg: "Response type not hashbrown::HashSet compatible"
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
 );
 
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_set!(
     for <T> ahash::AHashSet<T>,
-    where (T: FromRedisValue + Eq + Hash),
-    err_msg: "Response type not hashset compatible"
+    where (T: FromRedisValue + Eq + Hash)
 );
 
 impl FromRedisValue for Value {
