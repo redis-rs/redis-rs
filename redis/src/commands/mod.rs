@@ -1044,6 +1044,11 @@ implement_commands! {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
+    /// Returns the name of the current connection as set by CLIENT SETNAME.
+    fn client_getname<>() {
+        cmd("CLIENT").arg("GETNAME")
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
