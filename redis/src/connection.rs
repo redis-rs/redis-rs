@@ -1194,6 +1194,18 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisResult<Vec<Value>>;
 
+    /// An alternative to `req_packed_commands` that can be used if you want
+    /// to handle partial results.
+    /// This is useful for identifying failed commands and taking the necessary
+    /// actions only.
+    #[doc(hidden)]
+    fn req_packed_commands_raw(
+        &mut self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>>;
+
     /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         let pcmd = cmd.get_packed_command();
@@ -1556,6 +1568,65 @@ impl ConnectionLike for Connection {
         first_err.map_or(Ok(rv), Err)
     }
 
+    fn req_packed_commands_raw(
+        &mut self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        if self.pubsub {
+            self.exit_pubsub()?;
+        }
+        self.send_bytes(cmd)?;
+        let mut rv = vec![];
+        let mut first_err = None;
+        let mut count = count;
+        let mut idx = 0;
+        while idx < (offset + count) {
+            // When processing a transaction, some responses may be errors.
+            // We need to keep processing the rest of the responses in that case,
+            // so bailing early with `?` would not be correct.
+            // See: https://github.com/redis-rs/redis-rs/issues/436
+            let response = self.read_response();
+            match response {
+                Ok(Value::ServerError(err)) => {
+                    if idx < offset {
+                        if first_err.is_none() {
+                            first_err = Some(err.into());
+                        }
+                    } else {
+                        rv.push(Ok(Value::ServerError(err)));
+                    }
+                }
+                Ok(item) => {
+                    // RESP3 can insert push data between command replies
+                    if let Value::Push {
+                        kind: _kind,
+                        data: _data,
+                    } = item
+                    {
+                        // if that is the case we have to extend the loop and handle push data
+                        count += 1;
+                    } else if idx >= offset {
+                        rv.push(Ok(item));
+                    }
+                }
+                Err(err) => {
+                    if idx < offset {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    } else {
+                        rv.push(Err(err));
+                    }
+                }
+            }
+            idx += 1;
+        }
+
+        first_err.map_or(Ok(rv), Err)
+    }
+
     fn get_db(&self) -> i64 {
         self.db
     }
@@ -1585,6 +1656,15 @@ where
         count: usize,
     ) -> RedisResult<Vec<Value>> {
         self.deref_mut().req_packed_commands(cmd, offset, count)
+    }
+
+    fn req_packed_commands_raw(
+        &mut self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        self.deref_mut().req_packed_commands_raw(cmd, offset, count)
     }
 
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {

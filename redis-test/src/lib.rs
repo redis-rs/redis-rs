@@ -245,6 +245,40 @@ impl ConnectionLike for MockRedisConnection {
         next_cmd.responses
     }
 
+    fn req_packed_commands_raw(
+        &mut self,
+        cmd: &[u8],
+        _offset: usize,
+        _count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        let mut commands = self.commands.lock().unwrap();
+        let next_cmd = commands.pop_front().ok_or_else(|| {
+            RedisError::from((
+                ErrorKind::ClientError,
+                "TEST",
+                "unexpected command".to_owned(),
+            ))
+        })?;
+
+        if cmd != next_cmd.cmd_bytes {
+            return Err(RedisError::from((
+                ErrorKind::ClientError,
+                "TEST",
+                format!(
+                    "unexpected command: expected={}, actual={}",
+                    String::from_utf8(next_cmd.cmd_bytes)
+                        .unwrap_or_else(|_| "decode error".to_owned()),
+                    String::from_utf8(Vec::from(cmd)).unwrap_or_else(|_| "decode error".to_owned()),
+                ),
+            )));
+        }
+
+        match next_cmd.responses {
+            Err(e) => Err(e),
+            Ok(vc) => Ok(vc.into_iter().map(|v| Ok(v)).collect()),
+        }
+    }
+
     fn get_db(&self) -> i64 {
         0
     }

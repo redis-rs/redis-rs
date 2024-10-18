@@ -2571,3 +2571,119 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
 }
+
+/// A shortcut to wrap each element in tuple with `RedisResult<>`
+#[macro_export]
+macro_rules! redis_result_tuple {
+    () => (());
+    ( $($name:ident),+ ) => (($(RedisResult<$name>,)+));
+    ($($name:ty),+) => (
+        ($(RedisResult<$name>,)+)
+    );
+}
+
+pub trait FromRedisResultVec: Sized {
+    fn from_redis_result_vec(r: RedisResult<Vec<RedisResult<Value>>>) -> RedisResult<Self>;
+}
+
+macro_rules! from_redis_result_vec_for_tuple {
+    () => ({};);
+    ($($name:ident),+) => (
+        impl<$($name: FromRedisValue),+> FromRedisResultVec for redis_result_tuple!($($name),+) {
+            #[allow(non_snake_case, unused_variables)]
+            fn from_redis_result_vec(r: RedisResult<Vec<RedisResult<Value>>>) -> RedisResult<redis_result_tuple!($($name),*)> {
+                let items = r?;
+
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+                if items.len() != n {
+                    fail!((
+                        ErrorKind::TypeError,
+                        "Array response of wrong dimension."
+                    ));
+                }
+
+                // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                // postfix increment :)
+                let mut i = 0;
+                Ok((
+                    $(
+                        {
+                            let $name = ();
+                            FromRedisValue::from_redis_value(items[{ i += 1; i - 1 }].as_ref().unwrap())
+                        },
+                    )*
+                ))
+            }
+        }
+
+        #[allow(non_snake_case, unused_variables)]
+        impl<$($name: FromRedisValue),+> FromRedisResultVec for ($($name,)+) {
+            fn from_redis_result_vec(r: RedisResult<Vec<RedisResult<Value>>>) -> RedisResult<($($name,)+)> {
+                let mut items = r?;
+
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+                if items.len() != n {
+                    fail!((
+                        ErrorKind::TypeError,
+                        "Array response of wrong dimension."
+                    ));
+                }
+
+                // this is pretty ugly too.  The { i += 1; i - 1} is rust's
+                // postfix increment :)
+                let mut i = 0;
+                Ok((
+                    $(
+                        {
+                            let $name = ();
+                            let x = items[{ i += 1; i - 1 }].as_ref();
+                            if x.is_err() {
+                                return Err(items.remove({i+=1;i-1}).err().unwrap());
+                            }
+                            FromRedisValue::from_redis_value(x.unwrap())?
+                        },
+                    )*
+                ))
+            }
+        }
+
+        from_redis_result_vec_for_tuple_peel!($($name),+);
+    );
+}
+
+macro_rules! from_redis_result_vec_for_tuple_peel {
+    () => {};
+    ($name:ident) => {};
+    ($name:ident, $($other:ident),*) => {
+        from_redis_result_vec_for_tuple!($($other),*);
+    }
+}
+
+from_redis_result_vec_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12 }
+
+impl<T: FromRedisValue> FromRedisResultVec for Vec<T> {
+    fn from_redis_result_vec(r: RedisResult<Vec<RedisResult<Value>>>) -> RedisResult<Self> {
+        r?.into_iter().map(|x| FromRedisValue::from_owned_redis_value(x?)).collect()
+    }
+}
+
+impl<T: FromRedisValue, const N: usize> FromRedisResultVec for [T; N] {
+    fn from_redis_result_vec(r: RedisResult<Vec<RedisResult<Value>>>) -> RedisResult<Self> {
+        let mut y = vec![];
+        let mut iter = r?.into_iter();
+        while let Some(e) = iter.next() {
+            y.push(FromRedisValue::from_owned_redis_value(e?)?);
+        }
+        match y.try_into() {
+            Ok(array) => { Ok(array) },
+            Err(_) => { 
+                fail!((
+                    ErrorKind::TypeError,
+                    "Response has wrong dimension",
+                ));
+            },
+        }
+    }
+}

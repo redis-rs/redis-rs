@@ -559,6 +559,32 @@ impl MultiplexedConnection {
             _ => Ok(vec![value]),
         }
     }
+
+    /// Sends multiple already encoded (packed) command into the TCP socket
+    /// and reads `count` responses from it.  This is used to implement
+    /// pipelining.
+    pub async fn send_packed_commands_raw(
+        &mut self,
+        cmd: &crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        let result = self
+            .pipeline
+            .send_recv(
+                cmd.get_packed_pipeline(),
+                Some((offset, count)),
+                self.response_timeout,
+            )
+            .await
+            .map_err(|err| err.unwrap_or_else(closed_connection_error));
+
+        let value = result?;
+        match value {
+            Value::Array(values) => Ok(values.into_iter().map(|v| Ok(v)).collect()),
+            _ => Ok(vec![Ok(value)]),
+        }
+    }
 }
 
 impl ConnectionLike for MultiplexedConnection {
@@ -573,6 +599,15 @@ impl ConnectionLike for MultiplexedConnection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
+    }
+
+    fn req_packed_commands_raw<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<'a, Vec<RedisResult<Value>>> {
+        (async move { self.send_packed_commands_raw(cmd, offset, count).await }).boxed()
     }
 
     fn get_db(&self) -> i64 {

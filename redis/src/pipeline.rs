@@ -4,6 +4,7 @@ use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
     from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+    FromRedisResultVec,
 };
 
 /// Represents a redis command pipeline.
@@ -92,6 +93,14 @@ impl Pipeline {
         )?)
     }
 
+    fn execute_pipelined_raw(&self, con: &mut dyn ConnectionLike) -> RedisResult<Vec<RedisResult<Value>>> {
+        self.make_pipeline_results_raw(con.req_packed_commands_raw(
+            &encode_pipeline(&self.commands, false),
+            0,
+            self.commands.len(),
+        )?)
+    }
+
     fn execute_transaction(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
         let mut resp = con.req_packed_commands(
             &encode_pipeline(&self.commands, true),
@@ -102,6 +111,26 @@ impl Pipeline {
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Array(items)) => self.make_pipeline_results(items),
+            _ => fail!((
+                ErrorKind::ResponseError,
+                "Invalid response when parsing multi response"
+            )),
+        }
+    }
+
+    fn execute_transaction_raw(&self, con: &mut dyn ConnectionLike) -> RedisResult<Vec<RedisResult<Value>>> {
+        let mut resp = con.req_packed_commands_raw(
+            &encode_pipeline(&self.commands, true),
+            self.commands.len() + 1,
+            1,
+        )?;
+
+        match resp.pop() {
+            Some(Ok(Value::Nil)) => Ok(vec![]),
+            Some(Ok(Value::Array(items))) => {
+                let x = items.into_iter().map(|v| Ok(v)).collect();
+                self.make_pipeline_results_raw(x)
+            },
             _ => fail!((
                 ErrorKind::ResponseError,
                 "Invalid response when parsing multi response"
@@ -145,6 +174,32 @@ impl Pipeline {
         from_owned_redis_value(value.extract_error()?)
     }
 
+    /// An alternative to `query_raw` converting `Vec<RedisResult<Value>>` into more appropriate types,
+    /// like 
+    #[inline]
+    pub fn query_v2<T: FromRedisResultVec>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
+        FromRedisResultVec::from_redis_result_vec(self.query_raw(con))
+    }
+
+    /// An alternative to `query` returning all command results including failing ones.
+    #[inline]
+    pub fn query_raw(&self, con: &mut dyn ConnectionLike) -> RedisResult<Vec<RedisResult<Value>>> {
+        if !con.supports_pipelining() {
+            fail!((
+                ErrorKind::ResponseError,
+                "This connection does not support pipelining."
+            ));
+        }
+        let value = if self.commands.is_empty() {
+            Ok(vec![])
+        } else if self.transaction_mode {
+            self.execute_transaction_raw(con)
+        } else {
+            self.execute_pipelined_raw(con)
+        };
+        value
+    }
+
     #[cfg(feature = "aio")]
     async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
     where
@@ -154,6 +209,17 @@ impl Pipeline {
             .req_packed_commands(self, 0, self.commands.len())
             .await?;
         self.make_pipeline_results(value)
+    }
+
+    #[cfg(feature = "aio")]
+    async fn execute_pipelined_async_raw<C>(&self, con: &mut C) -> RedisResult<Vec<RedisResult<Value>>>
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        let value = con
+            .req_packed_commands_raw(self, 0, self.commands.len())
+            .await?;
+        self.make_pipeline_results_raw(value)
     }
 
     #[cfg(feature = "aio")]
@@ -167,6 +233,28 @@ impl Pipeline {
         match resp.pop() {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Array(items)) => self.make_pipeline_results(items),
+            _ => Err((
+                ErrorKind::ResponseError,
+                "Invalid response when parsing multi response",
+            )
+                .into()),
+        }
+    }
+
+    #[cfg(feature = "aio")]
+    async fn execute_transaction_async_raw<C>(&self, con: &mut C) -> RedisResult<Vec<RedisResult<Value>>>
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        let mut resp = con
+            .req_packed_commands_raw(self, self.commands.len() + 1, 1)
+            .await?;
+        match resp.pop() {
+            Some(Ok(Value::Nil)) => Ok(vec![]),
+            Some(Ok(Value::Array(items))) => {
+                let x = items.into_iter().map(|v| Ok(v)).collect();
+                self.make_pipeline_results_raw(x)
+            },
             _ => Err((
                 ErrorKind::ResponseError,
                 "Invalid response when parsing multi response",
@@ -190,6 +278,34 @@ impl Pipeline {
             self.execute_pipelined_async(con).await?
         };
         from_owned_redis_value(value.extract_error()?)
+    }
+
+    /// Async version of `query_v2`.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn query_async_v2<T: FromRedisResultVec>(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<T> {
+        let x = self.query_async_raw(con).await;
+        FromRedisResultVec::from_redis_result_vec(x)
+    }
+
+    /// Async version of `query_raw`.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn query_async_raw(
+        &self,
+        con: &mut impl crate::aio::ConnectionLike,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        let value = if self.commands.is_empty() {
+            Ok(vec![])
+        } else if self.transaction_mode {
+            self.execute_transaction_async_raw(con).await
+        } else {
+            self.execute_pipelined_async_raw(con).await
+        };
+        value
     }
 
     /// This is a shortcut to `query()` that does not return a value and
@@ -338,6 +454,16 @@ macro_rules! implement_pipeline_commands {
                     }
                 }
                 Ok(Value::Array(rv))
+            }
+
+            fn make_pipeline_results_raw(&self, resp: Vec<RedisResult<Value>>) -> RedisResult<Vec<RedisResult<Value>>> {
+                let mut rv = Vec::with_capacity(resp.len() - self.ignored_commands.len());
+                for (idx, result) in resp.into_iter().enumerate() {
+                    if !self.ignored_commands.contains(&idx) {
+                        rv.push(result);
+                    }
+                }
+                Ok(rv)
             }
         }
 
