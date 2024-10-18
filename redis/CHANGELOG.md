@@ -1,3 +1,17 @@
+### 0.27.5 (2024-10-18)
+
+#### Changes & Bug fixes
+
+* Allow disabling timeouts in `ConnectionManager` ([#1372](https://github.com/redis-rs/redis-rs/pull/1372) @dcreager)
+* Fix timeouts throwing Pubsub::get_message. ([#1379](https://github.com/redis-rs/redis-rs/pull/1379))
+* implement command `DRYRUN` ([#1373](https://github.com/redis-rs/redis-rs/pull/1373) @ArtemIsmagilov)
+* Support for `hashbrown::HashMap` and `hashbrown::HashSet`  ([#1359](https://github.com/redis-rs/redis-rs/pull/1359) @feelingsonice)
+* impl CLIENT GETNAME ([#1380](https://github.com/redis-rs/redis-rs/pull/1380) @ArtemIsmagilov)
+
+#### CI improvements
+
+* Increase test CI action timeout. ([#1370](https://github.com/redis-rs/redis-rs/pull/1370))
+
 ### 0.27.4 (2024-10-09)
 
 #### Changes & Bug fixes
