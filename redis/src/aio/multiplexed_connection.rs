@@ -100,11 +100,8 @@ pin_project! {
 }
 
 fn send_push(push_sender: &Option<AsyncPushSender>, info: PushInfo) {
-    match push_sender {
-        Some(sender) => {
-            let _ = sender.send(info);
-        }
-        None => {}
+    if let Some(sender) = push_sender {
+        let _ = sender.send(info);
     };
 }
 
