@@ -825,6 +825,16 @@ impl ConnectionLike for Client {
             .req_packed_commands(cmd, offset, count)
     }
 
+    fn req_packed_commands_raw(
+        &mut self,
+        cmd: &[u8],
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<RedisResult<Value>>> {
+        self.get_connection()?
+            .req_packed_commands_raw(cmd, offset, count)
+    }
+
     fn get_db(&self) -> i64 {
         self.connection_info.redis.db
     }

@@ -306,6 +306,71 @@ where
         .boxed()
     }
 
+    fn req_packed_commands_raw<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<'a, Vec<RedisResult<Value>>> {
+        (async move {
+            if self.pubsub {
+                self.exit_pubsub().await?;
+            }
+
+            self.buf.clear();
+            cmd.write_packed_pipeline(&mut self.buf);
+            self.con.write_all(&self.buf).await?;
+
+            let mut first_err = None;
+
+            for _ in 0..offset {
+                let response = self.read_response().await;
+                match response {
+                    Ok(Value::ServerError(err)) => {
+                        if first_err.is_none() {
+                            first_err = Some(err.into());
+                        }
+                    }
+                    Err(err) => {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut rv = Vec::with_capacity(count);
+            let mut count = count;
+            let mut idx = 0;
+            while idx < count {
+                let response = self.read_response().await;
+                match response {
+                    Ok(item) => {
+                        // RESP3 can insert push data between command replies
+                        if let Value::Push { .. } = item {
+                            // if that is the case we have to extend the loop and handle push data
+                            count += 1;
+                        } else {
+                            rv.push(Ok(item));
+                        }
+                    }
+                    Err(err) => {
+                        rv.push(Err(err))
+                    }
+                }
+                idx += 1;
+            }
+
+            if let Some(err) = first_err {
+                Err(err)
+            } else {
+                Ok(rv)
+            }
+        })
+        .boxed()
+    }
+
     fn get_db(&self) -> i64 {
         self.db
     }
