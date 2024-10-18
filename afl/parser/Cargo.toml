@@ -2,7 +2,7 @@
 name = "fuzz-target-parser"
 version = "0.1.0"
 authors = ["redis-rs developers"]
-edition = "2018"
+edition = "2021"
 
 [[bin]]
 name = "fuzz-target"
