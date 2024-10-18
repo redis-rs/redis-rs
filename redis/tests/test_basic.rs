@@ -2038,4 +2038,11 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_client_id() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let _num: i64 = con.client_id().unwrap();
+    }
 }
