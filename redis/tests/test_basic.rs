@@ -2038,4 +2038,13 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_client_setname() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        assert_eq!(con.client_setname("connection-name"), Ok(()));
+        let res: String = redis::cmd("CLIENT").arg("GETNAME").query(&mut con).unwrap();
+        assert_eq!(res, "connection-name");
+    }
 }
