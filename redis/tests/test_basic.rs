@@ -2038,4 +2038,12 @@ mod basic {
             .unwrap();
         assert!(info.contains("db=5"));
     }
+
+    #[test]
+    fn test_quit() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let _: () = con.quit().unwrap();
+        assert_eq!(con.check_connection(), false);
+    }
 }
