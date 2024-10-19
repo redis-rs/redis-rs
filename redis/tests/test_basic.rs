@@ -2043,7 +2043,6 @@ mod basic {
     fn test_client_getname() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
-
         redis::cmd("CLIENT")
             .arg("SETNAME")
             .arg("connection-name")
@@ -2051,5 +2050,12 @@ mod basic {
             .unwrap();
         let res: String = con.client_getname().unwrap();
         assert_eq!(res, "connection-name");
+    }
+
+    #[test]
+    fn test_client_id() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let _num: i64 = con.client_id().unwrap();
     }
 }
