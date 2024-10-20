@@ -1054,6 +1054,11 @@ implement_commands! {
         cmd("CLIENT").arg("ID")
     }
 
+    /// Authenticates the current connection
+    fn auth<K: ToRedisArgs, P: ToRedisArgs>(username: Option<K>, password: P) {
+        cmd("AUTH").arg(username).arg(password)
+    }
+
     // ACL commands
 
     /// When Redis is configured to use an ACL file (with the aclfile
