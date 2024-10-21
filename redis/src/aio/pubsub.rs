@@ -52,8 +52,7 @@ pub struct PubSubSink {
 pin_project! {
     /// The stream part of a split async Pubsub.
     ///
-    /// The sink is used to subscribe and unsubscribe from
-    /// channels.
+    /// The stream is used to receive messages from the server.
     /// The stream part is independent from the sink,
     /// and dropping the sink doesn't cause the stream part to
     /// stop working.
@@ -293,28 +292,70 @@ impl PubSubSink {
         }
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let (mut sink, mut stream) = client.get_async_pubsub().await?.split();
+    /// sink.subscribe(&["channel_1", "channel_2", "channel_3"]).await?;
+    /// sink.subscribe("channel_4").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name);
         self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel or channels.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let (mut sink, mut stream) = client.get_async_pubsub().await?.split();
+    /// sink.subscribe(&["channel_1", "channel_2", "channel_3"]).await?;
+    /// sink.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// sink.unsubscribe("channel_3").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel_name);
         self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to a new channel with pattern or patterns.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let (mut sink, mut stream) = client.get_async_pubsub().await?.split();
+    /// sink.psubscribe(&["channel_*", "cha**el"]).await?;
+    /// sink.psubscribe("pat***").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern);
         self.send_recv(cmd.get_packed_command()).await.map(|_| ())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern or patterns.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let (mut sink, mut stream) = client.get_async_pubsub().await?.split();
+    /// sink.psubscribe(&["channel_*", "cha**el", "cha**el_3"]).await?;
+    /// sink.punsubscribe(&["channel_*", "cha**el"]).await?;
+    /// sink.punsubscribe("cha**el_3").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
@@ -339,6 +380,10 @@ impl PubSubSink {
 }
 
 /// A connection dedicated to pubsub messages.
+///
+/// If the user wants to be able to subscribe or ping the connection
+/// while concurrently receiving messages, the `split` function allows
+/// the user to split the pubsub to a sink and a stream.
 pub struct PubSub {
     sink: PubSubSink,
     stream: PubSubStream,
@@ -397,8 +442,11 @@ where
 }
 
 impl PubSub {
-    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `ConnectionInfo`
+    /// Constructs a new `PubSub` out of a `AsyncRead + AsyncWrite` object
+    /// and a `ConnectionInfo`.
+    ///
+    /// This function is exposed for users who want to be able to use their own data stream.
+    /// Most users would be better served with [crate::Client::get_async_pubsub]
     pub async fn new<C>(connection_info: &RedisConnectionInfo, stream: C) -> RedisResult<Self>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
@@ -420,22 +468,64 @@ impl PubSub {
         Ok(con)
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let mut pubsub = client.get_async_pubsub().await?;
+    /// pubsub.subscribe(&["channel_1", "channel_2", "channel_3"]).await?;
+    /// pubsub.subscribe("channel_4").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.subscribe(channel_name).await
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel or channels.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let mut pubsub = client.get_async_pubsub().await?;
+    /// pubsub.subscribe(&["channel_1", "channel_2", "channel_3"]).await?;
+    /// pubsub.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// pubsub.unsubscribe("channel_3").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.unsubscribe(channel_name).await
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to a new channel with pattern or patterns.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let mut pubsub = client.get_async_pubsub().await?;
+    /// pubsub.psubscribe(&["channel_*", "cha**el"]).await?;
+    /// pubsub.psubscribe("pat***").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.psubscribe(channel_pattern).await
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern or patterns.
+    ///
+    /// ```rust,no_run
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// let mut pubsub = client.get_async_pubsub().await?;
+    /// pubsub.psubscribe(&["channel_*", "cha**el", "cha**el_3"]).await?;
+    /// pubsub.punsubscribe(&["channel_*", "cha**el"]).await?;
+    /// pubsub.punsubscribe("cha**el_3").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         self.sink.punsubscribe(channel_pattern).await
     }
