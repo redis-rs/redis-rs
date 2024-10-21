@@ -278,6 +278,13 @@ mod basic {
     }
 
     #[test]
+    fn test_select_index_command() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        assert_eq!(con.select(0), Ok(()));
+    }
+
+    #[test]
     fn test_hash_ops() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();

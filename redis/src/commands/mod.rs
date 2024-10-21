@@ -169,6 +169,11 @@ implement_commands! {
         cmd("MSET").arg(items)
     }
 
+    /// Select the logical database having the specified zero-based numeric index.
+    fn select<I: ToRedisArgs>(index: I) {
+        cmd("SELECT").arg(index)
+    }
+
     /// Sets multiple keys to their values.
     fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
         cmd("MSET").arg(items)
