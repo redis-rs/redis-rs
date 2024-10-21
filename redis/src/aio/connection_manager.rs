@@ -6,18 +6,15 @@ use crate::{
     AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
+use backon::{ExponentialBuilder, Retryable};
 use futures::{
     future::{self, Shared},
     FutureExt,
 };
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
-use tokio_retry2::{
-    strategy::{jitter, ExponentialBackoff},
-    MapErr, Retry,
-};
 
-/// ConnectionManager is the configuration for reconnect mechanism and request timing
+/// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
 #[derive(Clone, Debug)]
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
@@ -153,8 +150,7 @@ pub struct ConnectionManager {
     connection: Arc<ArcSwap<SharedRedisFuture<MultiplexedConnection>>>,
 
     runtime: Runtime,
-    retry_strategy: ExponentialBackoff,
-    number_of_retries: usize,
+    retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
 }
 
@@ -271,10 +267,13 @@ impl ConnectionManager {
         // Create a MultiplexedConnection and wait for it to be established
         let runtime = Runtime::locate();
 
-        let mut retry_strategy =
-            ExponentialBackoff::from_millis(config.exponent_base).factor(config.factor);
+        let mut retry_strategy = ExponentialBuilder::default()
+            .with_factor(config.factor as f32)
+            .with_max_times(config.number_of_retries)
+            .with_jitter();
         if let Some(max_delay) = config.max_delay {
-            retry_strategy = retry_strategy.max_delay(std::time::Duration::from_millis(max_delay));
+            retry_strategy =
+                retry_strategy.with_max_delay(std::time::Duration::from_millis(max_delay));
         }
 
         let mut connection_config = AsyncConnectionConfig::new();
@@ -293,13 +292,8 @@ impl ConnectionManager {
             connection_config = connection_config.set_push_sender(push_sender);
         }
 
-        let connection = Self::new_connection(
-            client.clone(),
-            retry_strategy.clone(),
-            config.number_of_retries,
-            &connection_config,
-        )
-        .await?;
+        let connection =
+            Self::new_connection(client.clone(), retry_strategy, &connection_config).await?;
 
         // Wrap the connection in an `ArcSwap` instance for fast atomic access
         Ok(Self {
@@ -308,7 +302,6 @@ impl ConnectionManager {
                 future::ok(connection).boxed().shared(),
             )),
             runtime,
-            number_of_retries: config.number_of_retries,
             retry_strategy,
             connection_config,
         })
@@ -316,19 +309,19 @@ impl ConnectionManager {
 
     async fn new_connection(
         client: Client,
-        exponential_backoff: ExponentialBackoff,
-        number_of_retries: usize,
+        exponential_backoff: ExponentialBuilder,
         connection_config: &AsyncConnectionConfig,
     ) -> RedisResult<MultiplexedConnection> {
-        let retry_strategy = exponential_backoff.map(jitter).take(number_of_retries);
         let connection_config = connection_config.clone();
-        Retry::spawn(retry_strategy, || async {
+        let get_conn = || async {
             client
                 .get_multiplexed_async_connection_with_config(&connection_config)
                 .await
-                .map_transient_err()
-        })
-        .await
+        };
+        get_conn
+            .retry(exponential_backoff)
+            .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
+            .await
     }
 
     /// Reconnect and overwrite the old connection.
@@ -337,17 +330,10 @@ impl ConnectionManager {
     /// when the connection loss was detected.
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
         let client = self.client.clone();
-        let retry_strategy = self.retry_strategy.clone();
-        let number_of_retries = self.number_of_retries;
+        let retry_strategy = self.retry_strategy;
         let connection_config = self.connection_config.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let con = Self::new_connection(
-                client,
-                retry_strategy,
-                number_of_retries,
-                &connection_config,
-            )
-            .await?;
+            let con = Self::new_connection(client, retry_strategy, &connection_config).await?;
             Ok(con)
         }
         .boxed()
