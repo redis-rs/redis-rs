@@ -1638,39 +1638,61 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    fn cache_messages_until_received_response(&mut self, cmd: &mut Cmd) -> RedisResult<()> {
-        if self.con.protocol != ProtocolVersion::RESP2 {
-            cmd.set_no_response(true);
-        }
-        let mut response = cmd.query(self.con)?;
+    fn cache_messages_until_received_response(
+        &mut self,
+        cmd: &mut Cmd,
+        is_sub_unsub: bool,
+    ) -> RedisResult<Value> {
+        let ignore_response = self.con.protocol != ProtocolVersion::RESP2 && is_sub_unsub;
+        cmd.set_no_response(ignore_response);
+
+        self.con.send_packed_command(&cmd.get_packed_command())?;
+
         loop {
-            if let Some(msg) = Msg::from_owned_value(response) {
+            let response = self.con.recv_response()?;
+            if let Some(msg) = Msg::from_value(&response) {
                 self.waiting_messages.push_back(msg);
             } else {
-                return Ok(());
+                return Ok(response);
             }
-            response = self.con.recv_response()?;
         }
     }
 
     /// Subscribes to a new channel.
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel))
+        self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
+        Ok(())
     }
 
     /// Subscribes to a new channel with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel))
+        self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel), true)?;
+        Ok(())
     }
 
     /// Unsubscribes from a channel.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel))
+        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel), true)?;
+        Ok(())
     }
 
     /// Unsubscribes from a channel with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel))
+        self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel), true)?;
+        Ok(())
+    }
+
+    /// Sends a ping with a message to the server
+    pub fn ping_message<T: FromRedisValue>(&mut self, message: impl ToRedisArgs) -> RedisResult<T> {
+        from_owned_redis_value(
+            self.cache_messages_until_received_response(cmd("PING").arg(message), false)?,
+        )
+    }
+    /// Sends a ping to the server
+    pub fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
+        from_owned_redis_value(
+            self.cache_messages_until_received_response(&mut cmd("PING"), false)?,
+        )
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
