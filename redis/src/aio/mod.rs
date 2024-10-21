@@ -83,6 +83,14 @@ pub trait ConnectionLike {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>>;
 
+    #[doc(hidden)]
+    fn req_packed_commands_raw<'a>(
+        &'a mut self,
+        cmd: &'a crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisFuture<'a, Vec<RedisResult<Value>>>;
+
     /// Returns the database this connection is bound to.  Note that this
     /// information might be unreliable because it's initially cached and
     /// also might be incorrect if the connection like object is not
