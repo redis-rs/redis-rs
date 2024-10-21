@@ -462,6 +462,10 @@ impl TestContext {
         Self::with_modules_and_tls(modules, mtls_enabled, None)
     }
 
+    pub fn new_with_addr(addr: ConnectionAddr) -> Self {
+        Self::with_modules_addr_and_tls(&[], false, addr, None)
+    }
+
     fn with_modules_and_tls(
         modules: &[Module],
         mtls_enabled: bool,
@@ -469,7 +473,15 @@ impl TestContext {
     ) -> Self {
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
+        Self::with_modules_addr_and_tls(modules, mtls_enabled, addr, tls_files)
+    }
 
+    fn with_modules_addr_and_tls(
+        modules: &[Module],
+        mtls_enabled: bool,
+        addr: ConnectionAddr,
+        tls_files: Option<TlsFilePaths>,
+    ) -> Self {
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
