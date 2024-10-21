@@ -31,6 +31,10 @@ pub mod tokio;
 
 mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
+#[cfg(feature = "connection-manager")]
+mod pubsub_manager;
+#[cfg(feature = "connection-manager")]
+pub use pubsub_manager::*;
 
 /// Represents the ability of connecting via TCP or via Unix socket
 #[async_trait]
