@@ -1485,7 +1485,7 @@ mod basic_async {
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
         use redis::ProtocolVersion;
 
-        let max_delay_between_attempts = 50;
+        let max_delay_between_attempts = 2;
 
         let mut config = redis::aio::ConnectionManagerConfig::new()
             .set_factor(10000)
@@ -1498,6 +1498,7 @@ mod basic_async {
         let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
+        let protocol = ctx.protocol;
         block_on_all(
             async move {
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1508,21 +1509,29 @@ mod basic_async {
                     redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
                         .await
                         .unwrap();
-                kill_client_async(&mut manager, &ctx.client).await.unwrap();
-
+                let addr = ctx.server.client_addr().clone();
+                drop(ctx);
                 let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
                 // we expect a connection failure error.
                 assert!(result.unwrap_err().is_unrecoverable_error());
-                if ctx.protocol != ProtocolVersion::RESP2 {
+                if protocol != ProtocolVersion::RESP2 {
                     assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
                 }
 
-                let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-                assert_eq!(result, redis::Value::Okay);
-                if ctx.protocol != ProtocolVersion::RESP2 {
-                    assert!(rx.try_recv().is_err());
+                let _server = RedisServer::new_with_addr_and_modules(addr, &[], false);
+
+                for _ in 0..5 {
+                    let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {
+                        sleep(Duration::from_millis(3).into()).await;
+                        continue;
+                    };
+                    assert_eq!(result, redis::Value::Okay);
+                    if protocol != ProtocolVersion::RESP2 {
+                        assert!(rx.try_recv().is_err());
+                    }
+                    return Ok(());
                 }
-                Ok(())
+                panic!("failed to reconnect");
             },
             runtime,
         )
@@ -1532,7 +1541,6 @@ mod basic_async {
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    #[cfg(feature = "connection-manager")]
     fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking(
         #[case] runtime: RuntimeType,
     ) {
