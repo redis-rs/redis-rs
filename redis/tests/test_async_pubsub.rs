@@ -19,14 +19,162 @@ mod async_pubsub {
 
     use crate::support::*;
 
+    macro_rules! impl_sink_func_for {
+        ($name: ident, $type: ident) => {
+            #[allow(dead_code)]
+            async fn $name(&mut self, arg: impl ToRedisArgs) -> RedisResult<()> {
+                match self {
+                    $type::PubSub(conn) => conn.$name(arg).await,
+                    $type::Manager(conn) => conn.$name(arg).await,
+                }
+            }
+        };
+    }
+
+    macro_rules! impl_sink_func {
+        ($name: ident) => {
+            impl Wrapper {
+                impl_sink_func_for!($name, Wrapper);
+            }
+            impl WrapperSink {
+                impl_sink_func_for!($name, WrapperSink);
+            }
+        };
+    }
+
+    impl_sink_func!(subscribe);
+    impl_sink_func!(unsubscribe);
+    impl_sink_func!(psubscribe);
+    impl_sink_func!(punsubscribe);
+
+    enum Wrapper {
+        PubSub(PubSub),
+        Manager(PubSubManager),
+    }
+
+    enum WrapperSink {
+        PubSub(PubSubSink),
+        Manager(PubSubManagerSink),
+    }
+
+    pin_project_lite::pin_project! {
+        #[project = WrapperStreamProj]
+        enum WrapperStream {
+            PubSub{#[pin]stream:PubSubStream},
+            Manager{#[pin]stream:PubSubManagerStream},
+        }
+    }
+
+    impl From<PubSub> for Wrapper {
+        fn from(conn: PubSub) -> Self {
+            Self::PubSub(conn)
+        }
+    }
+
+    impl From<PubSubManager> for Wrapper {
+        fn from(conn: PubSubManager) -> Self {
+            Self::Manager(conn)
+        }
+    }
+
+    impl WrapperSink {
+        async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
+            match self {
+                WrapperSink::PubSub(pubsub) => pubsub.ping().await,
+                WrapperSink::Manager(pubsub_manager) => pubsub_manager.ping().await,
+            }
+        }
+
+        async fn ping_message<T: FromRedisValue>(&mut self, message: &str) -> RedisResult<T> {
+            match self {
+                WrapperSink::PubSub(pubsub) => pubsub.ping_message(message).await,
+                WrapperSink::Manager(pubsub_manager) => pubsub_manager.ping_message(message).await,
+            }
+        }
+    }
+
+    impl Wrapper {
+        fn on_message<'a>(&'a mut self) -> Box<dyn Stream<Item = Msg> + Unpin + 'a> {
+            match self {
+                Wrapper::PubSub(pubsub) => Box::new(pubsub.on_message()),
+                Wrapper::Manager(pubsub_manager) => Box::new(pubsub_manager.on_message()),
+            }
+        }
+
+        fn into_on_message(self) -> Box<dyn Stream<Item = Msg> + Unpin> {
+            match self {
+                Wrapper::PubSub(pubsub) => Box::new(pubsub.into_on_message()),
+                Wrapper::Manager(pubsub_manager) => Box::new(pubsub_manager.into_on_message()),
+            }
+        }
+
+        fn split(self) -> (WrapperSink, WrapperStream) {
+            match self {
+                Wrapper::PubSub(pubsub) => {
+                    let (sink, stream) = pubsub.split();
+                    (WrapperSink::PubSub(sink), WrapperStream::PubSub { stream })
+                }
+                Wrapper::Manager(pubsub_manager) => {
+                    let (sink, stream) = pubsub_manager.split();
+                    (
+                        WrapperSink::Manager(sink),
+                        WrapperStream::Manager { stream },
+                    )
+                }
+            }
+        }
+    }
+
+    impl Stream for WrapperStream {
+        type Item = Msg;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+            match self.project() {
+                WrapperStreamProj::PubSub { stream } => stream.poll_next(cx),
+                WrapperStreamProj::Manager { stream } => stream.poll_next(cx),
+            }
+        }
+    }
+
+    enum PubsubType {
+        Pubsub,
+        Manager,
+    }
+
+    fn test_with_all_pubsub_types<Fut, T>(
+        test: impl Fn(TestContext, Wrapper) -> Fut,
+        runtime: RuntimeType,
+        pubsub_type: PubsubType,
+    ) where
+        Fut: Future<Output = redis::RedisResult<T>>,
+    {
+        block_on_all(
+            async move {
+                let ctx = TestContext::new();
+                let conn = match pubsub_type {
+                    PubsubType::Pubsub => ctx.async_pubsub().await.unwrap().into(),
+                    PubsubType::Manager => {
+                        ctx.client.get_async_pubsub_manager().await.unwrap().into()
+                    }
+                };
+                test(ctx, conn).await.unwrap();
+
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn pub_sub_subscription(#[case] runtime: RuntimeType) {
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+    fn pubsub_subscription(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
+        test_with_all_pubsub_types(
+            |ctx, mut pubsub_conn| async move {
                 let _: () = pubsub_conn.subscribe("phonewave").await?;
                 let mut pubsub_stream = pubsub_conn.on_message();
                 let mut publish_conn = ctx.async_connection().await?;
@@ -47,20 +195,19 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn pub_sub_subscription_to_multiple_channels(#[case] runtime: RuntimeType) {
-        use redis::RedisError;
-
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+    fn pubsub_subscription_to_multiple_channels(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
+        test_with_all_pubsub_types(
+            |ctx, mut pubsub_conn| async move {
                 let _: () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
                 let mut pubsub_stream = pubsub_conn.on_message();
                 let mut publish_conn = ctx.async_connection().await?;
@@ -76,20 +223,20 @@ mod async_pubsub {
                 Ok::<_, RedisError>(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn pub_sub_unsubscription(#[case] runtime: RuntimeType) {
+    fn pubsub_unsubscription(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
         const SUBSCRIPTION_KEY: &str = "phonewave-pub-sub-unsubscription";
-
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+        test_with_all_pubsub_types(
+            |ctx, mut pubsub_conn| async move {
                 pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
                 pubsub_conn.unsubscribe(SUBSCRIPTION_KEY).await?;
 
@@ -105,20 +252,20 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn can_receive_messages_while_sending_requests_from_split_pub_sub(
+    fn can_receive_messages_while_sending_requests_from_split_pubsub(
         #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
     ) {
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+        test_with_all_pubsub_types(
+            |ctx, pubsub_conn| async move {
+                let (mut sink, mut stream) = pubsub_conn.split();
                 let mut publish_conn = ctx.async_connection().await?;
 
                 let _: () = sink.subscribe("phonewave").await?;
@@ -136,21 +283,23 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn can_send_ping_on_split_pubsub(#[case] runtime: RuntimeType) {
+    fn can_send_ping_on_split_pubsub(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
         use redis::ProtocolVersion;
 
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
-                let mut publish_conn = ctx.async_connection().await?;
+        test_with_all_pubsub_types(
+            |ctx, pubsub_conn| async move {
+                let (mut sink, mut stream) = pubsub_conn.split();
+                let mut publish_conn = ctx.async_connection().await.unwrap();
 
                 let _: () = sink.subscribe("phonewave").await?;
 
@@ -190,20 +339,20 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn can_receive_messages_from_split_pub_sub_after_sink_was_dropped(
+    fn can_receive_messages_from_split_pubsub_after_sink_was_dropped(
         #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
     ) {
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+        test_with_all_pubsub_types(
+            |ctx, pubsub_conn| async move {
+                let (mut sink, mut stream) = pubsub_conn.split();
                 let mut publish_conn = ctx.async_connection().await?;
 
                 let _: () = sink.subscribe("phonewave").await?;
@@ -214,7 +363,7 @@ mod async_pubsub {
                 }
 
                 for _ in 0..repeats {
-                    let message: String = stream.next().await.unwrap().get_payload().unwrap();
+                    let message: String = stream.next().await.unwrap().get_payload()?;
 
                     assert_eq!("banana".to_string(), message);
                 }
@@ -222,31 +371,31 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn can_receive_messages_from_split_pub_sub_after_into_on_message(#[case] runtime: RuntimeType) {
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let mut pubsub = ctx.async_pubsub().await?;
+    fn can_receive_messages_from_split_pubsub_after_into_on_message(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
+        test_with_all_pubsub_types(
+            |ctx, mut pubsub| async move {
                 let mut publish_conn = ctx.async_connection().await?;
 
                 let _: () = pubsub.subscribe("phonewave").await?;
                 let mut stream = pubsub.into_on_message();
-                // wait a bit
-                sleep(Duration::from_secs(2).into()).await;
+
                 let repeats = 6;
                 for _ in 0..repeats {
                     let _: () = publish_conn.publish("phonewave", "banana").await?;
                 }
 
                 for _ in 0..repeats {
-                    let message: String = stream.next().await.unwrap().get_payload().unwrap();
+                    let message: String = stream.next().await.unwrap().get_payload()?;
 
                     assert_eq!("banana".to_string(), message);
                 }
@@ -254,18 +403,20 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn cannot_subscribe_on_split_pub_sub_after_stream_was_dropped(#[case] runtime: RuntimeType) {
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+    fn cannot_subscribe_on_split_pubsub_after_stream_was_dropped(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
+        test_with_all_pubsub_types(
+            |_ctx, pubsub| async move {
+                let (mut sink, stream) = pubsub.split();
                 drop(stream);
 
                 assert!(sink.subscribe("phonewave").await.is_err());
@@ -273,20 +424,21 @@ mod async_pubsub {
                 Ok(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn automatic_unsubscription(#[case] runtime: RuntimeType) {
+    fn automatic_unsubscription(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
         const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription";
 
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let mut pubsub_conn = ctx.async_pubsub().await?;
+        test_with_all_pubsub_types(
+            |ctx, mut pubsub_conn| async move {
                 pubsub_conn.subscribe(SUBSCRIPTION_KEY).await?;
                 drop(pubsub_conn);
 
@@ -311,20 +463,22 @@ mod async_pubsub {
                 Ok::<_, RedisError>(())
             },
             runtime,
-        )
-        .unwrap();
+            pubsub_type,
+        );
     }
 
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn automatic_unsubscription_on_split(#[case] runtime: RuntimeType) {
+    fn automatic_unsubscription_on_split(
+        #[case] runtime: RuntimeType,
+        #[values(PubsubType::Pubsub, PubsubType::Manager)] pubsub_type: PubsubType,
+    ) {
         const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription-on-split";
 
-        let ctx = TestContext::new();
-        block_on_all(
-            async move {
-                let (mut sink, stream) = ctx.async_pubsub().await?.split();
+        test_with_all_pubsub_types(
+            |ctx, pubsub_conn| async move {
+                let (mut sink, stream) = pubsub_conn.split();
                 sink.subscribe(SUBSCRIPTION_KEY).await?;
                 let mut conn = ctx.async_connection().await?;
                 sleep(Duration::from_millis(100).into()).await;
