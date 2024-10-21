@@ -37,11 +37,11 @@ pub struct ConnectionManagerConfig {
 }
 
 impl ConnectionManagerConfig {
-    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
-    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
-    const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
+    pub(crate) const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
+    pub(crate) const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+    pub(crate) const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
     const DEFAULT_RESPONSE_TIMEOUT: Option<std::time::Duration> = None;
-    const DEFAULT_CONNECTION_TIMEOUT: Option<std::time::Duration> = None;
+    pub(crate) const DEFAULT_CONNECTION_TIMEOUT: Option<std::time::Duration> = None;
 
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {

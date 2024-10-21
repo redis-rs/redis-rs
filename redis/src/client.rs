@@ -796,6 +796,22 @@ impl Client {
         crate::aio::PubSub::new(&self.connection_info.redis, connection).await
     }
 
+    /// Returns an async receiver for pub-sub messages.
+    #[cfg(feature = "connection-manager")]
+    pub async fn get_async_pubsub_manager(&self) -> RedisResult<crate::aio::PubSubManager> {
+        self.get_async_pubsub_manager_with_config(crate::aio::PubsubManagerConfig::default())
+            .await
+    }
+
+    /// Returns an async receiver for pub-sub messages.
+    #[cfg(feature = "connection-manager")]
+    pub async fn get_async_pubsub_manager_with_config(
+        &self,
+        config: crate::aio::PubsubManagerConfig,
+    ) -> RedisResult<crate::aio::PubSubManager> {
+        crate::aio::PubSubManager::new(&self.connection_info, config).await
+    }
+
     /// Returns an async receiver for monitor messages.
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?

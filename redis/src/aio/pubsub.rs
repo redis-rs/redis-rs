@@ -277,7 +277,7 @@ impl PubSubSink {
         (PubSubSink { sender }, f)
     }
 
-    async fn send_recv(&mut self, input: Vec<u8>) -> Result<Value, RedisError> {
+    pub(crate) async fn send_recv(&mut self, input: Vec<u8>) -> Result<Value, RedisError> {
         let (sender, receiver) = oneshot::channel();
 
         self.sender

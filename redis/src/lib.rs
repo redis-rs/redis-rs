@@ -570,6 +570,9 @@ pub use crate::commands::JsonAsyncCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
 
+#[cfg(feature = "connection-manager")]
+mod subscription_tracker;
+
 #[cfg(feature = "cluster")]
 mod cluster_topology;
 
