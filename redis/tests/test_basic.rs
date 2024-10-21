@@ -2058,4 +2058,13 @@ mod basic {
         let mut con = ctx.connection();
         let _num: i64 = con.client_id().unwrap();
     }
+
+    #[test]
+    fn test_client_setname() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        assert_eq!(con.client_setname("connection-name"), Ok(()));
+        let res: String = redis::cmd("CLIENT").arg("GETNAME").query(&mut con).unwrap();
+        assert_eq!(res, "connection-name");
+    }
 }
