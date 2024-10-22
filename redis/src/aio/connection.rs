@@ -24,6 +24,7 @@ use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
+use std::fmt;
 use std::net::SocketAddr;
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -45,6 +46,22 @@ pub struct Connection<C = Pin<Box<dyn AsyncStream + Send + Sync>>> {
 
     // Field indicating which protocol to use for server communications.
     protocol: ProtocolVersion,
+}
+
+impl<C> fmt::Debug for Connection<C>
+where
+    C: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Connection")
+            .field("con", &self.con)
+            .field("buf", &self.buf)
+            .field("decoder", &format_args!("<Decoder>"))
+            .field("db", &self.db)
+            .field("pubsub", &self.pubsub)
+            .field("protocol", &self.protocol)
+            .finish()
+    }
 }
 
 fn assert_sync<T: Sync>() {}
@@ -312,9 +329,11 @@ where
 }
 
 /// Represents a `PubSub` connection.
+#[derive(Debug)]
 pub struct PubSub<C = Pin<Box<dyn AsyncStream + Send + Sync>>>(Connection<C>);
 
 /// Represents a `Monitor` connection.
+#[derive(Debug)]
 pub struct Monitor<C = Pin<Box<dyn AsyncStream + Send + Sync>>>(Connection<C>);
 
 impl<C> PubSub<C>

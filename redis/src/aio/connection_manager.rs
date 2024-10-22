@@ -142,7 +142,7 @@ impl Default for ConnectionManagerConfig {
 ///   new reconnection attempt will be triggered if the error is an I/O error.
 ///
 /// [multiplexed-connection]: struct.MultiplexedConnection.html
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ConnectionManager {
     /// Information used for the connection. This is needed to be able to reconnect.
     client: Client,

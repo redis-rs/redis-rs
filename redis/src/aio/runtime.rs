@@ -17,6 +17,7 @@ pub(crate) enum Runtime {
     AsyncStd,
 }
 
+#[derive(Debug)]
 pub(crate) enum TaskHandle {
     #[cfg(feature = "tokio-comp")]
     Tokio(tokio::task::JoinHandle<()>),
@@ -24,6 +25,7 @@ pub(crate) enum TaskHandle {
     AsyncStd(async_std::task::JoinHandle<()>),
 }
 
+#[derive(Debug)]
 pub(crate) struct HandleContainer(Option<TaskHandle>);
 
 impl HandleContainer {
@@ -47,7 +49,7 @@ impl Drop for HandleContainer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 // we allow dead code here because the container isn't used directly, only in the derived drop.
 #[allow(dead_code)]
 pub(crate) struct SharedHandleContainer(Arc<HandleContainer>);

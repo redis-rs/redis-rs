@@ -123,6 +123,7 @@ use crate::{
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
+#[derive(Debug)]
 pub struct Sentinel {
     sentinels_connection_info: Vec<ConnectionInfo>,
     connections_cache: Vec<Option<Connection>>,
@@ -133,7 +134,7 @@ pub struct Sentinel {
 
 /// Holds the connection information that a sentinel should use when connecting to the
 /// servers (masters and replicas) belonging to it.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SentinelNodeConnectionInfo {
     /// The TLS mode of the connection, or None if we do not want to connect using TLS
     /// (just a plain TCP connection).
@@ -698,6 +699,7 @@ pub enum SentinelServerType {
 /// it SentinelClient requires &mut ref for get_connection()
 /// and we can't use it like this inside the r2d2 Manager
 #[cfg(feature = "r2d2")]
+#[derive(Debug)]
 pub struct LockedSentinelClient(pub(crate) Mutex<SentinelClient>);
 
 #[cfg(feature = "r2d2")]
@@ -722,6 +724,7 @@ impl LockedSentinelClient {
 /// desired master are specified when constructing an instance, so it will always
 /// return connections to the same target (for example, always to the master with name
 /// "mymaster123", or always to replicas of the master "another-master-abc").
+#[derive(Debug)]
 pub struct SentinelClient {
     sentinel: Sentinel,
     service_name: String,

@@ -429,6 +429,12 @@ pub struct Parser {
     decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
 }
 
+impl std::fmt::Debug for Parser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Parser").field("decoder", &"..").finish()
+    }
+}
+
 impl Default for Parser {
     fn default() -> Self {
         Parser::new()

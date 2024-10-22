@@ -59,6 +59,7 @@ use crate::connection::TlsConnParams;
 pin_project_lite::pin_project! {
     /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
     /// for it
+    #[derive(Debug)]
     pub struct AsyncStdWrapped<T> {  #[pin] inner: T }
 }
 
@@ -115,6 +116,7 @@ where
 }
 
 /// Represents an AsyncStd connectable
+#[derive(Debug)]
 pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
     Tcp(AsyncStdWrapped<TcpStream>),

@@ -7,7 +7,7 @@ use crate::types::{
 };
 
 /// Represents a redis command pipeline.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Pipeline {
     commands: Vec<Cmd>,
     transaction_mode: bool,

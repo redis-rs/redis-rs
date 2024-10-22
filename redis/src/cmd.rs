@@ -13,7 +13,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
 /// An argument to a redis command
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Arg<D> {
     /// A normal argument
     Simple(D),
@@ -22,7 +22,7 @@ pub enum Arg<D> {
 }
 
 /// Represents redis commands.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Cmd {
     data: Vec<u8>,
     // Arg::Simple contains the offset that marks the end of the argument
@@ -38,6 +38,17 @@ pub struct Iter<'a, T: FromRedisValue> {
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
+}
+
+impl<'a, T: FromRedisValue + std::fmt::Debug> std::fmt::Debug for Iter<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Iter")
+            .field("batch", &self.batch)
+            .field("cursor", &self.cursor)
+            .field("con", &"..")
+            .field("cmd", &self.cmd)
+            .finish()
+    }
 }
 
 impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
@@ -78,6 +89,17 @@ struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
     cmd: Cmd,
 }
 
+#[cfg(feature = "aio")]
+impl<'a, T: FromRedisValue + fmt::Debug + 'a> fmt::Debug for AsyncIterInner<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AsyncIterInner")
+            .field("batch", &self.batch)
+            .field("con", &format_args!("<AsyncConnection>"))
+            .field("cmd", &self.cmd)
+            .finish()
+    }
+}
+
 /// Represents the state of AsyncIter
 #[cfg(feature = "aio")]
 enum IterOrFuture<'a, T: FromRedisValue + 'a> {
@@ -86,8 +108,20 @@ enum IterOrFuture<'a, T: FromRedisValue + 'a> {
     Empty,
 }
 
+#[cfg(feature = "aio")]
+impl<'a, T: fmt::Debug + FromRedisValue + 'a> fmt::Debug for IterOrFuture<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IterOrFuture::Iter(inner) => f.debug_tuple("Iter").field(inner).finish(),
+            IterOrFuture::Future(_) => f.debug_tuple("Future").field(&"<boxed future>").finish(),
+            IterOrFuture::Empty => write!(f, "Empty"),
+        }
+    }
+}
+
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
+#[derive(Debug)]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }

@@ -102,7 +102,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 /// This represents an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClusterConnection<C = MultiplexedConnection> {
     sender: mpsc::Sender<Message<C>>,
     _task_handle: SharedHandleContainer,
