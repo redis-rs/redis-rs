@@ -295,8 +295,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4fa97bb310c33c811334143cf64c5bb2b7b3c06e453db6b095d7061eff8f113"
 dependencies = [
  "fastrand 2.0.1",
- "gloo-timers",
- "tokio",
 ]
 
 [[package]]
