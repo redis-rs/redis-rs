@@ -1,4 +1,4 @@
-use crate::aio::Runtime;
+use crate::aio::{HandleContainer, Runtime};
 use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
 };
@@ -24,8 +24,6 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
-
-use super::SharedHandleContainer;
 
 // A signal that a un/subscribe request has completed.
 type RequestResultSender = oneshot::Sender<RedisResult<Value>>;
@@ -62,7 +60,7 @@ pin_project! {
         #[pin]
         receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
         // This handle ensures that once the stream will be dropped, the underlying task will stop.
-        _task_handle: Option<SharedHandleContainer>,
+        _task_handle: Option<HandleContainer>,
     }
 }
 
@@ -459,7 +457,7 @@ impl PubSub {
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
         let handle = Runtime::locate().spawn(driver);
-        let _task_handle = Some(SharedHandleContainer::new(handle));
+        let _task_handle = Some(HandleContainer::new(handle));
         let stream = PubSubStream {
             receiver,
             _task_handle,
