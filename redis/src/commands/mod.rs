@@ -2160,6 +2160,10 @@ implement_commands! {
     // script commands
 
     /// Adds a prepared script command to the pipeline.
+    ///
+    /// Note: unlike a call to [`invoke`](crate::ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
+    /// it will not automatically be loaded and retried. The script can be loaded using the
+    /// [`load`](crate::ScriptInvocation::load) operation.
     #[cfg_attr(feature = "script", doc = r##"
 
 # Examples:
@@ -2171,6 +2175,7 @@ implement_commands! {
 let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
+script.prepare_invoke().load(&mut con)?;
 let (a, b): (isize, isize) = redis::pipe()
     .invoke_script(script.arg(1).arg(2))
     .invoke_script(script.arg(2).arg(3))
