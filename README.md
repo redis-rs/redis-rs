@@ -100,7 +100,7 @@ rustls = { version = "0.23", features = ["ring"] }
 
 And then, early in the main fn, add:
 
-```
+```rust
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
