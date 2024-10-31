@@ -90,6 +90,9 @@ redis = { version = "0.27.5", features = ["tokio-rustls-comp"] }
 
 # if you use async-std
 redis = { version = "0.27.5", features = ["async-std-rustls-comp"] }
+
+# Add rustls
+rustls = { version = "0.23", features = ["ring"] }
 ```
 
 With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
