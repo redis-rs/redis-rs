@@ -1758,4 +1758,37 @@ mod basic_async {
         )
         .unwrap();
     }
+
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_multiplexed_connection_send_single_disconnect_on_connection_failure(
+        #[case] runtime: RuntimeType,
+    ) {
+        let mut ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        block_on_all(
+            async move {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+                let _res = ctx
+                    .client
+                    .get_multiplexed_async_connection_with_config(&config)
+                    .await?;
+                drop(config);
+                ctx.stop_server();
+
+                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+                sleep(Duration::from_millis(1).into()).await;
+                assert!(rx.try_recv().is_err());
+                assert!(rx.is_closed());
+
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
 }

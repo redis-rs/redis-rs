@@ -1,7 +1,7 @@
 #[cfg(feature = "sentinel")]
 use crate::sentinel::LockedSentinelClient;
+use crate::types::closed_connection_error;
 use crate::{ConnectionLike, RedisError};
-use std::io;
 
 macro_rules! impl_manage_connection {
     ($client:ty, $connection:ty) => {
@@ -17,7 +17,7 @@ macro_rules! impl_manage_connection {
                 if conn.check_connection() {
                     Ok(())
                 } else {
-                    Err(RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe)))
+                    Err(closed_connection_error())
                 }
             }
 
