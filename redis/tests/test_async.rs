@@ -1513,8 +1513,6 @@ mod basic_async {
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
-        use redis::ProtocolVersion;
-
         let max_delay_between_attempts = 2;
 
         let mut config = redis::aio::ConnectionManagerConfig::new()
@@ -1562,6 +1560,48 @@ mod basic_async {
                     return Ok(());
                 }
                 panic!("failed to reconnect");
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "connection-manager")]
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[case::async_std(RuntimeType::AsyncStd)]
+    fn manager_should_reconnect_without_actions_if_push_sender_is_set(
+        #[case] runtime: RuntimeType,
+    ) {
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let max_delay_between_attempts = 2;
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_push_sender(tx)
+            .set_max_delay(max_delay_between_attempts);
+
+        block_on_all(
+            async move {
+                let mut conn = ctx
+                    .client
+                    .get_connection_manager_with_config(config)
+                    .await?;
+
+                let addr = ctx.server.client_addr().clone();
+                drop(ctx);
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Disconnection);
+                let _ctx = TestContext::new_with_addr(addr);
+
+                assert!(rx.try_recv().is_err());
+                assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+
+                Ok::<_, RedisError>(())
             },
             runtime,
         )
