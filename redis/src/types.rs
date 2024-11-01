@@ -2525,13 +2525,22 @@ pub struct PushInfo {
     pub data: Vec<Value>,
 }
 
+impl PushInfo {
+    pub(crate) fn disconnect() -> Self {
+        PushInfo {
+            kind: crate::PushKind::Disconnection,
+            data: vec![],
+        }
+    }
+}
+
 #[cfg(feature = "aio")]
 pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
 // A consistent error value for connections closed without a reason.
-#[cfg(feature = "aio")]
+#[cfg(any(feature = "aio", feature = "r2d2"))]
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
 }
