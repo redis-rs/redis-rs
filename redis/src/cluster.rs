@@ -41,6 +41,27 @@
 //!     .expire(key, 60).ignore()
 //!     .exec(&mut connection).unwrap();
 //! ```
+//!
+//! # Sending request to specific node
+//! In some cases you'd want to send a request to a specific node in the cluster, instead of
+//! letting the cluster connection decide by itself to which node it should send the request.
+//! This can happen, for example, if you want to send SCAN commands to each node in the cluster.
+//!
+//! ```rust,no_run
+//! use redis::Commands;
+//! use redis::cluster::ClusterClient;
+//! use redis::cluster_routing::{ RoutingInfo, SingleNodeRoutingInfo };
+//!
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let client = ClusterClient::new(nodes).unwrap();
+//! let mut connection = client.get_connection().unwrap();
+//!
+//! let routing_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress{
+//!     host: "redis://127.0.0.1".to_string(),
+//!     port: 6378
+//! });
+//! let _: redis::Value = connection.route_command(&redis::cmd("PING"), routing_info).unwrap();
+//! ```
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::str::FromStr;
