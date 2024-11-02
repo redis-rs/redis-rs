@@ -2,8 +2,9 @@ use super::{AsyncPushSender, RedisFuture, SharedHandleContainer};
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
+    subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, PushInfo, PushKind, ToRedisArgs,
+    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
@@ -15,6 +16,7 @@ use futures::{
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::Mutex;
 
 /// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
 #[derive(Clone)]
@@ -36,6 +38,8 @@ pub struct ConnectionManagerConfig {
     connection_timeout: Option<std::time::Duration>,
     /// sender channel for push values
     push_sender: Option<Arc<dyn AsyncPushSender>>,
+    /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
+    resubsrcibe_automatically: bool,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -48,6 +52,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             response_timeout,
             connection_timeout,
             push_sender,
+            resubsrcibe_automatically,
         } = &self;
         f.debug_struct("ConnectionManagerConfig")
             .field("exponent_base", &exponent_base)
@@ -56,6 +61,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("max_delay", &max_delay)
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
+            .field("resubsrcibe_automatically", &resubsrcibe_automatically)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -157,6 +163,12 @@ impl ConnectionManagerConfig {
         self.push_sender = Some(Arc::new(sender));
         self
     }
+
+    /// Configures the connection manager to automatically resubscribe to all pubsub channels after reconnecting.
+    pub fn set_automatic_resubscription(mut self) -> Self {
+        self.resubsrcibe_automatically = true;
+        self
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -169,6 +181,7 @@ impl Default for ConnectionManagerConfig {
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
             push_sender: None,
+            resubsrcibe_automatically: false,
         }
     }
 }
@@ -211,6 +224,7 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
+    subscription_tracker: Option<Arc<Mutex<SubscriptionTracker>>>,
     _task_handle: SharedHandleContainer,
 }
 
@@ -327,6 +341,10 @@ impl ConnectionManager {
         // Create a MultiplexedConnection and wait for it to be established
         let runtime = Runtime::locate();
 
+        if config.resubsrcibe_automatically && config.push_sender.is_none() {
+            return Err((crate::ErrorKind::ClientError, "Cannot set resubsrcibe_automatically without setting a push sender to receive messages.").into());
+        }
+
         let mut retry_strategy = ExponentialBuilder::default()
             .with_factor(config.factor as f32)
             .with_max_times(config.number_of_retries)
@@ -364,7 +382,12 @@ impl ConnectionManager {
         }
 
         let connection =
-            Self::new_connection(client.clone(), retry_strategy, &connection_config).await?;
+            Self::new_connection(client.clone(), retry_strategy, &connection_config, None).await?;
+        let subscription_tracker = if config.resubsrcibe_automatically {
+            Some(Arc::new(Mutex::new(SubscriptionTracker::default())))
+        } else {
+            None
+        };
 
         let new_self = Self {
             client,
@@ -374,6 +397,7 @@ impl ConnectionManager {
             runtime,
             retry_strategy,
             connection_config,
+            subscription_tracker,
             _task_handle,
         };
 
@@ -395,18 +419,23 @@ impl ConnectionManager {
         client: Client,
         exponential_backoff: ExponentialBuilder,
         connection_config: &AsyncConnectionConfig,
+        additional_commands: Option<Pipeline>,
     ) -> RedisResult<MultiplexedConnection> {
         let connection_config = connection_config.clone();
         let get_conn = || async {
-            let conn = client
+            client
                 .get_multiplexed_async_connection_with_config(&connection_config)
-                .await?;
-            Ok(conn)
+                .await
         };
-        get_conn
+        let mut conn = get_conn
             .retry(exponential_backoff)
             .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
-            .await
+            .await?;
+        if let Some(pipeline) = additional_commands {
+            // TODO - should we ignore these failures?
+            let _ = pipeline.exec_async(&mut conn).await;
+        }
+        Ok(conn)
     }
 
     /// Reconnect and overwrite the old connection.
@@ -417,8 +446,24 @@ impl ConnectionManager {
         let client = self.client.clone();
         let retry_strategy = self.retry_strategy;
         let connection_config = self.connection_config.clone();
+        let subscription_tracker = self.subscription_tracker.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let con = Self::new_connection(client, retry_strategy, &connection_config).await?;
+            let additional_commands = match subscription_tracker {
+                Some(subscription_tracker) => Some(
+                    subscription_tracker
+                        .lock()
+                        .await
+                        .get_subscription_pipeline(),
+                ),
+                None => None,
+            };
+            let con = Self::new_connection(
+                client,
+                retry_strategy,
+                &connection_config,
+                additional_commands,
+            )
+            .await?;
             Ok(con)
         }
         .boxed()
@@ -495,6 +540,18 @@ impl ConnectionManager {
         result
     }
 
+    async fn update_subscription_tracker(
+        &self,
+        action: SubscriptionAction,
+        args: impl ToRedisArgs,
+    ) {
+        let Some(subscription_tracker) = &self.subscription_tracker else {
+            return;
+        };
+        let mut guard = subscription_tracker.lock().await;
+        guard.update_with_request(action, args.to_redis_args().into_iter());
+    }
+
     /// Subscribes to a new channel.
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
@@ -507,6 +564,9 @@ impl ConnectionManager {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(&channel_name);
         cmd.exec_async(self).await?;
+        self.update_subscription_tracker(SubscriptionAction::Subscribe, channel_name)
+            .await;
+
         Ok(())
     }
 
@@ -518,6 +578,8 @@ impl ConnectionManager {
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(&channel_name);
         cmd.exec_async(self).await?;
+        self.update_subscription_tracker(SubscriptionAction::Unsubscribe, channel_name)
+            .await;
         Ok(())
     }
 
@@ -533,6 +595,8 @@ impl ConnectionManager {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(&channel_pattern);
         cmd.exec_async(self).await?;
+        self.update_subscription_tracker(SubscriptionAction::PSubscribe, channel_pattern)
+            .await;
         Ok(())
     }
 
@@ -544,6 +608,8 @@ impl ConnectionManager {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(&channel_pattern);
         cmd.exec_async(self).await?;
+        self.update_subscription_tracker(SubscriptionAction::PUnsubscribe, channel_pattern)
+            .await;
         Ok(())
     }
 }
