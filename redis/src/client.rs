@@ -376,47 +376,18 @@ impl Client {
         &self,
         config: &AsyncConnectionConfig,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let result = match Runtime::locate() {
+        match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
-            rt @ Runtime::Tokio => {
-                if let Some(connection_timeout) = config.connection_timeout {
-                    rt.timeout(
-                        connection_timeout,
-                        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
-                            config,
-                        ),
-                    )
-                    .await
-                } else {
-                    Ok(self
-                        .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(config)
-                        .await)
-                }
-            }
+            rt @ Runtime::Tokio => self
+                .get_multiplexed_async_connection_inner_with_timeout::<crate::aio::tokio::Tokio>(
+                    config, rt,
+                )
+                .await,
             #[cfg(feature = "async-std-comp")]
-            rt @ Runtime::AsyncStd => {
-                if let Some(connection_timeout) = config.connection_timeout {
-                    rt.timeout(
-                        connection_timeout,
-                        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                            config,
-                        ),
-                    )
-                    .await
-                } else {
-                    Ok(self
-                        .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                            config,
-                        )
-                        .await)
-                }
-            }
-        };
-
-        match result {
-            Ok(Ok(connection)) => Ok(connection),
-            Ok(Err(e)) => Err(e),
-            Err(elapsed) => Err(elapsed.into()),
+            rt @ Runtime::AsyncStd => self.get_multiplexed_async_connection_inner_with_timeout::<
+                crate::aio::async_std::AsyncStd,
+            >(config, rt)
+            .await,
         }
     }
 
@@ -803,6 +774,33 @@ impl Client {
             .set_factor(factor)
             .set_number_of_retries(number_of_retries);
         crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
+    }
+
+    async fn get_multiplexed_async_connection_inner_with_timeout<T>(
+        &self,
+        config: &AsyncConnectionConfig,
+        rt: Runtime,
+    ) -> RedisResult<crate::aio::MultiplexedConnection>
+    where
+        T: crate::aio::RedisRuntime,
+    {
+        let result = if let Some(connection_timeout) = config.connection_timeout {
+            rt.timeout(
+                connection_timeout,
+                self.get_multiplexed_async_connection_inner::<T>(config),
+            )
+            .await
+        } else {
+            Ok(self
+                .get_multiplexed_async_connection_inner::<T>(config)
+                .await)
+        };
+
+        match result {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(e)) => Err(e),
+            Err(elapsed) => Err(elapsed.into()),
+        }
     }
 
     async fn get_multiplexed_async_connection_inner<T>(
