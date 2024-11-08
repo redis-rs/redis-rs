@@ -23,8 +23,7 @@ Documentation on the library can be found at
 ## Basic Operation
 
 To open a connection you need to create a client and then to fetch a
-connection from it. In the future there will be a connection pool for
-those, currently each connection is separate and not pooled.
+connection from it.
 
 Many commands are implemented through the `Commands` trait but manual
 command creation is also possible.
@@ -62,6 +61,26 @@ redis = { version = "0.27.5", features = ["tokio-comp"] }
 # if you use async-std
 redis = { version = "0.27.5", features = ["async-std-comp"] }
 ```
+
+## Connection Pooling
+
+When using a sync connection, it is recommended to use a connection pool in order to handle
+disconnects or multi-threaded usage. This can be done using the `r2d2` feature.
+
+```
+redis = { version = "0.27.5", features = ["r2d2"] }
+```
+
+For async connections, connection pooling isn't necessary, unless blocking commands are used.
+The `MultiplexedConnection` is cloneable and can be used safely from multiple threads, so a 
+single connection can be easily reused. For automatic reconnections consider using 
+`ConnectionManager` with the `connection-manager` feature.
+Async cluster connections also don't require pooling and are thread-safe and reusable.
+
+Multiplexing won't help if blocking commands are used since the server won't handle commands
+from blocked connections until the connection is unblocked. If you want to be able to handle
+non-blocking commands concurrently with blocking commands, you should send the blocking
+commands on another connection.
 
 ## TLS Support
 
