@@ -5,7 +5,7 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, ScanOptions};
+    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
         ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
@@ -2066,5 +2066,13 @@ mod basic {
         assert_eq!(con.client_setname("connection-name"), Ok(()));
         let res: String = redis::cmd("CLIENT").arg("GETNAME").query(&mut con).unwrap();
         assert_eq!(res, "connection-name");
+    }
+
+    #[test]
+    fn test_role_primary() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
+        assert!(matches!(ret, Role::Primary { .. }));
     }
 }

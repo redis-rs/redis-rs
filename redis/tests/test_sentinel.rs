@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use redis::{
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
-    Client, Connection, ConnectionAddr, ConnectionInfo,
+    Client, Connection, ConnectionAddr, ConnectionInfo, Role,
 };
 
 use crate::support::*;
@@ -200,6 +200,15 @@ fn test_sentinel_server_down() {
 fn test_sentinel_client() {
     let master_name = "master1";
     let mut context = TestSentinelContext::new(2, 3, 3);
+    for sentinel in context.sentinels_connection_info() {
+        let mut conn = Client::open(sentinel.clone())
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
+        assert!(matches!(role, Role::Sentinel { .. }));
+    }
+
     let mut master_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
         String::from(master_name),
@@ -217,6 +226,8 @@ fn test_sentinel_client() {
     .unwrap();
 
     let mut master_con = master_client.get_connection().unwrap();
+    let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
+    assert!(matches!(role, Role::Primary { .. }));
 
     assert_is_connection_to_master(&mut master_con);
 
@@ -228,6 +239,8 @@ fn test_sentinel_client() {
 
     for _ in 0..20 {
         let mut replica_con = replica_client.get_connection().unwrap();
+        let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
+        assert!(matches!(role, Role::Replica { .. }));
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
     }

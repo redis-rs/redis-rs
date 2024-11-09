@@ -80,6 +80,90 @@ mod types {
     }
 
     #[test]
+    fn test_role_ret() {
+        use redis::ReplicaInfo;
+        use redis::Role;
+
+        let parse_models = [RedisParseMode::Owned, RedisParseMode::Ref];
+        let test_cases = vec![
+            (
+                Value::Array(vec![
+                    Value::BulkString("master".into()),
+                    Value::Int(3129659),
+                    Value::Array(vec![
+                        Value::Array(vec![
+                            Value::BulkString("127.0.0.1".into()),
+                            Value::BulkString("9001".into()),
+                            Value::BulkString("3129242".into()),
+                        ]),
+                        Value::Array(vec![
+                            Value::BulkString("127.0.0.1".into()),
+                            Value::BulkString("9002".into()),
+                            Value::BulkString("3129543".into()),
+                        ]),
+                    ]),
+                ]),
+                Role::Primary {
+                    replication_offset: 3129659,
+                    replicas: vec![
+                        ReplicaInfo {
+                            ip: "127.0.0.1".to_string(),
+                            port: 9001,
+                            replication_offset: 3129242,
+                        },
+                        ReplicaInfo {
+                            ip: "127.0.0.1".to_string(),
+                            port: 9002,
+                            replication_offset: 3129543,
+                        },
+                    ],
+                },
+            ),
+            (
+                Value::Array(vec![
+                    Value::BulkString("slave".into()),
+                    Value::BulkString("127.0.0.1".into()),
+                    Value::Int(9000),
+                    Value::BulkString("connected".into()),
+                    Value::Int(3167038),
+                ]),
+                Role::Replica {
+                    primary_ip: "127.0.0.1".to_string(),
+                    primary_port: 9000,
+                    replication_state: "connected".to_string(),
+                    data_received: 3167038,
+                },
+            ),
+            (
+                Value::Array(vec![
+                    Value::BulkString("sentinel".into()),
+                    Value::Array(vec![
+                        Value::BulkString("resque-master".into()),
+                        Value::BulkString("html-fragments-master".into()),
+                        Value::BulkString("stats-master".into()),
+                        Value::BulkString("metadata-master".into()),
+                    ]),
+                ]),
+                Role::Sentinel {
+                    primary_names: vec![
+                        "resque-master".to_string(),
+                        "html-fragments-master".to_string(),
+                        "stats-master".to_string(),
+                        "metadata-master".to_string(),
+                    ],
+                },
+            ),
+        ];
+
+        for parse_mode in &parse_models {
+            for (value, expected) in test_cases.clone() {
+                let parsed: Role = parse_mode.parse_redis_value(value).unwrap();
+                assert_eq!(parsed, expected);
+            }
+        }
+    }
+
+    #[test]
     fn test_i32() {
         // from the book hitchhiker's guide to the galaxy
         let everything_num = 42i32;
