@@ -1,5 +1,6 @@
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use itertools::Itertools;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
@@ -1137,6 +1138,166 @@ impl Deref for InfoDict {
 
     fn deref(&self) -> &Self::Target {
         &self.map
+    }
+}
+
+/// High level representation of response to the [`ROLE`][1] command.
+///
+/// [1]: https://redis.io/docs/latest/commands/role/
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Role {
+    /// Represents a primary role, which is `master` in legacy Redis terminology.
+    Primary {
+        /// The current primary replication offset
+        replication_offset: u64,
+        /// List of replica, each represented by a tuple of IP, port and the last acknowledged replication offset.
+        replicas: Vec<ReplicaInfo>,
+    },
+    /// Represents a replica role, which is `slave` in legacy Redis terminology.
+    Replica {
+        /// The IP of the primary.
+        primary_ip: String,
+        /// The port of the primary.
+        primary_port: u16,
+        /// The state of the replication from the point of view of the primary.
+        replication_state: String,
+        /// The amount of data received from the replica so far in terms of primary replication offset.
+        data_received: u64,
+    },
+    /// Represents a sentinel role.
+    Sentinel {
+        /// List of primary names monitored by this Sentinel instance.
+        primary_names: Vec<String>,
+    },
+}
+
+/// Replication information for a replica, as returned by the [`ROLE`][1] command.
+///
+/// [1]: https://redis.io/docs/latest/commands/role/
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ReplicaInfo {
+    /// The IP of the replica.
+    pub ip: String,
+    /// The port of the replica.
+    pub port: u16,
+    /// The last acknowledged replication offset.
+    pub replication_offset: i64,
+}
+
+impl FromRedisValue for ReplicaInfo {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        Self::from_owned_redis_value(v.clone())
+    }
+
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        let v = match get_owned_inner_value(v).into_sequence() {
+            Ok(v) => v,
+            Err(v) => invalid_type_error!(v, "Replica response should be an array"),
+        };
+        if v.len() < 3 {
+            invalid_type_error!(v, "Replica array is too short, expected 3 elements")
+        }
+        let v = v
+            .into_iter()
+            .next_tuple::<(Value, Value, Value)>()
+            .expect("Replica response too short, expected 3 elements");
+        let ip = from_owned_redis_value(v.0)?;
+        let port = from_owned_redis_value(v.1)?;
+        let offset = from_owned_redis_value(v.2)?;
+        Ok(ReplicaInfo {
+            ip,
+            port,
+            replication_offset: offset,
+        })
+    }
+}
+
+impl FromRedisValue for Role {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        Self::from_owned_redis_value(v.clone())
+    }
+
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        let v = match get_owned_inner_value(v).into_sequence() {
+            Ok(v) => v,
+            Err(v) => invalid_type_error!(v, "Role response should be an array"),
+        };
+        if v.len() < 2 {
+            invalid_type_error!(v, "Role array is too short, expected at least 2 elements")
+        }
+        match &v[0] {
+            Value::BulkString(role) => match role.as_slice() {
+                b"master" => Role::new_primary(v),
+                b"slave" => Role::new_replica(v),
+                b"sentinel" => Role::new_sentinel(v),
+                _ => invalid_type_error!(v, "Role type is not master, slave or sentinel"),
+            },
+            _ => invalid_type_error!(v, "Role type is not a bulk string"),
+        }
+    }
+}
+
+impl Role {
+    fn new_primary(values: Vec<Value>) -> RedisResult<Self> {
+        if values.len() < 3 {
+            invalid_type_error!(
+                values,
+                "Role primary response too short, expected 3 elements"
+            )
+        }
+        let values = values
+            .into_iter()
+            .next_tuple::<(Value, Value, Value)>()
+            .expect("Role primary response too short, expected 3 elements");
+
+        let replication_offset = from_owned_redis_value(values.1)?;
+        let replicas = from_owned_redis_value(values.2)?;
+
+        Ok(Role::Primary {
+            replication_offset,
+            replicas,
+        })
+    }
+
+    fn new_replica(values: Vec<Value>) -> RedisResult<Self> {
+        if values.len() < 5 {
+            invalid_type_error!(
+                values,
+                "Role replica response too short, expected 5 elements"
+            )
+        }
+
+        let values = values
+            .into_iter()
+            .next_tuple::<(Value, Value, Value, Value, Value)>()
+            .expect("Role replica response too short, expected 5 elements");
+
+        let primary_ip = from_owned_redis_value(values.1)?;
+        let primary_port = from_owned_redis_value(values.2)?;
+        let replication_state = from_owned_redis_value(values.3)?;
+        let data_received = from_owned_redis_value(values.4)?;
+
+        Ok(Role::Replica {
+            primary_ip,
+            primary_port,
+            replication_state,
+            data_received,
+        })
+    }
+
+    fn new_sentinel(values: Vec<Value>) -> RedisResult<Self> {
+        if values.len() < 2 {
+            invalid_type_error!(
+                values,
+                "Role sentinel response too short, expected at least 2 elements"
+            )
+        }
+        let values = values
+            .into_iter()
+            .next_tuple::<(Value, Value)>()
+            .expect("Role sentinel response too short, expected 2 elements");
+        let primary_names = from_owned_redis_value(values.1)?;
+        Ok(Role::Sentinel { primary_names })
     }
 }
 
