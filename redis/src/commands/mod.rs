@@ -2191,6 +2191,7 @@ assert_eq!(b, 5);
 /// Allows pubsub callbacks to stop receiving messages.
 ///
 /// Arbitrary data may be returned from `Break`.
+#[derive(Debug)]
 pub enum ControlFlow<U> {
     /// Continues.
     Continue,
@@ -2314,7 +2315,7 @@ impl PubSubCommands for Connection {
 ///     con.scan_options(opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
@@ -2398,7 +2399,7 @@ impl ToRedisArgs for ScanOptions {
 ///     con.lpos(key, value, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct LposOptions {
     count: Option<usize>,
     maxlen: Option<usize>,
@@ -2462,6 +2463,7 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Enum for the LEFT | RIGHT args used by some commands
+#[derive(Debug)]
 pub enum Direction {
     /// Targets the first element (head) of the list
     Left,
@@ -2499,7 +2501,7 @@ impl ToRedisArgs for Direction {
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     get: bool,

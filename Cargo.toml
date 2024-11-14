@@ -1,3 +1,6 @@
 [workspace]
 members = ["redis", "redis-test", "valkey", "afl/parser"]
 resolver = "2"
+
+[workspace.lints.rust]
+missing-debug-implementations = "warn"

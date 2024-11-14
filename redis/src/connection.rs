@@ -104,7 +104,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 
 /// TlsMode indicates use or do not use verification of certification.
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TlsMode {
     /// Secure verify certification.
     Secure,
@@ -461,6 +461,7 @@ impl IntoConnectionInfo for url::Url {
     }
 }
 
+#[derive(Debug)]
 struct TcpConnection {
     reader: TcpStream,
     open: bool,
@@ -473,6 +474,7 @@ struct TcpNativeTlsConnection {
 }
 
 #[cfg(feature = "tls-rustls")]
+#[derive(Debug)]
 struct TcpRustlsConnection {
     reader: StreamOwned<rustls::ClientConnection, TcpStream>,
     open: bool,
@@ -484,6 +486,7 @@ struct UnixConnection {
     open: bool,
 }
 
+#[derive(Debug)]
 enum ActualConnection {
     Tcp(TcpConnection),
     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -543,6 +546,7 @@ impl fmt::Debug for NoCertificateVerification {
 }
 
 /// Represents a stateful redis TCP connection.
+#[derive(Debug)]
 pub struct Connection {
     con: ActualConnection,
     parser: Parser,
@@ -566,6 +570,7 @@ pub struct Connection {
 }
 
 /// Represents a pubsub connection.
+#[derive(Debug)]
 pub struct PubSub<'a> {
     con: &'a mut Connection,
     waiting_messages: VecDeque<Msg>,

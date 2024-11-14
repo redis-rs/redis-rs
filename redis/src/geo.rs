@@ -17,6 +17,7 @@ macro_rules! invalid_type_error {
 ///
 /// [1]: ../trait.Commands.html#method.geo_dist
 /// [2]: ../trait.Commands.html#method.geo_radius
+#[derive(Debug)]
 pub enum Unit {
     /// Represents meters.
     Meters,
@@ -104,7 +105,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
 ///
 /// [1]: https://redis.io/commands/georadius
 /// [2]: https://redis.io/commands/georadiusbymember
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub enum RadiusOrder {
     /// Don't sort the results
     #[default]
@@ -141,7 +142,7 @@ pub enum RadiusOrder {
 ///     con.geo_radius(key, longitude, latitude, meters, Unit::Meters, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct RadiusOptions {
     with_coord: bool,
     with_dist: bool,
@@ -263,6 +264,7 @@ impl ToRedisArgs for RadiusOptions {
 ///
 /// [1]: ../trait.Commands.html#method.geo_radius
 /// [2]: ../trait.Commands.html#method.geo_radius_by_member
+#[derive(Debug)]
 pub struct RadiusSearchResult {
     /// The name that was found.
     pub name: String,

@@ -45,6 +45,7 @@ struct PipelineMessage {
 /// stop working.
 /// The sink isn't independent from the stream - dropping
 /// the stream will cause the sink to return errors on requests.
+#[derive(Debug)]
 pub struct PubSubSink {
     sender: UnboundedSender<PipelineMessage>,
 }
@@ -59,6 +60,7 @@ pin_project! {
     /// stop working.
     /// The sink isn't independent from the stream - dropping
     /// the stream will cause the sink to return errors on requests.
+    #[derive(Debug)]
     pub struct PubSubStream {
         #[pin]
         receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
@@ -323,6 +325,7 @@ impl PubSubSink {
 }
 
 /// A connection dedicated to pubsub messages.
+#[derive(Debug)]
 pub struct PubSub {
     sink: PubSubSink,
     stream: PubSubStream,

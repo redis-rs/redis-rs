@@ -106,6 +106,7 @@ impl Script {
 }
 
 /// Represents a prepared script call.
+#[derive(Debug)]
 pub struct ScriptInvocation<'a> {
     script: &'a Script,
     args: Vec<Vec<u8>>,

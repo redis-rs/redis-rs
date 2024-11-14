@@ -19,7 +19,7 @@ use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
 /// than final ClusterParams
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct BuilderParams {
     password: Option<String>,
     username: Option<String>,
@@ -33,7 +33,7 @@ struct BuilderParams {
     protocol: Option<ProtocolVersion>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct RetryParams {
     pub(crate) number_of_retries: u32,
     max_wait_time: u64,
@@ -71,7 +71,7 @@ impl RetryParams {
 }
 
 /// Redis cluster specific parameters.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct ClusterParams {
     pub(crate) password: Option<String>,
     pub(crate) username: Option<String>,
@@ -114,6 +114,7 @@ impl ClusterParams {
 }
 
 /// Used to configure and build a [`ClusterClient`].
+#[derive(Debug)]
 pub struct ClusterClientBuilder {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
     builder_params: BuilderParams,
@@ -350,7 +351,7 @@ impl ClusterClientBuilder {
 }
 
 /// This is a Redis Cluster client.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClusterClient {
     initial_nodes: Vec<ConnectionInfo>,
     cluster_params: ClusterParams,

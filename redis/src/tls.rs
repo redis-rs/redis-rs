@@ -7,7 +7,7 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Redis
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClientTlsConfig {
     /// client certificate byte stream in PEM format
     pub client_cert: Vec<u8>,
@@ -19,7 +19,7 @@ pub struct ClientTlsConfig {
 /// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsConfig` structure if mTLS is used
 /// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TlsCertificates {
     /// 'ClientTlsConfig' containing client certificate and key if mTLS is to be used
     pub client_tls: Option<ClientTlsConfig>,

@@ -32,6 +32,7 @@ macro_rules! invalid_type_error_inner {
 }
 
 /// Helper enum that is used to define expiry time
+#[derive(Debug)]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(u64),
@@ -46,7 +47,7 @@ pub enum Expiry {
 }
 
 /// Helper enum that is used to define expiry time for SET command
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(u64),
@@ -61,7 +62,7 @@ pub enum SetExpiry {
 }
 
 /// Helper enum that is used to define existence checks
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
     NX,
@@ -377,6 +378,7 @@ impl fmt::Display for PushKind {
     }
 }
 
+#[derive(Debug)]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
     Map(std::slice::Iter<'a, (Value, Value)>),
@@ -403,6 +405,7 @@ impl<'a> Iterator for MapIter<'a> {
     }
 }
 
+#[derive(Debug)]
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
     Map(std::vec::IntoIter<(Value, Value)>),
@@ -2648,7 +2651,7 @@ pub enum ProtocolVersion {
 }
 
 /// Helper enum that is used to define option for the hash expire commands
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExpireOption {
     /// NONE -- Set expiration regardless of the field's current expiration.
     NONE,

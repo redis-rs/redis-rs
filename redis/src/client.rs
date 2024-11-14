@@ -158,7 +158,7 @@ impl Client {
 
 /// Options for creation of async connection
 #[cfg(feature = "aio")]
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a response from the server
     pub(crate) response_timeout: Option<std::time::Duration>,
