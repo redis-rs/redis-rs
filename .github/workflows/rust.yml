@@ -91,7 +91,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          /tmp/libredisbloom.so
+          /tmp/redisbloom.so
         key: ${{ runner.os }}-redisbloom
 
     - name: Install DB
@@ -155,17 +155,11 @@ jobs:
         rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
         rm -rf ./__ci/redis-json
 
-    - name: Run module-specific tests
-      if: matrix.config.db-version != '6.2.13'
-      run: make test-module
-      env:
-        REDIS_VERSION: ${{ matrix.config.db-version }}
-
     - name: Checkout RedisBloom
       if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       uses: actions/checkout@v4
       with:
-        repository: "RedisJSON/RedisBloom"
+        repository: "RedisBloom/RedisBloom"
         path: "./__ci/redis-bloom"
         set-safe-directory: false
 
@@ -173,10 +167,10 @@ jobs:
       # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
       #
       #   1. Copy the untouched file (into Cargo.toml.actual)
-      #   2. Exclude ./__ci/redis-json from the workspace
+      #   2. Exclude ./__ci/redis-bloom from the workspace
       #      (preventing it from being compiled as a workspace module)
       #   3. Build RedisBloom
-      #   4. Move the built RedisBloom Module (librejson.so) to /tmp
+      #   4. Move the built RedisBloom Module (redisbloom.so) to /tmp
       #   5. Restore Cargo.toml to its untouched state
       #   6. Remove the RedisBloom Source code so it doesn't interfere with tests
       #
@@ -191,6 +185,12 @@ jobs:
         mv ./__ci/redis-json/target/release/redisbloom.so /tmp/redisbloom.so
         rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
         rm -rf ./__ci/redis-bloom
+
+    - name: Run module-specific tests
+      if: matrix.config.db-version != '6.2.13'
+      run: make test-module test-bloom
+      env:
+        REDIS_VERSION: ${{ matrix.config.db-version }}
 
 
     - name: Check features

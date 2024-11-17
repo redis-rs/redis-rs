@@ -146,7 +146,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_insert_options() {
+    fn test_bf_insert_options() {
         let empty = InsertOptions::default();
         assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
