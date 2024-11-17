@@ -186,14 +186,51 @@ be an empty `Vec`. If you want to handle deserialization and `Vec` unwrapping au
 you can use the `Json` wrapper from the
 [redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
+## BloomFilter Support
+
+Support for the RedisBloom Module can be enabled by specifying "bloom" as a feature in your Cargo.toml.
+
+`redis = { version = "0.27.5", features = ["bloom"] }`
+
+THen you can use the bloom filter commands (prefixed with `bf_`) on any Redis Connection
+
+```rust
+use redis::Client;
+use redis::Commands;
+use redis::RedisResult;
+    
+fn bloom_filter_add<P: AsRef<str>>(filter_name: P, item: P) -> RedisResult<bool> {
+    use redis::Commands;
+    use std::env;
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
+    let client = redis::Client::open(redis_url.as_str())?;
+    let mut con = client.get_connection()?;
+
+    // Reserve & add
+    let opts = bloom::ScalingOptions::ExpansionRate(2);
+    let reserve_succeeded: bool = con.bf_reserve_options(filter_name, 0.001, 10000, opts)?;
+    println!("[bf_reserve] Reserve succeeded: {reserve_succeeded}");
+
+    let add_succeeded: bool = con.bf_add(filter_name, item)?;
+    println!("[bf_add] Add succeeded: {add_succeeded}");
+
+    let exists: bool = con.bf_exists(filter_name, item)?;
+    println!("[bf_exists] {exists}.");
+}
+```
 ## Development
 
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
-you must set the following environment variable before running the test script
+you must set the following environment variables before running the test script
 
 -   `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
 
--   Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
+-   Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module.
+
+-   `REDIS_RS_REDIS_BLOOM_PATH` = The absolute path to the RedisBloom module (`redisbloom.so`).
+
+-   Please refer to this [link](https://github.com/RedisBloom/RedisBloom) to access the RedisBloom module.
 
 <!-- As support for modules are added later, it would be wise to update this list -->
 
