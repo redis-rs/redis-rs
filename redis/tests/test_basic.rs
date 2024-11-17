@@ -5,7 +5,10 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
+    use async_std::stream::Scan;
+    use redis::{
+        cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, RedisError, Role, ScanOptions,
+    };
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
         ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
@@ -16,7 +19,7 @@ mod basic {
     use std::io::Read;
     use std::thread::{self, sleep, spawn};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use std::vec;
+    use std::{panic, vec};
 
     use crate::{assert_args, support::*};
 
@@ -494,11 +497,60 @@ mod basic {
 
         for x in iter {
             // type inference limitations
-            let x: usize = x;
-            unseen.remove(&x);
+            match x {
+                Ok(x) => unseen.remove(&x),
+                Err(e) => panic!("err: {}", e), // TODO: Should handle error
+            };
         }
 
         assert_eq!(unseen.len(), 0);
+    }
+
+    #[test]
+    fn test_scanning_error() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Insert a bunch of keys with legit UTF-8 first
+        for x in 0..1000 {
+            redis::cmd("SET")
+                .arg(format!("foo{}", x))
+                .arg(x)
+                .exec(&mut con)
+                .unwrap();
+        }
+
+        // This key is raw bytes, invalid UTF-8
+        redis::cmd("SET")
+            .arg(b"\xc3\x28")
+            .arg("invalid")
+            .exec(&mut con)
+            .unwrap();
+
+        // attempt to iterate over the keyspace. Specify count=1 so we don't
+        // get the invalid UTF-8 scenario in the first scan
+        let mut iter = con
+            .scan_options::<String>(ScanOptions::default().with_count(1))
+            .unwrap();
+
+        let mut err_flag = false;
+        let mut count = 0;
+
+        while let Some(x) = iter.next() {
+            if x.is_err() {
+                // we found the error case
+                err_flag = true;
+                break;
+            } else {
+                count += 1;
+            }
+        }
+
+        // we should NOT have been able to iterate the whole keyspace
+        assert_ne!(count, 1001);
+
+        // make sure we encountered the error (i.e. instead of silent failure)
+        assert_eq!(err_flag, true);
     }
 
     #[test]
@@ -520,8 +572,13 @@ mod basic {
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
 
-        for (_field, value) in iter {
-            unseen.remove(&value);
+        for element in iter {
+            match element {
+                Ok((_field, value)) => {
+                    unseen.remove(&value);
+                }
+                Err(e) => panic!("err: {}", e), // TODO: Should handle error
+            }
         }
 
         assert_eq!(unseen.len(), 0);
@@ -1247,7 +1304,10 @@ mod basic {
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
         for item in iter {
-            found.insert(item);
+            match item {
+                Ok(item) => found.insert(item),
+                Err(e) => panic!("err: {}", e), // TODO: Should handle error
+            };
         }
 
         assert_eq!(found.len(), 2);

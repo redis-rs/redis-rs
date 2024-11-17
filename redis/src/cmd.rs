@@ -41,25 +41,32 @@ pub struct Iter<'a, T: FromRedisValue> {
 }
 
 impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
-    type Item = T;
+    type Item = RedisResult<T>;
 
     #[inline]
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<RedisResult<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(v);
+                return Some(Ok(v));
             };
             if self.cursor == 0 {
                 return None;
             }
 
             let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-            let rv = self.con.req_packed_command(&pcmd).ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
+            let rv = match self.con.req_packed_command(&pcmd) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let (cur, batch): (u64, Vec<T>) = match from_owned_redis_value(rv) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
 
             self.cursor = cur;
             self.batch = batch.into_iter();
