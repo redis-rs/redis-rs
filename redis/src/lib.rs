@@ -54,6 +54,7 @@
 //!
 //! * `acl`: enables acl support (enabled by default)
 //! * `aio`: enables async IO support (optional)
+//! * `bloom`: enables bloom-filter support (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
@@ -599,6 +600,10 @@ mod r2d2;
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
+
+#[cfg(feature = "bloom")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+pub mod bloom;
 
 #[cfg(feature = "cluster-async")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "cluster", feature = "aio"))))]

@@ -157,6 +157,7 @@ enum ServerType {
 
 pub enum Module {
     Json,
+    Bloom,
 }
 
 pub struct RedisServer {
@@ -290,6 +291,13 @@ impl RedisServer {
                         .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
                         "Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?",
                     ));
+                }
+                Module::Bloom => {
+                    redis_cmd
+                        .arg("--loadmodule")
+                        .arg(env::var("REDIS_RS_REDIS_BLOOM_PATH").expect(
+                            "Unable to find path to RedisBloom at REDIS_RS_REDIS_BLOOM_PATH, is it set?",
+                        ));
                 }
             };
         }

@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REDIS_RS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDIS_RS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
+
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -84,6 +86,14 @@ jobs:
           /tmp/librejson.so
         key: ${{ runner.os }}-redisjson
 
+    - name: Cache RedisBloom
+      id: cache-redisbloom
+      uses: actions/cache@v4
+      with:
+        path: |
+          /tmp/libredisbloom.so
+        key: ${{ runner.os }}-redisbloom
+
     - name: Install DB
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
@@ -150,6 +160,38 @@ jobs:
       run: make test-module
       env:
         REDIS_VERSION: ${{ matrix.config.db-version }}
+
+    - name: Checkout RedisBloom
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      uses: actions/checkout@v4
+      with:
+        repository: "RedisJSON/RedisBloom"
+        path: "./__ci/redis-bloom"
+        set-safe-directory: false
+
+      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
+      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
+      #
+      #   1. Copy the untouched file (into Cargo.toml.actual)
+      #   2. Exclude ./__ci/redis-json from the workspace
+      #      (preventing it from being compiled as a workspace module)
+      #   3. Build RedisBloom
+      #   4. Move the built RedisBloom Module (librejson.so) to /tmp
+      #   5. Restore Cargo.toml to its untouched state
+      #   6. Remove the RedisBloom Source code so it doesn't interfere with tests
+      #
+      # This shouldn't cause issues in the future so long as no profiles or patches
+      # are applied to the workspace Cargo.toml file
+    - name: Compile RedisBloom
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      run: |
+        cp ./Cargo.toml ./Cargo.toml.actual
+        echo $'\nexclude = [\"./__ci/redis-bloom\"]' >> Cargo.toml
+        cargo +stable build --release --manifest-path ./__ci/redis-bloom/Cargo.toml
+        mv ./__ci/redis-json/target/release/redisbloom.so /tmp/redisbloom.so
+        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+        rm -rf ./__ci/redis-bloom
+
 
     - name: Check features
       run: |
