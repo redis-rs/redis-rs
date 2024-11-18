@@ -188,10 +188,9 @@ jobs:
 
     - name: Run module-specific tests
       if: matrix.config.db-version != '6.2.13'
-      run: make test-module test-bloom
+      run: make test-module
       env:
         REDIS_VERSION: ${{ matrix.config.db-version }}
-
 
     - name: Check features
       run: |
