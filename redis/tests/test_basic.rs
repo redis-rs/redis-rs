@@ -1176,14 +1176,14 @@ mod basic {
             if x.is_err() {
                 // we found the error case
                 err_flag = true;
-                break;
             } else {
                 count += 1;
             }
         }
 
-        // we should NOT have been able to iterate the whole keyspace
-        assert_ne!(count, 1001);
+        // we should have been able to iterate over the entire keyspace EXCEPT the
+        // key which failed to parse
+        assert_eq!(count, 1000);
 
         // make sure we encountered the error (i.e. instead of silent failure)
         assert_eq!(err_flag, true);
