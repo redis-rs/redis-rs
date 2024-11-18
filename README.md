@@ -192,7 +192,7 @@ Support for the RedisBloom Module can be enabled by specifying "bloom" as a feat
 
 `redis = { version = "0.27.5", features = ["bloom"] }`
 
-THen you can use the bloom filter commands (prefixed with `bf_`) on any Redis Connection
+Then you can use the bloom filter commands (prefixed with `bf_`) on any Redis connection, as long as the server has the module installed.
 
 ```rust
 use redis::Client;

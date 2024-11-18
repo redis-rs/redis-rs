@@ -8,15 +8,13 @@ mod bloom {
     use crate::assert_args;
     use crate::support::*;
     use redis::bloom::ScalingOptions::{ExpansionRate, NonScaling};
-    use redis::bloom::{
-        DumpIterator, DumpResult, InfoType, InsertOptions, SingleInfoResponse,
-    };
+    use redis::bloom::{DumpIterator, DumpResult, InfoType, InsertOptions, SingleInfoResponse};
     use redis::{bloom::AllInfoResponse, Commands, RedisResult, ToRedisArgs};
     use std::collections::VecDeque;
     use std::vec;
 
     #[test]
-    fn test_bf_add_exists() {
+    fn test_module_bloom_add_exists() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -26,8 +24,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_madd_mexists() {
-        //  let ctx = TestContext::new();
+    fn test_module_bloom_madd_mexists() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -42,7 +39,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_cardinality() {
+    fn test_module_bloom_cardinality() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -53,7 +50,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_reserve_options() {
+    fn test_module_bloom_reserve_options() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -68,7 +65,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_info_all() {
+    fn test_module_bloom_info_all() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -86,7 +83,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_info_nonscaling() {
+    fn test_module_bloom_info_nonscaling() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -105,7 +102,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_info_single_when_expansion_set() {
+    fn test_module_bloom_info_single_when_expansion_set() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -128,7 +125,7 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_info_single_when_nonscaling_set() {
+    fn test_module_bloom_info_single_when_nonscaling_set() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
@@ -146,26 +143,26 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_insert_options() {
+    fn test_module_bloom_insert_options() {
         let empty = InsertOptions::default();
         assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
 
         let opts = InsertOptions::default()
-            .nocreate()
-            .scale(ExpansionRate(2))
-            .error_rate(0.001);
+            .with_nocreate()
+            .with_scale(ExpansionRate(2))
+            .with_error_rate(0.001);
 
         assert_args!(&opts, "NOCREATE", "EXPANSION", "2", "ERROR", "0.001");
     }
     #[test]
-    fn test_bf_insert() {
+    fn test_module_bloom_insert() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
         let opts = InsertOptions::default()
             // .nocreate()
-            .capacity(100)
-            .scale(ExpansionRate(2))
-            .error_rate(0.001);
+            .with_capacity(100)
+            .with_scale(ExpansionRate(2))
+            .with_error_rate(0.001);
 
         assert_eq!(
             con.bf_insert("bloomf2", &["element1", "element2"], opts),
@@ -178,9 +175,9 @@ mod bloom {
 
         let opts = InsertOptions::default()
             // .nocreate()
-            .capacity(100)
-            .scale(ExpansionRate(2))
-            .error_rate(0.001);
+            .with_capacity(100)
+            .with_scale(ExpansionRate(2))
+            .with_error_rate(0.001);
 
         assert_eq!(
             con.bf_insert("bloomf2", &["element3", "element4"], opts),
@@ -192,11 +189,11 @@ mod bloom {
         assert_eq!(items.expansion_rate, Some(2));
     }
     #[test]
-    fn test_bf_insert_nocreate() {
+    fn test_module_bloom_insert_nocreate() {
         // if no create set redis returns an error if filter does not exists
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
-        let opts = InsertOptions::default().nocreate();
+        let opts = InsertOptions::default().with_nocreate();
 
         let resp: RedisResult<Vec<String>> =
             con.bf_insert("bloomf3", &["element1", "element2"], opts);
@@ -214,14 +211,14 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_dump_and_load() {
+    fn test_module_bloom_dump_and_load() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
         let opts = InsertOptions::default()
             // .nocreate()
-            .capacity(100)
-            .scale(ExpansionRate(2))
-            .error_rate(0.001);
+            .with_capacity(100)
+            .with_scale(ExpansionRate(2))
+            .with_error_rate(0.001);
 
         assert_eq!(
             con.bf_insert("bloomf2", &["element1", "element2"], opts),
@@ -271,16 +268,16 @@ mod bloom {
     }
 
     #[test]
-    fn test_bf_dump_iterator() {
+    fn test_module_bloom_dump_iterator() {
         let ctx = TestContext::with_modules(&[Module::Bloom], false);
         let mut con = ctx.connection();
 
         // create a filter
         let opts = InsertOptions::default()
             // .nocreate()
-            .capacity(100)
-            .scale(ExpansionRate(2))
-            .error_rate(0.001);
+            .with_capacity(100)
+            .with_scale(ExpansionRate(2))
+            .with_error_rate(0.001);
 
         assert_eq!(
             con.bf_insert("bloomf2", &["element1", "element2"], opts),
@@ -292,9 +289,11 @@ mod bloom {
         let mut chunks: VecDeque<DumpResult> = VecDeque::new();
 
         let dump_iterator = DumpIterator::new(&mut con, "bloomf2");
-        for chunk in dump_iterator {
-            //println!("Got: chunk id {:?}", chunk.iterator);
-            chunks.push_back(chunk);
+        for chunk_res in dump_iterator {
+            match chunk_res {
+                Ok(chunk) => chunks.push_back(chunk),
+                Err(e) => panic!("Error while scanning dump: {:?}", e),
+            }
         }
         println!("completed dump for bloomf2");
 

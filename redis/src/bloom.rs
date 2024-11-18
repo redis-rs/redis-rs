@@ -1,6 +1,5 @@
 //! Defines types to use with the bloom filter commands.
 
-#[cfg(feature = "bloom")]
 use crate::{
     from_redis_value, ErrorKind, FromRedisValue, RedisError, RedisResult, RedisWrite, ToRedisArgs,
     Value,
@@ -46,23 +45,25 @@ pub struct InsertOptions {
 
 impl InsertOptions {
     ///Indicates that the filter should not be created if it does not already exist.
-    pub fn nocreate(mut self) -> Self {
+    pub fn with_nocreate(mut self) -> Self {
         self.no_create = Some(true);
         self
     }
 
     /// Specifies the desired capacity for the filter to be created.
-    pub fn scale(mut self, scale_option: ScalingOptions) -> Self {
+    pub fn with_scale(mut self, scale_option: ScalingOptions) -> Self {
         self.scaling = Some(scale_option);
         self
     }
+
     /// Specifies the error ratio of the newly created filter if it does not yet exist.
-    pub fn error_rate(mut self, rate: f64) -> Self {
+    pub fn with_error_rate(mut self, rate: f64) -> Self {
         self.error_rate = Some(rate);
         self
     }
+
     /// Specifies the desired capacity for the filter to be created.
-    pub fn capacity(mut self, capacity: i64) -> Self {
+    pub fn with_capacity(mut self, capacity: i64) -> Self {
         self.capacity = Some(capacity);
         self
     }
@@ -181,16 +182,6 @@ pub struct SingleInfoResponse {
     pub value: Option<i64>,
 }
 
-macro_rules! not_convertible_error {
-    ($v:expr, $det:expr) => {
-        RedisError::from((
-            ErrorKind::TypeError,
-            "Response type not convertible",
-            format!("{:?} (response was {:?})", $det, $v),
-        ))
-    };
-}
-
 impl FromRedisValue for SingleInfoResponse {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         match v {
@@ -269,10 +260,13 @@ impl FromRedisValue for DumpResult {
 /// let mut chunks: VecDeque<DumpResult> = VecDeque::new();
 ///
 /// let dump_iterator = DumpIterator::new(&mut con, "bloomf2");
-/// for chunk in dump_iterator {
-///
-///    chunks.push_back(chunk);
+/// for chunk_res in dump_iterator {
+///     match chunk_res {
+///         Ok(chunk) => chunks.push_back(chunk),
+///        Err(e) => panic!("Error while scanning dump: {:?}", e),
+///     }
 ///  }
+///
 ///  println!("completed dump for bloomf2");
 ///  Ok(())}
 /// #
@@ -282,6 +276,7 @@ pub struct DumpIterator<'a> {
     con: &'a mut Connection,
     key: &'a str,
     iter_id: i64,
+    has_error: bool,
 }
 
 impl<'a> DumpIterator<'a> {
@@ -291,20 +286,30 @@ impl<'a> DumpIterator<'a> {
             con,
             key,
             iter_id: 0,
+            has_error: false,
         }
     }
 }
 
 impl Iterator for DumpIterator<'_> {
-    type Item = DumpResult;
+    type Item = RedisResult<DumpResult>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let dump: DumpResult = self.con.bf_scandump(self.key, self.iter_id).unwrap();
-        if dump.iterator == 0 {
-            return None;
+        let dump_result: Self::Item = self.con.bf_scandump(self.key, self.iter_id);
+        match dump_result {
+            Ok(ref dump) => {
+                if dump.iterator == 0 || self.has_error {
+                    return None;
+                }
+                self.iter_id = dump.iterator;
+                Some(dump_result)
+            }
+
+            Err(e) => {
+                self.has_error = true;
+                Some(Err(e))
+            }
         }
-        self.iter_id = dump.iterator;
-        Some(dump)
     }
 }

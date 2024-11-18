@@ -41,7 +41,7 @@ fn run() -> RedisResult<()> {
 
     // insert
     let cars = ["Audi", "BMW", "Mercedes"];
-    let insert_opts = bloom::InsertOptions::default().scale(bloom::ScalingOptions::NonScaling);
+    let insert_opts = bloom::InsertOptions::default().with_scale(bloom::ScalingOptions::NonScaling);
     let insert_res: RedisResult<Vec<bool>> = con.bf_insert("car:models", &cars, insert_opts);
     match insert_res {
         Ok(results) => print_results(cars.to_vec(), results, "added", "not added"),

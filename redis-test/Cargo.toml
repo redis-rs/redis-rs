@@ -20,7 +20,6 @@ futures = { version = "0.3", optional = true }
 
 [features]
 aio = ["futures", "redis/aio"]
-bloom = ["redis/bloom"]
 [dev-dependencies]
-redis = { version = "0.27.0", path = "../redis", features = ["aio", "tokio-comp","bloom"] }
+redis = { version = "0.27.0", path = "../redis", features = ["aio", "tokio-comp"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }

@@ -40,6 +40,11 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         cmd,
         b"BITCOUNT"
+            | b"BF.CARD"
+            | b"BF.EXISTS"
+            | b"BF.INFO"
+            | b"BF.MEXISTS"
+            | b"BF.SCANDUMP"
             | b"BITFIELD_RO"
             | b"BITPOS"
             | b"DBSIZE"
@@ -2193,6 +2198,7 @@ assert_eq!(b, 5);
     // bloom commands
 
     /// Add an entry to a bloom filter
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.add/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_add<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
@@ -2200,6 +2206,7 @@ assert_eq!(b, 5);
         }
 
     /// check existence of an entry in a bloom filter.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.exists/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
@@ -2209,6 +2216,7 @@ assert_eq!(b, 5);
         }
 
     /// Add  multiple entries to a bloom filter.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.madd/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
       fn bf_madd<K: ToRedisArgs, V: ToRedisArgs>(key: K, items: V) {
@@ -2216,14 +2224,15 @@ assert_eq!(b, 5);
     }
 
     /// check existence of  multiple entries to a bloom filter.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.mexists/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_mexists<K: ToRedisArgs, V: ToRedisArgs>(key: K, items: &'a [V]) {
         cmd("BF.MEXISTS").arg(key).arg(items)
     }
 
-  /// Returns the cardinality of a Bloom filter - number of items that were added to a Bloom filter and detected as unique
-  /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.card/) for more information.
+    /// Returns the cardinality of a Bloom filter - number of items that were added to a Bloom filter and detected as unique
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.card/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_cardinality<K: ToRedisArgs>(key: K) {
@@ -2232,13 +2241,16 @@ assert_eq!(b, 5);
 
     /// Creates an empty Bloom filter with a single sub-filter for the initial specified
     /// capacity and with an upper bound error_rate.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.reserve/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_reserve<K: ToRedisArgs, E: ToRedisArgs, C: ToRedisArgs>(key: K, err_rate: E, capacity: C) {
         cmd("BF.RESERVE").arg(key).arg(err_rate).arg(capacity)
     }
 
+    /// Creates an empty Bloom filter with a single sub-filter for the initial specified
     /// capacity and with an upper bound error_rate.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.reserve/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_reserve_options<K: ToRedisArgs, E: ToRedisArgs, C: ToRedisArgs>(key: K, err_rate: E, capacity: C, options: ScalingOptions) {
@@ -2247,6 +2259,7 @@ assert_eq!(b, 5);
 
     /// Creates a new Bloom filter if the key does not exist using the specified
     /// error rate, capacity, and expansion, then adds all specified items to the Bloom Filter.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.insert/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_insert<K: ToRedisArgs,  I: ToRedisArgs>(
@@ -2260,6 +2273,7 @@ assert_eq!(b, 5);
     }
 
     /// Returns all information about a Bloom filter.
+    /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.info/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_info_all<K: ToRedisArgs>(key: K) {
@@ -2267,13 +2281,13 @@ assert_eq!(b, 5);
     }
 
      /// Returns specific information about a Bloom filter.
+     /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.info/) for more information.
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_info<K: ToRedisArgs>(key: K, infotype: InfoType) {
         cmd("BF.INFO").arg(key).arg(infotype)
     }
 
-        #[cfg(feature = "bloom")]
     /// Begins an incremental save of the Bloom filter.
     /// See the [Redis documentation](https://redis.io/docs/latest/commands/bf.scandump/) for more information.
     #[cfg(feature = "bloom")]
