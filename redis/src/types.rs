@@ -2558,9 +2558,6 @@ impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
     fn from_redis_value(v: &Value) -> RedisResult<RedisResult<T>> {
         Ok(from_redis_value(v))
     }
-    // fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
-    //     Ok(Ok(v))
-    // }
 }
 
 impl FromRedisValue for () {
