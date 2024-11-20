@@ -100,10 +100,10 @@ jobs:
         sudo apt-get update
         wget https://github.com/${{ matrix.config.db-org }}/${{ matrix.config.db-name }}/archive/${{ matrix.config.db-version }}.tar.gz;
         tar -xzvf ${{ matrix.config.db-version }}.tar.gz;
-        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} && 
-        BUILD_TLS=yes make install && 
+        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} &&
+        BUILD_TLS=yes make install &&
         sudo mv src/${{ matrix.config.db-name }}-server $HOME/redis-server &&
-        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli && 
+        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli &&
         popd;
         echo $PATH
 
@@ -155,36 +155,23 @@ jobs:
         rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
         rm -rf ./__ci/redis-json
 
-    - name: Checkout RedisBloom
-      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
-      uses: actions/checkout@v4
-      with:
-        repository: "RedisBloom/RedisBloom"
-        path: "./__ci/redis-bloom"
-        set-safe-directory: false
-
-      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
-      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
+      # Retrieving the redisbloom library
       #
-      #   1. Copy the untouched file (into Cargo.toml.actual)
-      #   2. Exclude ./__ci/redis-bloom from the workspace
-      #      (preventing it from being compiled as a workspace module)
-      #   3. Build RedisBloom
-      #   4. Move the built RedisBloom Module (redisbloom.so) to /tmp
-      #   5. Restore Cargo.toml to its untouched state
-      #   6. Remove the RedisBloom Source code so it doesn't interfere with tests
-      #
-      # This shouldn't cause issues in the future so long as no profiles or patches
-      # are applied to the workspace Cargo.toml file
-    - name: Compile RedisBloom
+      #   1. get the latest release tag from the RedisBloom repository
+      #   2. Extract the specific runn os ubuntu version
+      #   3. Download and extract the module
+    - name: Retrieve RedisBloom
       if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       run: |
-        cp ./Cargo.toml ./Cargo.toml.actual
-        echo $'\nexclude = [\"./__ci/redis-bloom\"]' >> Cargo.toml
-        cargo +stable build --release --manifest-path ./__ci/redis-bloom/Cargo.toml
-        mv ./__ci/redis-json/target/release/redisbloom.so /tmp/redisbloom.so
-        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
-        rm -rf ./__ci/redis-bloom
+        # Install dependencies
+        apt-get update
+        apt-get install -y curl tar jq sed
+        # Get the latest release tag
+        BLOOM_TAG=$(curl https://api.github.com/repos/RedisBloom/RedisBloom/releases/latest -s | jq -r .name | sed -E 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+        OS_VERSION=$(cat /etc/os-release | grep VERSION_ID | cut -d= -f2 | tr -d '"')
+        # Download and extract the module
+        curl -L -o /tmp/redisbloom.Linux-ubuntu$OS_VERSION-x86_64.$BLOOM_TAG.zip https://redismodules.s3.amazonaws.com/lab/staging/redisbloom/redisbloom.Linux-ubuntu$OS_VERSION-x86_64.$BLOOM_TAG.zip        
+        tar -C /tmp/ -xzf /tmp/redisbloom.Linux-ubuntu$OS_VERSION-x86_64.$BLOOM_TAG.zip
 
     - name: Run module-specific tests
       if: matrix.config.db-version != '6.2.13'
