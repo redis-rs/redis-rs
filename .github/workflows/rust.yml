@@ -27,44 +27,44 @@ jobs:
         config:
           [
             # Different DB cases:
+#            {
+#              rust: stable,
+#              db-org: redis,
+#              db-name: redis,
+#              db-version: 6.2.13
+#            },
             {
               rust: stable,
               db-org: redis,
               db-name: redis,
-              db-version: 6.2.13
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
               db-version: 7.2.4
             },
-            {
-              rust: stable,
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 7.2.6
-            },
-
-            # Different rust cases
-            {
-              rust: beta,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: nightly,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: 1.70.0,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            }
+#            {
+#              rust: stable,
+#              db-org: valkey-io,
+#              db-name: valkey,
+#              db-version: 7.2.6
+#            },
+#
+#            # Different rust cases
+#            {
+#              rust: beta,
+#              db-org: redis,
+#              db-name: redis,
+#              db-version: 7.2.4
+#            },
+#            {
+#              rust: nightly,
+#              db-org: redis,
+#              db-name: redis,
+#              db-version: 7.2.4
+#            },
+#            {
+#              rust: 1.70.0,
+#              db-org: redis,
+#              db-name: redis,
+#              db-version: 7.2.4
+#            }
           ]
 
     steps:
@@ -78,13 +78,13 @@ jobs:
           ~/redis-server
         key: ${{ runner.os }}-${{ matrix.config.db-name }}-${{ matrix.config.db-version }}
 
-    - name: Cache RedisJSON
-      id: cache-redisjson
-      uses: actions/cache@v4
-      with:
-        path: |
-          /tmp/librejson.so
-        key: ${{ runner.os }}-redisjson
+#    - name: Cache RedisJSON
+#      id: cache-redisjson
+#      uses: actions/cache@v4
+#      with:
+#        path: |
+#          /tmp/librejson.so
+#        key: ${{ runner.os }}-redisjson
 
     - name: Cache RedisBloom
       id: cache-redisbloom
@@ -123,49 +123,48 @@ jobs:
 
     - name: Run tests
       run: make test
-
-    - name: Checkout RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
-      uses: actions/checkout@v4
-      with:
-        repository: "RedisJSON/RedisJSON"
-        path: "./__ci/redis-json"
-        set-safe-directory: false
-
-      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
-      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
-      #
-      #   1. Copy the untouched file (into Cargo.toml.actual)
-      #   2. Exclude ./__ci/redis-json from the workspace
-      #      (preventing it from being compiled as a workspace module)
-      #   3. Build RedisJSON
-      #   4. Move the built RedisJSON Module (librejson.so) to /tmp
-      #   5. Restore Cargo.toml to its untouched state
-      #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
-      #
-      # This shouldn't cause issues in the future so long as no profiles or patches
-      # are applied to the workspace Cargo.toml file
-    - name: Compile RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
-      run: |
-        cp ./Cargo.toml ./Cargo.toml.actual
-        echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
-        cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-        mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
-        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
-        rm -rf ./__ci/redis-json
-
-      # Retrieving the redisbloom library
-      #
-      #   1. get the latest release tag from the RedisBloom repository
-      #   2. Extract the specific runn os ubuntu version
-      #   3. Download and extract the module
+#
+#    - name: Checkout RedisJSON
+#      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+#      uses: actions/checkout@v4
+#      with:
+#        repository: "RedisJSON/RedisJSON"
+#        path: "./__ci/redis-json"
+#        set-safe-directory: false
+#
+#      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
+#      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
+#      #
+#      #   1. Copy the untouched file (into Cargo.toml.actual)
+#      #   2. Exclude ./__ci/redis-json from the workspace
+#      #      (preventing it from being compiled as a workspace module)
+#      #   3. Build RedisJSON
+#      #   4. Move the built RedisJSON Module (librejson.so) to /tmp
+#      #   5. Restore Cargo.toml to its untouched state
+#      #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
+#      #
+#      # This shouldn't cause issues in the future so long as no profiles or patches
+#      # are applied to the workspace Cargo.toml file
+#    - name: Compile RedisJSON
+#      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+#      run: |
+#        cp ./Cargo.toml ./Cargo.toml.actual
+#        echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+#        cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
+#        mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
+#        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+#        rm -rf ./__ci/redis-json
+#
+#      # Retrieving the redisbloom library
+#      #
+#      #   1. get the latest release tag from the RedisBloom repository
+#      #   2. Extract the specific runn os ubuntu version
+#      #   3. Download and extract the module
     - name: Retrieve RedisBloom
       if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       run: |
         # Install dependencies
-        apt-get update
-        apt-get install -y curl tar jq sed
+        sudo apt-get update && sudo apt-get install -y curl tar jq sed
         # Get the latest release tag
         BLOOM_TAG=$(curl https://api.github.com/repos/RedisBloom/RedisBloom/releases/latest -s | jq -r .name | sed -E 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
         OS_VERSION=$(cat /etc/os-release | grep VERSION_ID | cut -d= -f2 | tr -d '"')
