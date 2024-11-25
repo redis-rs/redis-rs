@@ -156,7 +156,7 @@ jobs:
         rm -rf ./__ci/redis-json
 
     - name: Checkout RedisBloom
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       uses: actions/checkout@v4
       with:
         repository: "RedisBloom/RedisBloom"
@@ -164,7 +164,7 @@ jobs:
         submodules: recursive
 
     - name: Compile RedisBloom
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
       run: |
         cd ./__ci/redis-bloom
         ./sbin/setup
