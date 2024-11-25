@@ -170,7 +170,8 @@ jobs:
         ./sbin/setup
         bash -l
         make
-        mv ./__ci/redis-bloom/bin/linux-x64-release/redisbloom.so /tmp/redisbloom.so
+        mv /home/runner/work/redis-rs/redis-rs/__ci/redis-bloom/bin/linux-x64-release/redisbloom.so /tmp/redisbloom.so
+        rm -rf home/runner/work/redis-rs/redis-rs/__ci/redis-bloom
 
     - name: Run module-specific tests
       if: matrix.config.db-version != '6.2.13'
