@@ -1,4 +1,4 @@
-//! redis-rs is a Rust implementation of a Redis client library.  It exposes
+//! redis-rs is a Rust implementation of a client library for Redis.  It exposes
 //! a general purpose interface to Redis and also provides specific helpers for
 //! commonly used functionality.
 //!
@@ -109,7 +109,7 @@
 //!
 //! `redis+unix:///<path>[?db=<db>[&pass=<password>][&user=<username>][&protocol=<protocol>]]`
 //!
-//! For compatibility with some other redis libraries, the "unix" scheme
+//! For compatibility with some other libraries for Redis, the "unix" scheme
 //! is also supported:
 //!
 //! `unix:///<path>[?db=<db>][&pass=<password>][&user=<username>][&protocol=<protocol>]]`
