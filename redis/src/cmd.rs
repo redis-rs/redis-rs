@@ -40,7 +40,7 @@ pub struct Iter<'a, T: FromRedisValue> {
     cmd: Cmd,
 }
 
-impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
+impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     type Item = T;
 
     #[inline]
