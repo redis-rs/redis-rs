@@ -272,7 +272,7 @@ impl IntoConnectionInfo for ConnectionInfo {
 /// - Enabling TLS: `rediss://127.0.0.1:6379`
 /// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 /// - Enabling RESP3: `redis://127.0.0.1:6379/?protocol=resp3`
-impl<'a> IntoConnectionInfo for &'a str {
+impl IntoConnectionInfo for &str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Some(u) => u.into_connection_info(),
@@ -1705,7 +1705,7 @@ impl<'a> PubSub<'a> {
     }
 }
 
-impl<'a> Drop for PubSub<'a> {
+impl Drop for PubSub<'_> {
     fn drop(&mut self) {
         let _ = self.con.exit_pubsub();
     }
