@@ -592,6 +592,11 @@ impl ConnectionLike for MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the connection.
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -601,6 +606,8 @@ impl MultiplexedConnection {
     }
 
     /// Unsubscribes from channel.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -610,6 +617,11 @@ impl MultiplexedConnection {
     }
 
     /// Subscribes to a new channel with pattern.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the connection.
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -619,6 +631,8 @@ impl MultiplexedConnection {
     }
 
     /// Unsubscribes from channel pattern.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");

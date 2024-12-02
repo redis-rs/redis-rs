@@ -186,7 +186,9 @@ impl AsyncConnectionConfig {
         self
     }
 
-    /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
+    /// Sets sender channel for push values.
+    ///
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [RedisConnectionInfo::protocol] field.
     pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
         self.push_sender = Some(sender);
         self

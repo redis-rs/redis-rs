@@ -93,7 +93,9 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
+    /// Sets sender channel for push values.
+    ///
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [RedisConnectionInfo::protocol] field.
     pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
         self.push_sender = Some(sender);
         self
@@ -391,6 +393,11 @@ impl ConnectionManager {
     }
 
     /// Subscribes to a new channel.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the manager.
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be removed on a disconnect and must be re-subscribed.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
@@ -401,6 +408,8 @@ impl ConnectionManager {
     }
 
     /// Unsubscribes from channel.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -410,6 +419,11 @@ impl ConnectionManager {
     }
 
     /// Subscribes to a new channel with pattern.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the manager.
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be removed on a disconnect and must be re-subscribed.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
@@ -420,6 +434,8 @@ impl ConnectionManager {
     }
 
     /// Unsubscribes from channel pattern.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");
