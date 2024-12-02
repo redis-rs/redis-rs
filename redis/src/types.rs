@@ -15,6 +15,8 @@ use std::ops::Deref;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
 
+use crate::Msg;
+
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
         fail!(invalid_type_error_inner!($v, $det))
@@ -2689,6 +2691,24 @@ pub struct PushInfo {
     pub kind: PushKind,
     /// Data from push message
     pub data: Vec<Value>,
+}
+
+impl PushInfo {
+    /// Attempts to parse the push message's payload into a specific type.
+    pub fn try_from_redis_value<T>(mut self) -> RedisResult<T>
+    where
+        T: FromRedisValue,
+    {
+        let value = self.data.pop().ok_or_else(|| {
+            RedisError::from((ErrorKind::ResponseError, "No data in push message"))
+        })?;
+        from_owned_redis_value(value)
+    }
+
+    /// Converts the push info into a [Msg].
+    pub fn into_msg(self) -> Option<Msg> {
+        Msg::from_push_info(self)
+    }
 }
 
 #[cfg(feature = "aio")]
