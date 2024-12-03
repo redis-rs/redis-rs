@@ -190,15 +190,14 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
     }
 }
 
-// TODO enable once our MSRV is 1.72 or above
-// impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
-//     fn send(&self, info: PushInfo) -> Result<(), SendError> {
-//         match self.send(info) {
-//             Ok(_) => Ok(()),
-//             Err(_) => Err(SendError),
-//         }
-//     }
-// }
+impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
 
 impl<T> AsyncPushSender for std::sync::Arc<T>
 where
