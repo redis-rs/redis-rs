@@ -9,6 +9,7 @@ use redis::{
     ErrorKind, RedisError, RedisResult,
     Value::{self, *},
 };
+use redis_test::server::Module;
 
 use crate::support::*;
 mod support;
