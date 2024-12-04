@@ -4,7 +4,7 @@
 use futures::Future;
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis::{InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
+use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
 use redis_test::server::{use_protocol, Module, RedisServer};
 use redis_test::utils::{get_random_available_port, TlsFilePaths};
 #[cfg(feature = "tls-rustls")]

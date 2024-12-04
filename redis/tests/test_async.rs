@@ -1515,7 +1515,7 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
         use redis::ProtocolVersion;
-        use redis_test::utils::build_keys_and_certs_for_tls;
+        use redis_test::{server::RedisServer, utils::build_keys_and_certs_for_tls};
 
         let max_delay_between_attempts = 2;
 
