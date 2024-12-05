@@ -98,7 +98,7 @@ Add `rustls` to dependencies
 rustls = { version = "0.23", features = ["ring"] }
 ```
 
-And then, early in the main fn, add:
+And then, before creating a connection, ensure that you install a crypto provider. For example:
 
 ```rust
     rustls::crypto::ring::default_provider()
