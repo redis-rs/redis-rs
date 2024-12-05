@@ -111,6 +111,21 @@ redis = { version = "0.27.6", features = ["tokio-rustls-comp"] }
 redis = { version = "0.27.6", features = ["async-std-rustls-comp"] }
 ```
 
+Add `rustls` to dependencies
+
+```
+rustls = { version = "0.23", features = ["ring"] }
+```
+
+And then, before creating a connection, ensure that you install a crypto provider. For example:
+
+```rust
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+```
+
+
 With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
 
 -   `tls-rustls-insecure`: Allow insecure TLS connections
