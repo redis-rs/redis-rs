@@ -587,6 +587,11 @@ implement_commands! {
         cmd("LSET").arg(key).arg(index).arg(value)
     }
 
+    /// Sends a ping to the server
+    fn ping<K: ToRedisArgs>(message: K) {
+         cmd("PING").arg(message)
+    }
+
     /// Removes and returns the up to `count` last elements of the list stored at key
     ///
     /// If `count` is not specified, then defaults to last element.
@@ -2264,7 +2269,7 @@ pub trait PubSubCommands: Sized {
 impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
-impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sized {}
+impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
