@@ -4,16 +4,6 @@ use crate::types::{
     ErrorKind, FromRedisValue, RedisError, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-macro_rules! not_convertible_error {
-    ($v:expr, $det:expr) => {
-        RedisError::from((
-            ErrorKind::TypeError,
-            "Response type not convertible",
-            format!("{:?} (response was {:?})", $det, $v),
-        ))
-    };
-}
-
 /// ACL rules are used in order to activate or remove a flag, or to perform a
 /// given change to the user ACL, which under the hood are just single words.
 #[derive(Debug, Eq, PartialEq)]
