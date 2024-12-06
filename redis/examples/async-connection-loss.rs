@@ -79,7 +79,7 @@ async fn main() -> RedisResult<()> {
 
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     match mode {
-        Mode::Default => run_multi(client.get_multiplexed_tokio_connection().await?).await?,
+        Mode::Default => run_multi(client.get_multiplexed_async_connection().await?).await?,
         Mode::Reconnect => run_multi(client.get_connection_manager().await?).await?,
         #[allow(deprecated)]
         Mode::Deprecated => run_single(client.get_async_connection().await?).await?,

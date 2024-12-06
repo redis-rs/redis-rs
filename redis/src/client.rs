@@ -256,7 +256,7 @@ impl Client {
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     #[deprecated(
-        note = "aio::Connection is deprecated. Use client::get_multiplexed_tokio_connection instead."
+        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
     )]
     #[allow(deprecated)]
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
@@ -456,7 +456,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -477,7 +477,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -496,7 +496,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -517,7 +517,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
