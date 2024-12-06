@@ -1,5 +1,7 @@
 #![macro_use]
 
+#[cfg(feature = "cache-aio")]
+use crate::cmd::CommandCacheConfig;
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
@@ -9,9 +11,9 @@ use crate::types::{
 /// Represents a redis command pipeline.
 #[derive(Clone)]
 pub struct Pipeline {
-    commands: Vec<Cmd>,
-    transaction_mode: bool,
-    ignored_commands: HashSet<usize>,
+    pub(crate) commands: Vec<Cmd>,
+    pub(crate) transaction_mode: bool,
+    pub(crate) ignored_commands: HashSet<usize>,
 }
 
 /// A pipeline allows you to send multiple commands in one go to the
@@ -355,3 +357,15 @@ macro_rules! implement_pipeline_commands {
 }
 
 implement_pipeline_commands!(Pipeline);
+
+// Defines caching related functions for Pipeline, ClusterPipeline isn't supported yet.
+impl Pipeline {
+    /// Changes caching behaviour for latest command in the pipeline.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Self {
+        let cmd = self.get_last_command();
+        cmd.set_cache_config(command_cache_config);
+        self
+    }
+}

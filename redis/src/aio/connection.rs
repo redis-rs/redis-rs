@@ -90,7 +90,13 @@ where
             pubsub: false,
             protocol: connection_info.protocol,
         };
-        setup_connection(connection_info, &mut rv).await?;
+        setup_connection(
+            connection_info,
+            &mut rv,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .await?;
         Ok(rv)
     }
 

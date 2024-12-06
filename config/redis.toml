@@ -62,3 +62,7 @@ forbid = "tls"
 [[rule]]
 when = true
 forbid = "async-std-tls-comp"
+
+[[rule]]
+when = "cache-aio"
+require = ["tokio-comp", "OR", "async-std-comp"]
