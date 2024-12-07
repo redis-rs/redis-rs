@@ -240,8 +240,11 @@ To build:
 
 To test:
 
-    $ make test
+Note: `make test` requires cargo-nextest installed, to learn more about it please visit [homepage of cargo-nextest](https://nexte.st/).
 
+
+    $ make test
+    
 To run benchmarks:
 
     $ make bench
