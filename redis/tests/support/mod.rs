@@ -563,7 +563,7 @@ impl TestContext {
     pub async fn multiplexed_async_connection_tokio(
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_tokio_connection().await
+        self.client.get_multiplexed_async_connection().await
     }
 
     pub fn get_version(&self) -> Version {
