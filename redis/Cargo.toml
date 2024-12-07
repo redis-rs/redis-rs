@@ -41,7 +41,12 @@ bytes = { version = "1", optional = true }
 futures-util = { version = "0.3.15", default-features = false, optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
-tokio = { version = "1", features = ["rt", "net", "time", "sync"], optional = true }
+tokio = { version = "1", features = [
+    "rt",
+    "net",
+    "time",
+    "sync",
+], optional = true }
 socket2 = { version = "0.5", default-features = false, optional = true }
 
 # Only needed for the connection manager
@@ -97,17 +102,38 @@ itertools = "0.13.0"
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
-aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio", "async-trait"]
+aio = [
+    "bytes",
+    "pin-project-lite",
+    "futures-util",
+    "futures-util/alloc",
+    "futures-util/sink",
+    "tokio/io-util",
+    "tokio-util",
+    "tokio-util/codec",
+    "combine/tokio",
+    "async-trait",
+]
 geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
 script = ["sha1_smol"]
 tls-native-tls = ["native-tls"]
-tls-rustls = ["rustls/std", "rustls/ring", "rustls-native-certs", "rustls-pemfile", "rustls-pki-types"]
+tls-rustls = [
+    "rustls/std",
+    "rustls/ring",
+    "rustls-native-certs",
+    "rustls-pemfile",
+    "rustls-pki-types",
+]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "webpki-roots"]
 async-std-comp = ["aio", "async-std"]
-async-std-native-tls-comp = ["async-std-comp", "async-native-tls", "tls-native-tls"]
+async-std-native-tls-comp = [
+    "async-std-comp",
+    "async-native-tls",
+    "tls-native-tls",
+]
 async-std-rustls-comp = ["async-std-comp", "futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "tokio-native-tls"]
@@ -127,7 +153,9 @@ hashbrown = ["dep:hashbrown"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
-async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
+async-std-tls-comp = [
+    "async-std-native-tls-comp",
+] # use "async-std-native-tls-comp" instead
 
 [dev-dependencies]
 rand = "0.8"
@@ -147,6 +175,10 @@ rstest = "0.23"
 
 [[test]]
 name = "test_async"
+required-features = ["tokio-comp"]
+
+[[test]]
+name = "test_async_pubsub"
 required-features = ["tokio-comp"]
 
 [[test]]
