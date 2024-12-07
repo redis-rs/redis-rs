@@ -1608,6 +1608,41 @@ mod basic_async {
         .unwrap();
     }
 
+    #[cfg(feature = "connection-manager")]
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[case::async_std(RuntimeType::AsyncStd)]
+    fn manager_should_reconnect_without_actions(#[case] runtime: RuntimeType) {
+        let ctx = TestContext::new();
+
+        let max_delay_between_attempts = 2;
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_max_delay(max_delay_between_attempts);
+
+        block_on_all(
+            async move {
+                let mut conn = ctx
+                    .client
+                    .get_connection_manager_with_config(config)
+                    .await?;
+
+                let addr = ctx.server.client_addr().clone();
+                drop(ctx);
+                let _ctx = TestContext::new_with_addr(addr);
+
+                // allow time to reconnect.
+                sleep(Duration::from_millis(4).into()).await;
+
+                assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+
+                Ok::<_, RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]

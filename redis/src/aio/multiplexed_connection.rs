@@ -109,8 +109,14 @@ fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     };
 }
 
-fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
-    send_push(push_sender, PushInfo::disconnect());
+pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+    send_push(
+        push_sender,
+        PushInfo {
+            kind: crate::PushKind::Disconnection,
+            data: vec![],
+        },
+    );
 }
 
 impl<T> PipelineSink<T>
@@ -134,18 +140,24 @@ where
         loop {
             let item = ready!(self.as_mut().project().sink_stream.poll_next(cx));
             let item = match item {
-                Some(result) => result,
-                // The redis response stream is not going to produce any more items so we simulate a disconnection error to break out of the loop.
-                None => Err(closed_connection_error()),
+                Some(result) => {
+                    if let Err(err) = &result {
+                        if err.is_unrecoverable_error() {
+                            let self_ = self.as_mut().project();
+                            send_disconnect(self_.push_sender);
+                        }
+                    }
+                    result
+                }
+                // The redis response stream is not going to produce any more items so we `Err`
+                // to break out of the `forward` combinator and stop handling requests
+                None => {
+                    let self_ = self.project();
+                    send_disconnect(self_.push_sender);
+                    return Poll::Ready(Err(()));
+                }
             };
-
-            let is_unrecoverable = item.as_ref().is_err_and(|err| err.is_unrecoverable_error());
             self.as_mut().send_result(item);
-            if is_unrecoverable {
-                let self_ = self.project();
-                send_disconnect(self_.push_sender);
-                return Poll::Ready(Err(()));
-            }
         }
     }
 
@@ -453,6 +465,7 @@ impl MultiplexedConnection {
                 response_timeout,
                 connection_timeout: None,
                 push_sender: None,
+                ignore_resp_check: false,
             },
         )
         .await
@@ -472,7 +485,7 @@ impl MultiplexedConnection {
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
         let codec = ValueCodec::default().framed(stream);
-        if config.push_sender.is_some() {
+        if config.push_sender.is_some() && !config.ignore_resp_check {
             check_resp3!(
                 connection_info.protocol,
                 "Can only pass push sender to a connection using RESP3"

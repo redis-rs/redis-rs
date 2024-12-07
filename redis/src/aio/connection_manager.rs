@@ -129,9 +129,6 @@ impl ConnectionManagerConfig {
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
     /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
-    /// Setting this will mean that the connection manager actively listens to updates from the
-    /// server, and so it will cause the manager to reconnect after a disconnection, even if the manager was unused at
-    /// the time of the disconnect.
     ///
     /// # Examples
     ///
@@ -189,6 +186,8 @@ impl Default for ConnectionManagerConfig {
 /// - When a command sent to the server fails with an error that represents
 ///   a "connection dropped" condition, that error will be passed on to the
 ///   user, but it will trigger a reconnection in the background.
+/// - The connection might detect a dropped connection at any time, even without
+///   receiving a command from the user.
 /// - The reconnect code will atomically swap the current (dead) connection
 ///   with a future that will eventually resolve to a `MultiplexedConnection`
 ///   or to a `RedisError`
@@ -219,6 +218,12 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 
 /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
+
+struct DisconnectPushesConfig {
+    connection_manager: ConnectionManager,
+    internal_receiver: UnboundedReceiver<PushInfo>,
+    external_sender: Option<Arc<dyn AsyncPushSender>>,
+}
 
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
@@ -349,19 +354,19 @@ impl ConnectionManager {
             runtime.spawn(Self::check_for_disconnect_pushes(oneshot_receiver)),
         );
 
-        let mut components_for_reconnection_on_push = None;
-        if let Some(push_sender) = config.push_sender.clone() {
+        let external_sender = if let Some(push_sender) = config.push_sender.clone() {
             check_resp3!(
                 client.connection_info.redis.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
+            Some(push_sender)
+        } else {
+            None
+        };
 
-            let (internal_sender, internal_receiver) = unbounded_channel();
-            components_for_reconnection_on_push = Some((internal_receiver, push_sender));
-
-            connection_config =
-                connection_config.set_push_sender_internal(Arc::new(internal_sender));
-        }
+        let (internal_sender, internal_receiver) = unbounded_channel();
+        connection_config = connection_config.set_push_sender_internal(Arc::new(internal_sender));
+        connection_config.ignore_resp_check = true;
 
         let connection =
             Self::new_connection(client.clone(), retry_strategy, &connection_config).await?;
@@ -377,16 +382,18 @@ impl ConnectionManager {
             _task_handle,
         };
 
-        if let Some((internal_receiver, external_sender)) = components_for_reconnection_on_push {
-            oneshot_sender
-                .send((new_self.clone(), internal_receiver, external_sender))
-                .map_err(|_| {
-                    crate::RedisError::from((
-                        crate::ErrorKind::ClientError,
-                        "Failed to set automatic resubscription",
-                    ))
-                })?;
-        }
+        oneshot_sender
+            .send(DisconnectPushesConfig {
+                connection_manager: new_self.clone(),
+                internal_receiver,
+                external_sender,
+            })
+            .map_err(|_| {
+                crate::RedisError::from((
+                    crate::ErrorKind::ClientError,
+                    "Failed to set automatic resubscription",
+                ))
+            })?;
 
         Ok(new_self)
     }
@@ -437,23 +444,22 @@ impl ConnectionManager {
         }
     }
 
-    async fn check_for_disconnect_pushes(
-        receiver: oneshot::Receiver<(
-            ConnectionManager,
-            UnboundedReceiver<PushInfo>,
-            Arc<dyn AsyncPushSender>,
-        )>,
-    ) {
-        let Ok((this, mut internal_receiver, external_sender)) = receiver.await else {
+    async fn check_for_disconnect_pushes(receiver: oneshot::Receiver<DisconnectPushesConfig>) {
+        let Ok(DisconnectPushesConfig {
+            connection_manager: this,
+            mut internal_receiver,
+            external_sender,
+        }) = receiver.await
+        else {
             return;
         };
         while let Some(push_info) = internal_receiver.recv().await {
             if push_info.kind == PushKind::Disconnection {
                 this.reconnect(this.connection.load());
             }
-            if external_sender.send(push_info).is_err() {
-                return;
-            }
+            external_sender
+                .as_ref()
+                .map(|sender| sender.send(push_info).is_err());
         }
     }
 

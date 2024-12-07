@@ -165,6 +165,8 @@ pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
     pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
+    // only set this internally. Don't allow users to set this.
+    pub(crate) ignore_resp_check: bool,
 }
 
 #[cfg(feature = "aio")]
