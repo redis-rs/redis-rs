@@ -32,7 +32,7 @@ use crate::streams;
 use crate::acl;
 use crate::RedisConnectionInfo;
 
-#[cfg(feature = "cluster")]
+#[cfg(any(feature = "cluster", feature = "cache-aio"))]
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         cmd,
