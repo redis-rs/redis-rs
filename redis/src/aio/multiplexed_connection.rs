@@ -465,6 +465,7 @@ impl MultiplexedConnection {
                 response_timeout,
                 connection_timeout: None,
                 push_sender: None,
+                ignore_resp_check: false,
             },
         )
         .await
@@ -484,7 +485,7 @@ impl MultiplexedConnection {
         compile_error!("tokio-comp or async-std-comp features required for aio feature");
 
         let codec = ValueCodec::default().framed(stream);
-        if config.push_sender.is_some() {
+        if config.push_sender.is_some() && !config.ignore_resp_check {
             check_resp3!(
                 connection_info.protocol,
                 "Can only pass push sender to a connection using RESP3"

@@ -1,18 +1,20 @@
-use super::{AsyncPushSender, RedisFuture};
+use super::{AsyncPushSender, RedisFuture, SharedHandleContainer};
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
     types::{RedisError, RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, ToRedisArgs,
+    AsyncConnectionConfig, Client, Cmd, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
 use futures::{
+    channel::oneshot,
     future::{self, Shared},
     FutureExt,
 };
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
 #[derive(Clone)]
@@ -184,6 +186,8 @@ impl Default for ConnectionManagerConfig {
 /// - When a command sent to the server fails with an error that represents
 ///   a "connection dropped" condition, that error will be passed on to the
 ///   user, but it will trigger a reconnection in the background.
+/// - The connection might detect a dropped connection at any time, even without
+///   receiving a command from the user.
 /// - The reconnect code will atomically swap the current (dead) connection
 ///   with a future that will eventually resolve to a `MultiplexedConnection`
 ///   or to a `RedisError`
@@ -206,6 +210,7 @@ pub struct ConnectionManager {
     runtime: Runtime,
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
+    _task_handle: SharedHandleContainer,
 }
 
 /// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
@@ -213,6 +218,12 @@ type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
 
 /// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
+
+struct DisconnectPushesConfig {
+    connection_manager: ConnectionManager,
+    internal_receiver: UnboundedReceiver<PushInfo>,
+    external_sender: Option<Arc<dyn AsyncPushSender>>,
+}
 
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
@@ -338,19 +349,29 @@ impl ConnectionManager {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
 
-        if let Some(push_sender) = config.push_sender.clone() {
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel();
+        let _task_handle = SharedHandleContainer::new(
+            runtime.spawn(Self::check_for_disconnect_pushes(oneshot_receiver)),
+        );
+
+        let external_sender = if let Some(push_sender) = config.push_sender.clone() {
             check_resp3!(
                 client.connection_info.redis.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
-            connection_config = connection_config.set_push_sender_internal(push_sender);
-        }
+            Some(push_sender)
+        } else {
+            None
+        };
+
+        let (internal_sender, internal_receiver) = unbounded_channel();
+        connection_config = connection_config.set_push_sender_internal(Arc::new(internal_sender));
+        connection_config.ignore_resp_check = true;
 
         let connection =
             Self::new_connection(client.clone(), retry_strategy, &connection_config).await?;
 
-        // Wrap the connection in an `ArcSwap` instance for fast atomic access
-        Ok(Self {
+        let new_self = Self {
             client,
             connection: Arc::new(ArcSwap::from_pointee(
                 future::ok(connection).boxed().shared(),
@@ -358,7 +379,23 @@ impl ConnectionManager {
             runtime,
             retry_strategy,
             connection_config,
-        })
+            _task_handle,
+        };
+
+        oneshot_sender
+            .send(DisconnectPushesConfig {
+                connection_manager: new_self.clone(),
+                internal_receiver,
+                external_sender,
+            })
+            .map_err(|_| {
+                crate::RedisError::from((
+                    crate::ErrorKind::ClientError,
+                    "Failed to set automatic resubscription",
+                ))
+            })?;
+
+        Ok(new_self)
     }
 
     async fn new_connection(
@@ -368,9 +405,10 @@ impl ConnectionManager {
     ) -> RedisResult<MultiplexedConnection> {
         let connection_config = connection_config.clone();
         let get_conn = || async {
-            client
+            let conn = client
                 .get_multiplexed_async_connection_with_config(&connection_config)
-                .await
+                .await?;
+            Ok(conn)
         };
         get_conn
             .retry(exponential_backoff)
@@ -403,6 +441,25 @@ impl ConnectionManager {
         if Arc::ptr_eq(&prev, &current) {
             // ...start the connection attempt immediately but do not wait on it.
             self.runtime.spawn(new_connection.map(|_| ()));
+        }
+    }
+
+    async fn check_for_disconnect_pushes(receiver: oneshot::Receiver<DisconnectPushesConfig>) {
+        let Ok(DisconnectPushesConfig {
+            connection_manager: this,
+            mut internal_receiver,
+            external_sender,
+        }) = receiver.await
+        else {
+            return;
+        };
+        while let Some(push_info) = internal_receiver.recv().await {
+            if push_info.kind == PushKind::Disconnection {
+                this.reconnect(this.connection.load());
+            }
+            external_sender
+                .as_ref()
+                .map(|sender| sender.send(push_info).is_err());
         }
     }
 
@@ -454,8 +511,9 @@ impl ConnectionManager {
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name);
+        cmd.arg(&channel_name);
         cmd.exec_async(self).await?;
+
         Ok(())
     }
 
@@ -465,7 +523,7 @@ impl ConnectionManager {
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(channel_name);
+        cmd.arg(&channel_name);
         cmd.exec_async(self).await?;
         Ok(())
     }
@@ -480,7 +538,7 @@ impl ConnectionManager {
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern);
+        cmd.arg(&channel_pattern);
         cmd.exec_async(self).await?;
         Ok(())
     }
@@ -491,7 +549,7 @@ impl ConnectionManager {
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.client.connection_info.redis.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(channel_pattern);
+        cmd.arg(&channel_pattern);
         cmd.exec_async(self).await?;
         Ok(())
     }
