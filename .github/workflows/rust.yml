@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REDIS_RS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDIS_RS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
+
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -18,7 +20,7 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 60    
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -90,16 +92,24 @@ jobs:
           /tmp/librejson.so
         key: ${{ runner.os }}-redisjson
 
+    - name: Cache RedisBloom
+      id: cache-redisbloom
+      uses: actions/cache@v4
+      with:
+        path: |
+          /tmp/redisbloom.so
+        key: ${{ runner.os }}-redisbloom
+
     - name: Install DB
       if: steps.cache-redis.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
         wget https://github.com/${{ matrix.config.db-org }}/${{ matrix.config.db-name }}/archive/${{ matrix.config.db-version }}.tar.gz;
         tar -xzvf ${{ matrix.config.db-version }}.tar.gz;
-        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} && 
-        BUILD_TLS=yes make install && 
+        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} &&
+        BUILD_TLS=yes make install &&
         sudo mv src/${{ matrix.config.db-name }}-server $HOME/redis-server &&
-        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli && 
+        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli &&
         popd;
         echo $PATH
 
@@ -155,6 +165,24 @@ jobs:
         mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
         rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
         rm -rf ./__ci/redis-json
+
+    - name: Checkout RedisBloom
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      uses: actions/checkout@v4
+      with:
+        repository: "RedisBloom/RedisBloom"
+        path: "./__ci/redis-bloom"
+        submodules: recursive
+
+    - name: Compile RedisBloom
+      if: steps.cache-redisbloom.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+      run: |
+        cd ./__ci/redis-bloom
+        ./sbin/setup
+        bash -l
+        make
+        mv /home/runner/work/redis-rs/redis-rs/__ci/redis-bloom/bin/linux-x64-release/redisbloom.so /tmp/redisbloom.so
+        rm -rf home/runner/work/redis-rs/redis-rs/__ci/redis-bloom
 
     - name: Run module-specific tests
       if: matrix.config.db-version != '6.2.13'
