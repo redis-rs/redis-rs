@@ -1395,10 +1395,7 @@ impl Connection {
     }
 
     fn send_disconnect(&self) {
-        self.send_push(PushInfo {
-            kind: PushKind::Disconnection,
-            data: vec![],
-        })
+        self.send_push(PushInfo::disconnect())
     }
 
     fn close_connection(&mut self) {
