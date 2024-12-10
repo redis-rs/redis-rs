@@ -1632,7 +1632,7 @@ mod basic_async {
                 let _ctx = TestContext::new_with_addr(addr);
 
                 // allow time to reconnect.
-                sleep(Duration::from_millis(4).into()).await;
+                sleep(Duration::from_millis(10).into()).await;
 
                 assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
 
