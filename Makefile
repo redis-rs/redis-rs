@@ -55,12 +55,12 @@ test:
 
 test-module:
 	@echo "===================================================================="
-	@echo "Testing RESP2 with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP2 with module support enabled (currently RedisJSON && RedisBloom)"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features e -E 'test(test_module)'
 
 	@echo "===================================================================="
-	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP3 with module support enabled (currently only RedisJSON && RedisBloom)"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 RESP3=true cargo nextest run -p redis --all-features e -E 'test(test_module)'
 

@@ -98,6 +98,7 @@ itertools = "0.13.0"
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
 aio = ["bytes", "pin-project-lite", "futures-util", "futures-util/alloc", "futures-util/sink", "tokio/io-util", "tokio-util", "tokio-util/codec", "combine/tokio", "async-trait"]
+bloom = []
 geospatial = []
 json = ["serde", "serde/derive", "serde_json"]
 cluster = ["crc16", "rand"]
@@ -171,6 +172,10 @@ name = "test_bignum"
 name = "test_script"
 required-features = ["script"]
 
+[[test]]
+name = "test_bloom"
+required-features = ["bloom"]
+
 [[bench]]
 name = "bench_basic"
 harness = false
@@ -209,3 +214,7 @@ required-features = ["connection-manager"]
 [[example]]
 name = "streams"
 required-features = ["streams"]
+
+[[example]]
+name = "bloom"
+required-features = ["bloom"]
