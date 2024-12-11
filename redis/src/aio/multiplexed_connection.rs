@@ -109,14 +109,8 @@ fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     };
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
-    send_push(
-        push_sender,
-        PushInfo {
-            kind: crate::PushKind::Disconnection,
-            data: vec![],
-        },
-    );
+fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+    send_push(push_sender, PushInfo::disconnect());
 }
 
 impl<T> PipelineSink<T>
@@ -140,24 +134,18 @@ where
         loop {
             let item = ready!(self.as_mut().project().sink_stream.poll_next(cx));
             let item = match item {
-                Some(result) => {
-                    if let Err(err) = &result {
-                        if err.is_unrecoverable_error() {
-                            let self_ = self.as_mut().project();
-                            send_disconnect(self_.push_sender);
-                        }
-                    }
-                    result
-                }
-                // The redis response stream is not going to produce any more items so we `Err`
-                // to break out of the `forward` combinator and stop handling requests
-                None => {
-                    let self_ = self.project();
-                    send_disconnect(self_.push_sender);
-                    return Poll::Ready(Err(()));
-                }
+                Some(result) => result,
+                // The redis response stream is not going to produce any more items so we simulate a disconnection error to break out of the loop.
+                None => Err(closed_connection_error()),
             };
+
+            let is_unrecoverable = item.as_ref().is_err_and(|err| err.is_unrecoverable_error());
             self.as_mut().send_result(item);
+            if is_unrecoverable {
+                let self_ = self.project();
+                send_disconnect(self_.push_sender);
+                return Poll::Ready(Err(()));
+            }
         }
     }
 
