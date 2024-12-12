@@ -588,7 +588,12 @@ implement_commands! {
     }
 
     /// Sends a ping to the server
-    fn ping<K: ToRedisArgs>(message: K) {
+    fn ping<>() {
+         &mut cmd("PING")
+    }
+
+    /// Sends a ping with a message to the server
+    fn ping_message<K: ToRedisArgs>(message: K) {
          cmd("PING").arg(message)
     }
 

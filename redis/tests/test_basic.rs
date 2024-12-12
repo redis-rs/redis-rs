@@ -205,6 +205,17 @@ mod basic {
     }
 
     #[test]
+    fn test_ping() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let res: String = con.ping_message("foobar").unwrap();
+        assert_eq!(&res, "foobar");
+        let res: String = con.ping().unwrap();
+        assert_eq!(&res, "PONG");
+    }
+
+    #[test]
     fn test_getdel() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
