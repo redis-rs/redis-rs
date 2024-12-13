@@ -46,6 +46,21 @@ mod basic_async {
             }
         }
 
+        fn req_packed_commands_raw<'a>(
+            &'a mut self,
+            cmd: &'a redis::Pipeline,
+            offset: usize,
+            count: usize,
+        ) -> RedisFuture<'a, Vec<RedisResult<Value>>> {
+            match self {
+                Wrapper::MultiplexedConnection(conn) => {
+                    conn.req_packed_commands_raw(cmd, offset, count)
+                }
+                #[cfg(feature = "connection-manager")]
+                Wrapper::ConnectionManager(conn) => conn.req_packed_commands_raw(cmd, offset, count),
+            }
+        }
+
         fn req_packed_commands<'a>(
             &'a mut self,
             cmd: &'a redis::Pipeline,
