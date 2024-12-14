@@ -39,7 +39,7 @@ pub struct ConnectionManagerConfig {
     /// sender channel for push values
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
-    resubsrcibe_automatically: bool,
+    resubscribe_automatically: bool,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -52,7 +52,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             response_timeout,
             connection_timeout,
             push_sender,
-            resubsrcibe_automatically,
+            resubscribe_automatically,
         } = &self;
         f.debug_struct("ConnectionManagerConfig")
             .field("exponent_base", &exponent_base)
@@ -61,7 +61,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("max_delay", &max_delay)
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
-            .field("resubsrcibe_automatically", &resubsrcibe_automatically)
+            .field("resubscribe_automatically", &resubscribe_automatically)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -166,7 +166,7 @@ impl ConnectionManagerConfig {
 
     /// Configures the connection manager to automatically resubscribe to all pubsub channels after reconnecting.
     pub fn set_automatic_resubscription(mut self) -> Self {
-        self.resubsrcibe_automatically = true;
+        self.resubscribe_automatically = true;
         self
     }
 }
@@ -181,7 +181,7 @@ impl Default for ConnectionManagerConfig {
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
             push_sender: None,
-            resubsrcibe_automatically: false,
+            resubscribe_automatically: false,
         }
     }
 }
@@ -343,8 +343,8 @@ impl ConnectionManager {
         // Create a MultiplexedConnection and wait for it to be established
         let runtime = Runtime::locate();
 
-        if config.resubsrcibe_automatically && config.push_sender.is_none() {
-            return Err((crate::ErrorKind::ClientError, "Cannot set resubsrcibe_automatically without setting a push sender to receive messages.").into());
+        if config.resubscribe_automatically && config.push_sender.is_none() {
+            return Err((crate::ErrorKind::ClientError, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
         }
 
         let mut retry_strategy = ExponentialBuilder::default()
@@ -385,7 +385,7 @@ impl ConnectionManager {
 
         let connection =
             Self::new_connection(&client, retry_strategy, &connection_config, None).await?;
-        let subscription_tracker = if config.resubsrcibe_automatically {
+        let subscription_tracker = if config.resubscribe_automatically {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
