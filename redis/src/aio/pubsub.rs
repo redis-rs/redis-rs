@@ -295,30 +295,28 @@ impl PubSubSink {
 
     /// Subscribes to a new channel.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
-        let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name);
-        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
+        let cmd = cmd("SUBSCRIBE").arg(channel_name).get_packed_command();
+        self.send_recv(cmd).await.map(|_| ())
     }
 
     /// Unsubscribes from channel.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
-        let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(channel_name);
-        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
+        let cmd = cmd("UNSUBSCRIBE").arg(channel_name).get_packed_command();
+        self.send_recv(cmd).await.map(|_| ())
     }
 
     /// Subscribes to a new channel with pattern.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
-        let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
+        let cmd = cmd("PSUBSCRIBE").arg(channel_pattern).get_packed_command();
+        self.send_recv(cmd).await.map(|_| ())
     }
 
     /// Unsubscribes from channel pattern.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
-        let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        self.send_recv(cmd.get_packed_command()).await.map(|_| ())
+        let cmd = cmd("PUNSUBSCRIBE")
+            .arg(channel_pattern)
+            .get_packed_command();
+        self.send_recv(cmd).await.map(|_| ())
     }
 
     /// Sends a ping with a message to the server
@@ -326,15 +324,16 @@ impl PubSubSink {
         &mut self,
         message: impl ToRedisArgs,
     ) -> RedisResult<T> {
-        let mut cmd = cmd("PING");
-        cmd.arg(message);
-        from_owned_redis_value(self.send_recv(cmd.get_packed_command()).await?)
+        let cmd = cmd("PING").arg(message).get_packed_command();
+        let response = self.send_recv(cmd).await?;
+        from_owned_redis_value(response)
     }
 
     /// Sends a ping to the server
     pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
-        let cmd = cmd("PING");
-        from_owned_redis_value(self.send_recv(cmd.get_packed_command()).await?)
+        let cmd = cmd("PING").get_packed_command();
+        let response = self.send_recv(cmd).await?;
+        from_owned_redis_value(response)
     }
 }
 
