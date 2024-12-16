@@ -89,9 +89,11 @@ use crate::{
         Slot, SlotMap,
     },
     cluster_topology::parse_slots,
+    cmd,
+    subscription_tracker::SubscriptionTracker,
     types::closed_connection_error,
-    Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError, RedisFuture, RedisResult,
-    Value,
+    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
+    RedisFuture, RedisResult, ToRedisArgs, Value,
 };
 
 use futures_sink::Sink;
@@ -206,6 +208,81 @@ where
                 Response::Single(_) => unreachable!(),
             })
     }
+
+    /// Subscribes to a new channel.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the manager.
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
+    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("SUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("UNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Subscribes to a new channel pattern.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the manager.
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
+    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("PSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel pattern.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("PUNSUBSCRIBE");
+        cmd.arg(channel_pattern);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Subscribes to a new sharded channel.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the manager.
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
+    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    pub async fn ssubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("SSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from channel pattern.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    pub async fn sunsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        let mut cmd = cmd("SUNSUBSCRIBE");
+        cmd.arg(channel_name);
+        cmd.exec_async(self).await?;
+        Ok(())
+    }
 }
 
 type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
@@ -219,6 +296,7 @@ struct InnerCore<C> {
     cluster_params: ClusterParams,
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
+    subscription_tracker: Option<Mutex<SubscriptionTracker>>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -294,11 +372,17 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<Self> {
         let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+        let subscription_tracker = if cluster_params.async_push_sender.is_some() {
+            Some(Mutex::new(SubscriptionTracker::default()))
+        } else {
+            None
+        };
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
+            subscription_tracker,
         });
         let connection = ClusterConnInner {
             inner,
@@ -345,6 +429,33 @@ where
             )));
         }
         Ok(connections)
+    }
+
+    fn resubscribe(&self) {
+        let Some(subscription_tracker) = self.inner.subscription_tracker.as_ref() else {
+            return;
+        };
+
+        let subscription_pipe = subscription_tracker
+            .lock()
+            .unwrap()
+            .get_subscription_pipeline();
+
+        // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
+        let requests = subscription_pipe.cmd_iter().map(|cmd| {
+            let routing = RoutingInfo::for_routable(cmd)
+                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .into();
+            PendingRequest {
+                retry: 0,
+                sender: request::ResultExpectation::Internal,
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd.clone()),
+                    routing,
+                },
+            }
+        });
+        self.inner.pending_requests.lock().unwrap().extend(requests);
     }
 
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
@@ -398,7 +509,7 @@ where
     }
 
     // Query a node to discover slot-> master mappings.
-    async fn refresh_slots(inner: Arc<InnerCore<C>>) -> RedisResult<()> {
+    async fn refresh_slots(inner: Core<C>) -> RedisResult<()> {
         let mut write_guard = inner.conn_lock.write().await;
         let mut connections = mem::take(&mut write_guard.0);
         let slots = &mut write_guard.1;
@@ -589,7 +700,7 @@ where
                         (addr.clone(), receiver),
                         PendingRequest {
                             retry: 0,
-                            sender,
+                            sender: request::ResultExpectation::External(sender),
                             cmd: CmdArg::Cmd {
                                 cmd,
                                 routing: InternalSingleNodeRouting::Connection {
@@ -808,26 +919,30 @@ where
             ConnectionState::PollComplete => return Poll::Ready(Ok(())),
             ConnectionState::Recover(future) => future,
         };
-        match recover_future {
+        let res = match recover_future {
             RecoverFuture::RecoverSlots(ref mut future) => match ready!(future.as_mut().poll(cx)) {
                 Ok(_) => {
                     trace!("Recovered!");
                     self.state = ConnectionState::PollComplete;
-                    Poll::Ready(Ok(()))
+                    Ok(())
                 }
                 Err(err) => {
                     trace!("Recover slots failed!");
                     *future = Box::pin(Self::refresh_slots(self.inner.clone()));
-                    Poll::Ready(Err(err))
+                    Err(err)
                 }
             },
             RecoverFuture::Reconnect(ref mut future) => {
                 ready!(future.as_mut().poll(cx));
                 trace!("Reconnected connections");
                 self.state = ConnectionState::PollComplete;
-                Poll::Ready(Ok(()))
+                Ok(())
             }
+        };
+        if res.is_ok() {
+            self.resubscribe();
         }
+        Poll::Ready(res)
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
@@ -911,7 +1026,7 @@ where
                     .as_mut()
                     .respond(Err(self.refresh_error.take().unwrap()));
             } else if let Some(request) = self.inner.pending_requests.lock().unwrap().pop() {
-                let _ = request.sender.send(Err(self.refresh_error.take().unwrap()));
+                request.sender.send(Err(self.refresh_error.take().unwrap()));
             }
         }
     }
@@ -977,13 +1092,24 @@ where
         trace!("start_send");
         let Message { cmd, sender } = msg;
 
+        if let Some(tracker) = &self.inner.subscription_tracker {
+            // TODO - benchmark whether checking whether the command is a subscription outside of the mutex is more performant.
+            let mut tracker = tracker.lock().unwrap();
+            match &cmd {
+                CmdArg::Cmd { cmd, .. } => tracker.update_with_cmd(cmd.as_ref()),
+                CmdArg::Pipeline { pipeline, .. } => {
+                    tracker.update_with_pipeline(pipeline.as_ref())
+                }
+            }
+        };
+
         self.inner
             .pending_requests
             .lock()
             .unwrap()
             .push(PendingRequest {
                 retry: 0,
-                sender,
+                sender: request::ResultExpectation::External(sender),
                 cmd,
             });
         Ok(())
@@ -1083,6 +1209,19 @@ where
 /// and obtaining a connection handle.
 pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
+    fn connect_with_config<'a, T>(info: T, config: AsyncConnectionConfig) -> RedisFuture<'a, Self>
+    where
+        T: IntoConnectionInfo + Send + 'a,
+    {
+        // default implementation, for backwards compatibility
+        Self::connect(
+            info,
+            config.response_timeout.unwrap_or(Duration::MAX),
+            config.connection_timeout.unwrap_or(Duration::MAX),
+        )
+    }
+
+    /// Connect to a node, returning handle for command execution.
     fn connect<'a, T>(
         info: T,
         response_timeout: Duration,
@@ -1093,6 +1232,20 @@ pub trait Connect: Sized {
 }
 
 impl Connect for MultiplexedConnection {
+    fn connect_with_config<'a, T>(info: T, config: AsyncConnectionConfig) -> RedisFuture<'a, Self>
+    where
+        T: IntoConnectionInfo + Send + 'a,
+    {
+        async move {
+            let connection_info = info.into_connection_info()?;
+            let client = crate::Client::open(connection_info)?;
+            client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await
+        }
+        .boxed()
+    }
+
     fn connect<'a, T>(
         info: T,
         response_timeout: Duration,
@@ -1140,13 +1293,24 @@ where
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
+    let push_sender = params.async_push_sender.clone();
     let info = get_connection_info(node, params)?;
-    let mut conn: C = C::connect(info, response_timeout, connection_timeout).await?;
-    check_connection(&mut conn).await?;
-    if read_from_replicas {
-        // If READONLY is sent to primary nodes, it will have no effect
-        crate::cmd("READONLY").exec_async(&mut conn).await?;
+    let mut config = AsyncConnectionConfig::default()
+        .set_connection_timeout(connection_timeout)
+        .set_response_timeout(response_timeout);
+    if let Some(push_sender) = push_sender {
+        config = config.set_push_sender_internal(push_sender);
     }
+    let mut conn: C = C::connect_with_config(info, config).await?;
+
+    let check = if read_from_replicas {
+        // If READONLY is sent to primary nodes, it will have no effect
+        cmd("READONLY")
+    } else {
+        cmd("PING")
+    };
+
+    conn.req_packed_command(&check).await?;
     Ok(conn)
 }
 

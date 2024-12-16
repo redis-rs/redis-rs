@@ -605,7 +605,7 @@ pub use crate::commands::JsonAsyncCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
 
-#[cfg(feature = "connection-manager")]
+#[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
 mod subscription_tracker;
 
 #[cfg(feature = "cluster")]

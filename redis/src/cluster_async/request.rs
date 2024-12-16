@@ -120,9 +120,33 @@ pin_project! {
     }
 }
 
+// A wrapper that defines the expectation regarding the result of a request.
+pub(super) enum ResultExpectation {
+    // request was received from the user, and so must continue as long as the sender is alive
+    External(oneshot::Sender<RedisResult<Response>>),
+    // request was created internally, and must continue regardless of the response.
+    Internal,
+}
+
+impl ResultExpectation {
+    pub(super) fn send(self, result: RedisResult<Response>) {
+        let _ = match self {
+            ResultExpectation::External(sender) => sender.send(result),
+            ResultExpectation::Internal => Ok(()),
+        };
+    }
+
+    pub(super) fn is_closed(&self) -> bool {
+        match self {
+            ResultExpectation::External(sender) => sender.is_closed(),
+            ResultExpectation::Internal => false,
+        }
+    }
+}
+
 pub(super) struct PendingRequest<C> {
     pub(super) retry: u32,
-    pub(super) sender: oneshot::Sender<RedisResult<Response>>,
+    pub(super) sender: ResultExpectation,
     pub(super) cmd: CmdArg<C>,
 }
 
@@ -143,7 +167,7 @@ fn choose_response<C>(
     let (target, err) = match result {
         Ok(item) => {
             trace!("Ok");
-            let _ = request.sender.send(Ok(item));
+            request.sender.send(Ok(item));
             return (None, PollFlushAction::None);
         }
         Err((target, err)) => (target, err),
@@ -185,7 +209,7 @@ fn choose_response<C>(
 
         (OperationTarget::FanOut, _) => {
             // Fanout operation are retried per internal request, and don't need additional retries.
-            let _ = request.sender.send(Err(err));
+            request.sender.send(Err(err));
             (None, PollFlushAction::None)
         }
         (OperationTarget::NotFound, _) => {
@@ -232,7 +256,7 @@ fn choose_response<C>(
         ),
 
         (_, RetryMethod::NoRetry) => {
-            let _ = request.sender.send(Err(err));
+            request.sender.send(Err(err));
             (None, PollFlushAction::None)
         }
 
@@ -277,8 +301,7 @@ impl<C> Future for Request<C> {
 impl<C> Request<C> {
     pub(super) fn respond(self: Pin<&mut Self>, msg: RedisResult<Response>) {
         // If `send` errors the receiver has dropped and thus does not care about the message
-        let _ = self
-            .project()
+        self.project()
             .request
             .take()
             .expect("Result should only be sent once")
@@ -334,7 +357,7 @@ mod tests {
         (
             PendingRequest::<usize> {
                 retry,
-                sender,
+                sender: ResultExpectation::External(sender),
                 cmd: super::CmdArg::Cmd {
                     cmd: Arc::new(crate::cmd("foo")),
                     routing: routing::InternalSingleNodeRouting::Random.into(),
