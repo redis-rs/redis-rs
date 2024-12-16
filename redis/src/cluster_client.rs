@@ -1,7 +1,10 @@
+use crate::aio::AsyncPushSender;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
+#[cfg(feature = "cluster-async")]
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(feature = "tls-rustls")]
@@ -31,6 +34,8 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
     protocol: Option<ProtocolVersion>,
+    #[cfg(feature = "cluster-async")]
+    async_push_sender: Option<Arc<dyn AsyncPushSender>>,
 }
 
 #[derive(Clone)]
@@ -85,6 +90,8 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
     pub(crate) protocol: Option<ProtocolVersion>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
 }
 
 impl ClusterParams {
@@ -109,6 +116,7 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
             protocol: value.protocol,
+            async_push_sender: value.async_push_sender,
         })
     }
 }
@@ -345,6 +353,38 @@ impl ClusterClientBuilder {
     #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
     pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
         self.builder_params.read_from_replicas = read_from_replicas;
+        self
+    }
+
+    #[cfg(feature = "cluster-async")]
+    /// Sets sender sender for push values.
+    ///
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::cluster::ClusterClientBuilder;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = ClusterClientBuilder::new(vec!["rediss://127.0.0.1:6379/"]).set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::cluster::ClusterClientBuilder;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = ClusterClientBuilder::new(vec!["rediss://127.0.0.1:6379/"])
+    ///     .set_push_sender(move |msg|{
+    ///         let Ok(mut messages) = messages.lock() else {
+    ///             return Err(redis::aio::SendError);
+    ///         };
+    ///         messages.push(msg);
+    ///         Ok(())
+    ///     });
+    /// ```
+    pub fn set_push_sender(mut self, push_sender: impl AsyncPushSender) -> ClusterClientBuilder {
+        self.builder_params.async_push_sender = Some(Arc::new(push_sender));
         self
     }
 }
