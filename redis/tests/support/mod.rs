@@ -269,7 +269,7 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        #[cfg(feature = "rustls")]
+        #[cfg(feature = "tls-rustls")]
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             // we don't care about success, because failure means that the provider was set from another thread.
             let _ = rustls::crypto::ring::default_provider().install_default();
