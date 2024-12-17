@@ -7,7 +7,6 @@ use crate::connection::{
 use crate::types::{RedisFuture, RedisResult, Value};
 use crate::PushInfo;
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use async_trait::async_trait;
 use futures_util::Future;
 use std::net::SocketAddr;
 #[cfg(unix)]
@@ -34,7 +33,6 @@ mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 
 /// Represents the ability of connecting via TCP or via Unix socket
-#[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
