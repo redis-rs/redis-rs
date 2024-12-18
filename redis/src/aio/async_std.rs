@@ -25,7 +25,6 @@ use super::TaskHandle;
 use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
-use async_trait::async_trait;
 use futures_util::ready;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -193,7 +192,6 @@ impl AsyncRead for AsyncStd {
     }
 }
 
-#[async_trait]
 impl RedisRuntime for AsyncStd {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(connect_tcp(&socket_addr)

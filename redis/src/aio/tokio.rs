@@ -1,5 +1,4 @@
 use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr, TaskHandle};
-use async_trait::async_trait;
 use std::{
     future::Future,
     io,
@@ -120,7 +119,6 @@ impl AsyncRead for Tokio {
     }
 }
 
-#[async_trait]
 impl RedisRuntime for Tokio {
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
         Ok(connect_tcp(&socket_addr).await.map(Tokio::Tcp)?)

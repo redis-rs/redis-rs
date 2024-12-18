@@ -454,7 +454,9 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(socket_addrs.map(<T>::connect_tcp)).await?.0
+            select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr))))
+                .await?
+                .0
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -465,11 +467,14 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref tls_params,
         } => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(
-                socket_addrs.map(|socket_addr| {
-                    <T>::connect_tcp_tls(host, socket_addr, insecure, tls_params)
-                }),
-            )
+            select_ok(socket_addrs.map(|socket_addr| {
+                Box::pin(<T>::connect_tcp_tls(
+                    host,
+                    socket_addr,
+                    insecure,
+                    tls_params,
+                ))
+            }))
             .await?
             .0
         }
