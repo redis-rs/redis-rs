@@ -109,7 +109,7 @@ fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     };
 }
 
-fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
     send_push(push_sender, PushInfo::disconnect());
 }
 

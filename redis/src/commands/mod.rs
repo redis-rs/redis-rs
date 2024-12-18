@@ -1022,6 +1022,11 @@ implement_commands! {
         cmd("PUBLISH").arg(channel).arg(message)
     }
 
+    /// Posts a message to the given sharded channel.
+    fn spublish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) {
+        cmd("SPUBLISH").arg(channel).arg(message)
+    }
+
     // Object commands
 
     /// Returns the encoding of a key.
