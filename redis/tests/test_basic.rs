@@ -5,9 +5,7 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use redis::{
-        cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, RedisError, Role, ScanOptions,
-    };
+    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
         ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,

@@ -42,7 +42,7 @@ pub struct Iter<'a, T: FromRedisValue> {
 }
 
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
-    type Item = T;
+    type Item = RedisResult<T>;
 
     #[inline]
     fn next(&mut self) -> Option<RedisResult<T>> {
