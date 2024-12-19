@@ -8,9 +8,9 @@ use futures_util::{
 use std::pin::Pin;
 use std::{fmt, io, marker::PhantomData};
 
-use crate::{connection::ConnectionLike, Value};
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, Value};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -38,7 +38,7 @@ pub struct Iter<'a, T: FromRedisValue> {
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
-    _phantom: PhantomData<T>
+    _phantom: PhantomData<T>,
 }
 
 impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
