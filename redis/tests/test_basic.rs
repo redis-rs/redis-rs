@@ -5,7 +5,6 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use async_std::stream::Scan;
     use redis::{
         cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, RedisError, Role, ScanOptions,
     };
@@ -511,8 +510,6 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        println!("START");
-
         // Insert a bunch of keys with legit UTF-8 first
         for x in 0..1000 {
             redis::cmd("SET")
@@ -521,8 +518,6 @@ mod basic {
                 .exec(&mut con)
                 .unwrap();
         }
-
-        println!("START2");
 
         // This key is raw bytes, invalid UTF-8
         redis::cmd("SET")
@@ -533,8 +528,8 @@ mod basic {
 
             println!("START3");
 
-        // attempt to iterate over the keyspace. Specify count=1 so we don't
-        // get the invalid UTF-8 scenario in the first scan
+        // get an iterator for SCAN over all redis keys
+        // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
         let mut iter = con
             .scan_options::<String>(ScanOptions::default().with_count(1))
             .unwrap();
@@ -542,21 +537,18 @@ mod basic {
         let mut err_flag = false;
         let mut count = 0;
 
-        println!("START4");
-
+        // iterate over the entire keyspace till we reach the end
         while let Some(x) = iter.next() {
             if x.is_err() {
                 // we found the error case
                 err_flag = true;
-                println!("FOUND ERROR!");
             } else {
                 count += 1;
-                println!("COUNT IS {}", count);
             }
         }
 
         // we should have been able to iterate over the entire keyspace EXCEPT the
-        // key which failed to parse
+        // key which failed to parse, so count should be 1000 (1000 valid keys)
         assert_eq!(count, 1000);
 
         // make sure we encountered the error (i.e. instead of silent failure)

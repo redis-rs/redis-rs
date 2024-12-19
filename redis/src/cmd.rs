@@ -6,9 +6,9 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
-use std::{fmt, io};
+use std::{fmt, io, marker::PhantomData};
 
-use crate::connection::ConnectionLike;
+use crate::{connection::ConnectionLike, Value};
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 
@@ -34,10 +34,11 @@ pub struct Cmd {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<T>,
+    batch: std::vec::IntoIter<Value>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
+    _phantom: PhantomData<T>
 }
 
 impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
@@ -51,7 +52,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(Ok(v));
+                return Some(T::from_owned_redis_value(v));
             };
             if self.cursor == 0 {
                 return None;
@@ -63,7 +64,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let (cur, batch): (u64, Vec<T>) = match from_owned_redis_value(rv) {
+            let (cur, batch): (u64, Vec<Value>) = match from_owned_redis_value(rv) {
                 Ok(v) => v,
                 Err(e) => return Some(Err(e)),
             };
@@ -465,7 +466,7 @@ impl Cmd {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
+            from_owned_redis_value::<(u64, Vec<Value>)>(rv)?
         } else {
             (0, from_owned_redis_value(rv)?)
         };
@@ -475,6 +476,7 @@ impl Cmd {
             cursor,
             con,
             cmd: self,
+            _phantom: PhantomData,
         })
     }
 
