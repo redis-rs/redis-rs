@@ -524,8 +524,6 @@ mod basic {
             .exec(&mut con)
             .unwrap();
 
-        println!("START3");
-
         // get an iterator for SCAN over all redis keys
         // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
         let mut iter = con
