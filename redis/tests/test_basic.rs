@@ -1147,6 +1147,8 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
+        println!("START");
+
         // Insert a bunch of keys with legit UTF-8 first
         for x in 0..1000 {
             redis::cmd("SET")
@@ -1156,12 +1158,16 @@ mod basic {
                 .unwrap();
         }
 
+        println!("START2");
+
         // This key is raw bytes, invalid UTF-8
         redis::cmd("SET")
             .arg(b"\xc3\x28")
             .arg("invalid")
             .exec(&mut con)
             .unwrap();
+
+            println!("START3");
 
         // attempt to iterate over the keyspace. Specify count=1 so we don't
         // get the invalid UTF-8 scenario in the first scan
@@ -1172,12 +1178,16 @@ mod basic {
         let mut err_flag = false;
         let mut count = 0;
 
+        println!("START4");
+
         while let Some(x) = iter.next() {
             if x.is_err() {
                 // we found the error case
                 err_flag = true;
+                println!("FOUND ERROR!");
             } else {
                 count += 1;
+                println!("COUNT IS {}", count);
             }
         }
 
