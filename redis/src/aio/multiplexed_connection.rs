@@ -1,11 +1,9 @@
-use super::{ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
+use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 use crate::aio::{check_resp3, setup_connection};
 use crate::cmd::Cmd;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{
-    closed_connection_error, AsyncPushSender, RedisError, RedisFuture, RedisResult, Value,
-};
+use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
     cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
 };
@@ -24,6 +22,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -35,26 +34,30 @@ type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 enum ResponseAggregate {
     SingleCommand,
     Pipeline {
-        // The number of responses to skip before starting to save responses in the buffer.
-        skipped_response_count: usize,
-        // The number of responses to keep in the buffer
-        expected_response_count: usize,
         buffer: Vec<Value>,
         first_err: Option<RedisError>,
+        expectation: PipelineResponseExpectation,
     },
 }
 
+// TODO - this is a really bad name.
+struct PipelineResponseExpectation {
+    // The number of responses to skip before starting to save responses in the buffer.
+    skipped_response_count: usize,
+    // The number of responses to keep in the buffer
+    expected_response_count: usize,
+    // whether the pipelined request is a transaction
+    is_transaction: bool,
+}
+
 impl ResponseAggregate {
-    fn new(pipeline_response_counts: Option<(usize, usize)>) -> Self {
-        match pipeline_response_counts {
-            Some((skipped_response_count, expected_response_count)) => {
-                ResponseAggregate::Pipeline {
-                    expected_response_count,
-                    skipped_response_count,
-                    buffer: Vec::new(),
-                    first_err: None,
-                }
-            }
+    fn new(expectation: Option<PipelineResponseExpectation>) -> Self {
+        match expectation {
+            Some(expectation) => ResponseAggregate::Pipeline {
+                buffer: Vec::new(),
+                first_err: None,
+                expectation,
+            },
             None => ResponseAggregate::SingleCommand,
         }
     }
@@ -70,8 +73,9 @@ struct PipelineMessage {
     input: Vec<u8>,
     output: PipelineOutput,
     // If `None`, this is a single request, not a pipeline of multiple requests.
-    // If `Some`, the first value is the number of responses to skip, and the second is the number of responses to keep.
-    pipeline_response_counts: Option<(usize, usize)>,
+    // If `Some`, the first value is the number of responses to skip,
+    // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
+    expectation: Option<PipelineResponseExpectation>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -95,31 +99,25 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        push_sender: Option<AsyncPushSender>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
     }
 }
 
-fn send_push(push_sender: &Option<AsyncPushSender>, info: PushInfo) {
+fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     if let Some(sender) = push_sender {
         let _ = sender.send(info);
     };
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<AsyncPushSender>) {
-    send_push(
-        push_sender,
-        PushInfo {
-            kind: crate::PushKind::Disconnection,
-            data: vec![],
-        },
-    );
+fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+    send_push(push_sender, PushInfo::disconnect());
 }
 
 impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new(sink_stream: T, push_sender: Option<AsyncPushSender>) -> Self
+    fn new(sink_stream: T, push_sender: Option<Arc<dyn AsyncPushSender>>) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -136,24 +134,18 @@ where
         loop {
             let item = ready!(self.as_mut().project().sink_stream.poll_next(cx));
             let item = match item {
-                Some(result) => {
-                    if let Err(err) = &result {
-                        if err.is_unrecoverable_error() {
-                            let self_ = self.as_mut().project();
-                            send_disconnect(self_.push_sender);
-                        }
-                    }
-                    result
-                }
-                // The redis response stream is not going to produce any more items so we `Err`
-                // to break out of the `forward` combinator and stop handling requests
-                None => {
-                    let self_ = self.project();
-                    send_disconnect(self_.push_sender);
-                    return Poll::Ready(Err(()));
-                }
+                Some(result) => result,
+                // The redis response stream is not going to produce any more items so we simulate a disconnection error to break out of the loop.
+                None => Err(closed_connection_error()),
             };
+
+            let is_unrecoverable = item.as_ref().is_err_and(|err| err.is_unrecoverable_error());
             self.as_mut().send_result(item);
+            if is_unrecoverable {
+                let self_ = self.project();
+                send_disconnect(self_.push_sender);
+                return Poll::Ready(Err(()));
+            }
         }
     }
 
@@ -190,16 +182,19 @@ where
                 entry.output.send(result).ok();
             }
             ResponseAggregate::Pipeline {
-                expected_response_count,
-                skipped_response_count,
                 buffer,
                 first_err,
+                expectation:
+                    PipelineResponseExpectation {
+                        expected_response_count,
+                        skipped_response_count,
+                        is_transaction,
+                    },
             } => {
                 if *skipped_response_count > 0 {
-                    // errors in skipped values are still counted for errors, since they're errors that will cause the transaction to fail,
+                    // errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    // TODO - the unified pipeline/transaction flows make this confusing. consider splitting them.
-                    if first_err.is_none() {
+                    if first_err.is_none() && *is_transaction {
                         *first_err = result.and_then(Value::extract_error).err();
                     }
 
@@ -264,7 +259,7 @@ where
         PipelineMessage {
             input,
             output,
-            pipeline_response_counts,
+            expectation,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If there is nothing to receive our output we do not need to send the message as it is
@@ -283,7 +278,7 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
-                let response_aggregate = ResponseAggregate::new(pipeline_response_counts);
+                let response_aggregate = ResponseAggregate::new(expectation);
                 let entry = InFlight {
                     output,
                     response_aggregate,
@@ -333,7 +328,7 @@ where
 impl Pipeline {
     fn new<T>(
         sink_stream: T,
-        push_sender: Option<AsyncPushSender>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
     ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
@@ -366,8 +361,8 @@ impl Pipeline {
         &mut self,
         input: Vec<u8>,
         // If `None`, this is a single request, not a pipeline of multiple requests.
-        // If `Some`, the first value is the number of responses to skip, and the second is the number of responses to keep.
-        pipeline_response_counts: Option<(usize, usize)>,
+        // If `Some`, the value inside defines how the response should look like
+        expectation: Option<PipelineResponseExpectation>,
         timeout: Option<Duration>,
     ) -> Result<Value, Option<RedisError>> {
         let (sender, receiver) = oneshot::channel();
@@ -375,7 +370,7 @@ impl Pipeline {
         self.sender
             .send(PipelineMessage {
                 input,
-                pipeline_response_counts,
+                expectation,
                 output: sender,
             })
             .await
@@ -397,6 +392,7 @@ impl Pipeline {
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
 /// on the same underlying connection (tcp/unix socket).
+///
 /// This connection object is cancellation-safe, and the user can drop request future without polling them to completion,
 /// but this doesn't mean that the actual request sent to the server is cancelled.
 /// A side-effect of this is that the underlying connection won't be closed until all sent requests have been answered,
@@ -544,7 +540,11 @@ impl MultiplexedConnection {
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
-                Some((offset, count)),
+                Some(PipelineResponseExpectation {
+                    skipped_response_count: offset,
+                    expected_response_count: count,
+                    is_transaction: cmd.is_transaction(),
+                }),
                 self.response_timeout,
             )
             .await
@@ -579,6 +579,11 @@ impl ConnectionLike for MultiplexedConnection {
 
 impl MultiplexedConnection {
     /// Subscribes to a new channel.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the connection.
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -588,6 +593,8 @@ impl MultiplexedConnection {
     }
 
     /// Unsubscribes from channel.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -597,6 +604,11 @@ impl MultiplexedConnection {
     }
 
     /// Subscribes to a new channel with pattern.
+    ///
+    /// Updates from the sender will be sent on the push sender that was passed to the connection.
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -606,6 +618,8 @@ impl MultiplexedConnection {
     }
 
     /// Unsubscribes from channel pattern.
+    ///
+    /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");

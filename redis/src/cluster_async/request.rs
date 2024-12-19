@@ -247,7 +247,7 @@ impl<C> Future for Request<C> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
-        if this.request.is_none() {
+        if this.request.is_none() || this.request.as_ref().unwrap().sender.is_closed() {
             return Poll::Ready((None, PollFlushAction::None));
         };
 

@@ -41,8 +41,8 @@ pub struct Iter<'a, T: FromRedisValue> {
     _phantom: PhantomData<T>,
 }
 
-impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
-    type Item = RedisResult<T>;
+impl<T: FromRedisValue> Iterator for Iter<'_, T> {
+    type Item = T;
 
     #[inline]
     fn next(&mut self) -> Option<RedisResult<T>> {
@@ -627,10 +627,12 @@ pub fn cmd(name: &str) -> Cmd {
     rv
 }
 
-/// Packs a bunch of commands into a request.  This is generally a quite
-/// useless function as this functionality is nicely wrapped through the
-/// `Cmd` object, but in some cases it can be useful.  The return value
-/// of this can then be send to the low level `ConnectionLike` methods.
+/// Packs a bunch of commands into a request.
+///
+/// This is generally a quite useless function as this functionality is
+/// nicely wrapped through the `Cmd` object, but in some cases it can be
+/// useful.  The return value of this can then be send to the low level
+/// `ConnectionLike` methods.
 ///
 /// Example:
 ///

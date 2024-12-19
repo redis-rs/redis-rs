@@ -129,7 +129,7 @@ impl<'a> Input<'a> {
     }
 }
 
-impl<'a> Routable for Input<'a> {
+impl Routable for Input<'_> {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
             Input::Slice { cmd: _, routable } => routable.arg_idx(idx),
@@ -228,9 +228,10 @@ impl Connect for Connection {
     }
 }
 
-/// This represents a Redis Cluster connection. It stores the
-/// underlying connections maintained for each node in the cluster, as well
-/// as common parameters for connecting to nodes and executing commands.
+/// This represents a Redis Cluster connection.
+///
+/// It stores the underlying connections maintained for each node in the cluster,
+/// as well as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
     connections: RefCell<HashMap<String, C>>,

@@ -62,3 +62,8 @@ forbid = "tls"
 [[rule]]
 when = true
 forbid = "async-std-tls-comp"
+
+# these are all included in the `default` feature, so in order to reduce combinatoric explosion, we don't check them individually.
+[[rule]]
+when = true
+forbid = ["acl", "OR", "streams", "OR", "geospatial", "OR", "script", "OR", "keep-alive"]

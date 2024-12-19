@@ -135,6 +135,8 @@ pub enum ErrorKind {
     NotBusy,
     /// Used when a cluster connection cannot find a connection to a valid node.
     ClusterConnectionNotFound,
+    /// Attempted to unsubscribe on a connection that is not in subscribed mode.
+    NoSub,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -159,6 +161,7 @@ pub enum ServerErrorKind {
     MasterDown,
     ReadOnly,
     NotBusy,
+    NoSub,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -197,6 +200,7 @@ impl ServerError {
                 ServerErrorKind::MasterDown => "MASTERDOWN",
                 ServerErrorKind::ReadOnly => "READONLY",
                 ServerErrorKind::NotBusy => "NOTBUSY",
+                ServerErrorKind::NoSub => "NOSUB",
             },
         }
     }
@@ -229,6 +233,7 @@ impl From<ServerError> for RedisError {
                     ServerErrorKind::MasterDown => ErrorKind::MasterDown,
                     ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
                     ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+                    ServerErrorKind::NoSub => ErrorKind::NoSub,
                 };
                 match detail {
                     Some(detail) => RedisError::from((kind, desc, detail)),
@@ -576,9 +581,10 @@ impl fmt::Debug for Value {
     }
 }
 
-/// Represents a redis error.  For the most part you should be using
-/// the Error trait to interact with this rather than the actual
-/// struct.
+/// Represents a redis error.
+///
+/// For the most part you should be using the Error trait to interact with this
+/// rather than the actual struct.
 pub struct RedisError {
     repr: ErrorRepr,
 }
@@ -854,6 +860,9 @@ impl RedisError {
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
+            ErrorKind::NoSub => {
+                "Server declined unsubscribe related command in non-subscribed mode"
+            }
         }
     }
 
@@ -1015,6 +1024,7 @@ impl RedisError {
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
+            ErrorKind::NoSub => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
@@ -1541,7 +1551,7 @@ impl ToRedisArgs for String {
     }
 }
 
-impl<'a> ToRedisArgs for &'a str {
+impl ToRedisArgs for &str {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1587,7 +1597,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     }
 }
 
-impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
+impl<T: ToRedisArgs> ToRedisArgs for &[T] {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1862,7 +1872,9 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
 }
 
 /// This trait is used to convert a redis value into a more appropriate
-/// type.  While a redis `Value` can represent any response that comes
+/// type.  
+///
+/// While a redis `Value` can represent any response that comes
 /// back from the redis server, usually you want to map this into something
 /// that works better in rust.  For instance you might want to convert the
 /// return value into a `String` or an integer.
@@ -2642,8 +2654,10 @@ pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> RedisResult<T> {
     FromRedisValue::from_owned_redis_value(v)
 }
 
-/// Enum representing the communication protocol with the server. This enum represents the types
-/// of data that the server can send to the client, and the capabilities that the client can use.
+/// Enum representing the communication protocol with the server.
+///
+/// This enum represents the types of data that the server can send to the client,
+/// and the capabilities that the client can use.
 #[derive(Clone, Eq, PartialEq, Default, Debug, Copy)]
 pub enum ProtocolVersion {
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP2.md>
@@ -2692,13 +2706,19 @@ pub struct PushInfo {
     pub data: Vec<Value>,
 }
 
-#[cfg(feature = "aio")]
-pub(crate) type AsyncPushSender = tokio::sync::mpsc::UnboundedSender<PushInfo>;
+impl PushInfo {
+    pub(crate) fn disconnect() -> Self {
+        PushInfo {
+            kind: crate::PushKind::Disconnection,
+            data: vec![],
+        }
+    }
+}
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
 // A consistent error value for connections closed without a reason.
-#[cfg(feature = "aio")]
+#[cfg(any(feature = "aio", feature = "r2d2"))]
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
 }

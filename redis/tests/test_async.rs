@@ -1314,6 +1314,36 @@ mod basic_async {
         #[rstest]
         #[case::tokio(RuntimeType::Tokio)]
         #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        fn non_transaction_errors_do_not_affect_other_results_in_pipeline(
+            #[case] runtime: RuntimeType,
+        ) {
+            test_with_all_connection_types(
+                |mut conn| async move {
+                    conn.lpush::<&str, &str, ()>("key", "value").await?;
+
+                    let mut results: Vec<Value> = conn
+                        .req_packed_commands(
+                            redis::pipe()
+                                .get("key") // WRONGTYPE
+                                .llen("key"),
+                            0,
+                            2,
+                        )
+                        .await
+                        .unwrap();
+
+                    assert_eq!(results.pop().unwrap(), Value::Int(1));
+                    assert!(results.pop().unwrap().extract_error().is_err());
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            );
+        }
+
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
         fn pub_sub_multiple(#[case] runtime: RuntimeType) {
             use redis::RedisError;
 
@@ -1439,6 +1469,137 @@ mod basic_async {
             )
             .unwrap();
         }
+
+        #[cfg(feature = "connection-manager")]
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[case::async_std(RuntimeType::AsyncStd)]
+        fn manager_should_resubscribe_to_pubsub_channels_after_disconnect(
+            #[case] runtime: RuntimeType,
+        ) {
+            let ctx = TestContext::new();
+            if ctx.protocol == ProtocolVersion::RESP2 {
+                return;
+            }
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+            let max_delay_between_attempts = 2;
+            let config = redis::aio::ConnectionManagerConfig::new()
+                .set_push_sender(tx)
+                .set_automatic_resubscription()
+                .set_max_delay(max_delay_between_attempts);
+
+            block_on_all(
+                async move {
+                    let mut pubsub_conn = ctx
+                        .client
+                        .get_connection_manager_with_config(config)
+                        .await?;
+                    let _: () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                    let _: () = pubsub_conn.psubscribe(&["zoom*"]).await?;
+                    let _: () = pubsub_conn.unsubscribe("foo").await?;
+
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Subscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"phonewave".to_vec()), Value::Int(1)]
+                    );
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Subscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"foo".to_vec()), Value::Int(2)]
+                    );
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Subscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"bar".to_vec()), Value::Int(3)]
+                    );
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::PSubscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"zoom*".to_vec()), Value::Int(4)]
+                    );
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Unsubscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"foo".to_vec()), Value::Int(3)]
+                    );
+
+                    let addr = ctx.server.client_addr().clone();
+                    drop(ctx);
+                    // a yield, to let the connection manager to notice the broken connection.
+                    // this is required to reduce differences in test runs between async-std & tokio runtime.
+                    sleep(Duration::from_millis(1).into()).await;
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Disconnection);
+                    let ctx = TestContext::new_with_addr(addr);
+
+                    let push1 = rx.recv().await.unwrap();
+                    assert_eq!(push1.kind, PushKind::Subscribe);
+                    // we don't know the order that the resubscription requests will be sent in, so we check if both were received, in either order.
+                    let push2 = rx.recv().await.unwrap();
+                    assert_eq!(push2.kind, PushKind::Subscribe);
+                    assert!(
+                        (push1.data
+                            == vec![Value::BulkString(b"phonewave".to_vec()), Value::Int(1)]
+                            && push2.data
+                                == vec![Value::BulkString(b"bar".to_vec()), Value::Int(2)])
+                            || (push1.data
+                                == vec![Value::BulkString(b"bar".to_vec()), Value::Int(1)]
+                                && push2.data
+                                    == vec![
+                                        Value::BulkString(b"phonewave".to_vec()),
+                                        Value::Int(2)
+                                    ])
+                    );
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::PSubscribe);
+                    assert_eq!(
+                        push.data,
+                        vec![Value::BulkString(b"zoom*".to_vec()), Value::Int(3)]
+                    );
+
+                    let mut publish_conn = ctx.async_connection().await?;
+                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::Message);
+                    assert_eq!(
+                        push.data,
+                        vec![
+                            Value::BulkString(b"phonewave".to_vec()),
+                            Value::BulkString(b"banana".to_vec())
+                        ]
+                    );
+
+                    // this should be skipped, because we unsubscribed from foo
+                    let _: () = publish_conn.publish("foo", "goo").await?;
+                    let _: () = publish_conn.publish("zoomer", "foobar").await?;
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(push.kind, PushKind::PMessage);
+                    assert_eq!(
+                        push.data,
+                        vec![
+                            Value::BulkString(b"zoom*".to_vec()),
+                            Value::BulkString(b"zoomer".to_vec()),
+                            Value::BulkString(b"foobar".to_vec())
+                        ]
+                    );
+
+                    // no more messages should be sent.
+                    assert!(rx.try_recv().is_err());
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
     }
 
     #[rstest]
@@ -1483,9 +1644,7 @@ mod basic_async {
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
-        use redis::ProtocolVersion;
-
-        let max_delay_between_attempts = 50;
+        let max_delay_between_attempts = 2;
 
         let mut config = redis::aio::ConnectionManagerConfig::new()
             .set_factor(10000)
@@ -1498,6 +1657,7 @@ mod basic_async {
         let tls_files = build_keys_and_certs_for_tls(&tempdir);
 
         let ctx = TestContext::with_tls(tls_files.clone(), false);
+        let protocol = ctx.protocol;
         block_on_all(
             async move {
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1508,21 +1668,71 @@ mod basic_async {
                     redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
                         .await
                         .unwrap();
-                kill_client_async(&mut manager, &ctx.client).await.unwrap();
-
+                let addr = ctx.server.client_addr().clone();
+                drop(ctx);
                 let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
                 // we expect a connection failure error.
                 assert!(result.unwrap_err().is_unrecoverable_error());
-                if ctx.protocol != ProtocolVersion::RESP2 {
+                if protocol != ProtocolVersion::RESP2 {
                     assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
                 }
 
-                let result: redis::Value = manager.set("foo", "bar").await.unwrap();
-                assert_eq!(result, redis::Value::Okay);
-                if ctx.protocol != ProtocolVersion::RESP2 {
-                    assert!(rx.try_recv().is_err());
+                let _server = RedisServer::new_with_addr_and_modules(addr, &[], false);
+
+                for _ in 0..5 {
+                    let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {
+                        sleep(Duration::from_millis(3).into()).await;
+                        continue;
+                    };
+                    assert_eq!(result, redis::Value::Okay);
+                    if protocol != ProtocolVersion::RESP2 {
+                        assert!(rx.try_recv().is_err());
+                    }
+                    return Ok(());
                 }
-                Ok(())
+                panic!("failed to reconnect");
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "connection-manager")]
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[case::async_std(RuntimeType::AsyncStd)]
+    fn manager_should_reconnect_without_actions_if_push_sender_is_set(
+        #[case] runtime: RuntimeType,
+    ) {
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let max_delay_between_attempts = 2;
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_push_sender(tx)
+            .set_max_delay(max_delay_between_attempts);
+
+        block_on_all(
+            async move {
+                let mut conn = ctx
+                    .client
+                    .get_connection_manager_with_config(config)
+                    .await?;
+
+                let addr = ctx.server.client_addr().clone();
+                drop(ctx);
+                let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Disconnection);
+                let _ctx = TestContext::new_with_addr(addr);
+
+                assert!(rx.try_recv().is_err());
+                assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+
+                Ok::<_, RedisError>(())
             },
             runtime,
         )
@@ -1532,7 +1742,6 @@ mod basic_async {
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    #[cfg(feature = "connection-manager")]
     fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking(
         #[case] runtime: RuntimeType,
     ) {
@@ -1713,6 +1922,39 @@ mod basic_async {
                     .await
                     .unwrap();
                 assert!(info.contains("db=5"));
+
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_multiplexed_connection_send_single_disconnect_on_connection_failure(
+        #[case] runtime: RuntimeType,
+    ) {
+        let mut ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        block_on_all(
+            async move {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+                let _res = ctx
+                    .client
+                    .get_multiplexed_async_connection_with_config(&config)
+                    .await?;
+                drop(config);
+                ctx.stop_server();
+
+                assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
+                sleep(Duration::from_millis(1).into()).await;
+                assert!(rx.try_recv().is_err());
+                assert!(rx.is_closed());
 
                 Ok(())
             },

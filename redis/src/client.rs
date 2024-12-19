@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 #[cfg(feature = "aio")]
-use crate::types::AsyncPushSender;
+use crate::aio::AsyncPushSender;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
@@ -164,7 +164,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) response_timeout: Option<std::time::Duration>,
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<std::time::Duration>,
-    pub(crate) push_sender: Option<AsyncPushSender>,
+    pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
 }
 
 #[cfg(feature = "aio")]
@@ -186,8 +186,39 @@ impl AsyncConnectionConfig {
         self
     }
 
-    /// Sets sender channel for push values. Will fail client creation if the connection isn't configured for RESP3 communications.
-    pub fn set_push_sender(mut self, sender: AsyncPushSender) -> Self {
+    /// Sets sender sender for push values.
+    ///
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::AsyncConnectionConfig;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = AsyncConnectionConfig::new().set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::AsyncConnectionConfig;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = AsyncConnectionConfig::new().set_push_sender(move |msg|{
+    ///     let Ok(mut messages) = messages.lock() else {
+    ///         return Err(redis::aio::SendError);
+    ///     };
+    ///     messages.push(msg);
+    ///     Ok(())
+    /// });
+    /// ```
+    pub fn set_push_sender(self, sender: impl AsyncPushSender) -> Self {
+        self.set_push_sender_internal(std::sync::Arc::new(sender))
+    }
+
+    pub(crate) fn set_push_sender_internal(
+        mut self,
+        sender: std::sync::Arc<dyn AsyncPushSender>,
+    ) -> Self {
         self.push_sender = Some(sender);
         self
     }
@@ -225,7 +256,7 @@ impl Client {
     #[cfg(feature = "tokio-comp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
     #[deprecated(
-        note = "aio::Connection is deprecated. Use client::get_multiplexed_tokio_connection instead."
+        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
     )]
     #[allow(deprecated)]
     pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
@@ -425,7 +456,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -446,7 +477,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -465,7 +496,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).
@@ -486,7 +517,7 @@ impl Client {
     }
 
     /// Returns an async multiplexed connection from the client and a future which must be polled
-    /// to drive any requests submitted to it (see `get_multiplexed_tokio_connection`).
+    /// to drive any requests submitted to it (see [Self::get_multiplexed_async_connection]).
     ///
     /// A multiplexed connection can be cloned, allowing requests to be sent concurrently
     /// on the same underlying connection (tcp/unix socket).

@@ -269,7 +269,7 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        #[cfg(feature = "rustls")]
+        #[cfg(feature = "tls-rustls")]
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             // we don't care about success, because failure means that the provider was set from another thread.
             let _ = rustls::crypto::ring::default_provider().install_default();
@@ -462,6 +462,10 @@ impl TestContext {
         Self::with_modules_and_tls(modules, mtls_enabled, None)
     }
 
+    pub fn new_with_addr(addr: ConnectionAddr) -> Self {
+        Self::with_modules_addr_and_tls(&[], false, addr, None)
+    }
+
     fn with_modules_and_tls(
         modules: &[Module],
         mtls_enabled: bool,
@@ -469,7 +473,15 @@ impl TestContext {
     ) -> Self {
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
+        Self::with_modules_addr_and_tls(modules, mtls_enabled, addr, tls_files)
+    }
 
+    fn with_modules_addr_and_tls(
+        modules: &[Module],
+        mtls_enabled: bool,
+        addr: ConnectionAddr,
+        tls_files: Option<TlsFilePaths>,
+    ) -> Self {
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
@@ -551,7 +563,7 @@ impl TestContext {
     pub async fn multiplexed_async_connection_tokio(
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_tokio_connection().await
+        self.client.get_multiplexed_async_connection().await
     }
 
     pub fn get_version(&self) -> Version {

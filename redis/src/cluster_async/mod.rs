@@ -99,9 +99,10 @@ use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-/// This represents an async Redis Cluster connection. It stores the
-/// underlying connections maintained for each node in the cluster, as well
-/// as common parameters for connecting to nodes and executing commands.
+/// This represents an async Redis Cluster connection.
+///
+/// It stores the underlying connections maintained for each node in the cluster,
+/// as well as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
 pub struct ClusterConnection<C = MultiplexedConnection> {
     sender: mpsc::Sender<Message<C>>,
@@ -227,11 +228,7 @@ struct ClusterConnInner<C> {
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
-    #[cfg(feature = "tokio-comp")]
-    return Box::pin(tokio::time::sleep(duration));
-
-    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-    return Box::pin(async_std::task::sleep(duration));
+    Box::pin(Runtime::locate_and_sleep(duration))
 }
 
 #[derive(Debug, PartialEq)]

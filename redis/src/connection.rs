@@ -13,7 +13,7 @@ use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    SyncPushSender, ToRedisArgs, Value,
+    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 
@@ -90,8 +90,9 @@ fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpSt
 }
 
 /// This function takes a redis URL string and parses it into a URL
-/// as used by rust-url.  This is necessary as the default parser does
-/// not understand how redis URLs function.
+/// as used by rust-url.
+///
+/// This is necessary as the default parser does not understand how redis URLs function.
 pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
@@ -103,6 +104,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 }
 
 /// TlsMode indicates use or do not use verification of certification.
+///
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
 #[derive(Clone, Copy, PartialEq)]
 pub enum TlsMode {
@@ -270,7 +272,7 @@ impl IntoConnectionInfo for ConnectionInfo {
 /// - Enabling TLS: `rediss://127.0.0.1:6379`
 /// - Enabling Insecure TLS: `rediss://127.0.0.1:6379/#insecure`
 /// - Enabling RESP3: `redis://127.0.0.1:6379/?protocol=resp3`
-impl<'a> IntoConnectionInfo for &'a str {
+impl IntoConnectionInfo for &str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Some(u) => u.into_connection_info(),
@@ -1165,9 +1167,10 @@ fn setup_connection(
 }
 
 /// Implements the "stateless" part of the connection interface that is used by the
-/// different objects in redis-rs.  Primarily it obviously applies to `Connection`
-/// object but also some other objects implement the interface (for instance
-/// whole clients or certain redis results).
+/// different objects in redis-rs.
+///
+/// Primarily it obviously applies to `Connection` object but also some other objects
+///  implement the interface (for instance whole clients or certain redis results).
 ///
 /// Generally clients and connections (as well as redis results of those) implement
 /// this trait.  Actual connections provide more functionality which can be used
@@ -1313,31 +1316,60 @@ impl Connection {
         // messages are received until the _subscription count_ in the responses reach zero.
         let mut received_unsub = false;
         let mut received_punsub = false;
-        if self.protocol != ProtocolVersion::RESP2 {
-            while let Value::Push { kind, data } = from_owned_redis_value(self.recv_response()?)? {
-                if data.len() >= 2 {
-                    if let Value::Int(num) = data[1] {
-                        if resp3_is_pub_sub_state_cleared(
-                            &mut received_unsub,
-                            &mut received_punsub,
-                            &kind,
-                            num as isize,
-                        ) {
-                            break;
+
+        loop {
+            let resp = self.recv_response()?;
+
+            match resp {
+                Value::Push { kind, data } => {
+                    if data.len() >= 2 {
+                        if let Value::Int(num) = data[1] {
+                            if resp3_is_pub_sub_state_cleared(
+                                &mut received_unsub,
+                                &mut received_punsub,
+                                &kind,
+                                num as isize,
+                            ) {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        } else {
-            loop {
-                let res: (Vec<u8>, (), isize) = from_owned_redis_value(self.recv_response()?)?;
-                if resp2_is_pub_sub_state_cleared(
-                    &mut received_unsub,
-                    &mut received_punsub,
-                    &res.0,
-                    res.2,
-                ) {
-                    break;
+                Value::ServerError(err) => {
+                    // a new error behavior, introduced in valkey 8.
+                    // https://github.com/valkey-io/valkey/pull/759
+                    if err.kind() == Some(ServerErrorKind::NoSub) {
+                        if no_sub_err_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &err,
+                        ) {
+                            break;
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    return Err(err.into());
+                }
+                Value::Array(vec) => {
+                    let res: (Vec<u8>, (), isize) = from_owned_redis_value(Value::Array(vec))?;
+                    if resp2_is_pub_sub_state_cleared(
+                        &mut received_unsub,
+                        &mut received_punsub,
+                        &res.0,
+                        res.2,
+                    ) {
+                        break;
+                    }
+                }
+                _ => {
+                    return Err((
+                        ErrorKind::ClientError,
+                        "Unexpected unsubscribe response",
+                        format!("{resp:?}"),
+                    )
+                        .into())
                 }
             }
         }
@@ -1363,10 +1395,7 @@ impl Connection {
     }
 
     fn send_disconnect(&self) {
-        self.send_push(PushInfo {
-            kind: PushKind::Disconnection,
-            data: vec![],
-        })
+        self.send_push(PushInfo::disconnect())
     }
 
     fn close_connection(&mut self) {
@@ -1702,7 +1731,7 @@ impl<'a> PubSub<'a> {
     }
 }
 
-impl<'a> Drop for PubSub<'a> {
+impl Drop for PubSub<'_> {
     fn drop(&mut self) {
         let _ = self.con.exit_pubsub();
     }
@@ -1911,6 +1940,23 @@ pub fn resp3_is_pub_sub_state_cleared(
         _ => (),
     };
     *received_unsub && *received_punsub && num == 0
+}
+
+pub fn no_sub_err_is_pub_sub_state_cleared(
+    received_unsub: &mut bool,
+    received_punsub: &mut bool,
+    err: &ServerError,
+) -> bool {
+    let details = err.details();
+    *received_unsub = *received_unsub
+        || details
+            .map(|details| details.starts_with("'unsub"))
+            .unwrap_or_default();
+    *received_punsub = *received_punsub
+        || details
+            .map(|details| details.starts_with("'punsub"))
+            .unwrap_or_default();
+    *received_unsub && *received_punsub
 }
 
 /// Common logic for checking real cause of hello3 command error

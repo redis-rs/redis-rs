@@ -1,0 +1,6 @@
+[profile.default]
+retries = 2
+failure-output = "immediate-final" # show test failures inline, and also at the end of the run
+fail-fast = false # run all tests, even if some failed
+slow-timeout = { period = "1s", terminate-after = 20 }
+status-level = "skip"

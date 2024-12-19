@@ -1,4 +1,4 @@
-//! redis-rs is a Rust implementation of a Redis client library.  It exposes
+//! redis-rs is a Rust implementation of a client library for Redis.  It exposes
 //! a general purpose interface to Redis and also provides specific helpers for
 //! commonly used functionality.
 //!
@@ -47,6 +47,30 @@
 //! }
 //! ```
 //!
+//! ## Connection Pooling
+//!
+//! When using a sync connection, it is recommended to use a connection pool in order to handle
+//! disconnects or multi-threaded usage. This can be done using the `r2d2` feature.
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "r2d2")]
+//! # fn do_something() {
+//! use redis::Commands;
+//!
+//! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! let pool = r2d2::Pool::builder().build(client).unwrap();
+//! let mut conn = pool.get().unwrap();
+//!
+//! let _: () = conn.set("KEY", "VALUE").unwrap();
+//! let val: String = conn.get("KEY").unwrap();
+//! # }
+//! ```
+//!
+//! For async connections, connection pooling isn't necessary. The `MultiplexedConnection` is
+//! cloneable and can be used safely from multiple threads, so a single connection can be easily
+//! reused. For automatic reconnections consider using `ConnectionManager` with the `connection-manager` feature.
+//! Async cluster connections also don't require pooling and are thread-safe and reusable.
+//!
 //! ## Optional Features
 //!
 //! There are a few features defined that can enable additional functionality
@@ -85,7 +109,7 @@
 //!
 //! `redis+unix:///<path>[?db=<db>[&pass=<password>][&user=<username>][&protocol=<protocol>]]`
 //!
-//! For compatibility with some other redis libraries, the "unix" scheme
+//! For compatibility with some other libraries for Redis, the "unix" scheme
 //! is also supported:
 //!
 //! `unix:///<path>[?db=<db>][&pass=<password>][&user=<username>][&protocol=<protocol>]]`
@@ -571,6 +595,9 @@ pub use crate::commands::JsonAsyncCommands;
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
+
+#[cfg(feature = "connection-manager")]
+mod subscription_tracker;
 
 #[cfg(feature = "cluster")]
 mod cluster_topology;

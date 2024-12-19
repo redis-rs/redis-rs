@@ -694,9 +694,9 @@ pub enum SentinelServerType {
     Replica,
 }
 
-/// LockedSentinelClient is a wrapper around SentinelClient since
-/// it SentinelClient requires &mut ref for get_connection()
-/// and we can't use it like this inside the r2d2 Manager
+/// LockedSentinelClient is a wrapper around SentinelClient usable in r2d2.
+// [internal comment]: this was added since SentinelClient requires &mut ref for get_connection()
+// and we can't use it like this inside the r2d2 Manager, which requires a shared reference.
 #[cfg(feature = "r2d2")]
 pub struct LockedSentinelClient(pub(crate) Mutex<SentinelClient>);
 
@@ -714,10 +714,10 @@ impl LockedSentinelClient {
     }
 }
 
-/// An alternative to the Client type which creates connections from clients created
-/// on-demand based on information fetched from the sentinels. Uses the Sentinel type
-/// internally. This is basic an utility to help make it easier to use sentinels but
-/// with an interface similar to the client (`get_connection` and
+/// A utility wrapping `Sentinel` with an interface similar to [Client].
+///
+/// Uses the Sentinel type internally. This is a utility to help make it easier
+/// to use sentinels but with an interface similar to the client (`get_connection` and
 /// `get_async_connection`). The type of server (master or replica) and name of the
 /// desired master are specified when constructing an instance, so it will always
 /// return connections to the same target (for example, always to the master with name

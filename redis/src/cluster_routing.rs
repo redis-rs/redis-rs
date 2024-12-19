@@ -102,7 +102,9 @@ pub enum MultipleNodeRoutingInfo {
     MultiSlot(Vec<(Route, Vec<usize>)>),
 }
 
-/// Takes a routable and an iterator of indices, which is assumed to be created from`MultipleNodeRoutingInfo::MultiSlot`,
+/// Splits a command into a sub-command that won't generate a CROSSLOTS error.
+///
+///  Takes a routable and an iterator of indices, which is assumed to be created from`MultipleNodeRoutingInfo::MultiSlot`,
 /// and returns a command with the arguments matching the indices.
 pub fn command_for_multi_slot_indices<'a, 'b>(
     original_cmd: &'a impl Routable,

@@ -111,6 +111,25 @@ impl Runtime {
                 .map_err(|_| Elapsed(())),
         }
     }
+
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+    pub(crate) async fn sleep(&self, duration: Duration) {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => {
+                tokio::time::sleep(duration).await;
+            }
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => {
+                async_std::task::sleep(duration).await;
+            }
+        }
+    }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async fn locate_and_sleep(duration: Duration) {
+        Self::locate().sleep(duration).await
+    }
 }
 
 #[derive(Debug)]
