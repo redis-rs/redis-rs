@@ -34,7 +34,7 @@ pub struct Cmd {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<RedisResult<T>>,
+    batch: std::vec::IntoIter<T>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
@@ -51,7 +51,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(v);
+                return Some(Ok(v));
             };
             if self.cursor == 0 {
                 return None;
@@ -63,7 +63,7 @@ impl<'a, T: FromRedisValue> Iterator for Iter<'a, T> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let (cur, batch): (u64, Vec<RedisResult<T>>) = match from_owned_redis_value(rv) {
+            let (cur, batch): (u64, Vec<T>) = match from_owned_redis_value(rv) {
                 Ok(v) => v,
                 Err(e) => return Some(Err(e)),
             };
@@ -465,7 +465,7 @@ impl Cmd {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<RedisResult<T>>)>(rv)?
+            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
         } else {
             (0, from_owned_redis_value(rv)?)
         };
