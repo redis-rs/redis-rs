@@ -81,7 +81,7 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    aio::{ConnectionLike, MultiplexedConnection, Runtime, SharedHandleContainer},
+    aio::{check_resp3, ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     cluster::{get_connection_info, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{
@@ -96,6 +96,7 @@ use crate::{
     RedisFuture, RedisResult, ToRedisArgs, Value,
 };
 
+use crate::ProtocolVersion;
 use futures_sink::Sink;
 use futures_util::{
     future::{self, BoxFuture, FutureExt},
@@ -108,14 +109,19 @@ use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+struct ClientSideState {
+    protocol: ProtocolVersion,
+    _task_handle: HandleContainer,
+}
+
 /// This represents an async Redis Cluster connection.
 ///
 /// It stores the underlying connections maintained for each node in the cluster,
 /// as well as common parameters for connecting to nodes and executing commands.
 #[derive(Clone)]
 pub struct ClusterConnection<C = MultiplexedConnection> {
+    state: Arc<ClientSideState>,
     sender: mpsc::Sender<Message<C>>,
-    _task_handle: SharedHandleContainer,
 }
 
 impl<C> ClusterConnection<C>
@@ -126,6 +132,7 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
+        let protocol = cluster_params.protocol.unwrap_or_default();
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
@@ -136,11 +143,14 @@ where
                         .forward(inner)
                         .await;
                 };
-                let _task_handle = SharedHandleContainer::new(Runtime::locate().spawn(stream));
+                let _task_handle = HandleContainer::new(Runtime::locate().spawn(stream));
 
                 ClusterConnection {
                     sender,
-                    _task_handle,
+                    state: Arc::new(ClientSideState {
+                        protocol,
+                        _task_handle,
+                    }),
                 }
             })
     }
@@ -218,6 +228,7 @@ where
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
@@ -228,6 +239,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
@@ -243,6 +255,7 @@ where
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
@@ -253,6 +266,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
@@ -268,6 +282,7 @@ where
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
     pub async fn ssubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("SSUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
@@ -278,6 +293,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn sunsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
+        check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUNSUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
