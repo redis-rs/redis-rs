@@ -7,7 +7,6 @@ use crate::connection::{
 use crate::types::{RedisFuture, RedisResult, Value};
 use crate::PushInfo;
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use async_trait::async_trait;
 use futures_util::Future;
 use std::net::SocketAddr;
 #[cfg(unix)]
@@ -34,7 +33,6 @@ mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 
 /// Represents the ability of connecting via TCP or via Unix socket
-#[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
     async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
@@ -192,15 +190,14 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
     }
 }
 
-// TODO enable once our MSRV is 1.72 or above
-// impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
-//     fn send(&self, info: PushInfo) -> Result<(), SendError> {
-//         match self.send(info) {
-//             Ok(_) => Ok(()),
-//             Err(_) => Err(SendError),
-//         }
-//     }
-// }
+impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
 
 impl<T> AsyncPushSender for std::sync::Arc<T>
 where

@@ -8,7 +8,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.75"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
@@ -57,7 +57,6 @@ crc16 = { version = "0.4", optional = true }
 rand = { version = "0.8", optional = true }
 # Only needed for async_std support
 async-std = { version = "1.13.0", optional = true }
-async-trait = { version = "0.1.83", optional = true }
 
 # Only needed for native tls
 native-tls = { version = "0.2", optional = true }
@@ -97,7 +96,7 @@ itertools = "0.13.0"
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
-aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "futures-util/alloc", "futures-util/sink", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio", "dep:async-trait"]
+aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "futures-util/alloc", "futures-util/sink", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio"]
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
