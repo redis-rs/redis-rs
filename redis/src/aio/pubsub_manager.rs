@@ -301,8 +301,8 @@ async fn start_listening(
                 let packed_cmd = cmd.get_packed_command();
                 async move { sink.send_recv(packed_cmd).await }
             });
-            // TODO - should we handle errors better than just failing? how?
             let res: RedisResult<Vec<_>> = join_all(requests).await.into_iter().collect();
+            // We could subscribe successfully previously on those channels, so we'll retry if now we can't do that again.
             if res.is_err() {
                 // (TODO) - if we integrate logging/tracing to non-cluster connections, we should log the failure here.
                 continue;
