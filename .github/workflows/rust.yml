@@ -29,12 +29,6 @@ jobs:
               rust: stable,
               db-org: redis,
               db-name: redis,
-              db-version: 6.2.13
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
               db-version: 7.2.4
             },
             {
