@@ -1,3 +1,4 @@
+#[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
@@ -116,6 +117,7 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
             protocol: value.protocol,
+            #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
         })
     }
