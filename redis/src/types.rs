@@ -778,13 +778,21 @@ impl fmt::Debug for RedisError {
     }
 }
 
-pub(crate) enum RetryMethod {
+/// What method should be used if retrying this request.
+pub enum RetryMethod {
+    /// Create a fresh connection.
     Reconnect,
+    /// Don't retry, this is a permanent error.
     NoRetry,
+    /// Retry immediately, this doesn't require a wait since it's an IO level issue.
     RetryImmediately,
+    /// Retry after sleeping to avoid overloading the external service.
     WaitAndRetry,
+    /// The key has moved to a different node but we have to ask which node.
     AskRedirect,
+    /// The key has moved to a different node.
     MovedRedirect,
+    /// Reconnect the initial connection to the master cluster, this is only relevant for clusters.
     ReconnectFromInitialConnections,
 }
 
@@ -998,7 +1006,10 @@ impl RedisError {
         Self { repr }
     }
 
-    pub(crate) fn retry_method(&self) -> RetryMethod {
+    /// Specifies what method (if any) should be used to retry this request.
+    /// 
+    /// If you are using the cluster api retrying of requests is already handled by the library.
+    pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
             ErrorKind::Moved => RetryMethod::MovedRedirect,
             ErrorKind::Ask => RetryMethod::AskRedirect,
