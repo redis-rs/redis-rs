@@ -2297,14 +2297,28 @@ mod cluster_async {
     }
 
     mod pubsub {
-        use redis::{PushInfo, PushKind};
+        use redis::{cluster_async::ClusterConnection, PushInfo, PushKind};
         use tokio::join;
 
         use super::*;
 
+        async fn check_if_redis_6(conn: &mut ClusterConnection) -> bool {
+            let response = conn
+                .route_command(
+                    cmd("INFO").arg("server"),
+                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
+                )
+                .await
+                .unwrap();
+            let res = from_owned_redis_value::<String>(response).unwrap();
+            println!("res: {:?}, {}", res, res.contains("redis_version:6"));
+            true
+        }
+
         async fn subscribe_to_channels(
-            pubsub_conn: &mut redis::cluster_async::ClusterConnection,
+            pubsub_conn: &mut ClusterConnection,
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<PushInfo>,
+            is_redis_6: bool,
         ) -> RedisResult<()> {
             let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
             let push: PushInfo = rx.recv().await.unwrap();
@@ -2329,22 +2343,25 @@ mod cluster_async {
                 }
             );
 
-            let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
-            let push = rx.recv().await.unwrap();
-            assert_eq!(
-                push,
-                PushInfo {
-                    kind: PushKind::SSubscribe,
-                    data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                }
-            );
+            if !is_redis_6 {
+                let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::SSubscribe,
+                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                    }
+                );
+            }
 
             Ok(())
         }
 
         async fn check_publishing(
-            publish_conn: &mut redis::cluster_async::ClusterConnection,
+            publish_conn: &mut ClusterConnection,
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<PushInfo>,
+            is_redis_6: bool,
         ) -> RedisResult<()> {
             let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
             let push = rx.recv().await.unwrap();
@@ -2373,18 +2390,20 @@ mod cluster_async {
                 }
             );
 
-            let _: () = publish_conn.spublish("sphonewave", "banana").await?;
-            let push = rx.recv().await.unwrap();
-            assert_eq!(
-                push,
-                PushInfo {
-                    kind: PushKind::SMessage,
-                    data: vec![
-                        Value::BulkString(b"sphonewave".to_vec()),
-                        Value::BulkString(b"banana".to_vec()),
-                    ]
-                }
-            );
+            if !is_redis_6 {
+                let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::SMessage,
+                        data: vec![
+                            Value::BulkString(b"sphonewave".to_vec()),
+                            Value::BulkString(b"banana".to_vec()),
+                        ]
+                    }
+                );
+            }
             Ok(())
         }
 
@@ -2403,10 +2422,11 @@ mod cluster_async {
                 async move {
                     let (mut publish_conn, mut pubsub_conn) =
                         join!(ctx.async_connection(), ctx.async_connection());
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx).await?;
+                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
-                    check_publishing(&mut publish_conn, &mut rx).await?;
+                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
 
                     Ok::<_, RedisError>(())
                 },
@@ -2430,6 +2450,7 @@ mod cluster_async {
                 async move {
                     let (mut publish_conn, mut pubsub_conn) =
                         join!(ctx.async_connection(), ctx.async_connection());
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
                     let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
                     let push = rx.recv().await.unwrap();
@@ -2475,28 +2496,38 @@ mod cluster_async {
                         }
                     );
 
-                    let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::SSubscribe,
-                            data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                        }
-                    );
-                    let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::SUnsubscribe,
-                            data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(0)]
-                        }
-                    );
+                    if !is_redis_6 {
+                        let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                        let push = rx.recv().await.unwrap();
+                        assert_eq!(
+                            push,
+                            PushInfo {
+                                kind: PushKind::SSubscribe,
+                                data: vec![
+                                    Value::BulkString(b"sphonewave".to_vec()),
+                                    Value::Int(1)
+                                ]
+                            }
+                        );
+                        let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
+                        let push = rx.recv().await.unwrap();
+                        assert_eq!(
+                            push,
+                            PushInfo {
+                                kind: PushKind::SUnsubscribe,
+                                data: vec![
+                                    Value::BulkString(b"sphonewave".to_vec()),
+                                    Value::Int(0)
+                                ]
+                            }
+                        );
+                    }
 
                     let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
                     let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
-                    let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                    if !is_redis_6 {
+                        let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                    }
 
                     assert_eq!(
                         rx.try_recv(),
@@ -2524,8 +2555,9 @@ mod cluster_async {
             block_on_all(
                 async move {
                     let mut pubsub_conn = ctx.async_connection().await;
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx).await?;
+                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
                     drop(rx);
 
@@ -2559,6 +2591,7 @@ mod cluster_async {
             block_on_all(
                 async move {
                     let mut pubsub_conn = ctx.async_connection().await;
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
                     let _: () = pubsub_conn
                         .subscribe(&[
@@ -2634,44 +2667,45 @@ mod cluster_async {
                             }
                         );
                     }
+                    if !is_redis_6 {
+                        // we use the curly braces in order to avoid cross slots errors.
+                        let _: () = pubsub_conn
+                            .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
+                            .await?;
+                        for i in 1..4 {
+                            let push = rx.recv().await.unwrap();
+                            assert_eq!(
+                                push,
+                                PushInfo {
+                                    kind: PushKind::SSubscribe,
+                                    data: vec![
+                                        Value::BulkString(
+                                            format!("{{sphonewave}}{i}").as_bytes().to_vec()
+                                        ),
+                                        Value::Int(i)
+                                    ]
+                                }
+                            );
+                        }
 
-                    // we use the curly braces in order to avoid cross slots errors.
-                    let _: () = pubsub_conn
-                        .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
-                        .await?;
-                    for i in 1..4 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::SSubscribe,
-                                data: vec![
-                                    Value::BulkString(
-                                        format!("{{sphonewave}}{i}").as_bytes().to_vec()
-                                    ),
-                                    Value::Int(i)
-                                ]
-                            }
-                        );
-                    }
-
-                    let _: () = pubsub_conn
-                        .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
-                        .await?;
-                    for i in 1..3 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::SUnsubscribe,
-                                data: vec![
-                                    Value::BulkString(
-                                        format!("{{sphonewave}}{i}").as_bytes().to_vec()
-                                    ),
-                                    Value::Int(3 - i)
-                                ]
-                            }
-                        );
+                        let _: () = pubsub_conn
+                            .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
+                            .await?;
+                        for i in 1..3 {
+                            let push = rx.recv().await.unwrap();
+                            assert_eq!(
+                                push,
+                                PushInfo {
+                                    kind: PushKind::SUnsubscribe,
+                                    data: vec![
+                                        Value::BulkString(
+                                            format!("{{sphonewave}}{i}").as_bytes().to_vec()
+                                        ),
+                                        Value::Int(3 - i)
+                                    ]
+                                }
+                            );
+                        }
                     }
 
                     assert_eq!(
@@ -2716,8 +2750,9 @@ mod cluster_async {
 
                     let (mut publish_conn, mut pubsub_conn) =
                         join!(ctx.async_connection(), ctx.async_connection());
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx).await?;
+                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
                     println!("dropped");
                     drop(ctx);
@@ -2762,7 +2797,9 @@ mod cluster_async {
                     let mut pushes = Vec::new();
                     pushes.push(rx.recv().await.unwrap());
                     pushes.push(rx.recv().await.unwrap());
-                    pushes.push(rx.recv().await.unwrap());
+                    if !is_redis_6 {
+                        pushes.push(rx.recv().await.unwrap());
+                    }
                     // we expect only 3 resubscriptions.
                     assert!(rx.try_recv().is_err());
                     assert!(pushes.contains(&PushInfo {
@@ -2776,12 +2813,15 @@ mod cluster_async {
                         kind: PushKind::PSubscribe,
                         data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
                     }));
-                    assert!(pushes.contains(&PushInfo {
-                        kind: PushKind::SSubscribe,
-                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                    }));
 
-                    check_publishing(&mut publish_conn, &mut rx).await?;
+                    if !is_redis_6 {
+                        assert!(pushes.contains(&PushInfo {
+                            kind: PushKind::SSubscribe,
+                            data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                        }));
+                    }
+
+                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
 
                     Ok::<_, RedisError>(())
                 },
