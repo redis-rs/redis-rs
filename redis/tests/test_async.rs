@@ -1046,6 +1046,58 @@ mod basic_async {
         #[rstest]
         #[case::tokio(RuntimeType::Tokio)]
         #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        fn can_send_ping_on_split_pubsub(#[case] runtime: RuntimeType) {
+            let ctx = TestContext::new();
+            block_on_all(
+                async move {
+                    let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
+                    let mut publish_conn = ctx.async_connection().await?;
+
+                    let _: () = sink.subscribe("phonewave").await?;
+
+                    // we publish before the ping, to verify that published messages don't distort the ping's resuilt.
+                    let repeats = 6;
+                    for _ in 0..repeats {
+                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                    }
+
+                    if ctx.protocol == ProtocolVersion::RESP3 {
+                        let message: String = sink.ping().await?;
+                        assert_eq!(message, "PONG");
+                    } else {
+                        let message: Vec<String> = sink.ping().await?;
+                        assert_eq!(message, vec!["pong", ""]);
+                    }
+
+                    if ctx.protocol == ProtocolVersion::RESP3 {
+                        let message: String = sink.ping_message("foobar").await?;
+                        assert_eq!(message, "foobar");
+                    } else {
+                        let message: Vec<String> = sink.ping_message("foobar").await?;
+                        assert_eq!(message, vec!["pong", "foobar"]);
+                    }
+
+                    for _ in 0..repeats {
+                        let message: String = stream.next().await.unwrap().get_payload()?;
+
+                        assert_eq!("banana".to_string(), message);
+                    }
+
+                    // after the stream is closed, pinging should fail.
+                    drop(stream);
+                    let err = sink.ping_message::<()>("foobar").await.unwrap_err();
+                    assert!(err.is_unrecoverable_error());
+
+                    Ok(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
         fn can_receive_messages_from_split_pub_sub_after_sink_was_dropped(
             #[case] runtime: RuntimeType,
         ) {

@@ -205,6 +205,17 @@ mod basic {
     }
 
     #[test]
+    fn test_ping() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let res: String = con.ping_message("foobar").unwrap();
+        assert_eq!(&res, "foobar");
+        let res: String = con.ping().unwrap();
+        assert_eq!(&res, "PONG");
+    }
+
+    #[test]
     fn test_getdel() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
@@ -913,6 +924,72 @@ mod basic {
         let msg = pubsub_con.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
         assert_eq!(msg.get_payload(), Ok("bar".to_string()));
+    }
+
+    #[test]
+    fn test_pubsub_send_ping() {
+        use std::sync::{Arc, Barrier};
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Connection for subscriber api
+        let mut pubsub_con = ctx.connection();
+
+        // Barrier is used to make test thread wait to publish
+        // until after the pubsub thread has subscribed.
+        let publish_barrier = Arc::new(Barrier::new(2));
+        let pubsub_barrier = publish_barrier.clone();
+        // Barrier is used to make pubsub thread wait to ping
+        // until after the test thread has published.
+        let ping_barrier = Arc::new(Barrier::new(2));
+        let ping_barrier_clone = ping_barrier.clone();
+
+        let thread = spawn(move || {
+            let mut pubsub = pubsub_con.as_pubsub();
+            pubsub.subscribe("foo").unwrap();
+
+            let _ = pubsub_barrier.wait();
+            let _ = ping_barrier_clone.wait();
+
+            if ctx.protocol == ProtocolVersion::RESP3 {
+                let message: String = pubsub.ping().unwrap();
+                assert_eq!(message, "PONG");
+            } else {
+                let message: Vec<String> = pubsub.ping().unwrap();
+                assert_eq!(message, vec!["pong", ""]);
+            }
+
+            if ctx.protocol == ProtocolVersion::RESP3 {
+                let message: String = pubsub.ping_message("foobar").unwrap();
+                assert_eq!(message, "foobar");
+            } else {
+                let message: Vec<String> = pubsub.ping_message("foobar").unwrap();
+                assert_eq!(message, vec!["pong", "foobar"]);
+            }
+
+            let msg = pubsub.get_message().unwrap();
+            assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+            assert_eq!(msg.get_payload(), Ok(42));
+
+            let msg = pubsub.get_message().unwrap();
+            assert_eq!(msg.get_channel(), Ok("foo".to_string()));
+            assert_eq!(msg.get_payload(), Ok(23));
+        });
+
+        let _ = publish_barrier.wait();
+
+        redis::cmd("PUBLISH")
+            .arg("foo")
+            .arg(42)
+            .exec(&mut con)
+            .unwrap();
+
+        // We can also call the command directly
+        assert_eq!(con.publish("foo", 23), Ok(1));
+
+        ping_barrier.wait();
+
+        thread.join().expect("Something went wrong");
     }
 
     #[test]
