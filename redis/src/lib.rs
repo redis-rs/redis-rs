@@ -24,6 +24,14 @@
 //! part of the API allows you to express any request on the redis level.
 //! You can fluently switch between both API levels at any point.
 //!
+//! # TLS / SSL
+//!
+//! The user can enable TLS support using either RusTLS or native support (usually OpenSSL),
+//! using the `tls-rustls` or `tls-native-tls` features respectively. In order to enable TLS
+//! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp``,
+//! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
+//! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
+//!
 //! ## Connection Handling
 //!
 //! For connecting to redis you can use a client object which then can produce
@@ -77,7 +85,8 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
-//! * `aio`: enables async IO support (optional)
+//! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
+//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant, such as Smol. (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
@@ -85,13 +94,13 @@
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `cluster-async`: enables async redis cluster support (optional)
-//! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
 //! * `tcp_nodelay`: enables the no-delay flag on  communication sockets (optional)
 //! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
+//! * `json`: enables high-level interfaces for communication with the JSON module (optional)
 //!
 //! ## Connection Parameters
 //!
