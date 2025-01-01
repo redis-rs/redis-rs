@@ -369,14 +369,17 @@ impl ClusterClientBuilder {
     /// ```rust
     /// # use redis::cluster::ClusterClientBuilder;
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    /// let config = ClusterClientBuilder::new(vec!["rediss://127.0.0.1:6379/"]).set_push_sender(tx);
+    /// let config = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
+    ///     .use_protocol(redis::ProtocolVersion::RESP3)
+    ///     .set_push_sender(tx);
     /// ```
     ///
     /// ```rust
     /// # use std::sync::{Mutex, Arc};
     /// # use redis::cluster::ClusterClientBuilder;
     /// let messages = Arc::new(Mutex::new(Vec::new()));
-    /// let config = ClusterClientBuilder::new(vec!["rediss://127.0.0.1:6379/"])
+    /// let config = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
+    ///     .use_protocol(redis::ProtocolVersion::RESP3)
     ///     .set_push_sender(move |msg|{
     ///         let Ok(mut messages) = messages.lock() else {
     ///             return Err(redis::aio::SendError);
