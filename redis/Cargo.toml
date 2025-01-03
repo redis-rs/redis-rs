@@ -126,8 +126,6 @@ async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-c
 aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "futures-util/alloc", "futures-util/sink", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio"]
 
 [dev-dependencies]
-rand = "0.8"
-socket2 = "0.5"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
@@ -139,6 +137,7 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "test-ut
 tempfile = "=3.14.0"
 once_cell = "1"
 anyhow = "1"
+redis-test = { path = "../redis-test" }
 rstest = "0.23"
 
 [[test]]

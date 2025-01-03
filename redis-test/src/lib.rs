@@ -23,6 +23,11 @@
 //! assert_eq!(result, true);
 //! ```
 
+pub mod cluster;
+pub mod sentinel;
+pub mod server;
+pub mod utils;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 

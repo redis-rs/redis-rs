@@ -11,6 +11,7 @@ mod basic {
         ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
         ToRedisArgs, Value,
     };
+    use redis_test::utils::get_listener_on_free_port;
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::io::Read;
