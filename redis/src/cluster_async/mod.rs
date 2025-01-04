@@ -69,7 +69,9 @@
 //! ```
 use std::{
     collections::HashMap,
-    fmt, io, mem,
+    fmt,
+    future::Future,
+    io, mem,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{self, Poll},
@@ -92,7 +94,12 @@ use crate::{
     Value,
 };
 
-use futures::{future::BoxFuture, prelude::*, ready};
+use futures_sink::Sink;
+use futures_util::{
+    future::{self, BoxFuture, FutureExt},
+    ready,
+    stream::{self, Stream, StreamExt},
+};
 use log::{trace, warn};
 use rand::{seq::IteratorRandom, thread_rng};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};

@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
@@ -10,7 +11,7 @@ use crate::{
     types::RetryMethod, Cmd, RedisResult,
 };
 
-use futures::{future::BoxFuture, prelude::*, ready};
+use futures_util::{future::BoxFuture, ready};
 use log::trace;
 use pin_project_lite::pin_project;
 use tokio::sync::oneshot;
