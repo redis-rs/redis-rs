@@ -8,12 +8,8 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
-use futures::{
-    channel::oneshot,
-    future::{self, Shared},
-    FutureExt,
-};
-use futures_util::future::BoxFuture;
+use futures_channel::oneshot;
+use futures_util::future::{self, BoxFuture, FutureExt, Shared};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
