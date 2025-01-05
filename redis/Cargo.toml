@@ -127,7 +127,7 @@ disable-client-setinfo = []
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
 async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
 # Instead of specifying "aio", use either "tokio-comp" or "async-std-comp".
-aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "futures-util/alloc", "futures-util/sink", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio"]
+aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "futures-util/alloc", "futures-util/std", "futures-util/sink", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio"]
 
 [dev-dependencies]
 assert_approx_eq = "1.0"
