@@ -371,7 +371,7 @@ impl ClusterClientBuilder {
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     /// let config = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
     ///     .use_protocol(redis::ProtocolVersion::RESP3)
-    ///     .set_push_sender(tx);
+    ///     .push_sender(tx);
     /// ```
     ///
     /// ```rust
@@ -380,7 +380,7 @@ impl ClusterClientBuilder {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
     ///     .use_protocol(redis::ProtocolVersion::RESP3)
-    ///     .set_push_sender(move |msg|{
+    ///     .push_sender(move |msg|{
     ///         let Ok(mut messages) = messages.lock() else {
     ///             return Err(redis::aio::SendError);
     ///         };
@@ -388,7 +388,7 @@ impl ClusterClientBuilder {
     ///         Ok(())
     ///     });
     /// ```
-    pub fn set_push_sender(mut self, push_sender: impl AsyncPushSender) -> ClusterClientBuilder {
+    pub fn push_sender(mut self, push_sender: impl AsyncPushSender) -> ClusterClientBuilder {
         self.builder_params.async_push_sender = Some(Arc::new(push_sender));
         self
     }

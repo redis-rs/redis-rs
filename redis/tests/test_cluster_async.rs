@@ -2415,7 +2415,7 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
-                    .set_push_sender(tx.clone())
+                    .push_sender(tx.clone())
             });
 
             block_on_all(
@@ -2443,7 +2443,7 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
-                    .set_push_sender(tx.clone())
+                    .push_sender(tx.clone())
             });
 
             block_on_all(
@@ -2549,7 +2549,7 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
-                    .set_push_sender(tx.clone())
+                    .push_sender(tx.clone())
             });
 
             block_on_all(
@@ -2585,7 +2585,7 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
-                    .set_push_sender(tx.clone())
+                    .push_sender(tx.clone())
             });
 
             block_on_all(
@@ -2731,7 +2731,7 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
-                    .set_push_sender(tx.clone())
+                    .push_sender(tx.clone())
             });
 
             block_on_all(
