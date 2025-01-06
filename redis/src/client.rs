@@ -236,18 +236,7 @@ impl Client {
     )]
     #[allow(deprecated)]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        let con = match Runtime::locate() {
-            #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
-                    .await?
-            }
-            #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
-                    .await?
-            }
-        };
+        let con = self.get_simple_async_connection_dynamically().await?;
 
         crate::aio::Connection::new(&self.connection_info.redis, con).await
     }
@@ -790,6 +779,24 @@ impl Client {
         .await
     }
 
+    async fn get_simple_async_connection_dynamically(
+        &self,
+    ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
+        match Runtime::locate() {
+            #[cfg(feature = "tokio-comp")]
+            Runtime::Tokio => {
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
+                    .await
+            }
+
+            #[cfg(feature = "async-std-comp")]
+            Runtime::AsyncStd => {
+                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
+                    .await
+            }
+        }
+    }
+
     async fn get_simple_async_connection<T>(
         &self,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
@@ -810,19 +817,7 @@ impl Client {
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
-        let connection = match Runtime::locate() {
-            #[cfg(feature = "tokio-comp")]
-            Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
-                    .await?
-            }
-
-            #[cfg(feature = "async-std-comp")]
-            Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
-                    .await?
-            }
-        };
+        let connection = self.get_simple_async_connection_dynamically().await?;
 
         crate::aio::PubSub::new(&self.connection_info.redis, connection).await
     }
