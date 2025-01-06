@@ -95,11 +95,13 @@ where
     }
 
     /// Converts this [`Connection`] into [`PubSub`].
+    #[deprecated(note = "aio::Connection is deprecated. Use [Client::get_async_pubsub] instead")]
     pub fn into_pubsub(self) -> PubSub<C> {
         PubSub::new(self)
     }
 
     /// Converts this [`Connection`] into [`Monitor`]
+    #[deprecated(note = "aio::Connection is deprecated. Use [Client::get_async_pubsub] instead")]
     pub fn into_monitor(self) -> Monitor<C> {
         Monitor::new(self)
     }

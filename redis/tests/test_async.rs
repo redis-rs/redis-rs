@@ -1280,6 +1280,7 @@ mod basic_async {
             let ctx = TestContext::new();
             block_on_all(
                 async move {
+                    #[allow(deprecated)]
                     let mut pubsub_conn = ctx.deprecated_async_connection().await?.into_pubsub();
                     pubsub_conn.subscribe("phonewave").await?;
                     pubsub_conn.psubscribe("*").await?;
