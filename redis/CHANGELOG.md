@@ -1,3 +1,32 @@
+### 0.8.0 (2025-01-7)
+
+#### Changes & Bug fixes
+
+* ConnectionManager: reconnect on disconnect pushes ([#1407](https://github.com/redis-rs/redis-rs/pull/1407))
+* ConnectionManager: Support automatic resubscription ([#1408](https://github.com/redis-rs/redis-rs/pull/1408))
+* Remove async_trait dependency ([#1451](https://github.com/redis-rs/redis-rs/pull/1451))
+* Expose RetryMethod to consumers ([#1454](https://github.com/redis-rs/redis-rs/pull/1454) @Braedon-Wooding-Displayr)
+* Add ping support to commands & pubsubs ([#1341](https://github.com/redis-rs/redis-rs/pull/1341))
+* Expose server creation logic through redis-test ([#1363](https://github.com/redis-rs/redis-rs/pull/1363))
+* Depend only on the required sub-crates of futures ([#1465](https://github.com/redis-rs/redis-rs/pull/1465) @jplatte)
+* **Breaking change**: Mark more `Connection` functions as deprecated ([#1468](https://github.com/redis-rs/redis-rs/pull/1468))
+* Move repeated logic to function ([#1469](https://github.com/redis-rs/redis-rs/pull/1469))
+
+#### Documentation improvements
+
+* Update README to use rustls ([#1397](https://github.com/redis-rs/redis-rs/pull/1397) @khacminh)
+* Update README.md regarding cargo-nextest ([#1445](https://github.com/redis-rs/redis-rs/pull/1445) @altanozlu)
+* Improve features and TLS docs ([#1464](https://github.com/redis-rs/redis-rs/pull/1464))
+* Mention Valkey in Readme ([#1467](https://github.com/redis-rs/redis-rs/pull/1467))
+* Fix automatic resubscription docs ([#1450](https://github.com/redis-rs/redis-rs/pull/1450))
+* Replace `get_multiplexed_tokio_connection` in examples & tests ([#1443](https://github.com/redis-rs/redis-rs/pull/1443))
+
+#### CI improvements
+
+* Run tests concurrently ([#1444](https://github.com/redis-rs/redis-rs/pull/1444))
+* Report slow tests more eagerly ([#1441](https://github.com/redis-rs/redis-rs/pull/1441))
+* Improve testing of optional features ([#1448](https://github.com/redis-rs/redis-rs/pull/1448))
+
 ### 0.27.6 (2024-12-3)
 
 #### Changes & Bug fixes
