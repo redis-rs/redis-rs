@@ -355,8 +355,7 @@ where
 
 pub type Version = (u16, u16, u16);
 
-fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
-    let info: InfoDict = redis::Cmd::new().arg("INFO").query(conn).unwrap();
+pub fn parse_version(info: InfoDict) -> Version {
     let version: String = info.get("redis_version").unwrap();
     let versions: Vec<u16> = version
         .split('.')
@@ -364,6 +363,11 @@ fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
         .collect();
     assert_eq!(versions.len(), 3);
     (versions[0], versions[1], versions[2])
+}
+
+fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
+    let info: InfoDict = redis::Cmd::new().arg("INFO").query(conn).unwrap();
+    parse_version(info)
 }
 
 pub fn is_major_version(expected_version: u16, version: Version) -> bool {
