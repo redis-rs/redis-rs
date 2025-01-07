@@ -278,6 +278,14 @@ impl RedisWrite for Cmd {
         write!(self.data, "{arg}").unwrap();
         self.args.push(Arg::Simple(self.data.len()));
     }
+
+    fn start_buffered_arg(&mut self) {}
+    fn write_buffered_arg(&mut self, arg: &[u8]) {
+        self.data.extend_from_slice(arg);
+    }
+    fn finish_buffered_arg(&mut self) {
+        self.args.push(Arg::Simple(self.data.len()));
+    }
 }
 
 impl Default for Cmd {
