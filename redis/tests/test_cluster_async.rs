@@ -2310,9 +2310,8 @@ mod cluster_async {
                 )
                 .await
                 .unwrap();
-            let res = from_owned_redis_value::<String>(response).unwrap();
-            println!("res: {:?}, {}", res, res.contains("redis_version:6"));
-            true
+            let info = from_owned_redis_value::<InfoDict>(response).unwrap();
+            parse_version(info).0 >= 6
         }
 
         async fn subscribe_to_channels(
