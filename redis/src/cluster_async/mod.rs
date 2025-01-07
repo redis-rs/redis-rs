@@ -7,8 +7,6 @@
 //! that the cluster topology has changed, it will query nodes in order to find the current cluster topology.
 //! If it disconnects from some nodes, it will automatically reconnect to those nodes.
 //!
-//! Note that pubsub & push sending functionality is not currently provided by this module.
-//!
 //! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
 //! of connections to each node in the cluster.
 //!
@@ -46,6 +44,31 @@
 //! }
 //! ```
 //!
+//! # Pubsub
+//!
+//! Pubsub, and generally receiving push messages from the cluster nodes, is now supported
+//! when defining a connection with [crate::ProtocolVersion::RESP3] and some
+//! [crate::aio::AsyncPushSender] to receive the messages on.
+//!
+//! ```rust,no_run
+//! use redis::cluster::ClusterClientBuilder;
+//! use redis::{Value, AsyncCommands};
+//!
+//! async fn fetch_an_integer() -> redis::RedisResult<()> {
+//!     let nodes = vec!["redis://127.0.0.1/?protocol=3"];
+//!     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+//!     let client = ClusterClientBuilder::new(nodes)
+//!         .use_protocol(redis::ProtocolVersion::RESP3)
+//!         .push_sender(tx).build()?;
+//!     let mut connection = client.get_async_connection().await?;
+//!     connection.subscribe("channel").await?;
+//!     while let Some(msg) = rx.recv().await {
+//!         println!("Got: {:?}", msg);
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
 //! # Sending request to specific node
 //! In some cases you'd want to send a request to a specific node in the cluster, instead of
 //! letting the cluster connection decide by itself to which node it should send the request.
@@ -58,8 +81,8 @@
 //!
 //! async fn fetch_an_integer() -> redis::RedisResult<Value> {
 //!     let nodes = vec!["redis://127.0.0.1/"];
-//!     let client = ClusterClient::new(nodes).unwrap();
-//!     let mut connection = client.get_async_connection().await.unwrap();
+//!     let client = ClusterClient::new(nodes)?;
+//!     let mut connection = client.get_async_connection().await?;
 //!     let routing_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress{
 //!         host: "redis://127.0.0.1".to_string(),
 //!         port: 6378
