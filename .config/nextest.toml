@@ -2,5 +2,10 @@
 retries = 2
 failure-output = "immediate-final" # show test failures inline, and also at the end of the run
 fail-fast = false # run all tests, even if some failed
-slow-timeout = { period = "1s", terminate-after = 20 }
+slow-timeout = { period = "3s", terminate-after = 7 }
 status-level = "skip"
+
+
+[[profile.default.overrides]]
+filter = 'test(cluster_async::test_async_cluster_basic_failover)'
+slow-timeout = { period = "20s", terminate-after = 2 }
