@@ -1,10 +1,49 @@
+#[allow(unused_macros)]
+macro_rules! implement_command {
+	(
+        $lifetime: lifetime
+		$(#[$attr:meta])+
+		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+			$($argname:ident: $argty:ty),*) $body:block $rettype:ty
+    ) => {
+		$(#[$attr])*
+		#[inline]
+		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+			& $lifetime mut self
+			$(, $argname: $argty)*
+		) -> crate::types::RedisFuture<'a, $rettype>
+
+		{
+			Box::pin(async move { ($body).query_async(self).await })
+		}
+	};
+	(
+        $lifetime: lifetime
+		$(#[$attr:meta])+
+		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+			$($argname:ident: $argty:ty),*) $body:block
+    ) => {
+		$(#[$attr])*
+		#[inline]
+		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+			& $lifetime mut self
+			$(, $argname: $argty)*
+		) -> crate::types::RedisFuture<'a, crate::Value>
+		{
+			Box::pin(async move { ($body).query_async(self).await })
+		}
+	}
+}
+
 macro_rules! implement_commands {
     (
         $lifetime: lifetime
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) $body:block
+                $($argname:ident: $argty:ty),*) $(-> $rettype:ty)? $body:block
         )*
     ) =>
     (
@@ -257,6 +296,101 @@ macro_rules! implement_commands {
             }
         }
 
+		/// Implements common redis commands over asynchronous connections.
+		/// The return types are concrete and opinionated. If you want to choose the return type you should use the `AsyncCommands` trait.
+		#[cfg(feature = "aio")]
+        pub trait AsyncTypedCommands : crate::aio::ConnectionLike + Send + Sized {
+            $(
+				implement_command! {
+					$lifetime
+					$(#[$attr])*
+					fn $name<$($tyargs: $ty),*>(
+						$($argname: $argty),*
+					)
+
+					{
+						$body
+					} $($rettype)?
+				}
+            )*
+
+            /// Incrementally iterate the keys space.
+            #[inline]
+            fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0);
+                Box::pin(async move { c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate the keys space with options.
+            #[inline]
+            fn scan_options<RV: FromRedisValue>(&mut self, opts: ScanOptions) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg(opts);
+                Box::pin(async move { c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements for elements matching a pattern.
+            #[inline]
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move { c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate hash fields and associated values.
+            #[inline]
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate hash fields and associated values for
+			/// field names matching a pattern.
+            #[inline]
+            fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("HSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements.
+            #[inline]
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate set elements for elements matching a pattern.
+            #[inline]
+            fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("SSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate sorted set elements.
+            #[inline]
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+
+            /// Incrementally iterate sorted set elements for elements matching a pattern.
+            #[inline]
+            fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                let mut c = cmd("ZSCAN");
+                c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
+                Box::pin(async move {c.iter_async(self).await })
+            }
+        }
+
         /// Implements common redis commands for pipelines.  Unlike the regular
         /// commands trait, this returns the pipeline rather than a result
         /// directly.  Other than that it works the same however.
@@ -289,5 +423,5 @@ macro_rules! implement_commands {
                 }
             )*
         }
-    )
+    );
 }
