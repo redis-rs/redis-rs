@@ -140,17 +140,17 @@ implement_commands! {
     // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
-    fn get<K: ToRedisArgs>(key: K) {
+    fn get<K: ToRedisArgs>(key: K) -> String {
         cmd(if key.num_of_args() <= 1 { "GET" } else { "MGET" }).arg(key)
     }
 
     /// Get values of keys
-    fn mget<K: ToRedisArgs>(key: K){
+    fn mget<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("MGET").arg(key)
     }
 
     /// Gets all keys matching pattern
-    fn keys<K: ToRedisArgs>(key: K) {
+    fn keys<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("KEYS").arg(key)
     }
 
@@ -2337,6 +2337,9 @@ impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
+
+#[cfg(feature = "aio")]
+impl<T> AsyncTypedCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
