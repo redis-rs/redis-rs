@@ -1,6 +1,5 @@
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
-use itertools::Itertools;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
@@ -1222,13 +1221,10 @@ impl FromRedisValue for ReplicaInfo {
         if v.len() < 3 {
             invalid_type_error!(v, "Replica array is too short, expected 3 elements")
         }
-        let v = v
-            .into_iter()
-            .next_tuple::<(Value, Value, Value)>()
-            .expect("Replica response too short, expected 3 elements");
-        let ip = from_owned_redis_value(v.0)?;
-        let port = from_owned_redis_value(v.1)?;
-        let offset = from_owned_redis_value(v.2)?;
+        let mut v = v.into_iter();
+        let ip = from_owned_redis_value(v.next().expect("len was checked"))?;
+        let port = from_owned_redis_value(v.next().expect("len was checked"))?;
+        let offset = from_owned_redis_value(v.next().expect("len was checked"))?;
         Ok(ReplicaInfo {
             ip,
             port,
@@ -1270,13 +1266,12 @@ impl Role {
                 "Role primary response too short, expected 3 elements"
             )
         }
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value, Value)>()
-            .expect("Role primary response too short, expected 3 elements");
 
-        let replication_offset = from_owned_redis_value(values.1)?;
-        let replicas = from_owned_redis_value(values.2)?;
+        let mut values = values.into_iter();
+        _ = values.next();
+
+        let replication_offset = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let replicas = from_owned_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Primary {
             replication_offset,
@@ -1292,15 +1287,13 @@ impl Role {
             )
         }
 
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value, Value, Value, Value)>()
-            .expect("Role replica response too short, expected 5 elements");
+        let mut values = values.into_iter();
+        _ = values.next();
 
-        let primary_ip = from_owned_redis_value(values.1)?;
-        let primary_port = from_owned_redis_value(values.2)?;
-        let replication_state = from_owned_redis_value(values.3)?;
-        let data_received = from_owned_redis_value(values.4)?;
+        let primary_ip = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let primary_port = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let replication_state = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let data_received = from_owned_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Replica {
             primary_ip,
@@ -1317,11 +1310,8 @@ impl Role {
                 "Role sentinel response too short, expected at least 2 elements"
             )
         }
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value)>()
-            .expect("Role sentinel response too short, expected 2 elements");
-        let primary_names = from_owned_redis_value(values.1)?;
+        let second_val = values.into_iter().nth(1).expect("len was checked");
+        let primary_names = from_owned_redis_value(second_val)?;
         Ok(Role::Sentinel { primary_names })
     }
 }
@@ -1887,7 +1877,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
 }
 
 /// This trait is used to convert a redis value into a more appropriate
-/// type.  
+/// type.
 ///
 /// While a redis `Value` can represent any response that comes
 /// back from the redis server, usually you want to map this into something
