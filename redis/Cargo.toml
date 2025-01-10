@@ -208,3 +208,7 @@ required-features = ["connection-manager"]
 [[example]]
 name = "streams"
 required-features = ["streams"]
+
+[[example]]
+name = "async-typed"
+required-features = ["aio"]

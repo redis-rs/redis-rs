@@ -138,7 +138,7 @@ implement_commands! {
     // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
-    fn get<K: ToRedisArgs>(key: K) -> String {
+    fn get<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd(if key.num_of_args() <= 1 { "GET" } else { "MGET" }).arg(key)
     }
 
@@ -210,7 +210,7 @@ implement_commands! {
     }
 
     /// Delete one or more keys.
-    fn del<K: ToRedisArgs>(key: K) {
+    fn del<K: ToRedisArgs>(key: K) -> usize {
         cmd("DEL").arg(key)
     }
 
@@ -220,7 +220,7 @@ implement_commands! {
     }
 
     /// Determine the type of a key.
-    fn key_type<K: ToRedisArgs>(key: K) {
+    fn key_type<K: ToRedisArgs>(key: K) -> crate::types::ValueType {
         cmd("TYPE").arg(key)
     }
 
@@ -311,7 +311,7 @@ implement_commands! {
 
     /// Increment the numeric value of a key by the given amount.  This
     /// issues a `INCRBY` or `INCRBYFLOAT` depending on the type.
-    fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
+    fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) -> isize {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "INCRBYFLOAT"
         } else {
@@ -566,7 +566,7 @@ implement_commands! {
     }
 
     /// Returns the specified elements of the list stored at key.
-    fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
+    fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("LRANGE").arg(key).arg(start).arg(stop)
     }
 
