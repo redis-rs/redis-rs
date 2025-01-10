@@ -275,5 +275,9 @@ name = "streams"
 required-features = ["streams"]
 
 [[example]]
+name = "async-typed"
+required-features = ["aio"]
+
+[[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]

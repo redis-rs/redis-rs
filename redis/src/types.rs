@@ -2958,3 +2958,46 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
 }
+
+/// Possible types of value held in Redis, from https://redis.io/docs/latest/commands/type/
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueType {
+	String,
+	List,
+	Set,
+	ZSet,
+	Hash,
+	Stream
+}
+
+impl FromRedisValue for ValueType {
+	fn from_redis_value(v: &Value) -> RedisResult<Self> {
+		match v {
+			Value::SimpleString(s) => match s.as_str() {
+				"string" => Ok(ValueType::String),
+				"list" => Ok(ValueType::List),
+				"set" => Ok(ValueType::Set),
+				"zset" => Ok(ValueType::ZSet),
+				"hash" => Ok(ValueType::Hash),
+				"stream" => Ok(ValueType::Stream),
+				_ => invalid_type_error!(v, "Unknown value type")
+			},
+			_ => invalid_type_error!(v, "Unknown value type")
+		}
+	}
+
+	fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+		match v {
+			Value::SimpleString(s) => match s.as_str() {
+				"string" => Ok(ValueType::String),
+				"list" => Ok(ValueType::List),
+				"set" => Ok(ValueType::Set),
+				"zset" => Ok(ValueType::ZSet),
+				"hash" => Ok(ValueType::Hash),
+				"stream" => Ok(ValueType::Stream),
+				_ => invalid_type_error!(s, "Unknown value type")
+			},
+			_ => invalid_type_error!(v, "Unknown value type")
+		}
+	}
+}
