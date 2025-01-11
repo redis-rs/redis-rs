@@ -2311,7 +2311,7 @@ mod cluster_async {
                 .await
                 .unwrap();
             let info = from_owned_redis_value::<InfoDict>(response).unwrap();
-            parse_version(info).0 >= 6
+            parse_version(info).0 == 6
         }
 
         async fn subscribe_to_channels(
@@ -2426,6 +2426,38 @@ mod cluster_async {
                     subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
                     check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        fn pub_sub_shardnumsub(#[case] runtime: RuntimeType) {
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.use_protocol(ProtocolVersion::RESP3)
+            });
+
+            block_on_all(
+                async move {
+                    let mut pubsub_conn = ctx.async_connection().await;
+                    if check_if_redis_6(&mut pubsub_conn).await {
+                        return Ok(());
+                    }
+
+                    let _: () = pubsub_conn.ssubscribe("foo").await?;
+
+                    let res = cmd("pubsub")
+                        .arg("SHARDNUMSUB")
+                        .arg("foo")
+                        .query_async::<(String, usize)>(&mut pubsub_conn)
+                        .await
+                        .unwrap();
+                    assert_eq!(res, ("foo".to_string(), 1));
 
                     Ok::<_, RedisError>(())
                 },

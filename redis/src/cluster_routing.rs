@@ -411,7 +411,6 @@ impl RoutingInfo {
             | b"TIME"
             | b"PUBSUB CHANNELS"
             | b"PUBSUB NUMPAT"
-            | b"PUBSUB NUMSUB"
             | b"PUBSUB SHARDCHANNELS"
             | b"BGSAVE"
             | b"WAITAOF"
@@ -494,7 +493,9 @@ impl RoutingInfo {
             | b"XGROUP SETID"
             | b"XINFO CONSUMERS"
             | b"XINFO GROUPS"
-            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            | b"XINFO STREAM"
+            | b"PUBSUB SHARDNUMSUB"
+            | b"PUBSUB NUMSUB" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
