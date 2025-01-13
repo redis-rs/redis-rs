@@ -156,7 +156,7 @@ pub struct SentinelNodeConnectionInfo {
 }
 
 impl SentinelNodeConnectionInfo {
-    fn create_connection_info(&self, ip: String, port: u16) -> ConnectionInfo {
+    fn create_connection_info(&self, ip: String, port: u16) -> RedisResult<ConnectionInfo> {
         let addr = match self.tls_mode {
             None => crate::ConnectionAddr::Tcp(ip, port),
             Some(TlsMode::Secure) => crate::ConnectionAddr::TcpTls {
@@ -166,7 +166,12 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(not(feature = "tls-rustls"))]
                 tls_params: None,
                 #[cfg(feature = "tls-rustls")]
-                tls_params: Some(retrieve_tls_certificates(self.certs.clone().unwrap()).unwrap()),
+                tls_params: match self.certs.clone() {
+                    None => None,
+                    Some(certs) => {
+                        Some(retrieve_tls_certificates(certs)?)
+                    }
+                }
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -176,10 +181,10 @@ impl SentinelNodeConnectionInfo {
             },
         };
 
-        ConnectionInfo {
+        Ok(ConnectionInfo {
             addr,
             redis: self.redis_connection_info.clone().unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -308,7 +313,7 @@ fn find_valid_master(
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
-        let connection_info = node_connection_info.create_connection_info(ip, port);
+        let connection_info = node_connection_info.create_connection_info(ip, port)?;
         if check_role(&connection_info, "master") {
             return Ok(connection_info);
         }
@@ -339,7 +344,7 @@ async fn async_find_valid_master(
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
-        let connection_info = node_connection_info.create_connection_info(ip, port);
+        let connection_info = node_connection_info.create_connection_info(ip, port)?;
         if async_check_role(&connection_info, "master").await {
             return Ok(connection_info);
         }
@@ -354,18 +359,19 @@ async fn async_find_valid_master(
 fn get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
-) -> Vec<ConnectionInfo> {
-    valid_addrs(replicas, is_replica_valid)
-        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
-        .filter(|connection_info| check_role(connection_info, "slave"))
-        .collect()
+) -> RedisResult<Vec<ConnectionInfo>> {
+    let addresses = valid_addrs(replicas, is_replica_valid)
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port)).collect::<RedisResult<Vec<ConnectionInfo>>>()?;
+
+    Ok(addresses.into_iter().filter(|connection_info| check_role(connection_info, "slave"))
+        .collect())
 }
 
 #[cfg(feature = "aio")]
 async fn async_get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
-) -> Vec<ConnectionInfo> {
+) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
         if async_check_role(&connection_info, "slave").await {
             Some(connection_info)
@@ -374,11 +380,12 @@ async fn async_get_valid_replicas_addresses(
         }
     }
 
-    futures_util::stream::iter(valid_addrs(replicas, is_replica_valid))
-        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
-        .filter_map(is_replica_role_valid)
+    let addresses = valid_addrs(replicas, is_replica_valid)
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port)).collect::<RedisResult<Vec<_>>>()?;
+
+    Ok(futures_util::stream::iter(addresses).filter_map(is_replica_role_valid)
         .collect()
-        .await
+        .await)
 }
 
 #[cfg(feature = "aio")]
@@ -551,7 +558,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.get_sentinel_replicas(service_name)?;
-        Ok(get_valid_replicas_addresses(replicas, node_connection_info))
+        Ok(get_valid_replicas_addresses(replicas, node_connection_info)?)
     }
 
     /// Determines the masters address for the given name, and returns a client for that
@@ -648,7 +655,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.async_get_sentinel_replicas(service_name).await?;
-        Ok(async_get_valid_replicas_addresses(replicas, node_connection_info).await)
+        Ok(async_get_valid_replicas_addresses(replicas, node_connection_info).await?)
     }
 
     /// Determines the masters address for the given name, and returns a client for that
