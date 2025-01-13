@@ -256,7 +256,7 @@ impl ClusterConfig {
     }
 
     #[cfg(feature = "cluster-async")]
-    /// Sets sender sender for push values.
+    /// Sets a sender to receive pushed values.
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
     /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
