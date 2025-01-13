@@ -228,6 +228,64 @@ impl Connect for Connection {
     }
 }
 
+/// Options for creation of async connection
+#[derive(Clone, Default)]
+pub struct ClusterConfig {
+    pub(crate) connection_timeout: Option<Duration>,
+    pub(crate) response_timeout: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async_push_sender: Option<std::sync::Arc<dyn crate::aio::AsyncPushSender>>,
+}
+
+impl ClusterConfig {
+    /// Creates a new instance of the options with nothing set
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the connection timeout
+    pub fn set_connection_timeout(mut self, connection_timeout: std::time::Duration) -> Self {
+        self.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Sets the response timeout
+    pub fn set_response_timeout(mut self, response_timeout: std::time::Duration) -> Self {
+        self.response_timeout = Some(response_timeout);
+        self
+    }
+
+    #[cfg(feature = "cluster-async")]
+    /// Sets sender sender for push values.
+    ///
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::cluster::ClusterConfig;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = ClusterConfig::new().set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::cluster::ClusterConfig;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = ClusterConfig::new().set_push_sender(move |msg|{
+    ///     let Ok(mut messages) = messages.lock() else {
+    ///         return Err(redis::aio::SendError);
+    ///     };
+    ///     messages.push(msg);
+    ///     Ok(())
+    /// });
+    pub fn set_push_sender(mut self, sender: impl crate::aio::AsyncPushSender) -> Self {
+        self.async_push_sender = Some(std::sync::Arc::new(sender));
+        self
+    }
+}
+
 /// This represents a Redis Cluster connection.
 ///
 /// It stores the underlying connections maintained for each node in the cluster,
