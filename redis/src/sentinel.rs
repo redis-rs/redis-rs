@@ -168,10 +168,8 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(feature = "tls-rustls")]
                 tls_params: match self.certs.clone() {
                     None => None,
-                    Some(certs) => {
-                        Some(retrieve_tls_certificates(certs)?)
-                    }
-                }
+                    Some(certs) => Some(retrieve_tls_certificates(certs)?),
+                },
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -361,9 +359,12 @@ fn get_valid_replicas_addresses(
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     let addresses = valid_addrs(replicas, is_replica_valid)
-        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port)).collect::<RedisResult<Vec<ConnectionInfo>>>()?;
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
+        .collect::<RedisResult<Vec<ConnectionInfo>>>()?;
 
-    Ok(addresses.into_iter().filter(|connection_info| check_role(connection_info, "slave"))
+    Ok(addresses
+        .into_iter()
+        .filter(|connection_info| check_role(connection_info, "slave"))
         .collect())
 }
 
@@ -381,9 +382,11 @@ async fn async_get_valid_replicas_addresses(
     }
 
     let addresses = valid_addrs(replicas, is_replica_valid)
-        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port)).collect::<RedisResult<Vec<_>>>()?;
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
+        .collect::<RedisResult<Vec<_>>>()?;
 
-    Ok(futures_util::stream::iter(addresses).filter_map(is_replica_role_valid)
+    Ok(futures_util::stream::iter(addresses)
+        .filter_map(is_replica_role_valid)
         .collect()
         .await)
 }
@@ -558,7 +561,10 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.get_sentinel_replicas(service_name)?;
-        Ok(get_valid_replicas_addresses(replicas, node_connection_info)?)
+        get_valid_replicas_addresses(
+            replicas,
+            node_connection_info,
+        )
     }
 
     /// Determines the masters address for the given name, and returns a client for that
@@ -655,7 +661,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.async_get_sentinel_replicas(service_name).await?;
-        Ok(async_get_valid_replicas_addresses(replicas, node_connection_info).await?)
+        async_get_valid_replicas_addresses(replicas, node_connection_info).await
     }
 
     /// Determines the masters address for the given name, and returns a client for that
