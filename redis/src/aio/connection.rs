@@ -4,7 +4,8 @@
 use super::async_std;
 use super::ConnectionLike;
 use super::{setup_connection, AsyncStream, RedisRuntime};
-use crate::cmd::{cmd, Cmd};
+use crate::cmd::{cmd, pipe, Cmd};
+use crate::pipeline::Pipeline;
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
     Msg, RedisConnectionInfo,
@@ -24,6 +25,7 @@ use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
@@ -507,4 +509,36 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             )))
         }
     })
+}
+
+/// This function, akin to `redis::transaction`, simplifies transaction management slightly, but asynchronously.
+pub async fn transaction_async<
+    C: ConnectionLike + Clone,
+    K: ToRedisArgs,
+    T: FromRedisValue,
+    F: Fn(C, Pipeline) -> Fut,
+    Fut: Future<Output = Result<Option<T>, RedisError>>,
+>(
+    mut connection: C,
+    keys: &[K],
+    func: F,
+) -> Result<T, RedisError> {
+    loop {
+        cmd("WATCH")
+            .arg(keys)
+            .exec_async(&mut connection)
+            .await?;
+
+        let mut p = pipe();
+        let response = func(connection.clone(), p.atomic().to_owned()).await?;
+
+        match response {
+            None => continue,
+            Some(response) => {
+                cmd("UNWATCH").exec_async(&mut connection).await?;
+
+                return Ok(response);
+            }
+        }
+    }
 }
