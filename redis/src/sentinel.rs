@@ -166,7 +166,7 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(not(feature = "tls-rustls"))]
                 tls_params: None,
                 #[cfg(feature = "tls-rustls")]
-                tls_params: Some(retrieve_tls_certificates(self.certs.clone().unwrap()).unwrap())
+                tls_params: Some(retrieve_tls_certificates(self.certs.clone().unwrap()).unwrap()),
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -213,8 +213,8 @@ fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str) ->
         && master_info.contains_key("ip")
         && master_info.contains_key("port")
         && master_info.get("flags").map_or(false, |flags| {
-        flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
-    })
+            flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
+        })
         && master_info["port"].parse::<u16>().is_ok()
 }
 
@@ -222,8 +222,8 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
     replica_info.contains_key("ip")
         && replica_info.contains_key("port")
         && replica_info.get("flags").map_or(false, |flags| {
-        !flags.contains("s_down") && !flags.contains("o_down")
-    })
+            !flags.contains("s_down") && !flags.contains("o_down")
+        })
         && replica_info["port"].parse::<u16>().is_ok()
 }
 
@@ -854,7 +854,7 @@ impl SentinelClientBuilder {
             sentinels: sentinels.into_iter().collect::<Vec<_>>(),
             service_name,
             server_type,
-            sentinel_to_redis_params : BuilderConnectionParams {
+            sentinel_to_redis_params: BuilderConnectionParams {
                 tls_mode: None,
                 db: None,
                 username: None,
@@ -875,7 +875,6 @@ impl SentinelClientBuilder {
 
     /// Creates a new `SentinelClient` from the parameters
     pub fn build(mut self) -> RedisResult<SentinelClient> {
-
         let mut sentinel_to_redis_connection_info = RedisConnectionInfo::default();
 
         if let Some(db) = self.sentinel_to_redis_params.db {
@@ -972,12 +971,14 @@ impl SentinelClientBuilder {
             client_to_sentinel_redis_connection_info.protocol = protocol;
         }
 
-        let sentinels = self.sentinels.into_iter().map(|connection_addr| {
-            ConnectionInfo {
+        let sentinels = self
+            .sentinels
+            .into_iter()
+            .map(|connection_addr| ConnectionInfo {
                 addr: connection_addr,
                 redis: client_to_sentinel_redis_connection_info.clone(),
-            }
-        }).collect();
+            })
+            .collect();
 
         SentinelClient::build(
             sentinels,
@@ -1012,13 +1013,19 @@ impl SentinelClientBuilder {
     }
 
     /// Set protocol for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_protocol(mut self, protocol: ProtocolVersion) -> SentinelClientBuilder {
+    pub fn sentinel_to_redis_protocol(
+        mut self,
+        protocol: ProtocolVersion,
+    ) -> SentinelClientBuilder {
         self.sentinel_to_redis_params.protocol = Some(protocol);
         self
     }
 
     /// Set certificates for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_certificates(mut self, certificates: TlsCertificates) -> SentinelClientBuilder {
+    pub fn sentinel_to_redis_certificates(
+        mut self,
+        certificates: TlsCertificates,
+    ) -> SentinelClientBuilder {
         self.sentinel_to_redis_params.certificates = Some(certificates);
         self
     }
@@ -1048,14 +1055,19 @@ impl SentinelClientBuilder {
     }
 
     /// Set protocol for the connection to the sentinels
-
-    pub fn client_to_sentinel_protocol(mut self, protocol: ProtocolVersion) -> SentinelClientBuilder {
+    pub fn client_to_sentinel_protocol(
+        mut self,
+        protocol: ProtocolVersion,
+    ) -> SentinelClientBuilder {
         self.client_to_sentinel_params.protocol = Some(protocol);
         self
     }
 
     /// Set certificate for the connection to the sentinels
-    pub fn client_to_sentinel_certificates(mut self, certificates: TlsCertificates) -> SentinelClientBuilder {
+    pub fn client_to_sentinel_certificates(
+        mut self,
+        certificates: TlsCertificates,
+    ) -> SentinelClientBuilder {
         self.client_to_sentinel_params.certificates = Some(certificates);
         self
     }
