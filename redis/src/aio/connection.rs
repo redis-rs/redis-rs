@@ -10,6 +10,7 @@ use crate::cmd::{cmd, pipe};
 use crate::pipeline::Pipeline;
 use crate::{FromRedisValue, RedisError, ToRedisArgs};
 use futures_util::future::select_ok;
+use log::trace;
 use std::future::Future;
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
@@ -70,7 +71,73 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     })
 }
 
-/// This function, akin to `redis::transaction`, simplifies transaction management slightly, but asynchronously.
+/// Executes a Redis transaction asynchronously by automatically watching keys and running
+/// a transaction loop until it succeeds. Similar to the synchronous [`transaction`](crate::transaction)
+/// function but for async execution.
+///
+/// The provided closure may be executed multiple times if the transaction fails due to
+/// watched keys being modified between WATCH and EXEC. Any side effects in the closure
+/// should account for possible multiple executions.
+///
+/// # Arguments
+///
+/// * `connection` - A connection implementing [`ConnectionLike`](crate::aio::ConnectionLike) + Clone
+/// * `keys` - Array of keys to watch for changes during the transaction
+/// * `func` - Closure that implements the transaction logic. Will receive a cloned connection
+///   and an atomic pipeline (pre-configured with `MULTI`/`EXEC`). Should return
+///   `Result<Option<T>, RedisError>` where:
+///   - `None` indicates the transaction should be retried
+///   - `Some(T)` contains the final result if successful
+///   - `Err` aborts the transaction
+///
+/// # Type Parameters
+///
+/// * `C` - Connection type implementing ConnectionLike + Clone
+/// * `K` - Key type implementing ToRedisArgs
+/// * `T` - Return value type implementing FromRedisValue
+/// * `F` - Closure type taking (C, Pipeline) and returning Fut
+/// * `Fut` - Future returning Result<Option<T>, RedisError>
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use redis::{AsyncCommands, RedisResult, pipe};
+///
+/// async fn increment(con: redis::aio::ConnectionManager) -> RedisResult<isize> {
+///     let key = "my_counter";
+///     redis::aio::transaction_async(con, &[key], |mut con, mut pipe| async move {
+///         // Read the current value first
+///         let val: isize = con.get(key).await?;
+///         // Build the pipeline and execute it atomically (MULTI/EXEC are added automatically)
+///         pipe.set(key, val + 1)
+///             .ignore()
+///             .get(key)
+///             .query_async(&mut con)
+///             .await
+///     })
+///     .await
+/// }
+/// ```
+///
+/// # Notes
+///
+/// - The closure may be executed multiple times if watched keys are modified by other
+///   clients between `WATCH` and `EXEC`; its side effects must be idempotent.
+/// - A successful `EXEC` automatically discards all `WATCH`es, so no explicit `UNWATCH`
+///   is needed on the success path.
+/// - The transaction is automatically abandoned if the closure returns an error; an
+///   explicit `UNWATCH` is sent in that case to leave the connection in a clean state.
+///
+/// ## Warning: Concurrent Transactions on Multiplexed Connections
+///
+/// When using a multiplexed connection (e.g. [`ConnectionManager`](crate::aio::ConnectionManager)),
+/// cloning shares the underlying channel. Running concurrent transactions on clones of
+/// the same multiplexed connection is **unsafe**: the `WATCH`/`MULTI`/`EXEC` sequence
+/// from one transaction may interleave with commands from another, causing data
+/// corruption. Ensure at most one transaction is active on a given multiplexed
+/// connection at a time.
+///
+/// For more details on Redis transactions, see the [Redis documentation](https://redis.io/topics/transactions)
 pub async fn transaction_async<
     C: ConnectionLike + Clone,
     K: ToRedisArgs,
@@ -86,14 +153,26 @@ pub async fn transaction_async<
         cmd("WATCH").arg(keys).exec_async(&mut connection).await?;
 
         let mut p = pipe();
-        let response = func(connection.clone(), p.atomic().to_owned()).await?;
+        let response = func(connection.clone(), p.atomic().to_owned()).await;
 
         match response {
-            None => continue,
-            Some(response) => {
-                cmd("UNWATCH").exec_async(&mut connection).await?;
-
-                return Ok(response);
+            Ok(None) => {
+                trace!("Transaction failed, retrying");
+                // WATCH is automatically cleared by a failed EXEC, so loop back directly.
+                // Send UNWATCH as a best-effort safety net for any edge cases where EXEC
+                // was not reached (e.g. the closure returned None before calling query_async).
+                let _ = cmd("UNWATCH").exec_async(&mut connection).await;
+                continue;
+            }
+            Ok(Some(value)) => {
+                // A successful EXEC already discards all WATCHes; no extra UNWATCH needed.
+                return Ok(value);
+            }
+            Err(err) => {
+                // The closure aborted. WATCH may still be active, so discard it to leave
+                // the connection in a clean state for subsequent commands.
+                let _ = cmd("UNWATCH").exec_async(&mut connection).await;
+                return Err(err);
             }
         }
     }
