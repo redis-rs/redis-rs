@@ -2740,7 +2740,8 @@ pub enum ValueType {
 	Set,
 	ZSet,
 	Hash,
-	Stream
+	Stream,
+	Unknown(String)
 }
 
 impl FromRedisValue for ValueType {
@@ -2753,9 +2754,9 @@ impl FromRedisValue for ValueType {
 				"zset" => Ok(ValueType::ZSet),
 				"hash" => Ok(ValueType::Hash),
 				"stream" => Ok(ValueType::Stream),
-				_ => invalid_type_error!(v, "Unknown value type")
+				_ => Ok(ValueType::Unknown(s.clone()))
 			},
-			_ => invalid_type_error!(v, "Unknown value type")
+			_ => invalid_type_error!(v, "Value type should be a simple string")
 		}
 	}
 
@@ -2768,9 +2769,9 @@ impl FromRedisValue for ValueType {
 				"zset" => Ok(ValueType::ZSet),
 				"hash" => Ok(ValueType::Hash),
 				"stream" => Ok(ValueType::Stream),
-				_ => invalid_type_error!(s, "Unknown value type")
+				_ => Ok(ValueType::Unknown(s))
 			},
-			_ => invalid_type_error!(v, "Unknown value type")
+			_ => invalid_type_error!(v, "Value type should be a simple string")
 		}
 	}
 }

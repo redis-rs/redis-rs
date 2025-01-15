@@ -143,7 +143,7 @@ implement_commands! {
     }
 
     /// Get values of keys
-    fn mget<K: ToRedisArgs>(key: K) -> Vec<String> {
+    fn mget<K: ToRedisArgs>(key: K) -> Vec<Option<String>> {
         cmd("MGET").arg(key)
     }
 
