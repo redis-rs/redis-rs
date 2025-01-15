@@ -138,17 +138,17 @@ implement_commands! {
     // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
-    fn get<K: ToRedisArgs>(key: K) {
+    fn get<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd(if key.num_of_args() <= 1 { "GET" } else { "MGET" }).arg(key)
     }
 
     /// Get values of keys
-    fn mget<K: ToRedisArgs>(key: K){
+    fn mget<K: ToRedisArgs>(key: K) -> Vec<Option<String>> {
         cmd("MGET").arg(key)
     }
 
     /// Gets all keys matching pattern
-    fn keys<K: ToRedisArgs>(key: K) {
+    fn keys<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("KEYS").arg(key)
     }
 
@@ -210,7 +210,7 @@ implement_commands! {
     }
 
     /// Delete one or more keys.
-    fn del<K: ToRedisArgs>(key: K) {
+    fn del<K: ToRedisArgs>(key: K) -> usize {
         cmd("DEL").arg(key)
     }
 
@@ -220,7 +220,7 @@ implement_commands! {
     }
 
     /// Determine the type of a key.
-    fn key_type<K: ToRedisArgs>(key: K) {
+    fn key_type<K: ToRedisArgs>(key: K) -> crate::types::ValueType {
         cmd("TYPE").arg(key)
     }
 
@@ -311,7 +311,7 @@ implement_commands! {
 
     /// Increment the numeric value of a key by the given amount.  This
     /// issues a `INCRBY` or `INCRBYFLOAT` depending on the type.
-    fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
+    fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) -> isize {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "INCRBYFLOAT"
         } else {
@@ -566,7 +566,7 @@ implement_commands! {
     }
 
     /// Returns the specified elements of the list stored at key.
-    fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) {
+    fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("LRANGE").arg(key).arg(start).arg(stop)
     }
 
@@ -2280,6 +2280,9 @@ impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
+
+#[cfg(feature = "aio")]
+impl<T> AsyncTypedCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
