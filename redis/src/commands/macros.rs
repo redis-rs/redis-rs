@@ -1,5 +1,6 @@
-#[allow(unused_macros)]
+// Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
 macro_rules! implement_command {
+	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
@@ -18,6 +19,7 @@ macro_rules! implement_command {
 			Box::pin(async move { ($body).query_async(self).await })
 		}
 	};
+	// If no return type is specified in the input skeleton, we default to returning `redis::Value` in the generated function (note lack of match rule `$rettype:ty`)
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
