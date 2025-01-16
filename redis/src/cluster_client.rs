@@ -121,7 +121,7 @@ impl ClusterParams {
             async_push_sender: value.async_push_sender,
         })
     }
-    fn apply_config(mut self, config: cluster::ClusterConfig) -> Self {
+    fn with_config(mut self, config: cluster::ClusterConfig) -> Self {
         if let Some(connection_timeout) = config.connection_timeout {
             self.connection_timeout = connection_timeout;
         }
@@ -458,7 +458,7 @@ impl ClusterClient {
         config: cluster::ClusterConfig,
     ) -> RedisResult<cluster::ClusterConnection> {
         cluster::ClusterConnection::new(
-            self.cluster_params.clone().apply_config(config),
+            self.cluster_params.clone().with_config(config),
             self.initial_nodes.clone(),
         )
     }
@@ -488,7 +488,7 @@ impl ClusterClient {
     ) -> RedisResult<cluster_async::ClusterConnection> {
         cluster_async::ClusterConnection::new(
             &self.initial_nodes,
-            self.cluster_params.clone().apply_config(config),
+            self.cluster_params.clone().with_config(config),
         )
         .await
     }
