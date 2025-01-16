@@ -228,7 +228,7 @@ impl Connect for Connection {
     }
 }
 
-/// Options for creation of async connection
+/// Options for creation of connection
 #[derive(Clone, Default)]
 pub struct ClusterConfig {
     pub(crate) connection_timeout: Option<Duration>,
