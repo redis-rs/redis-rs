@@ -121,6 +121,7 @@ impl ClusterParams {
             async_push_sender: value.async_push_sender,
         })
     }
+
     fn with_config(mut self, config: cluster::ClusterConfig) -> Self {
         if let Some(connection_timeout) = config.connection_timeout {
             self.connection_timeout = connection_timeout;
