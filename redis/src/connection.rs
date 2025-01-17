@@ -6,7 +6,7 @@ use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::parser::Parser;
@@ -959,8 +959,28 @@ pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
+    let start = Instant::now();
     let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, &connection_info.redis)
+
+    // we temporarily set the timeout, and will remove it after finishing setup.
+    let remaining_timeout = timeout.and_then(|timeout| timeout.checked_sub(start.elapsed()));
+    // TLS could run logic that doesn't contain a timeout, and should fail if it takes too long.
+    if timeout.is_some() && remaining_timeout.is_none() {
+        return Err(RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Connection timed out",
+        )));
+    }
+    con.set_read_timeout(remaining_timeout)?;
+    con.set_write_timeout(remaining_timeout)?;
+
+    let con = setup_connection(con, &connection_info.redis)?;
+
+    // remove the temporary timeout.
+    con.set_read_timeout(None)?;
+    con.set_write_timeout(None)?;
+
+    Ok(con)
 }
 
 pub(crate) struct ConnectionSetupComponents {

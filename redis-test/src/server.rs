@@ -173,6 +173,9 @@ impl RedisServer {
             .expect("failed to create tempdir");
         let log_file = Self::log_file(&tempdir);
         redis_cmd.arg("--logfile").arg(log_file.clone());
+        if get_major_version() > 6 {
+            redis_cmd.arg("--enable-debug-command").arg("yes");
+        }
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -271,4 +274,18 @@ impl RedisServer {
     pub fn log_file(tempdir: &TempDir) -> PathBuf {
         tempdir.path().join("redis.log")
     }
+}
+
+fn get_major_version() -> u8 {
+    let full_string = String::from_utf8(
+        process::Command::new("redis-server")
+            .arg("-v")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let (_, res) = full_string.split_once(" v=").unwrap();
+    let (res, _) = res.split_once(".").unwrap();
+    res.parse().unwrap()
 }

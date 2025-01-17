@@ -5,7 +5,7 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use redis::{cmd, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
+    use redis::{cmd, Client, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
         ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
@@ -2152,5 +2152,31 @@ mod basic {
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
         assert!(matches!(ret, Role::Primary { .. }));
+    }
+
+    #[test]
+    fn test_connection_timeout_on_busy_server() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        // we stop the server on another thread, in order to move forwardd while the server is stopped.
+        let handle = thread::spawn(move || {
+            cmd("DEBUG")
+                .arg("SLEEP")
+                .arg("0.1")
+                .query::<()>(&mut con)
+                .unwrap();
+        });
+
+        // we wait, to ensure that the debug sleep has started.
+        thread::sleep(Duration::from_millis(5));
+        // we set a DB, in order to force calling requests on the server.
+        let mut addr = ctx.server.connection_info().clone();
+        addr.redis.db = 1;
+        let client = Client::open(addr).unwrap();
+        let try_connect = client.get_connection_with_timeout(Duration::from_millis(2));
+
+        assert!(try_connect.is_err_and(|err| { err.is_timeout() }));
+
+        handle.join().unwrap();
     }
 }
