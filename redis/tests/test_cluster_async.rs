@@ -2437,6 +2437,34 @@ mod cluster_async {
         #[rstest]
         #[case::tokio(RuntimeType::Tokio)]
         #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        fn pub_sub_subscription_with_config(#[case] runtime: RuntimeType) {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.use_protocol(ProtocolVersion::RESP3)
+            });
+            let config = redis::cluster::ClusterConfig::new().set_push_sender(tx.clone());
+            block_on_all(
+                async move {
+                    let (mut publish_conn, mut pubsub_conn) = join!(
+                        ctx.async_connection_with_config(config.clone()),
+                        ctx.async_connection_with_config(config)
+                    );
+                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+
+                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+
+                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+
+        #[rstest]
+        #[case::tokio(RuntimeType::Tokio)]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
         fn pub_sub_shardnumsub(#[case] runtime: RuntimeType) {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)

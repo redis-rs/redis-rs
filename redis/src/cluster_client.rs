@@ -121,6 +121,20 @@ impl ClusterParams {
             async_push_sender: value.async_push_sender,
         })
     }
+
+    fn with_config(mut self, config: cluster::ClusterConfig) -> Self {
+        if let Some(connection_timeout) = config.connection_timeout {
+            self.connection_timeout = connection_timeout;
+        }
+        if let Some(response_timeout) = config.response_timeout {
+            self.response_timeout = response_timeout;
+        }
+        #[cfg(feature = "cluster-async")]
+        if let Some(async_push_sender) = config.async_push_sender {
+            self.async_push_sender = Some(async_push_sender);
+        }
+        self
+    }
 }
 
 /// Used to configure and build a [`ClusterClient`].
@@ -434,6 +448,22 @@ impl ClusterClient {
         cluster::ClusterConnection::new(self.cluster_params.clone(), self.initial_nodes.clone())
     }
 
+    /// Creates new connections to Redis Cluster nodes with a custom config and returns a
+    /// [`cluster_async::ClusterConnection`].
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if there is a failure while creating connections or slots.
+    pub fn get_connection_with_config(
+        &self,
+        config: cluster::ClusterConfig,
+    ) -> RedisResult<cluster::ClusterConnection> {
+        cluster::ClusterConnection::new(
+            self.cluster_params.clone().with_config(config),
+            self.initial_nodes.clone(),
+        )
+    }
+
     /// Creates new connections to Redis Cluster nodes and returns a
     /// [`cluster_async::ClusterConnection`].
     ///
@@ -444,6 +474,24 @@ impl ClusterClient {
     pub async fn get_async_connection(&self) -> RedisResult<cluster_async::ClusterConnection> {
         cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
             .await
+    }
+
+    /// Creates new connections to Redis Cluster nodes with a custom config and returns a
+    /// [`cluster_async::ClusterConnection`].
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if there is a failure while creating connections or slots.
+    #[cfg(feature = "cluster-async")]
+    pub async fn get_async_connection_with_config(
+        &self,
+        config: cluster::ClusterConfig,
+    ) -> RedisResult<cluster_async::ClusterConnection> {
+        cluster_async::ClusterConnection::new(
+            &self.initial_nodes,
+            self.cluster_params.clone().with_config(config),
+        )
+        .await
     }
 
     #[doc(hidden)]
