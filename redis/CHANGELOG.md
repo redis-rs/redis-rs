@@ -1,18 +1,26 @@
+### 0.28.2 (2025-01-24)
+
+#### Changes & Bug fixes
+
+* feat(cluster): add `get(_async)?_connection_with_config` ([#1487](https://github\.com/redis-rs/redis-rs/pull/1487) by @Totodore) 
+* Fix connection creation timeout. ([#1490](https://github\.com/redis-rs/redis-rs/pull/1490)) 
+* Fix RetryMethod Import ([#1494](https://github\.com/redis-rs/redis-rs/pull/1494) by @Braedon-Wooding-Displayr) 
+
 ### 0.28.1 (2025-01-11)
 
 #### Changes & Bug fixes
 
-* fix changelogs. ([1473](https://github.com/redis-rs/redis-rs/pull/1473))
-* Remove itertools dependency ([1476](https://github.com/redis-rs/redis-rs/pull/1476) by @jplatte)
-* Clean up feature dependencies ([1474](https://github.com/redis-rs/redis-rs/pull/1474) by @jplatte)
-* Fix new version lints ([1479](https://github.com/redis-rs/redis-rs/pull/1479))
-* Fix routing for `PUBSUB SHARDNUMSUB` ([1483](https://github.com/redis-rs/redis-rs/pull/1483))
+* fix changelogs. ([#1473](https://github.com/redis-rs/redis-rs/pull/1473))
+* Remove itertools dependency ([#1476](https://github.com/redis-rs/redis-rs/pull/1476) by @jplatte)
+* Clean up feature dependencies ([#1474](https://github.com/redis-rs/redis-rs/pull/1474) by @jplatte)
+* Fix new version lints ([#1479](https://github.com/redis-rs/redis-rs/pull/1479))
+* Fix routing for `PUBSUB SHARDNUMSUB` ([#1483](https://github.com/redis-rs/redis-rs/pull/1483))
 
 #### CI improvements
 
 ### 0.28.0 (2025-01-7)
-* Double test_async_cluster_basic_failover timeout. ([1478](https://github.com/redis-rs/redis-rs/pull/1478))
-* Upgrade rstest ([1475](https://github.com/redis-rs/redis-rs/pull/1475) by @jplatte)
+* Double test_async_cluster_basic_failover timeout. ([#1478](https://github.com/redis-rs/redis-rs/pull/1478))
+* Upgrade rstest ([#1475](https://github.com/redis-rs/redis-rs/pull/1475) by @jplatte)
 
 #### Changes & Bug fixes
 
