@@ -548,6 +548,7 @@ pub use crate::types::{
 
     // error kinds
     ErrorKind,
+    RetryMethod,
 
     // conversion traits
     FromRedisValue,
