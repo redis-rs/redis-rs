@@ -574,13 +574,14 @@ pub use crate::types::{
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
-    PushInfo
+    PushInfo,
+	ValueType
 };
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::{
-    cmd::AsyncIter, commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture,
+    cmd::AsyncIter, commands::AsyncCommands, commands::AsyncTypedCommands, parser::parse_redis_value_async, types::RedisFuture,
 };
 
 mod macros;
