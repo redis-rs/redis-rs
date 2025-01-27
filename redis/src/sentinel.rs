@@ -105,6 +105,28 @@
 //! .unwrap();
 //! ```
 //!
+//! In addition, there is a `SentinelClientBuilder` to provide the most fine-grained configuration possibilities
+//!
+//! # Example
+//! ```rust,no_run
+//! use redis::sentinel::SentinelClientBuilder;
+//! use redis::TlsCertificates;
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//!
+//! let mut builder = SentinelClientBuilder::new(nodes, String::from("master"), redis::sentinel::SentinelServerType::Master).unwrap();
+//!
+//! builder = builder.client_to_sentinel_username(String::from("username1"));
+//! builder = builder.client_to_sentinel_password(String::from("password1"));
+//! builder = builder.client_to_sentinel_tls_mode(redis::TlsMode::Insecure);
+//!
+//! builder = builder.sentinel_to_redis_username(String::from("username2"));
+//! builder = builder.sentinel_to_redis_password(String::from("password2"));
+//! builder = builder.sentinel_to_redis_tls_mode(redis::TlsMode::Secure);
+//!
+//!
+//! let client = builder.build().unwrap();
+//! ```
+//!
 
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
@@ -858,6 +880,9 @@ pub struct SentinelClientBuilder {
 
 impl SentinelClientBuilder {
     /// Creates a new `SentinelClientBuilder`
+    /// - `sentinels` - Addresses of sentinel nodes
+    /// - `service_name` - The name of the service to be queried via the sentinels
+    /// - `server_type` - The server type to be queried via the sentinels
     pub fn new<T: IntoIterator<Item = ConnectionAddr>>(
         sentinels: T,
         service_name: String,
