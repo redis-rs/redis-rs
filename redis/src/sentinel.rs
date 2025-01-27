@@ -115,13 +115,13 @@
 //!
 //! let mut builder = SentinelClientBuilder::new(nodes, String::from("master"), redis::sentinel::SentinelServerType::Master).unwrap();
 //!
-//! builder = builder.client_to_sentinel_username(String::from("username1"));
-//! builder = builder.client_to_sentinel_password(String::from("password1"));
-//! builder = builder.client_to_sentinel_tls_mode(redis::TlsMode::Insecure);
+//! builder = builder.set_client_to_sentinel_username(String::from("username1"));
+//! builder = builder.set_client_to_sentinel_password(String::from("password1"));
+//! builder = builder.set_client_to_sentinel_tls_mode(redis::TlsMode::Insecure);
 //!
-//! builder = builder.client_to_redis_username(String::from("username2"));
-//! builder = builder.client_to_redis_password(String::from("password2"));
-//! builder = builder.client_to_redis_tls_mode(redis::TlsMode::Secure);
+//! builder = builder.set_client_to_redis_username(String::from("username2"));
+//! builder = builder.set_client_to_redis_password(String::from("password2"));
+//! builder = builder.set_client_to_redis_tls_mode(redis::TlsMode::Secure);
 //!
 //!
 //! let client = builder.build().unwrap();
@@ -1030,31 +1030,31 @@ impl SentinelClientBuilder {
     }
 
     /// Set tls mode for the connection between sentinels and redis nodes
-    pub fn client_to_redis_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
+    pub fn set_client_to_redis_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
         self.client_to_redis_params.tls_mode = Some(tls_mode);
         self
     }
 
     /// Set db for the connection between sentinels and redis nodes
-    pub fn client_to_redis_db(mut self, db: i64) -> SentinelClientBuilder {
+    pub fn set_client_to_redis_db(mut self, db: i64) -> SentinelClientBuilder {
         self.client_to_redis_params.db = Some(db);
         self
     }
 
     /// Set username for the connection between sentinels and redis nodes
-    pub fn client_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
+    pub fn set_client_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
         self.client_to_redis_params.username = Some(username);
         self
     }
 
     /// Set password for the connection between sentinels and redis nodes
-    pub fn client_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
+    pub fn set_client_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
         self.client_to_redis_params.password = Some(password);
         self
     }
 
     /// Set protocol for the connection between sentinels and redis nodes
-    pub fn client_to_redis_protocol(
+    pub fn set_client_to_redis_protocol(
         mut self,
         protocol: ProtocolVersion,
     ) -> SentinelClientBuilder {
@@ -1063,7 +1063,7 @@ impl SentinelClientBuilder {
     }
 
     /// Set certificates for the connection between sentinels and redis nodes
-    pub fn client_to_redis_certificates(
+    pub fn set_client_to_redis_certificates(
         mut self,
         certificates: TlsCertificates,
     ) -> SentinelClientBuilder {
@@ -1072,31 +1072,31 @@ impl SentinelClientBuilder {
     }
 
     /// Set tls mode for the connection to the sentinels
-    pub fn client_to_sentinel_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
+    pub fn set_client_to_sentinel_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
         self.client_to_sentinel_params.tls_mode = Some(tls_mode);
         self
     }
 
     /// Set db for the connection to the sentinels
-    pub fn client_to_sentinel_db(mut self, db: i64) -> SentinelClientBuilder {
+    pub fn set_client_to_sentinel_db(mut self, db: i64) -> SentinelClientBuilder {
         self.client_to_sentinel_params.db = Some(db);
         self
     }
 
     /// Set username for the connection to the sentinels
-    pub fn client_to_sentinel_username(mut self, username: String) -> SentinelClientBuilder {
+    pub fn set_client_to_sentinel_username(mut self, username: String) -> SentinelClientBuilder {
         self.client_to_sentinel_params.username = Some(username);
         self
     }
 
     /// Set password for the connection to the sentinels
-    pub fn client_to_sentinel_password(mut self, password: String) -> SentinelClientBuilder {
+    pub fn set_client_to_sentinel_password(mut self, password: String) -> SentinelClientBuilder {
         self.client_to_sentinel_params.password = Some(password);
         self
     }
 
     /// Set protocol for the connection to the sentinels
-    pub fn client_to_sentinel_protocol(
+    pub fn set_client_to_sentinel_protocol(
         mut self,
         protocol: ProtocolVersion,
     ) -> SentinelClientBuilder {
@@ -1105,7 +1105,7 @@ impl SentinelClientBuilder {
     }
 
     /// Set certificate for the connection to the sentinels
-    pub fn client_to_sentinel_certificates(
+    pub fn set_client_to_sentinel_certificates(
         mut self,
         certificates: TlsCertificates,
     ) -> SentinelClientBuilder {
