@@ -35,7 +35,7 @@
 //!     let client = ClusterClient::new(nodes).unwrap();
 //!     let mut connection = client.get_async_connection().await.unwrap();
 //!     let key = "test";
-//!     
+//!
 //!     redis::pipe()
 //!         .rpush(key, "123").ignore()
 //!         .ltrim(key, -10, -1).ignore()
@@ -437,35 +437,52 @@ where
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
-        let connections = stream::iter(initial_nodes.iter().cloned())
+        let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
                 async move {
                     let addr = info.addr.to_string();
                     let result = connect_and_check(&addr, params).await;
                     match result {
-                        Ok(conn) => Some((addr, async { conn }.boxed().shared())),
+                        Ok(conn) => Ok((addr, async { conn }.boxed().shared())),
                         Err(e) => {
                             trace!("Failed to connect to initial node: {:?}", e);
-                            None
+                            Err(e)
                         }
                     }
                 }
             })
             .buffer_unordered(initial_nodes.len())
             .fold(
-                HashMap::with_capacity(initial_nodes.len()),
-                |mut connections: ConnectionMap<C>, conn| async move {
-                    connections.extend(conn);
-                    connections
+                (ConnectionMap::<C>::with_capacity(initial_nodes.len()), None),
+                |(mut connections, mut error), result| async move {
+                    match result {
+                        Ok((addr, conn)) => {
+                            connections.insert(addr, conn);
+                        }
+                        Err(err) => {
+                            // Store at least one error to use as detail in the connection error if
+                            // all connections fail.
+                            error = Some(err);
+                        }
+                    }
+                    (connections, error)
                 },
             )
             .await;
         if connections.is_empty() {
-            return Err(RedisError::from((
-                ErrorKind::IoError,
-                "Failed to create initial connections",
-            )));
+            if let Some(err) = error {
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Failed to create initial connections",
+                    err.to_string(),
+                )));
+            } else {
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Failed to create initial connections",
+                )));
+            }
         }
         Ok(connections)
     }
