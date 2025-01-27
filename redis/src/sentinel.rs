@@ -119,9 +119,9 @@
 //! builder = builder.client_to_sentinel_password(String::from("password1"));
 //! builder = builder.client_to_sentinel_tls_mode(redis::TlsMode::Insecure);
 //!
-//! builder = builder.sentinel_to_redis_username(String::from("username2"));
-//! builder = builder.sentinel_to_redis_password(String::from("password2"));
-//! builder = builder.sentinel_to_redis_tls_mode(redis::TlsMode::Secure);
+//! builder = builder.client_to_redis_username(String::from("username2"));
+//! builder = builder.client_to_redis_password(String::from("password2"));
+//! builder = builder.client_to_redis_tls_mode(redis::TlsMode::Secure);
 //!
 //!
 //! let client = builder.build().unwrap();
@@ -870,11 +870,14 @@ struct BuilderConnectionParams {
 }
 
 /// Used to configure and build a [`SentinelClient`].
+/// There are two connections that can be configured independently
+/// 1. The connection towards the redis nodes (configured via `set_client_to_redis_..` functions)
+/// 2. The connection towards the sentinel nodes (configure via `set_client_to_sentinel_..` functions)
 pub struct SentinelClientBuilder {
     sentinels: Vec<ConnectionAddr>,
     service_name: String,
     server_type: SentinelServerType,
-    sentinel_to_redis_params: BuilderConnectionParams,
+    client_to_redis_params: BuilderConnectionParams,
     client_to_sentinel_params: BuilderConnectionParams,
 }
 
@@ -892,7 +895,7 @@ impl SentinelClientBuilder {
             sentinels: sentinels.into_iter().collect::<Vec<_>>(),
             service_name,
             server_type,
-            sentinel_to_redis_params: BuilderConnectionParams {
+            client_to_redis_params: BuilderConnectionParams {
                 tls_mode: None,
                 db: None,
                 username: None,
@@ -913,28 +916,28 @@ impl SentinelClientBuilder {
 
     /// Creates a new `SentinelClient` from the parameters
     pub fn build(mut self) -> RedisResult<SentinelClient> {
-        let mut sentinel_to_redis_connection_info = RedisConnectionInfo::default();
+        let mut client_to_redis_connection_info = RedisConnectionInfo::default();
 
-        if let Some(db) = self.sentinel_to_redis_params.db {
-            sentinel_to_redis_connection_info.db = db;
+        if let Some(db) = self.client_to_redis_params.db {
+            client_to_redis_connection_info.db = db;
         }
 
-        if let Some(username) = self.sentinel_to_redis_params.username {
-            sentinel_to_redis_connection_info.username = Some(username);
+        if let Some(username) = self.client_to_redis_params.username {
+            client_to_redis_connection_info.username = Some(username);
         }
 
-        if let Some(password) = self.sentinel_to_redis_params.password {
-            sentinel_to_redis_connection_info.password = Some(password);
+        if let Some(password) = self.client_to_redis_params.password {
+            client_to_redis_connection_info.password = Some(password);
         }
 
-        if let Some(protocol) = self.sentinel_to_redis_params.protocol {
-            sentinel_to_redis_connection_info.protocol = protocol;
+        if let Some(protocol) = self.client_to_redis_params.protocol {
+            client_to_redis_connection_info.protocol = protocol;
         }
 
-        let sentinel_to_redis_connection_info = SentinelNodeConnectionInfo {
-            tls_mode: self.sentinel_to_redis_params.tls_mode,
-            redis_connection_info: Some(sentinel_to_redis_connection_info),
-            certs: self.sentinel_to_redis_params.certificates,
+        let client_to_redis_connection_info = SentinelNodeConnectionInfo {
+            tls_mode: self.client_to_redis_params.tls_mode,
+            redis_connection_info: Some(client_to_redis_connection_info),
+            certs: self.client_to_redis_params.certificates,
         };
 
         for sentinel in &mut self.sentinels {
@@ -1021,50 +1024,50 @@ impl SentinelClientBuilder {
         SentinelClient::build(
             sentinels,
             self.service_name,
-            Some(sentinel_to_redis_connection_info),
+            Some(client_to_redis_connection_info),
             self.server_type,
         )
     }
 
     /// Set tls mode for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.tls_mode = Some(tls_mode);
+    pub fn client_to_redis_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
+        self.client_to_redis_params.tls_mode = Some(tls_mode);
         self
     }
 
     /// Set db for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_db(mut self, db: i64) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.db = Some(db);
+    pub fn client_to_redis_db(mut self, db: i64) -> SentinelClientBuilder {
+        self.client_to_redis_params.db = Some(db);
         self
     }
 
     /// Set username for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.username = Some(username);
+    pub fn client_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
+        self.client_to_redis_params.username = Some(username);
         self
     }
 
     /// Set password for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.password = Some(password);
+    pub fn client_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
+        self.client_to_redis_params.password = Some(password);
         self
     }
 
     /// Set protocol for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_protocol(
+    pub fn client_to_redis_protocol(
         mut self,
         protocol: ProtocolVersion,
     ) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.protocol = Some(protocol);
+        self.client_to_redis_params.protocol = Some(protocol);
         self
     }
 
     /// Set certificates for the connection between sentinels and redis nodes
-    pub fn sentinel_to_redis_certificates(
+    pub fn client_to_redis_certificates(
         mut self,
         certificates: TlsCertificates,
     ) -> SentinelClientBuilder {
-        self.sentinel_to_redis_params.certificates = Some(certificates);
+        self.client_to_redis_params.certificates = Some(certificates);
         self
     }
 
