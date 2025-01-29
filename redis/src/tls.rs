@@ -1,7 +1,7 @@
 use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
 
 use rustls::RootCertStore;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 

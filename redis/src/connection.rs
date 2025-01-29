@@ -505,11 +505,11 @@ struct NoCertificateVerification {
 impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: rustls_pki_types::UnixTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
@@ -517,7 +517,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -526,7 +526,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_tls13_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -692,7 +692,7 @@ impl ActualConnection {
                 let config = create_rustls_config(insecure, tls_params.clone())?;
                 let conn = rustls::ClientConnection::new(
                     Arc::new(config),
-                    rustls_pki_types::ServerName::try_from(host)?.to_owned(),
+                    rustls::pki_types::ServerName::try_from(host)?.to_owned(),
                 )?;
                 let reader = match timeout {
                     None => {
