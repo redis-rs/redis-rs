@@ -73,8 +73,6 @@ webpki-roots = { version = "0.26", optional = true }
 rustls-native-certs = { version = "0.7", optional = true }
 tokio-rustls = { version = "0.26", optional = true, default-features = false }
 futures-rustls = { version = "0.26", optional = true, default-features = false }
-rustls-pemfile = { version = "2", optional = true }
-rustls-pki-types = { version = "1", optional = true }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.217", optional = true }
@@ -104,7 +102,7 @@ json = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls","rustls/std", "rustls/ring", "dep:rustls-native-certs", "dep:rustls-pemfile", "dep:rustls-pki-types"]
+tls-rustls = ["dep:rustls","rustls/std", "rustls/ring", "dep:rustls-native-certs"]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 async-std-comp = ["aio", "dep:async-std"]

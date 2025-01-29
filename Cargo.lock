@@ -1696,8 +1696,6 @@ dependencies = [
  "rust_decimal",
  "rustls",
  "rustls-native-certs",
- "rustls-pemfile",
- "rustls-pki-types",
  "ryu",
  "serde",
  "serde_json",

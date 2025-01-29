@@ -159,7 +159,7 @@ impl RedisRuntime for Tokio {
 
         Ok(tls_connector
             .connect(
-                rustls_pki_types::ServerName::try_from(hostname)?.to_owned(),
+                rustls::pki_types::ServerName::try_from(hostname)?.to_owned(),
                 connect_tcp(&socket_addr).await?,
             )
             .await
