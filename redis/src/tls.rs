@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind as IOErrorKind};
+use std::io::{self, Error};
 
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -74,14 +74,14 @@ pub(crate) fn retrieve_tls_certificates(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| {
                 Error::new(
-                    IOErrorKind::Other,
+                    io::ErrorKind::Other,
                     format!("Unable to parse client certificate chain PEM: {err}"),
                 )
             })?;
 
         let client_key = PrivateKeyDer::from_pem_slice(&client_key).map_err(|err| {
             Error::new(
-                IOErrorKind::Other,
+                io::ErrorKind::Other,
                 format!("Unable to extract private key from PEM file: {err}"),
             )
         })?;
@@ -99,14 +99,14 @@ pub(crate) fn retrieve_tls_certificates(
         for result in CertificateDer::pem_slice_iter(&root_cert) {
             let cert = result.map_err(|err| {
                 Error::new(
-                    IOErrorKind::Other,
+                    io::ErrorKind::Other,
                     format!("Unable to parse root certificate PEM: {err}"),
                 )
             })?;
 
             if root_cert_store.add(cert).is_err() {
                 return Err(
-                    Error::new(IOErrorKind::Other, "Unable to parse TLS trust anchors").into(),
+                    Error::new(io::ErrorKind::Other, "Unable to parse TLS trust anchors").into(),
                 );
             }
         }
