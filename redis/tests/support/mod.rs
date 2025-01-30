@@ -14,6 +14,8 @@ use std::{
 };
 use std::{io, thread::sleep, time::Duration};
 
+#[cfg(feature = "cache-aio")]
+use redis::caching::CacheConfig;
 #[cfg(feature = "tls-rustls")]
 use redis::{ClientTlsConfig, TlsCertificates};
 
@@ -268,6 +270,30 @@ impl TestContext {
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_connection().await
+    }
+
+    #[cfg(all(feature = "aio", feature = "cache-aio"))]
+    pub fn async_connection_with_cache(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        self.async_connection_with_cache_config(CacheConfig::default())
+    }
+
+    #[cfg(all(feature = "aio", feature = "cache-aio"))]
+    pub fn async_connection_with_cache_config(
+        &self,
+        cache_config: CacheConfig,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
+        use redis::AsyncConnectionConfig;
+
+        let client = self.client.clone();
+        async move {
+            client
+                .get_multiplexed_async_connection_with_config(
+                    &AsyncConnectionConfig::new().set_cache_config(cache_config),
+                )
+                .await
+        }
     }
 
     pub fn get_version(&self) -> Version {

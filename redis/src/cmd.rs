@@ -6,6 +6,8 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+#[cfg(feature = "cache-aio")]
+use std::time::Duration;
 use std::{fmt, io};
 
 use crate::connection::ConnectionLike;
@@ -21,15 +23,67 @@ pub enum Arg<D> {
     Cursor,
 }
 
+/// CommandCacheConfig is used to define caching behaviour of individual commands.
+/// # Example
+/// ```rust
+/// use std::time::Duration;
+/// use redis::{CommandCacheConfig, Cmd};
+///
+/// let ttl = Duration::from_secs(120); // 2 minutes TTL
+/// let config = CommandCacheConfig::new()
+///     .set_enable_cache(true)
+///     .set_client_side_ttl(ttl);
+/// let command = Cmd::new().arg("GET").arg("key").set_cache_config(config);
+/// ```
+#[cfg(feature = "cache-aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+#[derive(Clone)]
+pub struct CommandCacheConfig {
+    pub(crate) enable_cache: bool,
+    pub(crate) client_side_ttl: Option<Duration>,
+}
+
+#[cfg(feature = "cache-aio")]
+impl CommandCacheConfig {
+    /// Creates new CommandCacheConfig with enable_cache as true and without client_side_ttl.
+    pub fn new() -> Self {
+        Self {
+            enable_cache: true,
+            client_side_ttl: None,
+        }
+    }
+
+    /// Sets whether the cache should be enabled or not.
+    /// Disabling cache for specific command when using [crate::caching::CacheMode::All] will not work.
+    pub fn set_enable_cache(mut self, enable_cache: bool) -> Self {
+        self.enable_cache = enable_cache;
+        self
+    }
+
+    /// Sets custom client side time to live (TTL).
+    pub fn set_client_side_ttl(mut self, client_side_ttl: Duration) -> Self {
+        self.client_side_ttl = Some(client_side_ttl);
+        self
+    }
+}
+#[cfg(feature = "cache-aio")]
+impl Default for CommandCacheConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Represents redis commands.
 #[derive(Clone)]
 pub struct Cmd {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    #[cfg(feature = "cache-aio")]
+    cache: Option<CommandCacheConfig>,
 }
 
 /// Represents a redis iterator.
@@ -321,6 +375,8 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -331,6 +387,8 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -565,7 +623,7 @@ impl Cmd {
     }
 
     // Get a reference to the argument at `idx`
-    #[cfg(feature = "cluster")]
+    #[cfg(any(feature = "cluster", feature = "cache-aio"))]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         if idx >= self.args.len() {
             return None;
@@ -600,6 +658,20 @@ impl Cmd {
     #[inline]
     pub fn is_no_response(&self) -> bool {
         self.no_response
+    }
+
+    /// Changes caching behaviour for this specific command.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Cmd {
+        self.cache = Some(command_cache_config);
+        self
+    }
+
+    #[cfg(feature = "cache-aio")]
+    #[inline]
+    pub(crate) fn get_cache_config(&self) -> &Option<CommandCacheConfig> {
+        &self.cache
     }
 }
 

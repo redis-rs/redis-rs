@@ -101,6 +101,7 @@
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
+//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -524,6 +525,8 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
+#[cfg(feature = "cache-aio")]
+pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, Direction, LposOptions, PubSubCommands, ScanOptions, SetOptions,
@@ -651,6 +654,10 @@ mod tls;
 #[cfg(feature = "tls-rustls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
+
+#[cfg(feature = "cache-aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+pub mod caching;
 
 mod client;
 mod cmd;

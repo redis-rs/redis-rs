@@ -385,11 +385,28 @@ where
     T::Error: ::std::fmt::Debug,
     T: Unpin,
 {
-    if execute_connection_pipeline(codec, connection_setup_pipeline(connection_info, true)).await?
+    if execute_connection_pipeline(
+        codec,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache-aio")]
+            None,
+        ),
+    )
+    .await?
         == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(codec, connection_setup_pipeline(connection_info, false))
-            .await?;
+        execute_connection_pipeline(
+            codec,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache-aio")]
+                None,
+            ),
+        )
+        .await?;
     }
 
     Ok(())

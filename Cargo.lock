@@ -937,6 +937,10 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash 0.8.11",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
@@ -1230,6 +1234,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 dependencies = [
  "value-bag",
+]
+
+[[package]]
+name = "lru"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37ee39891760e7d94734f6f63fedc29a2e4a152f836120753a72503f09fcf904"
+dependencies = [
+ "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -1682,6 +1695,7 @@ dependencies = [
  "hashbrown 0.15.2",
  "itoa",
  "log",
+ "lru",
  "native-tls",
  "num-bigint",
  "once_cell",
