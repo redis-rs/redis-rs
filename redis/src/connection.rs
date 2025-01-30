@@ -974,7 +974,12 @@ pub fn connect(
     con.set_read_timeout(remaining_timeout)?;
     con.set_write_timeout(remaining_timeout)?;
 
-    let con = setup_connection(con, &connection_info.redis)?;
+    let con = setup_connection(
+        con,
+        &connection_info.redis,
+        #[cfg(feature = "cache-aio")]
+        None,
+    )?;
 
     // remove the temporary timeout.
     con.set_read_timeout(None)?;
@@ -987,11 +992,14 @@ pub(crate) struct ConnectionSetupComponents {
     resp3_auth_cmd_idx: Option<usize>,
     resp2_auth_cmd_idx: Option<usize>,
     select_cmd_idx: Option<usize>,
+    #[cfg(feature = "cache-aio")]
+    cache_cmd_idx: Option<usize>,
 }
 
 pub(crate) fn connection_setup_pipeline(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
+    #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> (crate::Pipeline, ConnectionSetupComponents) {
     let mut last_cmd_index = 0;
 
@@ -1010,6 +1018,10 @@ pub(crate) fn connection_setup_pipeline(
         authenticate_with_resp3_cmd_index.is_none() && connection_info.password.is_some(),
     );
     let select_db_cmd_index = get_next_command_index(connection_info.db != 0);
+    #[cfg(feature = "cache-aio")]
+    let cache_cmd_index = get_next_command_index(
+        connection_info.protocol != ProtocolVersion::RESP2 && cache_config.is_some(),
+    );
 
     let mut pipeline = pipe();
 
@@ -1044,12 +1056,28 @@ pub(crate) fn connection_setup_pipeline(
         .arg(env!("CARGO_PKG_VERSION"))
         .ignore();
 
+    #[cfg(feature = "cache-aio")]
+    if cache_cmd_index.is_some() {
+        let cache_config = cache_config.expect(
+            "It's expected to have cache_config if cache_cmd_index is Some, please create an issue about this.",
+        );
+        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
+        match cache_config.mode {
+            crate::caching::CacheMode::All => {}
+            crate::caching::CacheMode::OptIn => {
+                pipeline.arg("OPTIN");
+            }
+        }
+    }
+
     (
         pipeline,
         ConnectionSetupComponents {
             resp3_auth_cmd_idx: authenticate_with_resp3_cmd_index,
             resp2_auth_cmd_idx: authenticate_with_resp2_cmd_index,
             select_cmd_idx: select_db_cmd_index,
+            #[cfg(feature = "cache-aio")]
+            cache_cmd_idx: cache_cmd_index,
         },
     )
 }
@@ -1116,12 +1144,26 @@ fn check_db_select(value: &Value) -> RedisResult<()> {
     }
 }
 
+#[cfg(feature = "cache-aio")]
+fn check_caching(result: &Value) -> RedisResult<()> {
+    match result {
+        Value::Okay => Ok(()),
+        _ => Err((
+            ErrorKind::ResponseError,
+            "Client-side caching returned unknown response",
+        )
+            .into()),
+    }
+}
+
 pub(crate) fn check_connection_setup(
     results: Vec<Value>,
     ConnectionSetupComponents {
         resp3_auth_cmd_idx,
         resp2_auth_cmd_idx,
         select_cmd_idx,
+        #[cfg(feature = "cache-aio")]
+        cache_cmd_idx,
     }: ConnectionSetupComponents,
 ) -> RedisResult<AuthResult> {
     // can't have both values set
@@ -1148,6 +1190,14 @@ pub(crate) fn check_connection_setup(
         check_db_select(value)?;
     }
 
+    #[cfg(feature = "cache-aio")]
+    if let Some(index) = cache_cmd_idx {
+        let Some(value) = results.get(index) else {
+            return Err((ErrorKind::ClientError, "Missing Caching response").into());
+        };
+        check_caching(value)?;
+    }
+
     Ok(AuthResult::Succeeded)
 }
 
@@ -1166,6 +1216,7 @@ fn execute_connection_pipeline(
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
+    #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
@@ -1177,10 +1228,25 @@ fn setup_connection(
         messages_to_skip: 0,
     };
 
-    if execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, true))?
-        == AuthResult::ShouldRetryWithoutUsername
+    if execute_connection_pipeline(
+        &mut rv,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        ),
+    )? == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, false))?;
+        execute_connection_pipeline(
+            &mut rv,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache-aio")]
+                cache_config,
+            ),
+        )?;
     }
 
     Ok(rv)

@@ -96,6 +96,8 @@ uuid = { version = "1.11.0", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
+lru = {version =  "0.12.3", optional = true}
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
 acl = []
@@ -121,6 +123,7 @@ sentinel = ["dep:rand"]
 tcp_nodelay = []
 num-bigint = []
 disable-client-setinfo = []
+cache-aio = ["aio", "dep:lru"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -184,6 +187,11 @@ name = "bench_cluster_async"
 harness = false
 required-features = ["cluster-async", "tokio-comp"]
 
+[[bench]]
+name = "bench_cache"
+harness = false
+required-features = ["tokio-comp", "cache-aio"]
+
 [[example]]
 name = "async-multiplexed"
 required-features = ["tokio-comp"]
@@ -207,3 +215,7 @@ required-features = ["connection-manager"]
 [[example]]
 name = "streams"
 required-features = ["streams"]
+
+[[example]]
+name = "async-caching"
+required-features = ["tokio-comp", "cache-aio"]
