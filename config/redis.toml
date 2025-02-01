@@ -67,3 +67,7 @@ forbid = "async-std-tls-comp"
 [[rule]]
 when = true
 forbid = ["acl", "OR", "streams", "OR", "geospatial", "OR", "script", "OR", "keep-alive"]
+
+[[rule]]
+when = "cache-aio"
+require = ["tokio-comp", "OR", "async-std-comp"]
