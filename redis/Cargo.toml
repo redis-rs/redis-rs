@@ -76,7 +76,7 @@ futures-rustls = { version = "0.26", optional = true, default-features = false }
 
 # Only needed for RedisJSON Support
 serde = { version = "1.0.217", optional = true }
-serde_json = { version = "1.0.133", optional = true }
+serde_json = { version = "1.0.138", optional = true }
 
 # Only needed for bignum Support
 rust_decimal = { version = "1.36.0", optional = true }
