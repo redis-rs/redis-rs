@@ -444,24 +444,26 @@ mod basic_async {
     fn test_transaction_async(#[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |con| async move {
-                let res: Vec<usize> = redis::aio::transaction_async(
-                    con,
-                    &["x", "y"],
-                    |mut con, mut pipe| async move {
-                        pipe.set("x", 42)
-                            .ignore()
-                            .set("y", 21)
-                            .ignore()
-                            .get("x")
-                            .get("y")
-                            .query_async(&mut con)
-                            .await
-                    },
-                )
-                .await
-                .unwrap();
+                let mut pipe = redis::pipe();
+                pipe.set("x", 42)
+                    .ignore()
+                    .set("y", 21)
+                    .ignore()
+                    .get("x")
+                    .get("y");
 
-                assert_eq!(&res, &[42, 21]);
+                let res: Result<Vec<redis::Value>, RedisError> =
+                    redis::aio::transaction_async(con, &["x", "y"], &mut pipe).await;
+
+                let values = res.unwrap();
+                println!("RESULT value : {:?}", values);
+                let last_value: Vec<redis::Value> =
+                    redis::from_redis_value(values.last().expect("Error ?")).unwrap();
+
+                let x: i32 = redis::from_redis_value(&last_value[2]).unwrap();
+                let y: i32 = redis::from_redis_value(&last_value[3]).unwrap();
+                assert_eq!(x, 42);
+                assert_eq!(y, 21);
 
                 Ok::<_, RedisError>(())
             },

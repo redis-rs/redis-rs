@@ -25,12 +25,11 @@ use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
-use std::future::Future;
+use log::trace;
 use std::net::SocketAddr;
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
-use log::trace;
 
 /// Represents a stateful redis TCP connection.
 #[deprecated(note = "aio::Connection is deprecated. Use aio::MultiplexedConnection instead.")]
@@ -569,30 +568,111 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ///
 /// For more details on Redis transactions, see the [Redis documentation](https://redis.io/topics/transactions)
 pub async fn transaction_async<
-    C: ConnectionLike + Clone,
+    Connection: ConnectionLike + Clone,
     K: ToRedisArgs,
     T: FromRedisValue,
-    F: Fn(C, Pipeline) -> Fut,
-    Fut: Future<Output = Result<Option<T>, RedisError>>,
 >(
-    mut connection: C,
+    mut connection: Connection,
     keys: &[K],
-    func: F,
+    user_pipeline: &mut Pipeline,
 ) -> Result<T, RedisError> {
+    let mut base_pipeline = pipe();
+    base_pipeline.cmd("WATCH").arg(keys).cmd("MULTI");
+    let commands = std::mem::take(&mut user_pipeline.commands);
+
+    let transaction_pipeline = commands
+        .into_iter()
+        .fold(
+            &mut base_pipeline, // Use a reference to the local variable
+            |p, cmd| {
+                if cmd.data != b"UNWATCH" {
+                    p.add_command(cmd);
+                }
+                p
+            },
+        )
+        .cmd("EXEC");
+
     loop {
-        cmd("WATCH").arg(keys).exec_async(&mut connection).await?;
-
-        let mut p = pipe();
-        let response = func(connection.clone(), p.atomic().to_owned()).await;
-
-        if matches!(response, Ok(None)) {
-            trace!("Transaction failed, retrying");
-            continue;
+        let response = transaction_pipeline.query_async(&mut connection).await;
+        match response {
+            Ok(None) => {
+                // Transaction was aborted due to watched keys being modified
+                trace!("Transaction failed, retrying.");
+                // Clean up the WATCH before retrying
+                cmd("UNWATCH").exec_async(&mut connection).await?;
+                continue;
+            }
+            Ok(Some(value)) => {
+                // Transaction succeeded
+                cmd("UNWATCH").exec_async(&mut connection).await?;
+                return Ok(value);
+            }
+            Err(e) => {
+                // Error occurred
+                cmd("UNWATCH").exec_async(&mut connection).await?;
+                return Err(e);
+            }
         }
-
-        cmd("UNWATCH").exec_async(&mut connection).await?;
-
-        // At this point, the response can only be `Ok(Some(T))` or `Err(RedisError)`.
-        return response.map(Option::unwrap);
     }
 }
+
+// pub async fn transaction_async2<
+//     C: ConnectionLike,
+//     K: ToRedisArgs,
+//     T: FromRedisValue,
+//     F: FnMut(&mut Pipeline),
+// >(
+//     connection: &mut C,
+//     keys: &[K],
+//     mut prepare: F,
+// ) -> Result<T, RedisError> {
+//     loop {
+//         cmd("WATCH").arg(keys).exec_async(connection).await?;
+
+//         let p = pipe();
+
+//         prepare(pipe().atomic());
+
+//         let response = p.query_async(connection).await;
+
+//         if matches!(response, Ok(None)) {
+//             trace!("Transaction failed, retrying");
+//             continue;
+//         }
+
+//         cmd("UNWATCH").exec_async(connection).await?;
+
+//         // At this point, the response can only be `Ok(Some(T))` or `Err(RedisError)`.
+//         return response.map(Option::unwrap);
+//     }
+// }
+
+// pub fn transaction<
+//     C: ConnectionLike,
+//     K: ToRedisArgs,
+//     T,
+//     F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
+// >(
+//     con: &mut C,
+//     keys: &[K],
+//     func: F,
+// ) -> RedisResult<T> {
+//     let mut func = func;
+//     loop {
+//         cmd("WATCH").arg(keys).exec(con)?;
+//         let mut p = pipe();
+//         let response: Option<T> = func(con, p.atomic())?;
+//         match response {
+//             None => {
+//                 continue;
+//             }
+//             Some(response) => {
+//                 // make sure no watch is left in the connection, even if
+//                 // someone forgot to use the pipeline.
+//                 cmd("UNWATCH").exec(con)?;
+//                 return Ok(response);
+//             }
+//         }
+//     }
+// }
