@@ -1,5 +1,5 @@
 build:
-	@cargo build
+	@RUSTFLAGS="-D warnings" cargo build --locked -p redis
 
 test:
 	@echo "===================================================================="
