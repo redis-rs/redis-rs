@@ -13,7 +13,7 @@ use crate::connection::{
 use crate::parser::ValueCodec;
 use crate::pipeline::Pipeline;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
-use crate::{from_owned_redis_value, ProtocolVersion, ToRedisArgs};
+use crate::{from_owned_redis_value, from_redis_value, ProtocolVersion, ToRedisArgs};
 #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
 use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -574,105 +574,37 @@ pub async fn transaction_async<
 >(
     mut connection: Connection,
     keys: &[K],
-    user_pipeline: &mut Pipeline,
+    pipeline: &mut Pipeline,
 ) -> Result<T, RedisError> {
-    let mut base_pipeline = pipe();
-    base_pipeline.cmd("WATCH").arg(keys).cmd("MULTI");
-    let commands = std::mem::take(&mut user_pipeline.commands);
+    let mut transaction_pipeline = pipe(); // a long lived value that will be used to build the transaction pipeline
+    transaction_pipeline.cmd("WATCH").arg(keys).cmd("MULTI");
 
-    let transaction_pipeline = commands
+    std::mem::take(&mut pipeline.commands) // consume the pipeline and give into_iter() ownership of the commands attribute
         .into_iter()
-        .fold(
-            &mut base_pipeline, // Use a reference to the local variable
-            |p, cmd| {
-                if cmd.data != b"UNWATCH" {
-                    p.add_command(cmd);
-                }
-                p
-            },
-        )
-        .cmd("EXEC");
+        .filter(|cmd| cmd.data != b"UNWATCH")
+        .for_each(|cmd| {
+            transaction_pipeline.add_command(cmd);
+        });
+    transaction_pipeline.cmd("EXEC");
 
     loop {
-        let response = transaction_pipeline.query_async(&mut connection).await;
+        let response: Result<Option<Vec<_>>, RedisError> =
+            transaction_pipeline.query_async(&mut connection).await;
+        cmd("UNWATCH").exec_async(&mut connection).await?; //  // Always clean up the WATCH after the transaction attempt, regardless of success/failure
         match response {
             Ok(None) => {
-                // Transaction was aborted due to watched keys being modified
-                trace!("Transaction failed, retrying.");
-                // Clean up the WATCH before retrying
-                cmd("UNWATCH").exec_async(&mut connection).await?;
+                trace!("Transaction failed, retrying");
                 continue;
             }
-            Ok(Some(value)) => {
-                // Transaction succeeded
-                cmd("UNWATCH").exec_async(&mut connection).await?;
-                return Ok(value);
+            Ok(Some(mut responses)) => {
+                // Extract the last element (the EXEC result)
+                let exec_result = responses.pop().ok_or(RedisError::from((
+                    ErrorKind::ResponseError,
+                    "Missing EXEC response",
+                )))?;
+                return from_redis_value(&exec_result);
             }
-            Err(e) => {
-                // Error occurred
-                cmd("UNWATCH").exec_async(&mut connection).await?;
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         }
     }
 }
-
-// pub async fn transaction_async2<
-//     C: ConnectionLike,
-//     K: ToRedisArgs,
-//     T: FromRedisValue,
-//     F: FnMut(&mut Pipeline),
-// >(
-//     connection: &mut C,
-//     keys: &[K],
-//     mut prepare: F,
-// ) -> Result<T, RedisError> {
-//     loop {
-//         cmd("WATCH").arg(keys).exec_async(connection).await?;
-
-//         let p = pipe();
-
-//         prepare(pipe().atomic());
-
-//         let response = p.query_async(connection).await;
-
-//         if matches!(response, Ok(None)) {
-//             trace!("Transaction failed, retrying");
-//             continue;
-//         }
-
-//         cmd("UNWATCH").exec_async(connection).await?;
-
-//         // At this point, the response can only be `Ok(Some(T))` or `Err(RedisError)`.
-//         return response.map(Option::unwrap);
-//     }
-// }
-
-// pub fn transaction<
-//     C: ConnectionLike,
-//     K: ToRedisArgs,
-//     T,
-//     F: FnMut(&mut C, &mut Pipeline) -> RedisResult<Option<T>>,
-// >(
-//     con: &mut C,
-//     keys: &[K],
-//     func: F,
-// ) -> RedisResult<T> {
-//     let mut func = func;
-//     loop {
-//         cmd("WATCH").arg(keys).exec(con)?;
-//         let mut p = pipe();
-//         let response: Option<T> = func(con, p.atomic())?;
-//         match response {
-//             None => {
-//                 continue;
-//             }
-//             Some(response) => {
-//                 // make sure no watch is left in the connection, even if
-//                 // someone forgot to use the pipeline.
-//                 cmd("UNWATCH").exec(con)?;
-//                 return Ok(response);
-//             }
-//         }
-//     }
-// }
