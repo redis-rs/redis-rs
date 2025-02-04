@@ -235,9 +235,9 @@ you must set the following environment variable before running the test script
 If you want to develop on the library there are a few commands provided
 by the makefile:
 
-To build:
+To build the core crate:
 
-    $ make
+    $ cargo build --locked -p redis
 
 To test:
 
