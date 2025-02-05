@@ -18,11 +18,8 @@ use std::pin::Pin;
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-use crate::connection::TlsConnParams;
+#[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+use crate::connection::io::TlsConnParams;
 
 /// Enables the tokio compatibility
 #[cfg(feature = "tokio-comp")]

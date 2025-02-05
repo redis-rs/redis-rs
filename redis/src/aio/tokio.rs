@@ -16,7 +16,7 @@ use tokio::{
 use native_tls::TlsConnector;
 
 #[cfg(feature = "tls-rustls")]
-use crate::connection::create_rustls_config;
+use crate::connection::io::tls_rustls::create_rustls_config;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 #[cfg(feature = "tls-rustls")]
@@ -25,11 +25,8 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
-#[cfg(feature = "tokio-rustls-comp")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tls-rustls")))]
-use crate::connection::TlsConnParams;
+#[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+use crate::connection::io::TlsConnParams;
 
 #[cfg(unix)]
 use super::Path;

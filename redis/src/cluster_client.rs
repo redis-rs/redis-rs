@@ -8,17 +8,13 @@ use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
-use crate::connection::TlsConnParams;
+use crate::connection::io::TlsConnParams;
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{retrieve_tls_certificates, TlsCertificates};
+use crate::connection::io::tls_rustls::{retrieve_tls_certificates, TlsCertificates};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types

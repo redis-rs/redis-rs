@@ -17,7 +17,8 @@ use crate::types::RedisResult;
 use async_native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "tls-rustls")]
-use crate::connection::create_rustls_config;
+use crate::connection::io::tls_rustls::create_rustls_config;
+
 #[cfg(feature = "tls-rustls")]
 use futures_rustls::{client::TlsStream, TlsConnector};
 
@@ -49,11 +50,8 @@ async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
         Ok(socket)
     }
 }
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-use crate::connection::TlsConnParams;
+use crate::connection::io::TlsConnParams;
 
 pin_project_lite::pin_project! {
     /// Wraps the async_std `AsyncRead/AsyncWrite` in order to implement the required the tokio traits
