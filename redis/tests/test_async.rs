@@ -438,6 +438,34 @@ mod basic_async {
         );
     }
 
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_transaction_async(#[case] runtime: RuntimeType) {
+        test_with_all_connection_types(
+            |con| async move {
+                let mut pipe = redis::pipe();
+                pipe.set("x", 42)
+                    .ignore()
+                    .set("y", 21)
+                    .ignore()
+                    .get("x")
+                    .get("y");
+
+                let res: Result<_, RedisError> =
+                    redis::aio::transaction_async(con, &["x", "y"], &mut pipe).await;
+                let last_value: Vec<redis::Value> = res.unwrap();
+                let x: i32 = redis::from_redis_value(&last_value[2]).unwrap();
+                let y: i32 = redis::from_redis_value(&last_value[3]).unwrap();
+                assert_eq!(x, 42);
+                assert_eq!(y, 21);
+
+                Ok::<_, RedisError>(())
+            },
+            runtime,
+        );
+    }
+
     fn test_cmd(con: &Wrapper, i: i32) -> impl Future<Output = RedisResult<()>> + Send {
         let mut con = con.clone();
         async move {
