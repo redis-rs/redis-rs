@@ -9,7 +9,7 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     use redis::aio::ConnectionManager;
     use redis::{
-        aio::{ConnectionLike, MultiplexedConnection},
+        aio::{AsyncTransactionConfig, ConnectionLike, MultiplexedConnection},
         cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
@@ -452,8 +452,13 @@ mod basic_async {
                     .get("x")
                     .get("y");
 
-                let res: Result<_, RedisError> =
-                    redis::aio::transaction_async(con, &["x", "y"], &mut pipe).await;
+                let res: Result<_, RedisError> = redis::aio::transaction_async(
+                    con,
+                    &["x", "y"],
+                    &mut pipe,
+                    Some(AsyncTransactionConfig { max_retries: 10 }),
+                )
+                .await;
                 let last_value: Vec<redis::Value> = res.unwrap();
                 let x: i32 = redis::from_redis_value(&last_value[2]).unwrap();
                 let y: i32 = redis::from_redis_value(&last_value[3]).unwrap();

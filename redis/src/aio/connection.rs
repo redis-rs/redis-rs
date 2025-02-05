@@ -4,7 +4,7 @@
 use super::async_std;
 use super::ConnectionLike;
 use super::{setup_connection, AsyncStream, RedisRuntime};
-use crate::cmd::{cmd, pipe, Cmd};
+use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
     Msg, RedisConnectionInfo,
@@ -25,6 +25,7 @@ use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
+#[cfg(feature = "verbose")]
 use log::trace;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -511,100 +512,104 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
     })
 }
 
-/// Executes a Redis transaction asynchronously by automatically watching keys and running
-/// a transaction loop until it succeeds. Similar to the synchronous [`transaction`](crate::transaction)
-/// function but for async execution.
+/// Configuration options for Redis async transactions.
+pub struct AsyncTransactionConfig {
+    /// Maximum number of retry attempts for failed transactions.
+    /// A value of 0 means no retries (single attempt only)
+    pub max_retries: usize,
+}
+
+/// Executes a Redis transaction asynchronously by watching the provided keys and running
+/// an **atomic** transaction loop until it succeeds. This function wraps the provided pipeline with
+/// WATCH, MULTI, and EXEC commands, retrying if changes to watched keys are detected.
 ///
-/// The provided closure may be executed multiple times if the transaction fails due to
-/// watched keys being modified between WATCH and EXEC. Any side effects in the closure
-/// should account for possible multiple executions.
+/// The provided pipeline should contain commands to execute within the transaction.
+/// The pipeline must NOT include UNWATCH, WATCH, MULTI, or EXEC commands as these are managed internally.
 ///
 /// # Arguments
 ///
-/// * `connection` - A connection implementing [`ConnectionLike`](crate::aio::ConnectionLike) + Clone
-/// * `keys` - Array of keys to watch for changes during the transaction
-/// * `func` - Closure that implements the transaction logic. Will receive a cloned connection
-///   and an atomic pipeline. Should return `Result<Option<T>, RedisError>` where:
-///   - `None` indicates the transaction should be retried
-///   - `Some(T)` contains the final result if successful
-///   - `Err` aborts the transaction
+/// * connection - A connection mutable implementing ConnectionLike
+/// * watched_keys - Array of keys to watch for changes during the transaction
+/// * pipeline - a mutable [Pipeline](https://docs.rs/redis/latest/redis/struct.Pipeline.html) reference containing transaction commands
+/// * config - Optional [AsyncTransactionConfig](https://docs.rs/redis/latest/redis/struct.AsyncTransactionConfig.html) struct to configure transaction maximum retries
 ///
 /// # Type Parameters
 ///
-/// * `C` - Connection type implementing ConnectionLike + Clone
-/// * `K` - Key type implementing ToRedisArgs
-/// * `T` - Return value type implementing FromRedisValue
-/// * `F` - Closure type taking (C, Pipeline) and returning Fut
-/// * `Fut` - Future returning Result<Option<T>, RedisError>
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use redis::{AsyncCommands, RedisResult, pipe};
-///
-/// async fn increment(con: redis::aio::ConnectionManager) -> RedisResult<isize> {
-///     let key = "my_counter";
-///     redis::aio::transaction_async(con, &[key], |mut con, mut pipe| async move {
-///         //  Get the current value
-///         let val: isize = con.get(key).await?;
-///         //   Create pipeline that increments and returns new value
-///         pipe.set(key, val + 1)
-///             .ignore()
-///             .get(key)
-///             .query_async(&mut con)
-///             .await
-///     })
-///     .await
-/// }
-/// ```
+/// * C - Connection type implementing ConnectionLike
+/// * K - Key type implementing ToRedisArgs
+/// * T - Return value type implementing FromRedisValue
 ///
 /// # Notes
 ///
-/// - The closure provided to this function may be executed multiple times if the
-///   watched keys are modified by other clients between the WATCH and EXEC commands
-/// - Side effects in the closure should be idempotent since they may occur multiple times
-/// - The transaction is automatically rolled back if the closure returns an error
-/// - Returns the final result once the transaction succeeds
+/// - The pipeline is executed repeatedly with automatic WATCH/MULTI/EXEC wrapping
+/// - Retries occur if watched keys are modified between attempts
+/// - Pipeline commands must be idempotent as they may execute multiple times
+/// - UNWATCH commands are automatically handled and should not be included
+/// - Returns the final EXEC result once the transaction succeeds
 ///
-/// For more details on Redis transactions, see the [Redis documentation](https://redis.io/topics/transactions)
-pub async fn transaction_async<
-    Connection: ConnectionLike + Clone,
-    K: ToRedisArgs,
-    T: FromRedisValue,
->(
+/// For Redis transaction details, see [official documentation](https://redis.io/docs/latest/develop/interact/transactions/)
+pub async fn transaction_async<Connection: ConnectionLike, K: ToRedisArgs, T: FromRedisValue>(
     mut connection: Connection,
-    keys: &[K],
+    watched_keys: &[K],
     pipeline: &mut Pipeline,
+    config: Option<AsyncTransactionConfig>,
 ) -> Result<T, RedisError> {
-    let mut transaction_pipeline = pipe(); // a long lived value that will be used to build the transaction pipeline
-    transaction_pipeline.cmd("WATCH").arg(keys).cmd("MULTI");
+    if pipeline.transaction_mode {
+        return Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Transaction pipeline cannot be wrapped in another transaction. The transaction_mode flag must be set to false.",
+        )));
+    }
 
-    std::mem::take(&mut pipeline.commands) // consume the pipeline and give into_iter() ownership of the commands attribute
-        .into_iter()
-        .filter(|cmd| cmd.data != b"UNWATCH")
-        .for_each(|cmd| {
-            transaction_pipeline.add_command(cmd);
-        });
+    // First, we initialize a long lived value that will be used to build the transaction pipeline
+    let mut transaction_pipeline = Pipeline {
+        commands: Vec::with_capacity(pipeline.commands.len() + 3), // 3 extra commands for WATCH, MULTI, EXEC
+        transaction_mode: false, // setting this to true will wrap the pipeline in MULTI/EXEC again, which is not desired
+        ignored_commands: pipeline.ignored_commands.clone(),
+    };
+    transaction_pipeline
+        .cmd("WATCH")
+        .arg(watched_keys)
+        .cmd("MULTI");
+
+    // We want to consume the pipeline but only need the commands
+    for cmd in std::mem::take(&mut pipeline.commands) {
+        if cmd.data == b"UNWATCH" {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "UNWATCH command should not be included in transaction pipeline, UNWATCH is handled internally.",
+            )));
+        }
+        transaction_pipeline.add_command(cmd);
+    }
     transaction_pipeline.cmd("EXEC");
 
-    loop {
+    let max_attempts = config.map_or(1, |c| c.max_retries + 1);
+    let mut attempts = 0;
+    while attempts < max_attempts {
         let response: Result<Option<Vec<_>>, RedisError> =
             transaction_pipeline.query_async(&mut connection).await;
         cmd("UNWATCH").exec_async(&mut connection).await?; //  // Always clean up the WATCH after the transaction attempt, regardless of success/failure
         match response {
             Ok(None) => {
-                trace!("Transaction failed, retrying");
+                attempts += 1;
+                #[cfg(feature = "verbose")]
+                trace!("Transaction  {attempts} failed, retrying...");
                 continue;
             }
             Ok(Some(mut responses)) => {
                 // Extract the last element (the EXEC result)
                 let exec_result = responses.pop().ok_or(RedisError::from((
                     ErrorKind::ResponseError,
-                    "Missing EXEC response",
+                    "Missing EXEC response.",
                 )))?;
                 return from_redis_value(&exec_result);
             }
             Err(e) => return Err(e),
         }
     }
+    Err(RedisError::from((
+        ErrorKind::ResponseError,
+        "Transaction failed after {attempts} attempts.",
+    )))
 }
