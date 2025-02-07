@@ -87,77 +87,168 @@ impl CacheManager {
         }
     }
 
+    fn calculate_expiration_time(&self, cmd: &Cmd) -> Instant {
+        let client_side_ttl = cmd
+            .get_cache_config()
+            .as_ref()
+            .and_then(|cache| cache.client_side_ttl)
+            .unwrap_or(self.cache_config.default_client_ttl);
+
+        Instant::now().add(client_side_ttl)
+    }
+
+    fn prepare_key_buffer(
+        &self,
+        buffer: &mut Vec<u8>,
+        single_command_name: &[u8],
+        redis_key: &[u8],
+        last_key: &[u8],
+        is_json_command: bool,
+    ) {
+        buffer.clear();
+        buffer.extend_from_slice(single_command_name);
+        buffer.extend_from_slice(redis_key);
+        if is_json_command {
+            buffer.extend_from_slice(last_key);
+        }
+    }
+
+    fn process_multi_key_arguments<'a>(
+        &self,
+        cmd: &'a Cmd,
+        is_json_command: bool,
+        single_command_name: &[u8],
+        commands: &mut Vec<(usize, MultipleCachedCommandPart<'a>)>,
+        response: &mut Vec<Value>,
+    ) {
+        let arguments: Vec<_> = cmd.args_iter().skip(1).collect();
+        let last_key_index = arguments.len() - 1;
+        let last_key = cmd.arg_idx(last_key_index + 1).unwrap_or(&[]);
+        let mut key_test_buffer: Vec<u8> = Vec::new();
+
+        for (i, arg) in arguments.iter().enumerate() {
+            if let crate::cmd::Arg::Simple(redis_key) = arg {
+                let is_json_last_key = is_json_command && (i == last_key_index);
+
+                self.prepare_key_buffer(
+                    &mut key_test_buffer,
+                    single_command_name,
+                    redis_key,
+                    last_key,
+                    is_json_command,
+                );
+
+                let command_part = MultipleCachedCommandPart {
+                    redis_key,
+                    cmd_key: key_test_buffer.clone(),
+                };
+
+                if is_json_last_key {
+                    if !commands.is_empty() {
+                        commands.push((i, command_part));
+                    }
+                    continue;
+                }
+
+                match self.get(redis_key, &key_test_buffer) {
+                    Some(value) => response.push(value),
+                    None => {
+                        response.push(Value::Nil);
+                        commands.push((i, command_part));
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_multi_key_command<'a>(
+        &self,
+        cmd: &'a Cmd,
+        command_name_str: &'a str,
+        single_command_name: &[u8],
+        client_side_expire: Instant,
+    ) -> PrepareCacheResult<'a> {
+        let mut commands = Vec::new();
+        let mut response = Vec::new();
+
+        let is_json_command = command_name_str.starts_with("JSON");
+
+        self.process_multi_key_arguments(
+            cmd,
+            is_json_command,
+            single_command_name,
+            &mut commands,
+            &mut response,
+        );
+
+        if commands.is_empty() {
+            return PrepareCacheResult::Cached(Value::Array(response));
+        }
+
+        PrepareCacheResult::NotCached(CacheableCommand::Multiple {
+            command_name: command_name_str,
+            commands,
+            response,
+            client_side_expire,
+        })
+    }
+
+    fn handle_single_key_command<'a>(
+        &self,
+        cmd: &'a Cmd,
+        client_side_expire: Instant,
+    ) -> PrepareCacheResult<'a> {
+        let redis_key = match cmd.arg_idx(1) {
+            Some(key) => key,
+            None => return PrepareCacheResult::NotCacheable,
+        };
+
+        let cmd_key = cmd.data.as_slice();
+
+        if let Some(value) = self.get(redis_key, cmd_key) {
+            return PrepareCacheResult::Cached(value);
+        }
+
+        PrepareCacheResult::NotCached(CacheableCommand::Single(
+            crate::caching::cmd::SingleCachedCommand {
+                redis_key,
+                cmd_key,
+                cmd,
+                client_side_expire,
+            },
+        ))
+    }
+
     /// Checks if there is enough information to resolve Cmd exists in cache,
     /// if it exists then returns PrepareCacheResult::Cached.
     /// If there isn't enough information in cache but Cmd is cacheable then packs enough information
     /// into CacheableCommand and returns PrepareCacheResult::NotCached.
     /// If Cmd doesn't support client side caching then it returns PrepareCacheResult::NotCacheable.
     fn get_cached_cmd_inner<'a>(&self, cmd: &'a Cmd) -> PrepareCacheResult<'a> {
-        let client_side_expire = {
-            let client_side_ttl = if let Some(ttl) = cmd
-                .get_cache_config()
-                .as_ref()
-                .and_then(|cache| cache.client_side_ttl)
-            {
-                ttl
-            } else {
-                self.cache_config.default_client_ttl
-            };
-            Instant::now().add(client_side_ttl)
-        };
-        if cmd_len(cmd) >= 2 {
-            if let Some(command_name) = cmd.arg_idx(0) {
-                if let Some((command_name_str, single_command_name)) = is_multi_key(command_name) {
-                    let mut commands = vec![];
-                    let mut response: Vec<Value> = vec![];
-                    let mut key_test_buffer: Vec<u8> = Vec::new();
-
-                    for (i, x) in cmd.args_iter().skip(1).enumerate() {
-                        if let crate::cmd::Arg::Simple(redis_key) = x {
-                            key_test_buffer.clear();
-                            key_test_buffer.extend_from_slice(single_command_name);
-                            key_test_buffer.extend_from_slice(redis_key);
-
-                            if let Some(value) = self.get(redis_key, &key_test_buffer) {
-                                response.push(value);
-                                continue;
-                            };
-                            response.push(Value::Nil);
-                            commands.push((
-                                i,
-                                MultipleCachedCommandPart {
-                                    redis_key,
-                                    cmd_key: key_test_buffer.clone(),
-                                },
-                            ))
-                        }
-                    }
-                    if commands.is_empty() {
-                        return PrepareCacheResult::Cached(Value::Array(response));
-                    }
-                    return PrepareCacheResult::NotCached(CacheableCommand::Multiple {
-                        command_name: command_name_str,
-                        commands,
-                        response,
-                        client_side_expire,
-                    });
-                } else if is_readonly_cmd(command_name) {
-                    let redis_key = cmd.arg_idx(1).unwrap();
-                    let cmd_key = cmd.data.as_slice();
-                    if let Some(value) = self.get(redis_key, cmd_key) {
-                        return PrepareCacheResult::Cached(value);
-                    }
-                    return PrepareCacheResult::NotCached(CacheableCommand::Single(
-                        crate::caching::cmd::SingleCachedCommand {
-                            redis_key,
-                            cmd_key,
-                            cmd,
-                            client_side_expire,
-                        },
-                    ));
-                }
-            }
+        if cmd_len(cmd) < 2 {
+            return PrepareCacheResult::NotCacheable;
         }
+
+        let command_name = match cmd.arg_idx(0) {
+            Some(name) => name,
+            None => return PrepareCacheResult::NotCacheable,
+        };
+
+        let client_side_expire = self.calculate_expiration_time(cmd);
+
+        if let Some((command_name_str, single_command_name)) = is_multi_key(command_name) {
+            return self.handle_multi_key_command(
+                cmd,
+                command_name_str,
+                single_command_name,
+                client_side_expire,
+            );
+        }
+
+        if is_readonly_cmd(command_name) {
+            return self.handle_single_key_command(cmd, client_side_expire);
+        }
+
         PrepareCacheResult::NotCacheable
     }
 
