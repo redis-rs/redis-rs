@@ -242,10 +242,10 @@ where
             })
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
@@ -258,7 +258,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel or channels
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -272,7 +272,7 @@ where
     /// Subscribes to a new channel pattern.
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
@@ -299,7 +299,7 @@ where
     /// Subscribes to a new sharded channel.
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might

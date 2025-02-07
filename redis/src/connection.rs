@@ -1773,25 +1773,25 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
         Ok(())
     }
 
-    /// Subscribes to a new channel with a pattern.
+    /// Subscribes to a new channel or channels with a pattern.
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel), true)?;
         Ok(())
     }
 
-    /// Unsubscribes from a channel.
+    /// Unsubscribes from a channel or channels.
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel), true)?;
         Ok(())
     }
 
-    /// Unsubscribes from a channel with a pattern.
+    /// Unsubscribes from a channel or channels with a pattern.
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel), true)?;
         Ok(())

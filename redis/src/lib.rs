@@ -325,8 +325,7 @@
 //! let client = redis::Client::open("redis://127.0.0.1/")?;
 //! let mut con = client.get_connection()?;
 //! let mut pubsub = con.as_pubsub();
-//! pubsub.subscribe("channel_1")?;
-//! pubsub.subscribe("channel_2")?;
+//! pubsub.subscribe(&["channel_1", "channel_2"])?;
 //!
 //! loop {
 //!     let msg = pubsub.get_message()?;
@@ -369,8 +368,7 @@
 //! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 //! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
 //! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
-//! con.subscribe("channel_1").await?;
-//! con.subscribe("channel_2").await?;
+//! con.subscribe(&["channel_1", "channel_2"]).await?;
 //!
 //! loop {
 //!   println!("Received {:?}", rx.recv().await.unwrap());

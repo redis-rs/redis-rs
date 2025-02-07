@@ -333,7 +333,7 @@ where
         Self(con)
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);

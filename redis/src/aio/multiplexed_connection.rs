@@ -683,12 +683,21 @@ impl ConnectionLike for MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel or channels
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
-    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// # }
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -697,9 +706,19 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel or channels
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// # }
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -711,9 +730,19 @@ impl MultiplexedConnection {
     /// Subscribes to a new channel with pattern.
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
-    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// # }
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
