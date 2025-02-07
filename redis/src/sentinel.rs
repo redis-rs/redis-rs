@@ -172,7 +172,12 @@ pub struct SentinelNodeConnectionInfo {
 }
 
 impl SentinelNodeConnectionInfo {
-    fn create_connection_info(&self, ip: String, port: u16, certs: &Option<TlsCertificates>,) -> RedisResult<ConnectionInfo> {
+    fn create_connection_info(
+        &self,
+        ip: String,
+        port: u16,
+        certs: &Option<TlsCertificates>,
+    ) -> RedisResult<ConnectionInfo> {
         let addr = match self.tls_mode {
             None => crate::ConnectionAddr::Tcp(ip, port),
             Some(TlsMode::Secure) => crate::ConnectionAddr::TcpTls {
@@ -182,7 +187,10 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(not(feature = "tls-rustls"))]
                 tls_params: None,
                 #[cfg(feature = "tls-rustls")]
-                tls_params: certs.as_ref().map(|certs| retrieve_tls_certificates(certs)).transpose()?,
+                tls_params: certs
+                    .as_ref()
+                    .map(|certs| retrieve_tls_certificates(certs))
+                    .transpose()?,
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -476,14 +484,16 @@ fn try_single_sentinel<T: FromRedisValue>(
 
 // non-async methods
 impl Sentinel {
-
     /// Creates a Sentinel client performing some basic
     /// checks on the URLs that might make the operation fail.
     pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Sentinel> {
         Self::build_with_certs(params, None)
     }
 
-    fn build_with_certs<T: IntoConnectionInfo>(params: Vec<T>, certs: Option<TlsCertificates>,) -> RedisResult<Sentinel> {
+    fn build_with_certs<T: IntoConnectionInfo>(
+        params: Vec<T>,
+        certs: Option<TlsCertificates>,
+    ) -> RedisResult<Sentinel> {
         if params.is_empty() {
             fail!((
                 ErrorKind::EmptySentinelList,
@@ -582,11 +592,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<Vec<ConnectionInfo>> {
         let replicas = self.get_sentinel_replicas(service_name)?;
-        get_valid_replicas_addresses(
-            replicas,
-            node_connection_info,
-            &self.certs
-        )
+        get_valid_replicas_addresses(replicas, node_connection_info, &self.certs)
     }
 
     /// Determines the masters address for the given name, and returns a client for that
@@ -804,7 +810,7 @@ impl SentinelClient {
         service_name: String,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
-        certs: Option<TlsCertificates>
+        certs: Option<TlsCertificates>,
     ) -> RedisResult<Self> {
         Ok(SentinelClient {
             sentinel: Sentinel::build_with_certs(params, certs)?,
