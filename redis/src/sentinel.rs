@@ -1077,12 +1077,6 @@ impl SentinelClientBuilder {
         self
     }
 
-    /// Set db for the connection to the sentinels
-    pub fn set_client_to_sentinel_db(mut self, db: i64) -> SentinelClientBuilder {
-        self.client_to_sentinel_params.db = Some(db);
-        self
-    }
-
     /// Set username for the connection to the sentinels
     pub fn set_client_to_sentinel_username(mut self, username: String) -> SentinelClientBuilder {
         self.client_to_sentinel_params.username = Some(username);
