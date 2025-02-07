@@ -30,7 +30,7 @@ pub struct TlsCertificates {
 
 pub(crate) fn inner_build_with_tls(
     mut connection_info: ConnectionInfo,
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<Client> {
     let tls_params = retrieve_tls_certificates(certificates)?;
 
@@ -58,7 +58,7 @@ pub(crate) fn inner_build_with_tls(
 }
 
 pub(crate) fn retrieve_tls_certificates(
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<TlsConnParams> {
     let TlsCertificates {
         client_tls,

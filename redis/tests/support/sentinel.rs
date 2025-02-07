@@ -61,7 +61,6 @@ impl TestSentinelContext {
         SentinelNodeConnectionInfo {
             tls_mode: self.tls_mode(),
             redis_connection_info: None,
-            certs: None,
         }
     }
 

@@ -155,7 +155,7 @@ impl Client {
     ) -> RedisResult<Client> {
         let connection_info = conn_info.into_connection_info()?;
 
-        inner_build_with_tls(connection_info, tls_certs)
+        inner_build_with_tls(connection_info, &tls_certs)
     }
 }
 
