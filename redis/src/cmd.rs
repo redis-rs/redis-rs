@@ -670,71 +670,71 @@ pub fn pipe() -> Pipeline {
 mod tests {
     use super::Cmd;
 
+    use crate::RedisWrite;
+    use std::io::Write;
+
     #[test]
     fn test_cmd_writer_for_next_arg() {
-        use crate::RedisWrite;
-        use std::io::Write;
-
         // Test that a write split across multiple calls to `write` produces the
         // same result as a single call to `write_arg`
+        let mut c1 = Cmd::new();
         {
-            let mut c1 = Cmd::new();
-            {
-                let mut c1_writer = c1.writer_for_next_arg();
-                c1_writer.write_all(b"foo").unwrap();
-                c1_writer.write_all(b"bar").unwrap();
-                c1_writer.flush().unwrap();
-            }
-            let v1 = c1.get_packed_command();
-
-            let mut c2 = Cmd::new();
-            c2.write_arg(b"foobar");
-            let v2 = c2.get_packed_command();
-
-            assert_eq!(v1, v2);
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"foo").unwrap();
+            c1_writer.write_all(b"bar").unwrap();
+            c1_writer.flush().unwrap();
         }
+        let v1 = c1.get_packed_command();
 
-        // Test that multiple writers to the same command produce the same
-        // result as the same multiple calls to `write_arg`
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    // Test that multiple writers to the same command produce the same
+    // result as the same multiple calls to `write_arg`
+    #[test]
+    fn test_cmd_writer_for_next_arg_multiple() {
+        let mut c1 = Cmd::new();
         {
-            let mut c1 = Cmd::new();
-            {
-                let mut c1_writer = c1.writer_for_next_arg();
-                c1_writer.write_all(b"foo").unwrap();
-                c1_writer.write_all(b"bar").unwrap();
-                c1_writer.flush().unwrap();
-            }
-            {
-                let mut c1_writer = c1.writer_for_next_arg();
-                c1_writer.write_all(b"baz").unwrap();
-                c1_writer.write_all(b"qux").unwrap();
-                c1_writer.flush().unwrap();
-            }
-            let v1 = c1.get_packed_command();
-
-            let mut c2 = Cmd::new();
-            c2.write_arg(b"foobar");
-            c2.write_arg(b"bazqux");
-            let v2 = c2.get_packed_command();
-
-            assert_eq!(v1, v2);
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"foo").unwrap();
+            c1_writer.write_all(b"bar").unwrap();
+            c1_writer.flush().unwrap();
         }
-
-        // Test that an "empty" write produces the equivalent to `write_arg(b"")`
         {
-            let mut c1 = Cmd::new();
-            {
-                let mut c1_writer = c1.writer_for_next_arg();
-                c1_writer.flush().unwrap();
-            }
-            let v1 = c1.get_packed_command();
-
-            let mut c2 = Cmd::new();
-            c2.write_arg(b"");
-            let v2 = c2.get_packed_command();
-
-            assert_eq!(v1, v2);
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"baz").unwrap();
+            c1_writer.write_all(b"qux").unwrap();
+            c1_writer.flush().unwrap();
         }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        c2.write_arg(b"bazqux");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    // Test that an "empty" write produces the equivalent to `write_arg(b"")`
+    #[test]
+    fn test_cmd_writer_for_next_arg_empty() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
     }
 
     #[test]
