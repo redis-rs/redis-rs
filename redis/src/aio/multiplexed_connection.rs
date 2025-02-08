@@ -683,7 +683,7 @@ impl ConnectionLike for MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    /// Subscribes to a new channel or channels
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
     /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
@@ -706,7 +706,7 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Unsubscribes from channel or channels
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
@@ -727,7 +727,7 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
     /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
@@ -751,7 +751,7 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {

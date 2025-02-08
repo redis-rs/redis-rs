@@ -242,14 +242,14 @@ where
             })
     }
 
-    /// Subscribes to a new channel or channels
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::Subcribe], later after the subscription completed.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -258,7 +258,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel or channels
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -269,14 +269,14 @@ where
         Ok(())
     }
 
-    /// Subscribes to a new channel pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::PSubcribe], later after the subscription completed.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -285,7 +285,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
@@ -296,7 +296,7 @@ where
         Ok(())
     }
 
-    /// Subscribes to a new sharded channel.
+    /// Subscribes to a new sharded channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
@@ -312,7 +312,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from sharded channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn sunsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {

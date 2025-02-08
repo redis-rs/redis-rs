@@ -286,7 +286,7 @@ impl PubSubSink {
         }
     }
 
-    /// Subscribes to a new channel or channels.
+    /// Subscribes to a new channel(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -303,7 +303,7 @@ impl PubSubSink {
         self.send_recv(cmd).await.map(|_| ())
     }
 
-    /// Unsubscribes from channel or channels
+    /// Unsubscribes from channel(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -320,7 +320,7 @@ impl PubSubSink {
         self.send_recv(cmd).await.map(|_| ())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -337,7 +337,7 @@ impl PubSubSink {
         self.send_recv(cmd).await.map(|_| ())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -473,7 +473,7 @@ impl PubSub {
         Ok(con)
     }
 
-    /// Subscribes to a new channel or channels.
+    /// Subscribes to a new channel(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -490,7 +490,7 @@ impl PubSub {
         self.sink.subscribe(channel_name).await
     }
 
-    /// Unsubscribes from channel or channels
+    /// Unsubscribes from channel(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -507,7 +507,7 @@ impl PubSub {
         self.sink.unsubscribe(channel_name).await
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
@@ -523,7 +523,7 @@ impl PubSub {
         self.sink.psubscribe(channel_pattern).await
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// ```rust,no_run
     /// # #[cfg(feature = "aio")]
