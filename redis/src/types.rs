@@ -1326,16 +1326,9 @@ pub trait RedisWrite {
         self.write_arg(arg.to_string().as_bytes())
     }
 
-    /// Start a buffered argument.
-    fn start_buffered_arg(&mut self);
-
-    /// Write to an existing buffered argument. If `start_buffered_arg` wasn't
-    /// called first, this may panic.
-    fn write_buffered_arg(&mut self, arg: &[u8]);
-
-    /// Finalize a buffered argument. If this isn't called after
-    /// `start_buffered_arg`, the command will not be well-formed
-    fn finish_buffered_arg(&mut self);
+    /// Appends an empty argument to the command, and returns a
+    /// [`std::io::Write`] instance that can write to it.
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1347,13 +1340,10 @@ impl RedisWrite for Vec<Vec<u8>> {
         self.push(arg.to_string().into_bytes())
     }
 
-    fn start_buffered_arg(&mut self) {
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
         self.push(Vec::new());
+        self.last_mut().unwrap()
     }
-    fn write_buffered_arg(&mut self, arg: &[u8]) {
-        self.last_mut().unwrap().extend_from_slice(arg);
-    }
-    fn finish_buffered_arg(&mut self) {}
 }
 
 /// Used to convert a value into one or multiple redis argument
