@@ -1325,6 +1325,10 @@ pub trait RedisWrite {
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.write_arg(arg.to_string().as_bytes())
     }
+
+    /// Appends an empty argument to the command, and returns a
+    /// [`std::io::Write`] instance that can write to it.
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1334,6 +1338,11 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.push(arg.to_string().into_bytes())
+    }
+
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
+        self.push(Vec::new());
+        self.last_mut().unwrap()
     }
 }
 
