@@ -107,8 +107,8 @@
 //! # Example
 //! ```rust,no_run
 //! use redis::sentinel::SentinelClientBuilder;
-//! use redis::TlsCertificates;
-//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! use redis::{ConnectionAddr, TlsCertificates};
+//! let nodes = vec![ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6379), ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6378), ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6377)];
 //!
 //! let mut builder = SentinelClientBuilder::new(nodes, String::from("master"), redis::sentinel::SentinelServerType::Master).unwrap();
 //!
