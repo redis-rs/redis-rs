@@ -189,7 +189,7 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(feature = "tls-rustls")]
                 tls_params: certs
                     .as_ref()
-                    .map(|certs| retrieve_tls_certificates(certs))
+                    .map(retrieve_tls_certificates)
                     .transpose()?,
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
@@ -331,7 +331,7 @@ fn find_valid_master(
     certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
-        let connection_info = node_connection_info.create_connection_info(ip, port, &certs)?;
+        let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
         if check_role(&connection_info, "master") {
             return Ok(connection_info);
         }
