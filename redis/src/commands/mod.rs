@@ -244,12 +244,12 @@ implement_commands! {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
-    /// Get the time to live for a key in seconds.
+    /// Get the absolute Unix expiration timestamp in seconds.
     fn expire_time<K: ToRedisArgs>(key: K) {
         cmd("EXPIRETIME").arg(key)
-        }
+    }
 
-    /// Get the time to live for a key in milliseconds.
+    /// Get the absolute Unix expiration timestamp in milliseconds.
     fn pexpire_time<K: ToRedisArgs>(key: K) {
         cmd("PEXPIRETIME").arg(key)
     }
@@ -259,12 +259,12 @@ implement_commands! {
         cmd("PERSIST").arg(key)
     }
 
-    /// Get the expiration time of a key.
+    /// Get the time to live for a key in seconds.
     fn ttl<K: ToRedisArgs>(key: K) {
         cmd("TTL").arg(key)
     }
 
-    /// Get the expiration time of a key in milliseconds.
+    /// Get the time to live for a key in milliseconds.
     fn pttl<K: ToRedisArgs>(key: K) {
         cmd("PTTL").arg(key)
     }
@@ -395,7 +395,7 @@ implement_commands! {
         cmd("HSETNX").arg(key).arg(field).arg(value)
     }
 
-    /// Sets a multiple fields in a hash.
+    /// Sets multiple fields in a hash.
     fn hset_multiple<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &'a [(F, V)]) {
         cmd("HMSET").arg(key).arg(items)
     }
@@ -414,17 +414,17 @@ implement_commands! {
         cmd("HEXISTS").arg(key).arg(field)
     }
 
-    /// Get one or more fields TTL in seconds.
+    /// Get one or more fields' TTL in seconds.
     fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
         cmd("HTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
-    /// Get one or more fields TTL in milliseconds.
+    /// Get one or more fields' TTL in milliseconds.
     fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
         cmd("HPTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
-    /// Set one or more fields time to live in seconds.
+    /// Set one or more fields' time to live in seconds.
     fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) {
        cmd("HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -444,7 +444,7 @@ implement_commands! {
         cmd("HPERSIST").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
-    /// Set one or more fields time to live in milliseconds.
+    /// Set one or more fields' time to live in milliseconds.
     fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) {
         cmd("HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
