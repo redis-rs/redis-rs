@@ -29,11 +29,13 @@ use futures_util::ready;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[inline(always)]
-async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
+async fn connect_tcp(
+    addr: &SocketAddr,
+    tcp_settings: &crate::io::tcp::TcpSettings,
+) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr).await?;
     let std_socket = std::net::TcpStream::try_from(socket)?;
-    let std_socket =
-        crate::io::tcp::stream_with_settings(std_socket, &crate::io::tcp::TcpSettings::default())?;
+    let std_socket = crate::io::tcp::stream_with_settings(std_socket, tcp_settings)?;
 
     Ok(std_socket.into())
 }
@@ -181,8 +183,11 @@ impl AsyncRead for AsyncStd {
 }
 
 impl RedisRuntime for AsyncStd {
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(connect_tcp(&socket_addr)
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        Ok(connect_tcp(&socket_addr, tcp_settings)
             .await
             .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
@@ -193,8 +198,9 @@ impl RedisRuntime for AsyncStd {
         socket_addr: SocketAddr,
         insecure: bool,
         _tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
-        let tcp_stream = connect_tcp(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
         let tls_connector = if insecure {
             TlsConnector::new()
                 .danger_accept_invalid_certs(true)
@@ -215,8 +221,9 @@ impl RedisRuntime for AsyncStd {
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
-        let tcp_stream = connect_tcp(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
 
         let config = create_rustls_config(insecure, tls_params.clone())?;
         let tls_connector = TlsConnector::from(Arc::new(config));

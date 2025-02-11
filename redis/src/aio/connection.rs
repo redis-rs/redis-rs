@@ -9,6 +9,7 @@ use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
     Msg, RedisConnectionInfo,
 };
+use crate::io::tcp::TcpSettings;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
@@ -218,7 +219,7 @@ pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
-    let con = connect_simple::<C>(connection_info).await?;
+    let con = connect_simple::<C>(connection_info, &TcpSettings::default()).await?;
     Connection::new(&connection_info.redis, con).await
 }
 
@@ -458,11 +459,12 @@ async fn get_socket_addrs(
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
+    tcp_settings: &TcpSettings,
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr))))
+            select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr, tcp_settings))))
                 .await?
                 .0
         }
@@ -481,6 +483,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
                     socket_addr,
                     insecure,
                     tls_params,
+                    tcp_settings,
                 ))
             }))
             .await?

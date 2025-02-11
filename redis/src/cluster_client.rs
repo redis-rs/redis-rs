@@ -1,6 +1,7 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::io::tcp::TcpSettings;
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
@@ -37,6 +38,7 @@ struct BuilderParams {
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
+    pub(crate) tcp_settings: TcpSettings,
 }
 
 #[derive(Clone)]
@@ -93,6 +95,7 @@ pub(crate) struct ClusterParams {
     pub(crate) protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
+    pub(crate) tcp_settings: TcpSettings,
 }
 
 impl ClusterParams {
@@ -119,6 +122,7 @@ impl ClusterParams {
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
+            tcp_settings: value.tcp_settings,
         })
     }
 
@@ -404,6 +408,13 @@ impl ClusterClientBuilder {
     /// ```
     pub fn push_sender(mut self, push_sender: impl AsyncPushSender) -> ClusterClientBuilder {
         self.builder_params.async_push_sender = Some(Arc::new(push_sender));
+        self
+    }
+
+    /// Set the behavior of the underlying TCP connection.
+    #[cfg(feature = "cluster-async")]
+    pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
+        self.builder_params.tcp_settings = tcp_settings;
         self
     }
 }
