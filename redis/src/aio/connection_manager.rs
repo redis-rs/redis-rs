@@ -546,10 +546,10 @@ impl ConnectionManager {
         guard.update_with_request(action, args.to_redis_args().into_iter());
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -565,7 +565,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -578,10 +578,10 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -596,7 +596,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {

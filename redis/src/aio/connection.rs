@@ -333,7 +333,7 @@ where
         Self(con)
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
@@ -343,7 +343,7 @@ where
         cmd.query_async(&mut self.0).await
     }
 
-    /// Subscribes to a new channel with a pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(pchannel);
@@ -363,7 +363,7 @@ where
         cmd.query_async(&mut self.0).await
     }
 
-    /// Unsubscribes from a channel with a pattern.
+    /// Unsubscribes from channel pattern(s).
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(pchannel);
