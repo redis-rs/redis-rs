@@ -156,6 +156,7 @@ pub struct Sentinel {
     #[cfg(feature = "aio")]
     async_connections_cache: Vec<Option<AsyncConnection>>,
     replica_start_index: usize,
+    #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
 }
 
@@ -176,6 +177,7 @@ impl SentinelNodeConnectionInfo {
         &self,
         ip: String,
         port: u16,
+        #[cfg(feature = "tls-rustls")]
         certs: &Option<TlsCertificates>,
     ) -> RedisResult<ConnectionInfo> {
         let addr = match self.tls_mode {
@@ -328,9 +330,13 @@ fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
+    #[cfg(feature = "tls-rustls")]
     certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
+        #[cfg(not(feature = "tls-rustls"))]
+        let connection_info = node_connection_info.create_connection_info(ip, port)?;
+        #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
         if check_role(&connection_info, "master") {
             return Ok(connection_info);
@@ -360,9 +366,13 @@ async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
+    #[cfg(feature = "tls-rustls")]
     certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
+        #[cfg(not(feature = "tls-rustls"))]
+        let connection_info = node_connection_info.create_connection_info(ip, port)?;
+        #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
         if async_check_role(&connection_info, "master").await {
             return Ok(connection_info);
@@ -375,6 +385,22 @@ async fn async_find_valid_master(
     ))
 }
 
+#[cfg(not(feature = "tls-rustls"))]
+fn get_valid_replicas_addresses(
+    replicas: Vec<HashMap<String, String>>,
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> RedisResult<Vec<ConnectionInfo>> {
+    let addresses = valid_addrs(replicas, is_replica_valid)
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
+        .collect::<RedisResult<Vec<ConnectionInfo>>>()?;
+
+    Ok(addresses
+        .into_iter()
+        .filter(|connection_info| check_role(connection_info, "slave"))
+        .collect())
+}
+
+#[cfg(feature = "tls-rustls")]
 fn get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
@@ -390,7 +416,30 @@ fn get_valid_replicas_addresses(
         .collect())
 }
 
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", not(feature = "tls-rustls")))]
+async fn async_get_valid_replicas_addresses(
+    replicas: Vec<HashMap<String, String>>,
+    node_connection_info: &SentinelNodeConnectionInfo,
+) -> RedisResult<Vec<ConnectionInfo>> {
+    async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
+        if async_check_role(&connection_info, "slave").await {
+            Some(connection_info)
+        } else {
+            None
+        }
+    }
+
+    let addresses = valid_addrs(replicas, is_replica_valid)
+        .map(|(ip, port)| node_connection_info.create_connection_info(ip, port))
+        .collect::<RedisResult<Vec<_>>>()?;
+
+    Ok(futures_util::stream::iter(addresses)
+        .filter_map(is_replica_role_valid)
+        .collect()
+        .await)
+}
+
+#[cfg(all(feature = "aio", feature = "tls-rustls"))]
 async fn async_get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
@@ -484,15 +533,23 @@ fn try_single_sentinel<T: FromRedisValue>(
 
 // non-async methods
 impl Sentinel {
+    #[cfg(not(feature = "tls-rustls"))]
     /// Creates a Sentinel client performing some basic
     /// checks on the URLs that might make the operation fail.
     pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Sentinel> {
-        Self::build_with_certs(params, None)
+        Self::build_inner(params)
     }
 
-    fn build_with_certs<T: IntoConnectionInfo>(
+    #[cfg(feature = "tls-rustls")]
+    /// Creates a Sentinel client performing some basic
+    /// checks on the URLs that might make the operation fail.
+    pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Sentinel> {
+        Self::build_inner(params, None)
+    }
+
+    fn build_inner<T: IntoConnectionInfo>(
         params: Vec<T>,
-        certs: Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
     ) -> RedisResult<Sentinel> {
         if params.is_empty() {
             fail!((
@@ -509,7 +566,7 @@ impl Sentinel {
         let mut connections_cache = vec![];
         connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
 
-        #[cfg(feature = "aio")]
+        #[cfg(all(feature = "aio", feature = "tls-rustls"))]
         {
             let mut async_connections_cache = vec![];
             async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
@@ -523,7 +580,30 @@ impl Sentinel {
             })
         }
 
-        #[cfg(not(feature = "aio"))]
+        #[cfg(all(feature = "aio", not(feature = "tls-rustls")))]
+        {
+            let mut async_connections_cache = vec![];
+            async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
+
+            Ok(Sentinel {
+                sentinels_connection_info,
+                connections_cache,
+                async_connections_cache,
+                replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
+            })
+        }
+
+        #[cfg(all(not(feature = "aio"), feature = "tls-rustls"))]
+        {
+            Ok(Sentinel {
+                sentinels_connection_info,
+                connections_cache,
+                replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
+                certs,
+            })
+        }
+
+        #[cfg(all(not(feature = "aio"), not(feature = "tls-rustls")))]
         {
             Ok(Sentinel {
                 sentinels_connection_info,
@@ -577,6 +657,17 @@ impl Sentinel {
         self.try_all_sentinels(sentinel_replicas_cmd(service_name))
     }
 
+    #[cfg(not(feature = "tls-rustls"))]
+    fn find_master_address(
+        &mut self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<ConnectionInfo> {
+        let masters = self.get_sentinel_masters()?;
+        find_valid_master(masters, service_name, node_connection_info)
+    }
+
+    #[cfg(feature = "tls-rustls")]
     fn find_master_address(
         &mut self,
         service_name: &str,
@@ -586,6 +677,17 @@ impl Sentinel {
         find_valid_master(masters, service_name, node_connection_info, &self.certs)
     }
 
+    #[cfg(not(feature = "tls-rustls"))]
+    fn find_valid_replica_addresses(
+        &mut self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<Vec<ConnectionInfo>> {
+        let replicas = self.get_sentinel_replicas(service_name)?;
+        get_valid_replicas_addresses(replicas, node_connection_info)
+    }
+
+    #[cfg(feature = "tls-rustls")]
     fn find_valid_replica_addresses(
         &mut self,
         service_name: &str,
@@ -674,6 +776,17 @@ impl Sentinel {
             .await
     }
 
+    #[cfg(not(feature = "tls-rustls"))]
+    async fn async_find_master_address(
+        &mut self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<ConnectionInfo> {
+        let masters = self.async_get_sentinel_masters().await?;
+        async_find_valid_master(masters, service_name, node_connection_info).await
+    }
+
+    #[cfg(feature = "tls-rustls")]
     async fn async_find_master_address(
         &mut self,
         service_name: &str,
@@ -683,6 +796,17 @@ impl Sentinel {
         async_find_valid_master(masters, service_name, node_connection_info, &self.certs).await
     }
 
+    #[cfg(not(feature = "tls-rustls"))]
+    async fn async_find_valid_replica_addresses(
+        &mut self,
+        service_name: &str,
+        node_connection_info: &SentinelNodeConnectionInfo,
+    ) -> RedisResult<Vec<ConnectionInfo>> {
+        let replicas = self.async_get_sentinel_replicas(service_name).await?;
+        async_get_valid_replicas_addresses(replicas, node_connection_info).await
+    }
+
+    #[cfg(feature = "tls-rustls")]
     async fn async_find_valid_replica_addresses(
         &mut self,
         service_name: &str,
@@ -788,6 +912,7 @@ pub struct SentinelClient {
 }
 
 impl SentinelClient {
+    #[cfg(not(feature = "tls-rustls"))]
     /// Creates a SentinelClient performing some basic checks on the URLs that might
     /// result in an error.
     pub fn build<T: IntoConnectionInfo>(
@@ -796,7 +921,24 @@ impl SentinelClient {
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
     ) -> RedisResult<Self> {
-        Self::build_with_certs(
+        Self::build_inner(
+            params,
+            service_name,
+            node_connection_info,
+            server_type,
+        )
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    /// Creates a SentinelClient performing some basic checks on the URLs that might
+    /// result in an error.
+    pub fn build<T: IntoConnectionInfo>(
+        params: Vec<T>,
+        service_name: String,
+        node_connection_info: Option<SentinelNodeConnectionInfo>,
+        server_type: SentinelServerType,
+    ) -> RedisResult<Self> {
+        Self::build_inner(
             params,
             service_name,
             node_connection_info,
@@ -805,15 +947,19 @@ impl SentinelClient {
         )
     }
 
-    fn build_with_certs<T: IntoConnectionInfo>(
+    fn build_inner<T: IntoConnectionInfo>(
         params: Vec<T>,
         service_name: String,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
+        #[cfg(feature = "tls-rustls")]
         certs: Option<TlsCertificates>,
     ) -> RedisResult<Self> {
         Ok(SentinelClient {
-            sentinel: Sentinel::build_with_certs(params, certs)?,
+            #[cfg(not(feature = "tls-rustls"))]
+            sentinel: Sentinel::build_inner(params)?,
+            #[cfg(feature = "tls-rustls")]
+            sentinel: Sentinel::build_inner(params, certs)?,
             service_name,
             node_connection_info: node_connection_info.unwrap_or_default(),
             server_type,
@@ -888,6 +1034,7 @@ struct BuilderConnectionParams {
     username: Option<String>,
     password: Option<String>,
     protocol: Option<ProtocolVersion>,
+    #[cfg(feature = "tls-rustls")]
     certificates: Option<TlsCertificates>,
 }
 
@@ -923,6 +1070,7 @@ impl SentinelClientBuilder {
                 username: None,
                 password: None,
                 protocol: None,
+                #[cfg(feature = "tls-rustls")]
                 certificates: None,
             },
             client_to_sentinel_params: BuilderConnectionParams {
@@ -931,6 +1079,7 @@ impl SentinelClientBuilder {
                 username: None,
                 password: None,
                 protocol: None,
+                #[cfg(feature = "tls-rustls")]
                 certificates: None,
             },
         })
@@ -970,6 +1119,7 @@ impl SentinelClientBuilder {
                             "Tls mode cannot be set for Tcp connection.",
                         )));
                     }
+                    #[cfg(feature = "tls-rustls")]
                     if self.client_to_sentinel_params.certificates.is_some() {
                         return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
@@ -993,6 +1143,7 @@ impl SentinelClientBuilder {
                             }
                         }
                     }
+                    #[cfg(feature = "tls-rustls")]
                     if let Some(certs) = &self.client_to_sentinel_params.certificates {
                         let new_tls_params = retrieve_tls_certificates(certs)?;
                         *tls_params = Some(new_tls_params);
@@ -1005,6 +1156,7 @@ impl SentinelClientBuilder {
                             "Tls mode cannot be set for unix sockets.",
                         )));
                     }
+                    #[cfg(feature = "tls-rustls")]
                     if self.client_to_sentinel_params.certificates.is_some() {
                         return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
@@ -1042,12 +1194,12 @@ impl SentinelClientBuilder {
             })
             .collect();
 
-        SentinelClient::build_with_certs(
+        SentinelClient::build_inner(
             sentinels,
             self.service_name,
             Some(client_to_redis_connection_info),
             self.server_type,
-            self.client_to_redis_params.certificates,
+            #[cfg(feature = "tls-rustls")] self.client_to_redis_params.certificates,
         )
     }
 
@@ -1084,6 +1236,7 @@ impl SentinelClientBuilder {
         self
     }
 
+    #[cfg(feature = "tls-rustls")]
     /// Set certificates for the connection to redis
     pub fn set_client_to_redis_certificates(
         mut self,
@@ -1120,6 +1273,7 @@ impl SentinelClientBuilder {
         self
     }
 
+    #[cfg(feature = "tls-rustls")]
     /// Set certificate for the connection to the sentinels
     pub fn set_client_to_sentinel_certificates(
         mut self,
