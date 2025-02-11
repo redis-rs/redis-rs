@@ -661,6 +661,8 @@ mod client;
 mod cmd;
 mod commands;
 mod connection;
+/// Module for defining I/O behavior.
+pub mod io;
 mod parser;
 mod script;
 mod types;

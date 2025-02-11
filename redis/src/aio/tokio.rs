@@ -37,23 +37,11 @@ use super::Path;
 #[inline(always)]
 async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
     let socket = TcpStreamTokio::connect(addr).await?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let std_socket = socket.into_std()?;
-        let socket2: socket2::Socket = std_socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        TcpStreamTokio::from_std(socket2.into())
-    }
+    let std_socket = socket.into_std()?;
+    let std_socket =
+        crate::io::tcp::stream_with_settings(std_socket, &crate::io::tcp::TcpSettings::default())?;
 
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    TcpStreamTokio::from_std(std_socket)
 }
 
 pub(crate) enum Tokio {

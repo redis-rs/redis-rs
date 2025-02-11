@@ -31,23 +31,11 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 #[inline(always)]
 async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr).await?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let mut std_socket = std::net::TcpStream::try_from(socket)?;
-        let socket2: socket2::Socket = std_socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        std_socket = socket2.into();
-        Ok(std_socket.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    let std_socket = std::net::TcpStream::try_from(socket)?;
+    let std_socket =
+        crate::io::tcp::stream_with_settings(std_socket, &crate::io::tcp::TcpSettings::default())?;
+
+    Ok(std_socket.into())
 }
 #[cfg(feature = "tls-rustls")]
 use crate::tls::TlsConnParams;
