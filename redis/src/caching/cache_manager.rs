@@ -102,15 +102,24 @@ impl CacheManager {
         buffer: &mut Vec<u8>,
         single_command_name: &[u8],
         redis_key: &[u8],
-        last_key: &[u8],
-        is_json_command: bool,
+        json_path_key: Option<&[u8]>,
     ) {
         buffer.clear();
         buffer.extend_from_slice(single_command_name);
         buffer.extend_from_slice(redis_key);
-        if is_json_command {
-            buffer.extend_from_slice(last_key);
+        if let Some(json_path_key) = json_path_key {
+            buffer.extend_from_slice(json_path_key);
         }
+    }
+
+    fn extract_simple_arguments<'a>(&self, cmd: &'a Cmd) -> Vec<&'a [u8]> {
+        cmd.args_iter()
+            .skip(1) // Skip the command name
+            .filter_map(|arg| match arg {
+                crate::cmd::Arg::Simple(simple_arg) => Some(simple_arg),
+                _ => None,
+            })
+            .collect()
     }
 
     fn process_multi_key_arguments<'a>(
@@ -120,42 +129,38 @@ impl CacheManager {
         single_command_name: &[u8],
         commands: &mut Vec<(usize, MultipleCachedCommandPart<'a>)>,
         response: &mut Vec<Value>,
+        tail_args: &mut Vec<&'a [u8]>,
     ) {
-        let arguments: Vec<_> = cmd.args_iter().skip(1).collect();
-        let last_key_index = arguments.len() - 1;
-        let last_key = cmd.arg_idx(last_key_index + 1).unwrap_or(&[]);
+        let mut arguments = self.extract_simple_arguments(cmd);
+        let json_path_key = is_json_command
+            .then(|| {
+                arguments.pop().map(|k| {
+                    tail_args.push(k);
+                    k
+                })
+            })
+            .flatten();
         let mut key_test_buffer: Vec<u8> = Vec::new();
 
-        for (i, arg) in arguments.iter().enumerate() {
-            if let crate::cmd::Arg::Simple(redis_key) = arg {
-                let is_json_last_key = is_json_command && (i == last_key_index);
+        for (i, redis_key) in arguments.iter().enumerate() {
+            self.prepare_key_buffer(
+                &mut key_test_buffer,
+                single_command_name,
+                redis_key,
+                json_path_key,
+            );
 
-                self.prepare_key_buffer(
-                    &mut key_test_buffer,
-                    single_command_name,
-                    redis_key,
-                    last_key,
-                    is_json_command,
-                );
-
-                let command_part = MultipleCachedCommandPart {
-                    redis_key,
-                    cmd_key: key_test_buffer.clone(),
-                };
-
-                if is_json_last_key {
-                    if !commands.is_empty() {
-                        commands.push((i, command_part));
-                    }
-                    continue;
-                }
-
-                match self.get(redis_key, &key_test_buffer) {
-                    Some(value) => response.push(value),
-                    None => {
-                        response.push(Value::Nil);
-                        commands.push((i, command_part));
-                    }
+            match self.get(redis_key, &key_test_buffer) {
+                Some(value) => response.push(value),
+                None => {
+                    response.push(Value::Nil);
+                    commands.push((
+                        i,
+                        MultipleCachedCommandPart {
+                            redis_key,
+                            cmd_key: key_test_buffer.clone(),
+                        },
+                    ));
                 }
             }
         }
@@ -169,6 +174,7 @@ impl CacheManager {
         client_side_expire: Instant,
     ) -> PrepareCacheResult<'a> {
         let mut commands = Vec::new();
+        let mut tail_args: Vec<&'a [u8]> = Vec::new();
         let mut response = Vec::new();
 
         let is_json_command = command_name_str.starts_with("JSON");
@@ -179,6 +185,7 @@ impl CacheManager {
             single_command_name,
             &mut commands,
             &mut response,
+            &mut tail_args,
         );
 
         if commands.is_empty() {
@@ -190,6 +197,7 @@ impl CacheManager {
             commands,
             response,
             client_side_expire,
+            tail_args,
         })
     }
 
