@@ -4,7 +4,6 @@ use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
-#[cfg(feature = "cluster-async")]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,9 +34,12 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
     protocol: Option<ProtocolVersion>,
+    pub(crate) connect_hook: Option<Arc<ConnectHook>>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
 }
+
+type ConnectHook = dyn Fn(String, u16) -> RedisResult<(String, u16)> + Send + Sync;
 
 #[derive(Clone)]
 pub(crate) struct RetryParams {
@@ -91,6 +93,7 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Duration,
     pub(crate) protocol: Option<ProtocolVersion>,
+    pub(crate) connect_hook: Option<Arc<ConnectHook>>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
 }
@@ -117,6 +120,7 @@ impl ClusterParams {
             connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
             response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
             protocol: value.protocol,
+            connect_hook: value.connect_hook,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
         })
@@ -356,6 +360,19 @@ impl ClusterClientBuilder {
     /// Sets the protocol with which the client should communicate with the server.
     pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
         self.builder_params.protocol = Some(protocol);
+        self
+    }
+
+    /// Set a hook that is called when connecting to a cluster node. The hook is called for both
+    /// the initial connections and any additional nodes we connect to later.
+    ///
+    /// The hook can substitute a different host or port. This allows the client to work around
+    /// some cases where the node addresses the cluster supplies to the client do not work.
+    pub fn connect_hook(
+        mut self,
+        connect_hook: impl Fn(String, u16) -> RedisResult<(String, u16)> + Send + Sync + 'static,
+    ) -> ClusterClientBuilder {
+        self.builder_params.connect_hook = Some(Arc::new(connect_hook));
         self
     }
 

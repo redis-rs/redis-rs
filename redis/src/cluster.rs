@@ -1081,7 +1081,11 @@ pub(crate) fn get_connection_info(
     node: &str,
     cluster_params: ClusterParams,
 ) -> RedisResult<ConnectionInfo> {
-    let (host, port) = split_node_address(node)?;
+    let (mut host, mut port) = split_node_address(node)?;
+
+    if let Some(hook) = cluster_params.connect_hook {
+        (host, port) = hook(host, port)?;
+    }
 
     Ok(ConnectionInfo {
         addr: get_connection_addr(host, port, cluster_params.tls, cluster_params.tls_params),
