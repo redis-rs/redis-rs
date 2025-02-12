@@ -177,8 +177,7 @@ impl SentinelNodeConnectionInfo {
         &self,
         ip: String,
         port: u16,
-        #[cfg(feature = "tls-rustls")]
-        certs: &Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
     ) -> RedisResult<ConnectionInfo> {
         let addr = match self.tls_mode {
             None => crate::ConnectionAddr::Tcp(ip, port),
@@ -189,10 +188,7 @@ impl SentinelNodeConnectionInfo {
                 #[cfg(not(feature = "tls-rustls"))]
                 tls_params: None,
                 #[cfg(feature = "tls-rustls")]
-                tls_params: certs
-                    .as_ref()
-                    .map(retrieve_tls_certificates)
-                    .transpose()?,
+                tls_params: certs.as_ref().map(retrieve_tls_certificates).transpose()?,
             },
             Some(TlsMode::Insecure) => crate::ConnectionAddr::TcpTls {
                 host: ip,
@@ -330,8 +326,7 @@ fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
-    #[cfg(feature = "tls-rustls")]
-    certs: &Option<TlsCertificates>,
+    #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         #[cfg(not(feature = "tls-rustls"))]
@@ -366,8 +361,7 @@ async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
-    #[cfg(feature = "tls-rustls")]
-    certs: &Option<TlsCertificates>,
+    #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         #[cfg(not(feature = "tls-rustls"))]
@@ -921,12 +915,7 @@ impl SentinelClient {
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
     ) -> RedisResult<Self> {
-        Self::build_inner(
-            params,
-            service_name,
-            node_connection_info,
-            server_type,
-        )
+        Self::build_inner(params, service_name, node_connection_info, server_type)
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -952,8 +941,7 @@ impl SentinelClient {
         service_name: String,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
-        #[cfg(feature = "tls-rustls")]
-        certs: Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
     ) -> RedisResult<Self> {
         Ok(SentinelClient {
             #[cfg(not(feature = "tls-rustls"))]
@@ -1199,7 +1187,8 @@ impl SentinelClientBuilder {
             self.service_name,
             Some(client_to_redis_connection_info),
             self.server_type,
-            #[cfg(feature = "tls-rustls")] self.client_to_redis_params.certificates,
+            #[cfg(feature = "tls-rustls")]
+            self.client_to_redis_params.certificates,
         )
     }
 
