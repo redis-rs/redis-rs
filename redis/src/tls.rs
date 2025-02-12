@@ -120,6 +120,7 @@ pub(crate) fn retrieve_tls_certificates(
     Ok(TlsConnParams {
         client_tls_params,
         root_cert_store,
+        danger_accept_invalid_hostnames: false,
     })
 }
 

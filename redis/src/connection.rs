@@ -43,13 +43,15 @@ use rustls_native_certs::load_native_certs;
 use crate::tls::ClientTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct TlsConnParams {
     #[cfg(feature = "tls-rustls")]
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+    pub(crate) danger_accept_invalid_hostnames: bool,
 }
 
 static DEFAULT_PORT: u16 = 6379;
@@ -155,10 +157,13 @@ impl ConnectionAddr {
     /// Checks if this address is supported.
     ///
     /// Because not all platforms support all connection addresses this is a
-    /// quick way to figure out if a connection method is supported.  Currently
-    /// this only affects unix connections which are only supported on unix
-    /// platforms and on older versions of rust also require an explicit feature
-    /// to be enabled.
+    /// quick way to figure out if a connection method is supported. Currently
+    /// this affects:
+    ///
+    /// - Unix socket addresses, which are supported only on Unix
+    ///
+    /// - TLS addresses, which are supported only if a TLS feature is enabled
+    ///   (either `tls-native-tls` or `tls-rustls`).
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
@@ -166,6 +171,23 @@ impl ConnectionAddr {
                 cfg!(any(feature = "tls-native-tls", feature = "tls-rustls"))
             }
             ConnectionAddr::Unix(_) => cfg!(unix),
+        }
+    }
+
+    /// Configure this address to connect without checking certificate hostnames.
+    ///
+    /// This is slightly less insecure than full `insecure` mode.
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+    pub fn set_insecure_accept_invalid_hostnames(&mut self, insecure: bool) {
+        if let ConnectionAddr::TcpTls { tls_params, .. } = self {
+            if let Some(ref mut params) = tls_params {
+                params.danger_accept_invalid_hostnames = insecure;
+            } else if insecure {
+                *tls_params = Some(TlsConnParams {
+                    danger_accept_invalid_hostnames: insecure,
+                    ..Default::default()
+                });
+            }
         }
     }
 
@@ -603,13 +625,17 @@ impl ActualConnection {
                 ref host,
                 port,
                 insecure,
-                ..
+                ref tls_params,
             } => {
                 let tls_connector = if insecure {
                     TlsConnector::builder()
                         .danger_accept_invalid_certs(true)
                         .danger_accept_invalid_hostnames(true)
                         .use_sni(false)
+                        .build()?
+                } else if let Some(params) = tls_params {
+                    TlsConnector::builder()
+                        .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
                         .build()?
                 } else {
                     TlsConnector::new()?

@@ -195,7 +195,7 @@ impl RedisRuntime for AsyncStd {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        _tls_params: &Option<TlsConnParams>,
+        tls_params: &Option<TlsConnParams>,
         tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
@@ -204,6 +204,9 @@ impl RedisRuntime for AsyncStd {
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
                 .use_sni(false)
+        } else if let Some(params) = tls_params {
+            TlsConnector::new()
+                .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
         } else {
             TlsConnector::new()
         };
