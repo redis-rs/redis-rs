@@ -130,6 +130,8 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"ZSCAN"
             | b"ZSCORE"
             | b"ZUNION"
+            | b"JSON.GET"
+            | b"JSON.MGET"
     )
 }
 
