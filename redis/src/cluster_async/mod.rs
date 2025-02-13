@@ -127,7 +127,7 @@ use futures_util::{
     stream::{self, Stream, StreamExt},
 };
 use log::{trace, warn};
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{seq::IteratorRandom, rng};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -1386,7 +1386,7 @@ where
 {
     connections
         .keys()
-        .choose(&mut thread_rng())
+        .choose(&mut rng())
         .and_then(|addr| {
             connections
                 .get(addr)

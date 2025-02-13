@@ -212,7 +212,7 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
 
 /// Generates a random value in the 0..max range.
 fn random_replica_index(max: NonZeroUsize) -> usize {
-    rand::thread_rng().gen_range(0..max.into())
+    rand::rng().random_range(0..max.into())
 }
 
 fn try_connect_to_first_replica(

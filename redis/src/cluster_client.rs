@@ -71,7 +71,7 @@ impl RetryParams {
         let clamped_wait = base_wait
             .min(self.max_wait_time)
             .max(self.min_wait_time + 1);
-        let jittered_wait = rand::thread_rng().gen_range(self.min_wait_time..clamped_wait);
+        let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
 }
