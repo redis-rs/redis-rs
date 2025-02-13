@@ -59,18 +59,20 @@ impl TestSentinelContext {
 
     pub fn sentinel_node_connection_info(&self) -> SentinelNodeConnectionInfo {
         SentinelNodeConnectionInfo {
-            tls_mode: if let ConnectionAddr::TcpTls { insecure, .. } =
-                self.cluster.servers[0].client_addr()
-            {
-                if *insecure {
-                    Some(TlsMode::Insecure)
-                } else {
-                    Some(TlsMode::Secure)
-                }
-            } else {
-                None
-            },
+            tls_mode: self.tls_mode(),
             redis_connection_info: None,
+        }
+    }
+
+    pub fn tls_mode(&self) -> Option<TlsMode> {
+        if let ConnectionAddr::TcpTls { insecure, .. } = self.cluster.servers[0].client_addr() {
+            if *insecure {
+                Some(TlsMode::Insecure)
+            } else {
+                Some(TlsMode::Secure)
+            }
+        } else {
+            None
         }
     }
 

@@ -102,7 +102,7 @@ impl ClusterParams {
 
         #[cfg(feature = "tls-rustls")]
         let tls_params = {
-            let retrieved_tls_params = value.certs.clone().map(retrieve_tls_certificates);
+            let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
 
             retrieved_tls_params.transpose()?
         };
