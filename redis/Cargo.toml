@@ -54,7 +54,7 @@ r2d2 = { version = "0.8.10", optional = true }
 
 # Only needed for cluster
 crc16 = { version = "0.4", optional = true }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 
 # Only needed for cluster-async
 futures-sink = { version = "0.3.31", optional = true }
