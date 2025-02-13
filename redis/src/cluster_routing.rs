@@ -1,8 +1,8 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::IndexedRandom;
+use rand::rng;
 
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
@@ -635,9 +635,7 @@ impl SlotAddrs {
     }
 
     fn get_replica_node(&self) -> &str {
-        self.replicas
-            .choose(&mut thread_rng())
-            .unwrap_or(&self.primary)
+        self.replicas.choose(&mut rng()).unwrap_or(&self.primary)
     }
 
     pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr, read_from_replica: bool) -> &str {

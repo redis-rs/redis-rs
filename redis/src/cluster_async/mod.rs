@@ -127,7 +127,7 @@ use futures_util::{
     stream::{self, Stream, StreamExt},
 };
 use log::{trace, warn};
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -1384,12 +1384,9 @@ fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, C
 where
     C: Clone,
 {
-    connections
-        .keys()
-        .choose(&mut thread_rng())
-        .and_then(|addr| {
-            connections
-                .get(addr)
-                .map(|conn| (addr.clone(), conn.clone()))
-        })
+    connections.keys().choose(&mut rng()).and_then(|addr| {
+        connections
+            .get(addr)
+            .map(|conn| (addr.clone(), conn.clone()))
+    })
 }

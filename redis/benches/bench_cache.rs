@@ -7,17 +7,17 @@ use support::*;
 mod support;
 
 use rand::{
-    distributions::{Bernoulli, Distribution},
+    distr::{Bernoulli, Distribution},
     Rng,
 };
 use redis::caching::CacheConfig;
 use std::env;
 fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cmd> {
     let mut cmds = vec![];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let distribution = Bernoulli::from_ratio(total_read, total_command).unwrap();
     for is_read in distribution
-        .sample_iter(&mut rand::thread_rng())
+        .sample_iter(&mut rand::rng())
         .take(total_command as usize)
     {
         if is_read {
@@ -26,7 +26,7 @@ fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cm
             cmds.push(
                 redis::cmd("SET")
                     .arg(&key)
-                    .arg(rng.gen_range(1..1000))
+                    .arg(rng.random_range(1..1000))
                     .clone(),
             );
         }
@@ -49,11 +49,11 @@ async fn benchmark_executer(
         ctx.multiplexed_async_connection_tokio().await.unwrap()
     };
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut handles = Vec::new();
     for _ in 0..key_count {
         let mut con = con.clone();
-        let key = format!("{}", rng.gen_range(1..1000));
+        let key = format!("{}", rng.random_range(1..1000));
         handles.push(tokio::spawn(async move {
             for cmd in generate_commands(
                 key,
