@@ -4,7 +4,7 @@ use std::{io, net::TcpStream, time::Duration};
 #[derive(Clone, Debug)]
 pub struct TcpSettings {
     nodelay: bool,
-    keepalive: socket2::TcpKeepalive,
+    keepalive: Option<socket2::TcpKeepalive>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     user_timeout: Option<Duration>,
 }
@@ -16,15 +16,20 @@ impl TcpSettings {
     }
 
     /// Set parameters configuring TCP keepalive probes for this socket.
+    ///
+    /// Default values are system-specific
     pub fn set_keepalive(self, keepalive: socket2::TcpKeepalive) -> Self {
-        Self { keepalive, ..self }
+        Self {
+            keepalive: Some(keepalive),
+            ..self
+        }
     }
 
     /// Set the value of the `TCP_USER_TIMEOUT` option on this socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn set_user_timeout(self, user_timeout: Option<Duration>) -> Self {
+    pub fn set_user_timeout(self, user_timeout: Duration) -> Self {
         Self {
-            user_timeout,
+            user_timeout: Some(user_timeout),
             ..self
         }
     }
@@ -37,9 +42,9 @@ impl Default for TcpSettings {
             nodelay: true,
             #[cfg(not(feature = "tcp_nodelay"))]
             nodelay: false,
-            keepalive: socket2::TcpKeepalive::new(),
+            keepalive: None,
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            user_timeout: Some(Duration::from_secs(5)),
+            user_timeout: None,
         }
     }
 }
@@ -50,7 +55,9 @@ pub(crate) fn stream_with_settings(
 ) -> io::Result<TcpStream> {
     socket.set_nodelay(settings.nodelay)?;
     let socket2: socket2::Socket = socket.into();
-    socket2.set_tcp_keepalive(&settings.keepalive)?;
+    if let Some(keepalive) = &settings.keepalive {
+        socket2.set_tcp_keepalive(keepalive)?;
+    }
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     socket2.set_tcp_user_timeout(settings.user_timeout)?;
     Ok(socket2.into())
