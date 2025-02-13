@@ -635,9 +635,7 @@ impl SlotAddrs {
     }
 
     fn get_replica_node(&self) -> &str {
-        self.replicas
-            .choose(&mut rng())
-            .unwrap_or(&self.primary)
+        self.replicas.choose(&mut rng()).unwrap_or(&self.primary)
     }
 
     pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr, read_from_replica: bool) -> &str {

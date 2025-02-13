@@ -85,7 +85,7 @@ use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
-use rand::{seq::IteratorRandom, rng, Rng};
+use rand::{rng, seq::IteratorRandom, Rng};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
