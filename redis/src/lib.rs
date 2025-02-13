@@ -32,6 +32,12 @@
 //! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
 //! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
 //!
+//! # TCP settings
+//!
+//! The user can set parameters of the underlying TCP connection by using the `tcp_nodelay` and `keep-alive` features.
+//! Alternatively, users of async connections can set [crate::io::tcp::TcpSettings] on the connection configuration objects,
+//! and set the TCP parameters in a more specific manner there.
+//!
 //! ## Connection Handling
 //!
 //! For connecting to redis you can use a client object which then can produce
