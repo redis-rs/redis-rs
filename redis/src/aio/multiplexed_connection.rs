@@ -475,10 +475,7 @@ impl MultiplexedConnection {
             stream,
             AsyncConnectionConfig {
                 response_timeout,
-                connection_timeout: None,
-                push_sender: None,
-                #[cfg(feature = "cache-aio")]
-                cache_config: None,
+                ..Default::default()
             },
         )
         .await

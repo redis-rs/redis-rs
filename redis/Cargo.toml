@@ -1,7 +1,7 @@
 [package]
 name = "redis"
 version = "0.28.2"
-keywords = ["redis",  "valkey", "cluster", "sentinel", "pubsub"]
+keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
@@ -38,11 +38,19 @@ combine = { version = "4.6", default-features = false, features = ["std"] }
 
 # Only needed for AIO
 bytes = { version = "1", optional = true }
-futures-util = { version = "0.3.31", default-features = false, features = ["std", "sink"], optional = true }
+futures-util = { version = "0.3.31", default-features = false, features = [
+  "std",
+  "sink",
+], optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
-tokio = { version = "1", features = ["rt", "net", "time", "sync"], optional = true }
-socket2 = { version = "0.5", default-features = false, optional = true }
+tokio = { version = "1", features = [
+  "rt",
+  "net",
+  "time",
+  "sync",
+], optional = true }
+socket2 = { version = "0.5", features = ["all"] }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.7.1" }
@@ -94,7 +102,7 @@ uuid = { version = "1.12.1", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
-lru = {version =  "0.12.3", optional = true}
+lru = { version = "0.12.3", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive"]
@@ -104,11 +112,20 @@ json = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls","rustls/std", "rustls/ring", "dep:rustls-native-certs"]
+tls-rustls = [
+  "dep:rustls",
+  "rustls/std",
+  "rustls/ring",
+  "dep:rustls-native-certs",
+]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 async-std-comp = ["aio", "dep:async-std"]
-async-std-native-tls-comp = ["async-std-comp", "dep:async-native-tls", "tls-native-tls"]
+async-std-native-tls-comp = [
+  "async-std-comp",
+  "dep:async-native-tls",
+  "tls-native-tls",
+]
 async-std-rustls-comp = ["async-std-comp", "dep:futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
@@ -116,7 +133,7 @@ tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 connection-manager = ["dep:futures-channel", "aio", "dep:backon"]
 streams = []
 cluster-async = ["aio", "cluster", "dep:futures-sink", "dep:log"]
-keep-alive = ["dep:socket2"]
+keep-alive = []
 sentinel = ["dep:rand"]
 tcp_nodelay = []
 num-bigint = []
@@ -125,9 +142,20 @@ cache-aio = ["aio", "dep:lru"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
-async-std-tls-comp = ["async-std-native-tls-comp"] # use "async-std-native-tls-comp" instead
+async-std-tls-comp = [
+  "async-std-native-tls-comp",
+] # use "async-std-native-tls-comp" instead
 # Instead of specifying "aio", use either "tokio-comp" or "async-std-comp".
-aio = ["bytes", "dep:pin-project-lite", "dep:futures-util", "dep:tokio", "tokio/io-util", "dep:tokio-util", "tokio-util/codec", "combine/tokio"]
+aio = [
+  "bytes",
+  "dep:pin-project-lite",
+  "dep:futures-util",
+  "dep:tokio",
+  "tokio/io-util",
+  "dep:tokio-util",
+  "tokio-util/codec",
+  "combine/tokio",
+]
 
 [dev-dependencies]
 assert_approx_eq = "1.0"
@@ -137,7 +165,13 @@ futures-time = "3"
 criterion = "0.5"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "test-util", "time"] }
+tokio = { version = "1", features = [
+  "rt",
+  "macros",
+  "rt-multi-thread",
+  "test-util",
+  "time",
+] }
 tempfile = "=3.16.0"
 once_cell = "1"
 anyhow = "1"

@@ -1350,10 +1350,12 @@ where
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
+    let tcp_settings = params.tcp_settings.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
-        .set_response_timeout(response_timeout);
+        .set_response_timeout(response_timeout)
+        .set_tcp_settings(tcp_settings);
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }

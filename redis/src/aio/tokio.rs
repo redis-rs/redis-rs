@@ -35,25 +35,15 @@ use crate::connection::TlsConnParams;
 use super::Path;
 
 #[inline(always)]
-async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
+async fn connect_tcp(
+    addr: &SocketAddr,
+    tcp_settings: &crate::io::tcp::TcpSettings,
+) -> io::Result<TcpStreamTokio> {
     let socket = TcpStreamTokio::connect(addr).await?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let std_socket = socket.into_std()?;
-        let socket2: socket2::Socket = std_socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        TcpStreamTokio::from_std(socket2.into())
-    }
+    let std_socket = socket.into_std()?;
+    let std_socket = crate::io::tcp::stream_with_settings(std_socket, tcp_settings)?;
 
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    TcpStreamTokio::from_std(std_socket)
 }
 
 pub(crate) enum Tokio {
@@ -120,8 +110,13 @@ impl AsyncRead for Tokio {
 }
 
 impl RedisRuntime for Tokio {
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(connect_tcp(&socket_addr).await.map(Tokio::Tcp)?)
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        Ok(connect_tcp(&socket_addr, tcp_settings)
+            .await
+            .map(Tokio::Tcp)?)
     }
 
     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -130,6 +125,7 @@ impl RedisRuntime for Tokio {
         socket_addr: SocketAddr,
         insecure: bool,
         _: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -142,7 +138,7 @@ impl RedisRuntime for Tokio {
         }
         .into();
         Ok(tls_connector
-            .connect(hostname, connect_tcp(&socket_addr).await?)
+            .connect(hostname, connect_tcp(&socket_addr, tcp_settings).await?)
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
@@ -153,6 +149,7 @@ impl RedisRuntime for Tokio {
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let config = create_rustls_config(insecure, tls_params.clone())?;
         let tls_connector = TlsConnector::from(Arc::new(config));
@@ -160,7 +157,7 @@ impl RedisRuntime for Tokio {
         Ok(tls_connector
             .connect(
                 rustls::pki_types::ServerName::try_from(hostname)?.to_owned(),
-                connect_tcp(&socket_addr).await?,
+                connect_tcp(&socket_addr, tcp_settings).await?,
             )
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
