@@ -50,7 +50,7 @@ pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
-    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub(crate) danger_accept_invalid_hostnames: bool,
 }
 
@@ -177,7 +177,7 @@ impl ConnectionAddr {
     /// Configure this address to connect without checking certificate hostnames.
     ///
     /// This is slightly less insecure than full `insecure` mode.
-    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub fn set_insecure_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let ConnectionAddr::TcpTls { tls_params, .. } = self {
             if let Some(ref mut params) = tls_params {
@@ -543,6 +543,81 @@ impl fmt::Debug for NoCertificateVerification {
     }
 }
 
+/// Insecure `ServerCertVerifier` for rustls that implements `danger_accept_invalid_hostnames`.
+#[cfg(feature = "tls-rustls-insecure")]
+#[derive(Debug)]
+struct AcceptInvalidHostnamesCertVerifier {
+    inner: Arc<rustls::client::WebPkiServerVerifier>,
+}
+
+#[cfg(feature = "tls-rustls-insecure")]
+fn is_hostname_error(err: &rustls::Error) -> bool {
+    matches!(
+        err,
+        rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)
+    )
+}
+
+#[cfg(feature = "tls-rustls-insecure")]
+impl rustls::client::danger::ServerCertVerifier for AcceptInvalidHostnamesCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        self.inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::ServerCertVerified::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner
+            .verify_tls12_signature(message, cert, dss)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner
+            .verify_tls13_signature(message, cert, dss)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
 /// Represents a stateful redis TCP connection.
 pub struct Connection {
     con: ActualConnection,
@@ -893,10 +968,10 @@ pub(crate) fn create_rustls_config(
 
     let config = rustls::ClientConfig::builder();
     let config = if let Some(tls_params) = tls_params {
-        let config_builder =
-            config.with_root_certificates(tls_params.root_cert_store.unwrap_or(root_store));
+        let root_cert_store = tls_params.root_cert_store.unwrap_or(root_store);
+        let config_builder = config.with_root_certificates(root_cert_store.clone());
 
-        if let Some(ClientTlsParams {
+        let config_builder = if let Some(ClientTlsParams {
             client_cert_chain: client_cert,
             client_key,
         }) = tls_params.client_tls_params
@@ -912,7 +987,30 @@ pub(crate) fn create_rustls_config(
                 })?
         } else {
             config_builder.with_no_client_auth()
-        }
+        };
+
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
+            if !cfg!(feature = "tls-rustls-insecure") {
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot create insecure client via danger_accept_invalid_hostnames without tls-rustls-insecure feature"
+                ));
+            }
+            let mut config = config_builder;
+            config.dangerous().set_certificate_verifier(Arc::new(
+                AcceptInvalidHostnamesCertVerifier {
+                    inner: rustls::client::WebPkiServerVerifier::builder(Arc::new(root_cert_store))
+                        .build()
+                        .map_err(|err| rustls::Error::from(rustls::OtherError(Arc::new(err))))?,
+                },
+            ));
+            config
+        } else {
+            config_builder
+        };
+
+        config_builder
     } else {
         config
             .with_root_certificates(root_store)
