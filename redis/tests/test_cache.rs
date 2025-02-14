@@ -138,7 +138,7 @@ fn test_cache_mget(#[case] runtime: RuntimeType) {
 #[cfg(feature = "json")]
 #[case::tokio(RuntimeType::Tokio)]
 #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-fn test_cache_json_get_mget(#[case] runtime: RuntimeType) {
+fn test_module_cache_json_get_mget(#[case] runtime: RuntimeType) {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
         return;
@@ -211,7 +211,7 @@ fn test_cache_json_get_mget(#[case] runtime: RuntimeType) {
 #[cfg(feature = "json")]
 #[case::tokio(RuntimeType::Tokio)]
 #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-fn test_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType) {
+fn test_module_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType) {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
         return;
