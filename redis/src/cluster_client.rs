@@ -9,10 +9,6 @@ use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(feature = "cluster-async")]

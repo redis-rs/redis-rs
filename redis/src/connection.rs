@@ -40,13 +40,17 @@ use crate::PushInfo;
 use rustls_native_certs::load_native_certs;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
+use crate::tls::ClientTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
-#[cfg(not(feature = "tls-rustls"))]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct TlsConnParams;
+pub struct TlsConnParams {
+    #[cfg(feature = "tls-rustls")]
+    pub(crate) client_tls_params: Option<ClientTlsParams>,
+    #[cfg(feature = "tls-rustls")]
+    pub(crate) root_cert_store: Option<RootCertStore>,
+}
 
 static DEFAULT_PORT: u16 = 6379;
 

@@ -39,10 +39,8 @@ async fn connect_tcp(
 
     Ok(std_socket.into())
 }
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
 
 pin_project_lite::pin_project! {

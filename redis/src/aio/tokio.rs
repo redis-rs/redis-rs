@@ -25,10 +25,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
-#[cfg(feature = "tokio-rustls-comp")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tls-rustls")))]
+#[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(unix)]
