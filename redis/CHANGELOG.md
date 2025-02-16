@@ -2,20 +2,20 @@
 
 #### Changes & Bug fixes
 
-* Tweaks to rustls usage ([#1499] (https://github.com/redis-rs/redis-rs/pull/1499) by @djc)
-* Add client side caching support for MultiplexedConnection ([#1296] (https://github.com/redis-rs/redis-rs/pull/1296) by @altanozlu)
-* Add buffered write methods to RedisWrite ([#905] (https://github.com/redis-rs/redis-rs/pull/905) by @swwu)
-* Include the reason for one connection failure if cluster connect fails ([#1497] (https://github.com/redis-rs/redis-rs/pull/1497) by @Marwes)
-* Upgrade to rand 0.9 ([#1525] (https://github.com/redis-rs/redis-rs/pull/1525) by @gkorland)
-* Allow configuring Sentinel with custom TLS certificates ([#1335] (https://github.com/redis-rs/redis-rs/pull/1335) by @ergonjomeier)
-* Fix caching with the JSON module ([#1520] (https://github.com/redis-rs/redis-rs/pull/1520) by @kudlatyamroth)
-* Allow users of async connections to set TCP settings. ([#1523] (https://github.com/redis-rs/redis-rs/pull/1523))
+* Tweaks to rustls usage ([#1499](https://github.com/redis-rs/redis-rs/pull/1499) by @djc)
+* Add client side caching support for MultiplexedConnection ([#1296](https://github.com/redis-rs/redis-rs/pull/1296) by @altanozlu)
+* Add buffered write methods to RedisWrite ([#905](https://github.com/redis-rs/redis-rs/pull/905) by @swwu)
+* Include the reason for one connection failure if cluster connect fails ([#1497](https://github.com/redis-rs/redis-rs/pull/1497) by @Marwes)
+* Upgrade to rand 0.9 ([#1525](https://github.com/redis-rs/redis-rs/pull/1525) by @gkorland)
+* Allow configuring Sentinel with custom TLS certificates ([#1335](https://github.com/redis-rs/redis-rs/pull/1335) by @ergonjomeier)
+* Fix caching with the JSON module ([#1520](https://github.com/redis-rs/redis-rs/pull/1520) by @kudlatyamroth)
+* Allow users of async connections to set TCP settings. ([#1523](https://github.com/redis-rs/redis-rs/pull/1523))
 
 #### Documentation improvements
 
-* Clarify build instructions in README. ([#1515] (https://github.com/redis-rs/redis-rs/pull/1515))
-* Improve pubsub docs. ([#1519] (https://github.com/redis-rs/redis-rs/pull/1519))
-* Improve docs around TTLs/ expiry times. ([#1522] (https://github.com/redis-rs/redis-rs/pull/1522) by @clbarnes)
+* Clarify build instructions in README. ([#1515](https://github.com/redis-rs/redis-rs/pull/1515))
+* Improve pubsub docs. ([#1519](https://github.com/redis-rs/redis-rs/pull/1519))
+* Improve docs around TTLs/ expiry times. ([#1522](https://github.com/redis-rs/redis-rs/pull/1522) by @clbarnes)
 
 ### 0.28.2 (2025-01-24)
 
