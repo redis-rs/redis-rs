@@ -1,3 +1,6 @@
+### 0.9.0 (2025-02-16)
+* Track redis 0.29.0 release
+
 ### 0.8.0 (2025-01-7)
 * Track redis 0.28.0 release
 * Expose server creation logic through redis-test ([#1363](https://github.com/redis-rs/redis-rs/pull/1363))

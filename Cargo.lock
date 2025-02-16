@@ -1242,9 +1242,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.12.5"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
 dependencies = [
  "hashbrown 0.15.2",
 ]
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.28.2"
+version = "0.29.0"
 dependencies = [
  "ahash 0.8.11",
  "anyhow",
@@ -1742,11 +1742,11 @@ dependencies = [
 
 [[package]]
 name = "redis-test"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bytes",
  "futures",
- "rand 0.8.5",
+ "rand 0.9.0",
  "redis",
  "socket2 0.5.8",
  "tempfile",
