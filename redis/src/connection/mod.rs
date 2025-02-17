@@ -41,7 +41,7 @@ pub struct Connection(GenericConnection<ActualConnection>);
 
 /// Generic version of [`Connection`]
 pub struct GenericConnection<IO> {
-    con: IO,
+    con: Option<IO>,
 
     parser: Parser,
     db: i64,
@@ -371,7 +371,7 @@ fn setup_connection<IO: io::ConnectionDriver>(
     #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> RedisResult<GenericConnection<IO>> {
     let mut rv = GenericConnection {
-        con,
+        con: Some(con),
         parser: Parser::new(),
         db: connection_info.db,
         pubsub: false,
@@ -585,7 +585,12 @@ impl<IO: io::ConnectionDriver> GenericConnection<IO> {
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        self.con.set_write_timeout(dur)
+        match self.con.as_ref() {
+            Some(con) => con.set_write_timeout(dur),
+            None => Err(RedisError::from(std::io::Error::from(
+                std::io::ErrorKind::BrokenPipe,
+            ))),
+        }
     }
 
     /// Sets the read timeout for the connection.
@@ -594,7 +599,12 @@ impl<IO: io::ConnectionDriver> GenericConnection<IO> {
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
-        self.con.set_read_timeout(dur)
+        match self.con.as_ref() {
+            Some(con) => con.set_read_timeout(dur),
+            None => Err(RedisError::from(std::io::Error::from(
+                std::io::ErrorKind::BrokenPipe,
+            ))),
+        }
     }
 
     /// Creates a [`PubSub`] instance for this connection.
@@ -729,15 +739,19 @@ impl<IO: io::ConnectionDriver> GenericConnection<IO> {
     fn close_connection(&mut self) {
         // Notify the PushManager that the connection was lost
         self.send_disconnect();
-        // NOTE: In original implementation this used to call `self.con.close_connection()`
-        // now this happens in Drop
+        self.con = None;
     }
 
     /// Fetches a single message from the connection. If the message is a response,
     /// increment `messages_to_skip` if it wasn't received before a timeout.
     fn read(&mut self, is_response: bool) -> RedisResult<Value> {
         loop {
-            let result = self.con.read_value(&mut self.parser);
+            let result = match self.con.as_mut() {
+                Some(con) => con.read_value(&mut self.parser),
+                None => Err(RedisError::from(std::io::Error::from(
+                    std::io::ErrorKind::BrokenPipe,
+                ))),
+            };
             self.try_send(&result);
 
             let Err(err) = &result else {
@@ -771,7 +785,12 @@ impl<IO: io::ConnectionDriver> GenericConnection<IO> {
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
-        let result = self.con.send_bytes(bytes);
+        let result = match self.con.as_mut() {
+            Some(con) => con.send_bytes(bytes),
+            None => Err(RedisError::from(std::io::Error::from(
+                std::io::ErrorKind::BrokenPipe,
+            ))),
+        };
         if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
@@ -886,7 +905,7 @@ impl<IO: io::ConnectionDriver> ConnectionLike for GenericConnection<IO> {
     }
 
     fn is_open(&self) -> bool {
-        self.con.is_open()
+        self.con.as_ref().map(|c| c.is_open()).unwrap_or_default()
     }
 }
 
