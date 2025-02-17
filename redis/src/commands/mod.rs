@@ -1,10 +1,11 @@
 use crate::cmd::{cmd, Cmd, Iter};
-use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::connection::{Connection, ConnectionLike, GenericConnection, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite,
     SetExpiry, ToRedisArgs,
 };
+use crate::ConnectionDriver;
 
 #[macro_use]
 mod macros;
@@ -2282,6 +2283,42 @@ impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
+
+impl<IO: ConnectionDriver> PubSubCommands for GenericConnection<IO> {
+    fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        C: ToRedisArgs,
+    {
+        let mut pubsub = self.as_pubsub();
+        pubsub.subscribe(channels)?;
+
+        loop {
+            let msg = pubsub.get_message()?;
+            match func(msg) {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(value) => return Ok(value),
+            }
+        }
+    }
+
+    fn psubscribe<P, F, U>(&mut self, patterns: P, mut func: F) -> RedisResult<U>
+    where
+        F: FnMut(Msg) -> ControlFlow<U>,
+        P: ToRedisArgs,
+    {
+        let mut pubsub = self.as_pubsub();
+        pubsub.psubscribe(patterns)?;
+
+        loop {
+            let msg = pubsub.get_message()?;
+            match func(msg) {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(value) => return Ok(value),
+            }
+        }
+    }
+}
 
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>

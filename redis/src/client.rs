@@ -5,14 +5,18 @@ use crate::aio::AsyncPushSender;
 #[cfg(feature = "aio")]
 use crate::io::tcp::TcpSettings;
 use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    connection::{
+        connect, connect_with_io, io, Connection, ConnectionInfo, ConnectionLike,
+        IntoConnectionInfo,
+    },
     types::{RedisResult, Value},
+    GenericConnection,
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{inner_build_with_tls, TlsCertificates};
+use crate::connection::io::tls_rustls::{inner_build_with_tls, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
@@ -65,6 +69,15 @@ impl Client {
     /// that you handle those errors.
     pub fn get_connection_with_timeout(&self, timeout: Duration) -> RedisResult<Connection> {
         connect(&self.connection_info, Some(timeout))
+    }
+
+    /// Same as [`Self::get_connection_with_timeout`] but with a custom IO Driver.
+    pub fn get_connection_with_io_and_timeout<IO: io::ConnectionDriver>(
+        &self,
+        driver: IO,
+        timeout: Duration,
+    ) -> RedisResult<GenericConnection<IO>> {
+        connect_with_io(driver, &self.connection_info, Some(timeout))
     }
 
     /// Returns a reference of client connection info object.

@@ -139,7 +139,7 @@ use crate::aio::MultiplexedConnection as AsyncConnection;
 use crate::client::AsyncConnectionConfig;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::retrieve_tls_certificates;
+use crate::connection::io::tls_rustls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
 use crate::{
@@ -498,6 +498,7 @@ fn reconnect(
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
     let new_connection = sentinel_client.get_connection()?;
+
     connection.replace(new_connection);
     Ok(())
 }

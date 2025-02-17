@@ -425,7 +425,7 @@ assert_eq!(b, 5);
 ```
 
 Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-it will not automatically be loaded and retried. The script can be loaded using the 
+it will not automatically be loaded and retried. The script can be loaded using the
 [`load`](ScriptInvocation::load) operation.
 "##
 )]
@@ -536,8 +536,9 @@ pub use crate::commands::{
     Commands, ControlFlow, Direction, LposOptions, PubSubCommands, ScanOptions, SetOptions,
 };
 pub use crate::connection::{
-    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
+    io::ConnectionDriver, parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo,
+    ConnectionLike, GenericConnection, GenericPubSub, IntoConnectionInfo, Msg, PubSub,
+    RedisConnectionInfo, TlsMode,
 };
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
@@ -652,13 +653,6 @@ pub mod cluster_async;
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
-#[cfg(feature = "tls-rustls")]
-mod tls;
-
-#[cfg(feature = "tls-rustls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
-pub use crate::tls::{ClientTlsConfig, TlsCertificates};
-
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
 pub mod caching;
@@ -672,3 +666,7 @@ pub mod io;
 mod parser;
 mod script;
 mod types;
+
+#[cfg(feature = "tls-rustls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
+pub use crate::connection::io::{ClientTlsConfig, TlsCertificates};

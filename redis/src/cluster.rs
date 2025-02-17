@@ -75,26 +75,23 @@ use crate::cluster_routing::{
 use crate::cluster_topology::parse_slots;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
-    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
+    connect, connect_with_io, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    RedisConnectionInfo,
 };
 use crate::parser::parse_redis_value;
 use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
-use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
+use crate::{ConnectionDriver, GenericConnection, IntoConnectionInfo};
 use rand::{rng, seq::IteratorRandom, Rng};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
-use crate::connection::TlsConnParams;
+use crate::connection::io::TlsConnParams;
 
 #[derive(Clone)]
 enum Input<'a> {
@@ -203,7 +200,39 @@ pub trait Connect: Sized {
     fn recv_response(&mut self) -> RedisResult<Value>;
 }
 
+impl<IO: ConnectionDriver> Connect for GenericConnection<IO> {
+    fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
+    where
+        T: IntoConnectionInfo,
+    {
+        let info = info.into_connection_info()?;
+        let driver = IO::establish_conn(&info.addr, timeout)?;
+        connect_with_io(driver, &info, timeout)
+    }
+
+    #[inline]
+    fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
+        Self::send_packed_command(self, cmd)
+    }
+
+    #[inline]
+    fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        Self::set_write_timeout(self, dur)
+    }
+
+    #[inline]
+    fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
+        Self::set_read_timeout(self, dur)
+    }
+
+    #[inline]
+    fn recv_response(&mut self) -> RedisResult<Value> {
+        Self::recv_response(self)
+    }
+}
+
 impl Connect for Connection {
+    #[inline]
     fn connect<T>(info: T, timeout: Option<Duration>) -> RedisResult<Self>
     where
         T: IntoConnectionInfo,
@@ -211,18 +240,22 @@ impl Connect for Connection {
         connect(&info.into_connection_info()?, timeout)
     }
 
+    #[inline]
     fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
         Self::send_packed_command(self, cmd)
     }
 
+    #[inline]
     fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         Self::set_write_timeout(self, dur)
     }
 
+    #[inline]
     fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         Self::set_read_timeout(self, dur)
     }
 
+    #[inline]
     fn recv_response(&mut self) -> RedisResult<Value> {
         Self::recv_response(self)
     }

@@ -1,4 +1,4 @@
-use std::{io, net::TcpStream, time::Duration};
+use std::{io, net::TcpStream};
 
 /// Settings for a TCP stream.
 #[derive(Clone, Debug)]
@@ -6,7 +6,7 @@ pub struct TcpSettings {
     nodelay: bool,
     keepalive: Option<socket2::TcpKeepalive>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    user_timeout: Option<Duration>,
+    user_timeout: Option<std::time::Duration>,
 }
 
 impl TcpSettings {
@@ -27,7 +27,7 @@ impl TcpSettings {
 
     /// Set the value of the `TCP_USER_TIMEOUT` option on this socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn set_user_timeout(self, user_timeout: Duration) -> Self {
+    pub fn set_user_timeout(self, user_timeout: std::time::Duration) -> Self {
         Self {
             user_timeout: Some(user_timeout),
             ..self
