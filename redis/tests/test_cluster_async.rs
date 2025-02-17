@@ -525,18 +525,15 @@ mod cluster_async {
     }
 
     impl Connect for ErrorConnection {
-        fn connect<'a, T>(
+        fn connect_with_config<'a, T>(
             info: T,
-            response_timeout: Duration,
-            connection_timeout: Duration,
+            config: redis::AsyncConnectionConfig,
         ) -> RedisFuture<'a, Self>
         where
             T: IntoConnectionInfo + Send + 'a,
         {
             Box::pin(async move {
-                let inner =
-                    MultiplexedConnection::connect(info, response_timeout, connection_timeout)
-                        .await?;
+                let inner = MultiplexedConnection::connect_with_config(info, config).await?;
                 Ok(ErrorConnection { inner })
             })
         }

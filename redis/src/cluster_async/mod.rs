@@ -1268,23 +1268,6 @@ pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect_with_config<'a, T>(info: T, config: AsyncConnectionConfig) -> RedisFuture<'a, Self>
     where
-        T: IntoConnectionInfo + Send + 'a,
-    {
-        // default implementation, for backwards compatibility
-        Self::connect(
-            info,
-            config.response_timeout.unwrap_or(Duration::MAX),
-            config.connection_timeout.unwrap_or(Duration::MAX),
-        )
-    }
-
-    /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(
-        info: T,
-        response_timeout: Duration,
-        connection_timeout: Duration,
-    ) -> RedisFuture<'a, Self>
-    where
         T: IntoConnectionInfo + Send + 'a;
 }
 
@@ -1296,27 +1279,6 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-            client
-                .get_multiplexed_async_connection_with_config(&config)
-                .await
-        }
-        .boxed()
-    }
-
-    fn connect<'a, T>(
-        info: T,
-        response_timeout: Duration,
-        connection_timeout: Duration,
-    ) -> RedisFuture<'a, MultiplexedConnection>
-    where
-        T: IntoConnectionInfo + Send + 'a,
-    {
-        async move {
-            let connection_info = info.into_connection_info()?;
-            let client = crate::Client::open(connection_info)?;
-            let config = crate::AsyncConnectionConfig::new()
-                .set_connection_timeout(connection_timeout)
-                .set_response_timeout(response_timeout);
             client
                 .get_multiplexed_async_connection_with_config(&config)
                 .await
