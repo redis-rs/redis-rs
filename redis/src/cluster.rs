@@ -86,7 +86,7 @@ use crate::{
     cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
 use crate::{ConnectionDriver, GenericConnection, IntoConnectionInfo};
-use rand::{seq::IteratorRandom, thread_rng, Rng};
+use rand::{rng, seq::IteratorRandom, Rng};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
@@ -572,9 +572,9 @@ where
 
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                let mut rng = thread_rng();
+                let mut rng = rng();
                 Ok(addr_for_slot(Route::new(
-                    rng.gen_range(0..SLOT_SIZE),
+                    rng.random_range(0..SLOT_SIZE),
                     SlotAddr::Master,
                 ))?)
             }
@@ -1086,7 +1086,7 @@ impl NodeCmd {
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     connections: &mut HashMap<String, C>,
 ) -> Option<(String, &mut C)> {
-    let addr = connections.keys().choose(&mut thread_rng())?.to_string();
+    let addr = connections.keys().choose(&mut rng())?.to_string();
     let conn = connections.get_mut(&addr)?;
     Some((addr, conn))
 }

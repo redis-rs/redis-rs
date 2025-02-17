@@ -3,26 +3,15 @@ use std::{
     time::Duration,
 };
 
-use crate::{ErrorKind, RedisResult};
+use crate::{
+    io::tcp::{stream_with_settings, TcpSettings},
+    ErrorKind, RedisResult,
+};
 
 #[inline(always)]
 pub(super) fn connect_tcp(addr: (&str, u16)) -> std::io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let socket2: socket2::Socket = socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        Ok(socket2.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    stream_with_settings(socket, &TcpSettings::default())
 }
 
 #[inline(always)]
@@ -31,21 +20,7 @@ pub(super) fn connect_tcp_timeout(
     timeout: Duration,
 ) -> std::io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let socket2: socket2::Socket = socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        Ok(socket2.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    stream_with_settings(socket, &TcpSettings::default())
 }
 
 pub struct TcpConnection {

@@ -32,7 +32,10 @@ pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 /// Represents the ability of connecting via TCP or via Unix socket
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self>;
 
     // Performs a TCP TLS connection
     #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -41,6 +44,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self>;
 
     /// Performs a UNIX connection

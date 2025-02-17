@@ -1,6 +1,7 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::io::tcp::TcpSettings;
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
@@ -33,6 +34,7 @@ struct BuilderParams {
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
+    pub(crate) tcp_settings: TcpSettings,
 }
 
 #[derive(Clone)]
@@ -67,7 +69,7 @@ impl RetryParams {
         let clamped_wait = base_wait
             .min(self.max_wait_time)
             .max(self.min_wait_time + 1);
-        let jittered_wait = rand::thread_rng().gen_range(self.min_wait_time..clamped_wait);
+        let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
 }
@@ -89,6 +91,7 @@ pub(crate) struct ClusterParams {
     pub(crate) protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
+    pub(crate) tcp_settings: TcpSettings,
 }
 
 impl ClusterParams {
@@ -98,7 +101,7 @@ impl ClusterParams {
 
         #[cfg(feature = "tls-rustls")]
         let tls_params = {
-            let retrieved_tls_params = value.certs.clone().map(retrieve_tls_certificates);
+            let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
 
             retrieved_tls_params.transpose()?
         };
@@ -115,6 +118,7 @@ impl ClusterParams {
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
+            tcp_settings: value.tcp_settings,
         })
     }
 
@@ -400,6 +404,13 @@ impl ClusterClientBuilder {
     /// ```
     pub fn push_sender(mut self, push_sender: impl AsyncPushSender) -> ClusterClientBuilder {
         self.builder_params.async_push_sender = Some(Arc::new(push_sender));
+        self
+    }
+
+    /// Set the behavior of the underlying TCP connection.
+    #[cfg(feature = "cluster-async")]
+    pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
+        self.builder_params.tcp_settings = tcp_settings;
         self
     }
 }

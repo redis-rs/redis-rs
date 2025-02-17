@@ -66,6 +66,7 @@ pub(crate) enum CacheableCommand<'a> {
         commands: Vec<(usize, MultipleCachedCommandPart<'a>)>,
         response: Vec<Value>,
         client_side_expire: Instant,
+        tail_args: Vec<&'a [u8]>,
     },
 }
 
@@ -102,6 +103,7 @@ impl CacheableCommand<'_> {
                 commands,
                 response: mut cached_response,
                 client_side_expire,
+                tail_args: _,
             } => {
                 if let Some(Value::Array(mget_values)) = replies.next() {
                     for ((key_value, pttl_value), (key_index, cached_command)) in
@@ -144,11 +146,15 @@ impl CacheableCommand<'_> {
                 commands,
                 response: _response,
                 client_side_expire: _client_side_expire,
+                tail_args,
             } => {
                 let mut cmd = Cmd::new();
                 cmd.arg(command_name);
                 for command in commands {
                     cmd.arg(command.1.redis_key);
+                }
+                for tail_arg in tail_args {
+                    cmd.arg(tail_arg);
                 }
                 pipeline.add_command(cmd);
                 for command in commands {

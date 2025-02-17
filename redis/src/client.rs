@@ -2,6 +2,8 @@ use std::time::Duration;
 
 #[cfg(feature = "aio")]
 use crate::aio::AsyncPushSender;
+#[cfg(feature = "aio")]
+use crate::io::tcp::TcpSettings;
 use crate::{
     connection::{
         connect, connect_with_io, io, Connection, ConnectionInfo, ConnectionLike,
@@ -168,7 +170,7 @@ impl Client {
     ) -> RedisResult<Client> {
         let connection_info = conn_info.into_connection_info()?;
 
-        inner_build_with_tls(connection_info, tls_certs)
+        inner_build_with_tls(connection_info, &tls_certs)
     }
 }
 
@@ -183,6 +185,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<CacheConfig>,
+    pub(crate) tcp_settings: TcpSettings,
 }
 
 #[cfg(feature = "aio")]
@@ -247,6 +250,14 @@ impl AsyncConnectionConfig {
         self.cache_config = Some(cache_config);
         self
     }
+
+    /// Set the behavior of the underlying TCP connection.
+    pub fn set_tcp_settings(self, tcp_settings: crate::io::tcp::TcpSettings) -> Self {
+        Self {
+            tcp_settings,
+            ..self
+        }
+    }
 }
 
 /// To enable async support you need to chose one of the supported runtimes and active its
@@ -261,7 +272,9 @@ impl Client {
     )]
     #[allow(deprecated)]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        let con = self.get_simple_async_connection_dynamically().await?;
+        let con = self
+            .get_simple_async_connection_dynamically(&TcpSettings::default())
+            .await?;
 
         crate::aio::Connection::new(&self.connection_info.redis, con).await
     }
@@ -795,7 +808,9 @@ impl Client {
     where
         T: crate::aio::RedisRuntime,
     {
-        let con = self.get_simple_async_connection::<T>().await?;
+        let con = self
+            .get_simple_async_connection::<T>(&config.tcp_settings)
+            .await?;
         crate::aio::MultiplexedConnection::new_with_config(
             &self.connection_info.redis,
             con,
@@ -806,17 +821,18 @@ impl Client {
 
     async fn get_simple_async_connection_dynamically(
         &self,
+        tcp_settings: &TcpSettings,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
         match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>()
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(tcp_settings)
                     .await
             }
 
             #[cfg(feature = "async-std-comp")]
             Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>()
+                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>(tcp_settings)
                     .await
             }
         }
@@ -824,13 +840,16 @@ impl Client {
 
     async fn get_simple_async_connection<T>(
         &self,
+        tcp_settings: &TcpSettings,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
     where
         T: crate::aio::RedisRuntime,
     {
-        Ok(crate::aio::connect_simple::<T>(&self.connection_info)
-            .await?
-            .boxed())
+        Ok(
+            crate::aio::connect_simple::<T>(&self.connection_info, tcp_settings)
+                .await?
+                .boxed(),
+        )
     }
 
     #[cfg(feature = "connection-manager")]
@@ -842,7 +861,9 @@ impl Client {
     #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
-        let connection = self.get_simple_async_connection_dynamically().await?;
+        let connection = self
+            .get_simple_async_connection_dynamically(&TcpSettings::default())
+            .await?;
 
         crate::aio::PubSub::new(&self.connection_info.redis, connection).await
     }

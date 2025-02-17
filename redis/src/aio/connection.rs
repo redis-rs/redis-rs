@@ -9,6 +9,7 @@ use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
     Msg, RedisConnectionInfo,
 };
+use crate::io::tcp::TcpSettings;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
@@ -218,7 +219,7 @@ pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
-    let con = connect_simple::<C>(connection_info).await?;
+    let con = connect_simple::<C>(connection_info, &TcpSettings::default()).await?;
     Connection::new(&connection_info.redis, con).await
 }
 
@@ -333,7 +334,7 @@ where
         Self(con)
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
@@ -343,7 +344,7 @@ where
         cmd.query_async(&mut self.0).await
     }
 
-    /// Subscribes to a new channel with a pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     pub async fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PSUBSCRIBE");
         cmd.arg(pchannel);
@@ -363,7 +364,7 @@ where
         cmd.query_async(&mut self.0).await
     }
 
-    /// Unsubscribes from a channel with a pattern.
+    /// Unsubscribes from channel pattern(s).
     pub async fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(pchannel);
@@ -458,11 +459,12 @@ async fn get_socket_addrs(
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
+    tcp_settings: &TcpSettings,
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = get_socket_addrs(host, port).await?;
-            select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr))))
+            select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr, tcp_settings))))
                 .await?
                 .0
         }
@@ -481,6 +483,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
                     socket_addr,
                     insecure,
                     tls_params,
+                    tcp_settings,
                 ))
             }))
             .await?

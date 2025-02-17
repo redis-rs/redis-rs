@@ -32,6 +32,12 @@
 //! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
 //! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
 //!
+//! # TCP settings
+//!
+//! The user can set parameters of the underlying TCP connection by using the `tcp_nodelay` and `keep-alive` features.
+//! Alternatively, users of async connections can set [crate::io::tcp::TcpSettings] on the connection configuration objects,
+//! and set the TCP parameters in a more specific manner there.
+//!
 //! ## Connection Handling
 //!
 //! For connecting to redis you can use a client object which then can produce
@@ -325,8 +331,7 @@
 //! let client = redis::Client::open("redis://127.0.0.1/")?;
 //! let mut con = client.get_connection()?;
 //! let mut pubsub = con.as_pubsub();
-//! pubsub.subscribe("channel_1")?;
-//! pubsub.subscribe("channel_2")?;
+//! pubsub.subscribe(&["channel_1", "channel_2"])?;
 //!
 //! loop {
 //!     let msg = pubsub.get_message()?;
@@ -369,8 +374,7 @@
 //! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 //! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
 //! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
-//! con.subscribe("channel_1").await?;
-//! con.subscribe("channel_2").await?;
+//! con.subscribe(&["channel_1", "channel_2"]).await?;
 //!
 //! loop {
 //!   println!("Received {:?}", rx.recv().await.unwrap());
@@ -657,6 +661,8 @@ mod client;
 mod cmd;
 mod commands;
 mod connection;
+/// Module for defining I/O behavior.
+pub mod io;
 mod parser;
 mod script;
 mod types;

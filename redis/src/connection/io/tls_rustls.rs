@@ -94,7 +94,7 @@ pub struct TlsCertificates {
 
 pub(crate) fn inner_build_with_tls(
     mut connection_info: ConnectionInfo,
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<Client> {
     let tls_params = retrieve_tls_certificates(certificates)?;
 
@@ -122,7 +122,7 @@ pub(crate) fn inner_build_with_tls(
 }
 
 pub(crate) fn retrieve_tls_certificates(
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<TlsConnParams> {
     let TlsCertificates {
         client_tls,
@@ -134,7 +134,7 @@ pub(crate) fn retrieve_tls_certificates(
         client_key,
     }) = client_tls
     {
-        let client_cert_chain = CertificateDer::pem_slice_iter(&client_cert)
+        let client_cert_chain = CertificateDer::pem_slice_iter(client_cert)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| {
                 std::io::Error::new(
@@ -143,7 +143,7 @@ pub(crate) fn retrieve_tls_certificates(
                 )
             })?;
 
-        let client_key = PrivateKeyDer::from_pem_slice(&client_key).map_err(|err| {
+        let client_key = PrivateKeyDer::from_pem_slice(client_key).map_err(|err| {
             std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Unable to extract private key from PEM file: {err}"),
@@ -160,7 +160,7 @@ pub(crate) fn retrieve_tls_certificates(
 
     let root_cert_store = if let Some(root_cert) = root_cert {
         let mut root_cert_store = RootCertStore::empty();
-        for result in CertificateDer::pem_slice_iter(&root_cert) {
+        for result in CertificateDer::pem_slice_iter(root_cert) {
             let cert = result.map_err(|err| {
                 std::io::Error::new(
                     std::io::ErrorKind::Other,

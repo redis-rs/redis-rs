@@ -35,7 +35,7 @@
 //!     let client = ClusterClient::new(nodes).unwrap();
 //!     let mut connection = client.get_async_connection().await.unwrap();
 //!     let key = "test";
-//!     
+//!
 //!     redis::pipe()
 //!         .rpush(key, "123").ignore()
 //!         .ltrim(key, -10, -1).ignore()
@@ -127,7 +127,7 @@ use futures_util::{
     stream::{self, Stream, StreamExt},
 };
 use log::{trace, warn};
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -242,14 +242,14 @@ where
             })
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::Subcribe], later after the subscription completed.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -258,7 +258,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -269,14 +269,14 @@ where
         Ok(())
     }
 
-    /// Subscribes to a new channel pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::PSubcribe], later after the subscription completed.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -285,7 +285,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
@@ -296,10 +296,10 @@ where
         Ok(())
     }
 
-    /// Subscribes to a new sharded channel.
+    /// Subscribes to a new sharded channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
@@ -312,7 +312,7 @@ where
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from sharded channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn sunsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -437,35 +437,52 @@ where
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
-        let connections = stream::iter(initial_nodes.iter().cloned())
+        let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(|info| {
                 let params = params.clone();
                 async move {
                     let addr = info.addr.to_string();
                     let result = connect_and_check(&addr, params).await;
                     match result {
-                        Ok(conn) => Some((addr, async { conn }.boxed().shared())),
+                        Ok(conn) => Ok((addr, async { conn }.boxed().shared())),
                         Err(e) => {
                             trace!("Failed to connect to initial node: {:?}", e);
-                            None
+                            Err(e)
                         }
                     }
                 }
             })
             .buffer_unordered(initial_nodes.len())
             .fold(
-                HashMap::with_capacity(initial_nodes.len()),
-                |mut connections: ConnectionMap<C>, conn| async move {
-                    connections.extend(conn);
-                    connections
+                (ConnectionMap::<C>::with_capacity(initial_nodes.len()), None),
+                |(mut connections, mut error), result| async move {
+                    match result {
+                        Ok((addr, conn)) => {
+                            connections.insert(addr, conn);
+                        }
+                        Err(err) => {
+                            // Store at least one error to use as detail in the connection error if
+                            // all connections fail.
+                            error = Some(err);
+                        }
+                    }
+                    (connections, error)
                 },
             )
             .await;
         if connections.is_empty() {
-            return Err(RedisError::from((
-                ErrorKind::IoError,
-                "Failed to create initial connections",
-            )));
+            if let Some(err) = error {
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Failed to create initial connections",
+                    err.to_string(),
+                )));
+            } else {
+                return Err(RedisError::from((
+                    ErrorKind::IoError,
+                    "Failed to create initial connections",
+                )));
+            }
         }
         Ok(connections)
     }
@@ -1333,10 +1350,12 @@ where
     let connection_timeout = params.connection_timeout;
     let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
+    let tcp_settings = params.tcp_settings.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
-        .set_response_timeout(response_timeout);
+        .set_response_timeout(response_timeout)
+        .set_tcp_settings(tcp_settings);
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }
@@ -1367,12 +1386,9 @@ fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, C
 where
     C: Clone,
 {
-    connections
-        .keys()
-        .choose(&mut thread_rng())
-        .and_then(|addr| {
-            connections
-                .get(addr)
-                .map(|conn| (addr.clone(), conn.clone()))
-        })
+    connections.keys().choose(&mut rng()).and_then(|addr| {
+        connections
+            .get(addr)
+            .map(|conn| (addr.clone(), conn.clone()))
+    })
 }

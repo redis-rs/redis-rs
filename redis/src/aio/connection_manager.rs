@@ -36,6 +36,7 @@ pub struct ConnectionManagerConfig {
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
+    tcp_settings: crate::io::tcp::TcpSettings,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -49,6 +50,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             connection_timeout,
             push_sender,
             resubscribe_automatically,
+            tcp_settings,
         } = &self;
         f.debug_struct("ConnectionManagerConfig")
             .field("exponent_base", &exponent_base)
@@ -66,6 +68,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
                     &"not set"
                 },
             )
+            .field("tcp_settings", &tcp_settings)
             .finish()
     }
 }
@@ -165,6 +168,14 @@ impl ConnectionManagerConfig {
         self.resubscribe_automatically = true;
         self
     }
+
+    /// Set the behavior of the underlying TCP connection.
+    pub fn set_tcp_settings(self, tcp_settings: crate::io::tcp::TcpSettings) -> Self {
+        Self {
+            tcp_settings,
+            ..self
+        }
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -173,11 +184,12 @@ impl Default for ConnectionManagerConfig {
             exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
             factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
             number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
-            max_delay: None,
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+            max_delay: None,
             push_sender: None,
             resubscribe_automatically: false,
+            tcp_settings: Default::default(),
         }
     }
 }
@@ -359,6 +371,7 @@ impl ConnectionManager {
         if let Some(response_timeout) = config.response_timeout {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
+        connection_config = connection_config.set_tcp_settings(config.tcp_settings);
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
         let _task_handle = HandleContainer::new(
@@ -546,10 +559,10 @@ impl ConnectionManager {
         guard.update_with_request(action, args.to_redis_args().into_iter());
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -565,7 +578,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -578,10 +591,10 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -596,7 +609,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {

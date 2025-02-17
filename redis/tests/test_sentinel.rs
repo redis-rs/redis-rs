@@ -3,12 +3,12 @@ mod support;
 
 use std::collections::HashMap;
 
+use crate::support::*;
+use redis::sentinel::SentinelClientBuilder;
 use redis::{
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
     Client, Connection, ConnectionAddr, ConnectionInfo, Role,
 };
-
-use crate::support::*;
 
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
     let info_map: std::collections::HashMap<&str, &str> = value
@@ -224,6 +224,81 @@ fn test_sentinel_client() {
         redis::sentinel::SentinelServerType::Replica,
     )
     .unwrap();
+
+    let mut master_con = master_client.get_connection().unwrap();
+    let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
+    assert!(matches!(role, Role::Primary { .. }));
+
+    assert_is_connection_to_master(&mut master_con);
+
+    let node_conn_info = context.sentinel_node_connection_info();
+    let sentinel = context.sentinel_mut();
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+
+    for _ in 0..20 {
+        let mut replica_con = replica_client.get_connection().unwrap();
+        let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
+        assert!(matches!(role, Role::Replica { .. }));
+
+        assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
+    }
+}
+
+#[test]
+fn test_sentinel_client_builder() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 3, 3);
+    for sentinel in context.sentinels_connection_info() {
+        let mut conn = Client::open(sentinel.clone())
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
+        assert!(matches!(role, Role::Sentinel { .. }));
+    }
+
+    let mut master_client_builder = SentinelClientBuilder::new(
+        context
+            .sentinels_connection_info
+            .iter()
+            .map(|sentinel| sentinel.addr.clone()),
+        String::from(master_name),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap();
+
+    let mut replica_client_builder = SentinelClientBuilder::new(
+        context
+            .sentinels_connection_info
+            .iter()
+            .map(|sentinel| sentinel.addr.clone()),
+        String::from(master_name),
+        redis::sentinel::SentinelServerType::Replica,
+    )
+    .unwrap();
+
+    if let Some(username) = &context.sentinels_connection_info[0].redis.username.clone() {
+        master_client_builder =
+            master_client_builder.set_client_to_sentinel_username(username.clone());
+    }
+
+    if let Some(password) = &context.sentinels_connection_info[0].redis.password {
+        master_client_builder =
+            master_client_builder.set_client_to_sentinel_password(password.clone());
+    }
+
+    master_client_builder = master_client_builder
+        .set_client_to_sentinel_protocol(context.sentinels_connection_info[0].redis.protocol);
+
+    if let Some(tls_mode) = context.tls_mode() {
+        master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);
+        replica_client_builder = replica_client_builder.set_client_to_redis_tls_mode(tls_mode);
+    }
+
+    let mut master_client = master_client_builder.build().unwrap();
+    let mut replica_client = replica_client_builder.build().unwrap();
 
     let mut master_con = master_client.get_connection().unwrap();
     let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
