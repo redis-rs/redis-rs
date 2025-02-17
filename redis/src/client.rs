@@ -60,14 +60,6 @@ impl Client {
         connect(&self.connection_info, None)
     }
 
-    /// Same as [`Self::get_connection`] but with a custom IO Driver.
-    pub fn get_connection_with_io<IO: io::ConnectionDriver>(
-        &self,
-        driver: IO,
-    ) -> RedisResult<GenericConnection<IO>> {
-        connect_with_io(driver, &self.connection_info, None)
-    }
-
     /// Instructs the client to actually connect to redis with specified
     /// timeout and returns a connection object.  The connection object
     /// can be used to send commands to the server.  This can fail with

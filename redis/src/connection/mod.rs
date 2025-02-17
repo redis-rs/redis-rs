@@ -729,7 +729,8 @@ impl<IO: io::ConnectionDriver> GenericConnection<IO> {
     fn close_connection(&mut self) {
         // Notify the PushManager that the connection was lost
         self.send_disconnect();
-        self.con.close_connection();
+        // NOTE: In original implementation this used to call `self.con.close_connection()`
+        // now this happens in Drop
     }
 
     /// Fetches a single message from the connection. If the message is a response,

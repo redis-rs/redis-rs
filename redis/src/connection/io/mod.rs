@@ -49,9 +49,6 @@ pub trait ConnectionDriver: Sized {
 
     /// Reports if the connection driver is open.
     fn is_open(&self) -> bool;
-
-    /// Closes the connection driver.
-    fn close_connection(&mut self);
 }
 
 pub enum ActualConnection {
@@ -250,8 +247,10 @@ impl ConnectionDriver for ActualConnection {
             ActualConnection::Unix(UnixConnection { open, .. }) => open,
         }
     }
+}
 
-    fn close_connection(&mut self) {
+impl Drop for ActualConnection {
+    fn drop(&mut self) {
         match self {
             ActualConnection::Tcp(ref mut connection) => {
                 let _ = connection.reader.shutdown(net::Shutdown::Both);

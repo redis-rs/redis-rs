@@ -3,11 +3,6 @@ use crate::sentinel::LockedSentinelClient;
 use crate::types::closed_connection_error;
 use crate::{ConnectionLike, RedisError};
 
-// NOTE: GenericConnection and generic friends
-// are NOT supported here,
-// as there's no easy way to do so with the current
-// non-breaking change approach in mind
-
 macro_rules! impl_manage_connection {
     ($client:ty, $connection:ty) => {
         impl r2d2::ManageConnection for $client {

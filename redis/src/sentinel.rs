@@ -117,17 +117,15 @@ use crate::aio::MultiplexedConnection as AsyncConnection;
 use crate::client::AsyncConnectionConfig;
 
 use crate::{
-    connection::{ActualConnection, ConnectionInfo},
-    types::RedisResult,
-    Client, Cmd, Connection, ConnectionDriver, ErrorKind, FromRedisValue, GenericConnection,
-    IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
+    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ErrorKind,
+    FromRedisValue, IntoConnectionInfo, RedisConnectionInfo, TlsMode, Value,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
-pub struct Sentinel<IO = ActualConnection> {
+pub struct Sentinel {
     sentinels_connection_info: Vec<ConnectionInfo>,
-    connections_cache: Vec<Option<GenericConnection<IO>>>,
+    connections_cache: Vec<Option<Connection>>,
     #[cfg(feature = "aio")]
     async_connections_cache: Vec<Option<AsyncConnection>>,
     replica_start_index: usize,
@@ -401,21 +399,21 @@ async fn async_try_single_sentinel<T: FromRedisValue>(
     }
 }
 
-fn reconnect<IO: ConnectionDriver>(
-    connection: &mut Option<GenericConnection<IO>>,
+fn reconnect(
+    connection: &mut Option<Connection>,
     connection_info: &ConnectionInfo,
 ) -> RedisResult<()> {
     let sentinel_client = Client::open(connection_info.clone())?;
-    let io = IO::establish_conn(&connection_info.addr, None)?;
-    let new_connection = sentinel_client.get_connection_with_io(io)?;
+    let new_connection = sentinel_client.get_connection()?;
+
     connection.replace(new_connection);
     Ok(())
 }
 
-fn try_single_sentinel<T: FromRedisValue, IO: ConnectionDriver>(
+fn try_single_sentinel<T: FromRedisValue>(
     cmd: Cmd,
     connection_info: &ConnectionInfo,
-    cached_connection: &mut Option<GenericConnection<IO>>,
+    cached_connection: &mut Option<Connection>,
 ) -> RedisResult<T> {
     if cached_connection.is_none() {
         reconnect(cached_connection, connection_info)?;
@@ -766,15 +764,6 @@ impl SentinelClient {
     pub fn get_connection(&mut self) -> RedisResult<Connection> {
         let client = self.get_client()?;
         client.get_connection()
-    }
-
-    /// Same as [`Self::get_connection`] but with your own IO driver.
-    pub fn get_connection_with_io<IO: ConnectionDriver>(
-        &mut self,
-        driver: IO,
-    ) -> RedisResult<GenericConnection<IO>> {
-        let client = self.get_client()?;
-        client.get_connection_with_io(driver)
     }
 }
 
