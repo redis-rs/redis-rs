@@ -135,6 +135,8 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 struct ClientSideState {
     protocol: ProtocolVersion,
     _task_handle: HandleContainer,
+    response_timeout: Duration,
+    runtime: Runtime,
 }
 
 /// This represents an async Redis Cluster connection.
@@ -156,6 +158,8 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let protocol = cluster_params.protocol.unwrap_or_default();
+        let response_timeout = cluster_params.response_timeout;
+        let runtime = Runtime::locate();
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
@@ -166,13 +170,15 @@ where
                         .forward(inner)
                         .await;
                 };
-                let _task_handle = HandleContainer::new(Runtime::locate().spawn(stream));
+                let _task_handle = HandleContainer::new(runtime.spawn(stream));
 
                 ClusterConnection {
                     sender,
                     state: Arc::new(ClientSideState {
                         protocol,
                         _task_handle,
+                        response_timeout,
+                        runtime,
                     }),
                 }
             })
@@ -197,18 +203,23 @@ where
                     "redis_cluster: Unable to send command",
                 ))
             })?;
-        receiver
-            .await
-            .unwrap_or_else(|_| {
-                Err(RedisError::from(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "redis_cluster: Unable to receive command",
-                )))
+        self.state
+            .runtime
+            .timeout(self.state.response_timeout, async move {
+                receiver
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(RedisError::from(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "redis_cluster: Unable to receive command",
+                        )))
+                    })
+                    .map(|response| match response {
+                        Response::Single(value) => value,
+                        Response::Multiple(_) => unreachable!(),
+                    })
             })
-            .map(|response| match response {
-                Response::Single(value) => value,
-                Response::Multiple(_) => unreachable!(),
-            })
+            .await?
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be sent to a random node.
@@ -233,13 +244,18 @@ where
             .await
             .map_err(|_| closed_connection_error())?;
 
-        receiver
-            .await
-            .unwrap_or_else(|_| Err(closed_connection_error()))
-            .map(|response| match response {
-                Response::Multiple(values) => values,
-                Response::Single(_) => unreachable!(),
+        self.state
+            .runtime
+            .timeout(self.state.response_timeout, async move {
+                receiver
+                    .await
+                    .unwrap_or_else(|_| Err(closed_connection_error()))
+                    .map(|response| match response {
+                        Response::Multiple(values) => values,
+                        Response::Single(_) => unreachable!(),
+                    })
             })
+            .await?
     }
 
     /// Subscribes to a new channel(s).    
@@ -1311,13 +1327,11 @@ where
 {
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout;
-    let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
     let tcp_settings = params.tcp_settings.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
-        .set_response_timeout(response_timeout)
         .set_tcp_settings(tcp_settings);
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
