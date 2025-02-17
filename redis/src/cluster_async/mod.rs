@@ -126,7 +126,7 @@ use futures_util::{
     ready,
     stream::{self, Stream, StreamExt},
 };
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
@@ -446,7 +446,7 @@ where
                     match result {
                         Ok(conn) => Ok((addr, async { conn }.boxed().shared())),
                         Err(e) => {
-                            trace!("Failed to connect to initial node: {:?}", e);
+                            debug!("Failed to connect to initial node: {:?}", e);
                             Err(e)
                         }
                     }
@@ -515,6 +515,7 @@ where
     }
 
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
+        debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
             let connection_map =
@@ -1359,7 +1360,13 @@ where
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }
-    let mut conn: C = C::connect_with_config(info, config).await?;
+    let mut conn = match C::connect_with_config(info, config).await {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!("Failed to connect to node: {:?}, due to: {:?}", node, err);
+            return Err(err);
+        }
+    };
 
     let check = if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
