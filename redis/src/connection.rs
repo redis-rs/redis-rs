@@ -176,9 +176,14 @@ impl ConnectionAddr {
 
     /// Configure this address to connect without checking certificate hostnames.
     ///
-    /// This is slightly less insecure than full `insecure` mode.
+    /// # Warning
+    ///
+    /// You should think very carefully before you use this method. If hostname
+    /// verification is not used, any valid certificate for any site will be
+    /// trusted for use from any other. This introduces a significant
+    /// vulnerability to man-in-the-middle attacks.
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-    pub fn set_insecure_accept_invalid_hostnames(&mut self, insecure: bool) {
+    pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let ConnectionAddr::TcpTls { tls_params, .. } = self {
             if let Some(ref mut params) = tls_params {
                 params.danger_accept_invalid_hostnames = insecure;
