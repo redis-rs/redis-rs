@@ -1156,5 +1156,41 @@ mod cluster {
                 }
             }
         }
+
+        #[cfg(feature = "tls-rustls-insecure")]
+        #[test]
+        fn test_danger_accept_invalid_hostnames() {
+            use crate::support::mtls_test::create_cluster_client_builder_from_cluster;
+
+            let cluster = TestClusterContext::new_with_mtls_no_ip_alts();
+
+            // We should not be able to connect without disabling hostname checking.
+            let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
+            let connection = client.get_connection();
+            match cluster.cluster.servers.first().unwrap().connection_info() {
+                ConnectionInfo {
+                    addr: redis::ConnectionAddr::TcpTls { .. },
+                    ..
+                } => {
+                    if connection.is_ok() {
+                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                    }
+                }
+                _ => {
+                    if let Err(e) = connection {
+                        panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                    }
+                    // With no server support for TLS, don't bother with the rest of the test.
+                    return;
+                }
+            }
+
+            let client = create_cluster_client_builder_from_cluster(&cluster, false)
+                .danger_accept_invalid_hostnames(true)
+                .build()
+                .unwrap();
+            let connection = client.get_connection();
+            assert!(connection.is_ok());
+        }
     }
 }

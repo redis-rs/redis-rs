@@ -13,6 +13,10 @@ pub struct TlsFilePaths {
 }
 
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
+    build_keys_and_certs_for_tls_ext(tempdir, true)
+}
+
+pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -> TlsFilePaths {
     // Based on shell script in redis's server tests
     // https://github.com/redis/redis/blob/8c291b97b95f2e011977b522acf77ead23e26f55/utils/gen-test-certs.sh
     let ca_crt = tempdir.path().join("ca.crt");
@@ -65,14 +69,14 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
         .expect("failed to create CA cert");
 
     // Build x509v3 extensions file
-    fs::write(
-        &ext_file,
-        b"keyUsage = digitalSignature, keyEncipherment\n\
-    subjectAltName = @alt_names\n\
-    [alt_names]\n\
-    IP.1 = 127.0.0.1\n",
-    )
-    .expect("failed to create x509v3 extensions file");
+    let mut ext = "keyUsage = digitalSignature, keyEncipherment\n\
+                    subjectAltName = @alt_names\n"
+        .to_string();
+    if with_ip_alts {
+        ext += "[alt_names]\n";
+        ext += "IP.1 = 127.0.0.1\n";
+    }
+    fs::write(&ext_file, ext).expect("failed to create x509v3 extensions file");
 
     // Read redis key
     let mut key_cmd = process::Command::new("openssl")
