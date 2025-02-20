@@ -11,6 +11,7 @@ pub struct RedisClusterConfiguration {
     pub num_nodes: u16,
     pub num_replicas: u16,
     pub modules: Vec<Module>,
+    pub tls_insecure: bool,
     pub mtls_enabled: bool,
     pub ports: Vec<u16>,
 }
@@ -31,19 +32,21 @@ impl Default for RedisClusterConfiguration {
             num_nodes: 3,
             num_replicas: 0,
             modules: vec![],
+            tls_insecure: true,
             mtls_enabled: false,
             ports: vec![],
         }
     }
 }
 
-enum ClusterType {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClusterType {
     Tcp,
     TcpTls,
 }
 
 impl ClusterType {
-    fn get_intended() -> ClusterType {
+    pub fn get_intended() -> ClusterType {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
@@ -103,6 +106,7 @@ impl RedisCluster {
             num_nodes: nodes,
             num_replicas: replicas,
             modules,
+            tls_insecure,
             mtls_enabled,
             ports,
         } = configuration;
@@ -265,6 +269,9 @@ impl RedisCluster {
                     cmd.arg(ca_crt);
                     cmd.arg("--tls");
                 }
+            } else if !tls_insecure && tls_paths.is_some() {
+                let ca_crt = &tls_paths.as_ref().unwrap().ca_crt;
+                cmd.arg("--tls").arg("--cacert").arg(ca_crt);
             } else {
                 cmd.arg("--tls").arg("--insecure");
             }
