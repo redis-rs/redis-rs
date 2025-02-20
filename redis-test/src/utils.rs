@@ -47,7 +47,7 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
     make_key(&redis_key, 2048);
 
     // Build CA Cert
-    process::Command::new("openssl")
+    let status = process::Command::new("openssl")
         .arg("req")
         .arg("-x509")
         .arg("-new")
@@ -67,15 +67,38 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
         .expect("failed to spawn openssl")
         .wait()
         .expect("failed to create CA cert");
+    assert!(
+        status.success(),
+        "`openssl req` failed to create CA cert: {status}"
+    );
 
     // Build x509v3 extensions file
-    let mut ext = "keyUsage = digitalSignature, keyEncipherment\n\
-                    subjectAltName = @alt_names\n"
-        .to_string();
-    if with_ip_alts {
-        ext += "[alt_names]\n";
-        ext += "IP.1 = 127.0.0.1\n";
-    }
+    let ext = if with_ip_alts {
+        "\
+            keyUsage = digitalSignature, keyEncipherment\n\
+            subjectAltName = @alt_names\n\
+            [alt_names]\n\
+            IP.1 = 127.0.0.1\n\
+            "
+    } else {
+        "\
+            [req]\n\
+            distinguished_name = req_distinguished_name\n\
+            x509_extensions = v3_req\n\
+            prompt = no\n\
+            \n\
+            [req_distinguished_name]\n\
+            CN = localhost.example.com\n\
+            \n\
+            [v3_req]\n\
+            basicConstraints = CA:FALSE\n\
+            keyUsage = nonRepudiation, digitalSignature, keyEncipherment\n\
+            subjectAltName = @alt_names\n\
+            \n\
+            [alt_names]\n\
+            DNS.1 = localhost.example.com\n\
+            "
+    };
     fs::write(&ext_file, ext).expect("failed to create x509v3 extensions file");
 
     // Read redis key
@@ -93,7 +116,8 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
         .expect("failed to spawn openssl");
 
     // build redis cert
-    process::Command::new("openssl")
+    let mut command2 = process::Command::new("openssl");
+    command2
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
@@ -107,18 +131,28 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
         .arg("-days")
         .arg("365")
         .arg("-extfile")
-        .arg(&ext_file)
+        .arg(&ext_file);
+    if !with_ip_alts {
+        command2.arg("-extensions").arg("v3_req");
+    }
+    let status2 = command2
         .arg("-out")
         .arg(&redis_crt)
         .stdin(key_cmd.stdout.take().expect("should have stdout"))
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
         .spawn()
         .expect("failed to spawn openssl")
         .wait()
         .expect("failed to create redis cert");
 
-    key_cmd.wait().expect("failed to create redis key");
+    let status = key_cmd.wait().expect("failed to create redis key");
+    assert!(
+        status.success(),
+        "`openssl req` failed to create request for Redis cert: {status}"
+    );
+    assert!(
+        status2.success(),
+        "`openssl x509` failed to create Redis cert: {status2}"
+    );
 
     TlsFilePaths {
         redis_crt,

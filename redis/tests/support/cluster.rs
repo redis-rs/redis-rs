@@ -47,10 +47,10 @@ impl TestClusterContext {
         )
     }
 
-    pub fn new_with_mtls_no_ip_alts() -> TestClusterContext {
+    pub fn new_without_ip_alts() -> TestClusterContext {
         Self::new_with_config_and_builder(
             RedisClusterConfiguration {
-                mtls_enabled: true,
+                tls_insecure: false,
                 certs_with_ip_alts: false,
                 ..Default::default()
             },
