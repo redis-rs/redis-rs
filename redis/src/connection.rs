@@ -994,6 +994,9 @@ pub(crate) fn create_rustls_config(
             config_builder.with_no_client_auth()
         };
 
+        // The cfg here matches the cfg on `danger_accept_invalid_hostnames`.
+        // This way adding `tls-rustls` on top of `tls-native-tls` does not
+        // remove the field or cause it to be silently ignored.
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
         let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
             if !cfg!(feature = "tls-rustls-insecure") {
