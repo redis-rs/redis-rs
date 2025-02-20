@@ -38,6 +38,22 @@ mod cluster_async {
         ))
     }
 
+    async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike) {
+        cmd("SET")
+            .arg("test")
+            .arg("test_data")
+            .exec_async(&mut connection)
+            .await
+            .expect("SET command should succeed");
+        let res: String = cmd("GET")
+            .arg("test")
+            .clone()
+            .query_async(&mut connection)
+            .await
+            .expect("GET command should succeed");
+        assert_eq!(res, "test_data");
+    }
+
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
@@ -46,18 +62,8 @@ mod cluster_async {
 
         block_on_all(
             async move {
-                let mut connection = cluster.async_connection().await;
-                cmd("SET")
-                    .arg("test")
-                    .arg("test_data")
-                    .exec_async(&mut connection)
-                    .await?;
-                let res: String = cmd("GET")
-                    .arg("test")
-                    .clone()
-                    .query_async(&mut connection)
-                    .await?;
-                assert_eq!(res, "test_data");
+                let connection = cluster.async_connection().await;
+                smoke_test_connection(connection).await;
                 Ok::<_, RedisError>(())
             },
             runtime,
@@ -372,6 +378,66 @@ mod cluster_async {
             runtime,
         )
         .unwrap()
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_async_cluster_default_reject_invalid_hostnames(#[case] runtime: RuntimeType) {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // Only TLS causes invalid certificates to be rejected as desired.
+            return;
+        }
+
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            tls_insecure: false,
+            certs_with_ip_alts: false,
+            ..Default::default()
+        });
+
+        block_on_all(
+            async move {
+                assert!(cluster.client.get_async_connection().await.is_err());
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "tls-rustls-insecure")]
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_async_cluster_danger_accept_invalid_hostnames(#[case] runtime: RuntimeType) {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // No point testing this TLS-specific mode in non-TLS configurations.
+            return;
+        }
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                tls_insecure: false,
+                certs_with_ip_alts: false,
+                ..Default::default()
+            },
+            |builder| builder.danger_accept_invalid_hostnames(true),
+        );
+
+        block_on_all(
+            async move {
+                let connection = cluster.async_connection().await;
+                smoke_test_connection(connection).await;
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
     }
 
     #[rstest]

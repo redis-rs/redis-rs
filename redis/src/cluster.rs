@@ -90,10 +90,6 @@ use rand::{rng, seq::IteratorRandom, Rng};
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 #[derive(Clone)]

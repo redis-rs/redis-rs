@@ -4,6 +4,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::RootCertStore;
 
+use crate::connection::TlsConnParams;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
@@ -119,6 +120,8 @@ pub(crate) fn retrieve_tls_certificates(
     Ok(TlsConnParams {
         client_tls_params,
         root_cert_store,
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        danger_accept_invalid_hostnames: false,
     })
 }
 
@@ -142,10 +145,4 @@ impl Clone for ClientTlsParams {
             },
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct TlsConnParams {
-    pub(crate) client_tls_params: Option<ClientTlsParams>,
-    pub(crate) root_cert_store: Option<RootCertStore>,
 }

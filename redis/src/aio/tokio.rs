@@ -25,10 +25,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
-#[cfg(feature = "tokio-rustls-comp")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tls-rustls")))]
+#[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(unix)]
@@ -124,7 +121,7 @@ impl RedisRuntime for Tokio {
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        _: &Option<TlsConnParams>,
+        params: &Option<TlsConnParams>,
         tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
@@ -132,6 +129,10 @@ impl RedisRuntime for Tokio {
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
                 .use_sni(false)
+                .build()?
+        } else if let Some(params) = params {
+            TlsConnector::builder()
+                .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
                 .build()?
         } else {
             TlsConnector::new()?
