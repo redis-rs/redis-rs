@@ -10,7 +10,7 @@ mod cluster {
 
     use crate::support::*;
     use redis::{
-        cluster::{cluster_pipe, ClusterClient},
+        cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
         Value,
@@ -20,11 +20,7 @@ mod cluster {
         server::use_protocol,
     };
 
-    #[test]
-    fn test_cluster_basics() {
-        let cluster = TestClusterContext::new();
-        let mut con = cluster.connection();
-
+    fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
@@ -41,6 +37,12 @@ mod cluster {
                 .query(&mut con),
             Ok(("foo".to_string(), b"bar".to_vec()))
         );
+    }
+
+    #[test]
+    fn test_cluster_basics() {
+        let cluster = TestClusterContext::new();
+        smoke_test_connection(cluster.connection());
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -79,10 +81,8 @@ mod cluster {
             },
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
-        cluster
-            .client
-            .get_connection()
-            .expect("connection should succeed in danger mode");
+
+        smoke_test_connection(cluster.connection());
     }
 
     #[test]
@@ -94,24 +94,7 @@ mod cluster {
         });
         cluster.disable_default_user();
 
-        let mut con = cluster.connection();
-
-        redis::cmd("SET")
-            .arg("{x}key1")
-            .arg(b"foo")
-            .exec(&mut con)
-            .unwrap();
-        redis::cmd("SET")
-            .arg(&["{x}key2", "bar"])
-            .exec(&mut con)
-            .unwrap();
-
-        assert_eq!(
-            redis::cmd("MGET")
-                .arg(&["{x}key1", "{x}key2"])
-                .query(&mut con),
-            Ok(("foo".to_string(), b"bar".to_vec()))
-        );
+        smoke_test_connection(cluster.connection());
     }
 
     #[test]
