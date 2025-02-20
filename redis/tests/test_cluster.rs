@@ -43,33 +43,41 @@ mod cluster {
         );
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_default_reject_invalid_hostnames() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // Only TLS causes invalid certificates to be rejected as desired.
+            return;
+        }
+
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            tls_insecure: false,
+            certs_with_ip_alts: false,
+            ..Default::default()
+        });
+        assert!(cluster.client.get_connection().is_err());
+    }
+
+    #[cfg(feature = "tls-rustls-insecure")]
+    #[test]
+    fn test_danger_accept_invalid_hostnames() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // No point testing this TLS-specific mode in non-TLS configurations.
+            return;
+        }
+
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration {
                 tls_insecure: false,
                 certs_with_ip_alts: false,
                 ..Default::default()
             },
-            |builder| builder.tls(redis::TlsMode::Secure),
-        );
-        assert!(cluster.client.get_connection().is_err());
-    }
-
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-    #[test]
-    fn test_danger_accept_invalid_hostnames() {
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
-            |builder| {
-                builder
-                    .tls(redis::TlsMode::Secure)
-                    .danger_accept_invalid_hostnames(true)
-            },
+            |builder| builder.danger_accept_invalid_hostnames(true),
         );
         cluster
             .client
