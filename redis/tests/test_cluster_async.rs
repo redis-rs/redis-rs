@@ -1839,7 +1839,7 @@ mod cluster_async {
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     fn test_async_cluster_with_username_and_password(#[case] runtime: RuntimeType) {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+        let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder
                 .username(RedisCluster::username().to_string())
                 .password(RedisCluster::password().to_string())
@@ -2016,8 +2016,9 @@ mod cluster_async {
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     fn test_async_cluster_reconnect_after_complete_server_disconnect(#[case] runtime: RuntimeType) {
-        let cluster =
-            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
+        let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
+            builder.retries(2)
+        });
 
         block_on_all(
             async move {
@@ -2070,8 +2071,9 @@ mod cluster_async {
     fn test_async_cluster_reconnect_after_complete_server_disconnect_route_to_many(
         #[case] runtime: RuntimeType,
     ) {
-        let cluster =
-            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+        let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
+            builder.retries(3)
+        });
 
         block_on_all(
             async move {
@@ -2787,7 +2789,7 @@ mod cluster_async {
             // doesn't send disconnect message, but instead resubscribes automatically.
 
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
                 builder
                     .use_protocol(ProtocolVersion::RESP3)
                     .push_sender(tx.clone())

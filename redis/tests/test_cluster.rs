@@ -1023,8 +1023,9 @@ mod cluster {
 
     #[test]
     fn test_cluster_reconnect_after_complete_server_disconnect() {
-        let cluster =
-            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+        let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
+            builder.retries(3)
+        });
 
         let ports: Vec<_> = cluster
             .nodes
@@ -1064,8 +1065,9 @@ mod cluster {
 
     #[test]
     fn test_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
-        let cluster =
-            TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
+        let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
+            builder.retries(3)
+        });
 
         let ports: Vec<_> = cluster
             .nodes
