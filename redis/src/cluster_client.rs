@@ -39,7 +39,7 @@ struct BuilderParams {
     pub(crate) tcp_settings: TcpSettings,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct RetryParams {
     pub(crate) number_of_retries: u32,
     max_wait_time: u64,

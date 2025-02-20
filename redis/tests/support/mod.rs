@@ -466,10 +466,7 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
 #[cfg(feature = "tls-rustls")]
 pub(crate) mod mtls_test {
     use super::*;
-    use redis::{
-        cluster::{ClusterClient, ClusterClientBuilder},
-        ConnectionInfo, RedisError,
-    };
+    use redis::{cluster::ClusterClient, ConnectionInfo, RedisError};
 
     fn clean_node_info(nodes: &[ConnectionInfo]) -> Vec<ConnectionInfo> {
         let nodes = nodes
@@ -497,13 +494,6 @@ pub(crate) mod mtls_test {
         cluster: &TestClusterContext,
         mtls_enabled: bool,
     ) -> Result<ClusterClient, RedisError> {
-        create_cluster_client_builder_from_cluster(cluster, mtls_enabled).build()
-    }
-
-    pub(crate) fn create_cluster_client_builder_from_cluster(
-        cluster: &TestClusterContext,
-        mtls_enabled: bool,
-    ) -> ClusterClientBuilder {
         let server = cluster
             .cluster
             .servers
@@ -523,6 +513,7 @@ pub(crate) mod mtls_test {
             // server-side TLS NOT available
             builder
         }
+        .build()
     }
 }
 
