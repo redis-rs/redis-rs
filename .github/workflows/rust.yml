@@ -240,7 +240,7 @@ jobs:
         cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
 
-  flag-frenzy:
+  flag-frenzy1:
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v4
@@ -251,4 +251,47 @@ jobs:
 
         - run: |
             cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
-            flag-frenzy --package redis
+            cd redis
+            flag-frenzy --config ../config/ --chunk 0 --total-chunks 4
+
+  flag-frenzy2:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain/@master
+          with:
+            toolchain: stable
+        - uses: Swatinem/rust-cache@v2
+
+        - run: |
+            cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
+            cd redis
+            flag-frenzy --config ../config/ --chunk 1 --total-chunks 4
+
+  flag-frenzy3:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain/@master
+          with:
+            toolchain: stable
+        - uses: Swatinem/rust-cache@v2
+
+        - run: |
+            cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
+            cd redis
+            flag-frenzy --config ../config/ --chunk 2 --total-chunks 4
+
+  flag-frenzy4:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: dtolnay/rust-toolchain/@master
+          with:
+            toolchain: stable
+        - uses: Swatinem/rust-cache@v2
+
+        - run: |
+            cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
+            cd redis
+            flag-frenzy --config ../config/ --chunk 3 --total-chunks 4 
