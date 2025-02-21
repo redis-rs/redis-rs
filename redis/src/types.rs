@@ -690,6 +690,19 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     }
 }
 
+#[cfg(feature = "tls-rustls")]
+impl From<rustls_native_certs::Error> for RedisError {
+    fn from(err: rustls_native_certs::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "Fetch certs Error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
 #[cfg(feature = "uuid")]
 impl From<uuid::Error> for RedisError {
     fn from(err: uuid::Error) -> RedisError {

@@ -857,8 +857,14 @@ pub(crate) fn create_rustls_config(
         not(feature = "tls-native-tls"),
         not(feature = "tls-rustls-webpki-roots")
     ))]
-    for cert in load_native_certs()? {
-        root_store.add(cert)?;
+    {
+        let mut certificate_result = load_native_certs();
+        if let Some(error) = certificate_result.errors.pop() {
+            return Err(error.into());
+        }
+        for cert in certificate_result.certs {
+            root_store.add(cert)?;
+        }
     }
 
     let config = rustls::ClientConfig::builder();
