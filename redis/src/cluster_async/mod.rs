@@ -126,7 +126,7 @@ use futures_util::{
     ready,
     stream::{self, Stream, StreamExt},
 };
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
@@ -135,6 +135,8 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 struct ClientSideState {
     protocol: ProtocolVersion,
     _task_handle: HandleContainer,
+    response_timeout: Duration,
+    runtime: Runtime,
 }
 
 /// This represents an async Redis Cluster connection.
@@ -156,6 +158,8 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let protocol = cluster_params.protocol.unwrap_or_default();
+        let response_timeout = cluster_params.response_timeout;
+        let runtime = Runtime::locate();
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
@@ -166,13 +170,15 @@ where
                         .forward(inner)
                         .await;
                 };
-                let _task_handle = HandleContainer::new(Runtime::locate().spawn(stream));
+                let _task_handle = HandleContainer::new(runtime.spawn(stream));
 
                 ClusterConnection {
                     sender,
                     state: Arc::new(ClientSideState {
                         protocol,
                         _task_handle,
+                        response_timeout,
+                        runtime,
                     }),
                 }
             })
@@ -197,18 +203,23 @@ where
                     "redis_cluster: Unable to send command",
                 ))
             })?;
-        receiver
-            .await
-            .unwrap_or_else(|_| {
-                Err(RedisError::from(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "redis_cluster: Unable to receive command",
-                )))
+        self.state
+            .runtime
+            .timeout(self.state.response_timeout, async move {
+                receiver
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(RedisError::from(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "redis_cluster: Unable to receive command",
+                        )))
+                    })
+                    .map(|response| match response {
+                        Response::Single(value) => value,
+                        Response::Multiple(_) => unreachable!(),
+                    })
             })
-            .map(|response| match response {
-                Response::Single(value) => value,
-                Response::Multiple(_) => unreachable!(),
-            })
+            .await?
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be sent to a random node.
@@ -233,13 +244,18 @@ where
             .await
             .map_err(|_| closed_connection_error())?;
 
-        receiver
-            .await
-            .unwrap_or_else(|_| Err(closed_connection_error()))
-            .map(|response| match response {
-                Response::Multiple(values) => values,
-                Response::Single(_) => unreachable!(),
+        self.state
+            .runtime
+            .timeout(self.state.response_timeout, async move {
+                receiver
+                    .await
+                    .unwrap_or_else(|_| Err(closed_connection_error()))
+                    .map(|response| match response {
+                        Response::Multiple(values) => values,
+                        Response::Single(_) => unreachable!(),
+                    })
             })
+            .await?
     }
 
     /// Subscribes to a new channel(s).    
@@ -446,7 +462,7 @@ where
                     match result {
                         Ok(conn) => Ok((addr, async { conn }.boxed().shared())),
                         Err(e) => {
-                            trace!("Failed to connect to initial node: {:?}", e);
+                            debug!("Failed to connect to initial node: {:?}", e);
                             Err(e)
                         }
                     }
@@ -515,6 +531,7 @@ where
     }
 
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
+        debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
             let connection_map =
@@ -1267,23 +1284,6 @@ pub trait Connect: Sized {
     /// Connect to a node, returning handle for command execution.
     fn connect_with_config<'a, T>(info: T, config: AsyncConnectionConfig) -> RedisFuture<'a, Self>
     where
-        T: IntoConnectionInfo + Send + 'a,
-    {
-        // default implementation, for backwards compatibility
-        Self::connect(
-            info,
-            config.response_timeout.unwrap_or(Duration::MAX),
-            config.connection_timeout.unwrap_or(Duration::MAX),
-        )
-    }
-
-    /// Connect to a node, returning handle for command execution.
-    fn connect<'a, T>(
-        info: T,
-        response_timeout: Duration,
-        connection_timeout: Duration,
-    ) -> RedisFuture<'a, Self>
-    where
         T: IntoConnectionInfo + Send + 'a;
 }
 
@@ -1295,27 +1295,6 @@ impl Connect for MultiplexedConnection {
         async move {
             let connection_info = info.into_connection_info()?;
             let client = crate::Client::open(connection_info)?;
-            client
-                .get_multiplexed_async_connection_with_config(&config)
-                .await
-        }
-        .boxed()
-    }
-
-    fn connect<'a, T>(
-        info: T,
-        response_timeout: Duration,
-        connection_timeout: Duration,
-    ) -> RedisFuture<'a, MultiplexedConnection>
-    where
-        T: IntoConnectionInfo + Send + 'a,
-    {
-        async move {
-            let connection_info = info.into_connection_info()?;
-            let client = crate::Client::open(connection_info)?;
-            let config = crate::AsyncConnectionConfig::new()
-                .set_connection_timeout(connection_timeout)
-                .set_response_timeout(response_timeout);
             client
                 .get_multiplexed_async_connection_with_config(&config)
                 .await
@@ -1348,18 +1327,22 @@ where
 {
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout;
-    let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
     let tcp_settings = params.tcp_settings.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
-        .set_response_timeout(response_timeout)
         .set_tcp_settings(tcp_settings);
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }
-    let mut conn: C = C::connect_with_config(info, config).await?;
+    let mut conn = match C::connect_with_config(info, config).await {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!("Failed to connect to node: {:?}, due to: {:?}", node, err);
+            return Err(err);
+        }
+    };
 
     let check = if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect

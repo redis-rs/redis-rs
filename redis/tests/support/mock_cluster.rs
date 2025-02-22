@@ -35,10 +35,9 @@ pub struct MockConnection {
 
 #[cfg(feature = "cluster-async")]
 impl cluster_async::Connect for MockConnection {
-    fn connect<'a, T>(
+    fn connect_with_config<'a, T>(
         info: T,
-        _response_timeout: Duration,
-        _connection_timeout: Duration,
+        _config: redis::AsyncConnectionConfig,
     ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
