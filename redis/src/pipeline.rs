@@ -87,7 +87,8 @@ impl Pipeline {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// Returns the number of commands currently queued in the pipeline.
+    pub fn len(&self) -> usize {
         self.commands.len()
     }
 

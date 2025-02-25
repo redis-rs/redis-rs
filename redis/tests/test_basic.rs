@@ -770,6 +770,14 @@ mod basic {
     }
 
     #[test]
+    fn test_pipeline_len() {
+        let mut pl = redis::pipe();
+
+        pl.cmd("PING").cmd("SET").arg(1);
+        assert_eq!(pl.len(), 2);
+    }
+
+    #[test]
     fn test_real_transaction() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
