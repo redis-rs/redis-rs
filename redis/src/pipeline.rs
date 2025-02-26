@@ -94,6 +94,11 @@ impl Pipeline {
         self.commands.len()
     }
 
+    /// Returns `true` is the pipeline contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
         self.make_pipeline_results(con.req_packed_commands(
             &encode_pipeline(&self.commands, false),

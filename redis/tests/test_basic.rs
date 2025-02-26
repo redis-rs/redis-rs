@@ -778,6 +778,15 @@ mod basic {
     }
 
     #[test]
+    fn test_pipeline_is_empty() {
+        let mut pl = redis::pipe();
+
+        assert!(pl.is_empty());
+        pl.cmd("PING").cmd("SET").arg(1);
+        assert!(!pl.is_empty());
+    }
+
+    #[test]
     fn test_real_transaction() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
