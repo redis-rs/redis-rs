@@ -28,7 +28,7 @@
 //!
 //! The user can enable TLS support using either RusTLS or native support (usually OpenSSL),
 //! using the `tls-rustls` or `tls-native-tls` features respectively. In order to enable TLS
-//! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp``,
+//! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp`,
 //! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
 //! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
 //!
