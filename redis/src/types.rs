@@ -2962,12 +2962,19 @@ pub(crate) fn closed_connection_error() -> RedisError {
 /// Possible types of value held in Redis, from https://redis.io/docs/latest/commands/type/
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueType {
+	/// Generally returned by anything that returns a single element. https://redis.io/docs/latest/develop/data-types/strings/
 	String,
+	/// A list of String values. https://redis.io/docs/latest/develop/data-types/lists/
 	List,
+	/// A set of unique String values. https://redis.io/docs/latest/develop/data-types/sets/
 	Set,
+	/// A sorted set of String values. https://redis.io/docs/latest/develop/data-types/sorted-sets/
 	ZSet,
+	/// A collection of field-value pairs. https://redis.io/docs/latest/develop/data-types/hashes/
 	Hash,
+	/// A Redis Stream. https://redis.io/docs/latest/develop/data-types/stream
 	Stream,
+	/// Any other value type not explicitly defined in https://redis.io/docs/latest/commands/type/
 	Unknown(String)
 }
 
