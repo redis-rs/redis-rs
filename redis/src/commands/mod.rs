@@ -2,8 +2,8 @@ use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
-    ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, NumericBehavior,
-    RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
+    ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
+    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
 };
 
 #[macro_use]
@@ -187,22 +187,23 @@ implement_commands! {
     }
 
     /// Set the value of a key, only if the key does not exist
-    fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+    fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> bool {
         cmd("SETNX").arg(key).arg(value)
     }
 
     /// Sets multiple keys to their values failing if at least one already exists.
-    fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) {
+    fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> bool {
         cmd("MSETNX").arg(items)
     }
 
     /// Set the string value of a key and return its old value.
-    fn getset<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+    fn getset<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> Option<String> {
         cmd("GETSET").arg(key).arg(value)
     }
 
     /// Get a range of bytes/substring from the value of a key. Negative values provide an offset from the end of the value.
-    fn getrange<K: ToRedisArgs>(key: K, from: isize, to: isize) {
+    /// Redis returns an empty string if the key doesn't exist, not Nil
+    fn getrange<K: ToRedisArgs>(key: K, from: isize, to: isize) -> String {
         cmd("GETRANGE").arg(key).arg(from).arg(to)
     }
 
@@ -212,12 +213,13 @@ implement_commands! {
     }
 
     /// Delete one or more keys.
+    /// Returns number of keys deleted.
     fn del<K: ToRedisArgs>(key: K) -> usize {
         cmd("DEL").arg(key)
     }
 
     /// Determine if a key exists.
-    fn exists<K: ToRedisArgs>(key: K) {
+    fn exists<K: ToRedisArgs>(key: K) -> bool {
         cmd("EXISTS").arg(key)
     }
 
@@ -227,84 +229,99 @@ implement_commands! {
     }
 
     /// Set a key's time to live in seconds.
-    fn expire<K: ToRedisArgs>(key: K, seconds: i64) {
+    /// Returns whether expiration was set.
+    fn expire<K: ToRedisArgs>(key: K, seconds: i64) -> bool {
         cmd("EXPIRE").arg(key).arg(seconds)
     }
 
     /// Set the expiration for a key as a UNIX timestamp.
-    fn expire_at<K: ToRedisArgs>(key: K, ts: i64) {
+    /// Returns whether expiration was set.
+    fn expire_at<K: ToRedisArgs>(key: K, ts: i64) -> bool {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
     /// Set a key's time to live in milliseconds.
-    fn pexpire<K: ToRedisArgs>(key: K, ms: i64) {
+    /// Returns whether expiration was set.
+    fn pexpire<K: ToRedisArgs>(key: K, ms: i64) -> bool {
         cmd("PEXPIRE").arg(key).arg(ms)
     }
 
     /// Set the expiration for a key as a UNIX timestamp in milliseconds.
-    fn pexpire_at<K: ToRedisArgs>(key: K, ts: i64) {
+    /// Returns whether expiration was set.
+    fn pexpire_at<K: ToRedisArgs>(key: K, ts: i64) -> bool {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
     /// Get the absolute Unix expiration timestamp in seconds.
-    fn expire_time<K: ToRedisArgs>(key: K) {
+    /// Returns -1 if key exists but has no expiration time, -2 if key does not exist.
+    fn expire_time<K: ToRedisArgs>(key: K) -> isize {
         cmd("EXPIRETIME").arg(key)
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
-    fn pexpire_time<K: ToRedisArgs>(key: K) {
+    /// Returns -1 if key exists but has no expiration time, -2 if key does not exist.
+    fn pexpire_time<K: ToRedisArgs>(key: K) -> isize {
         cmd("PEXPIRETIME").arg(key)
     }
 
     /// Remove the expiration from a key.
-    fn persist<K: ToRedisArgs>(key: K) {
+    /// Returns whether a timeout was removed.
+    fn persist<K: ToRedisArgs>(key: K) -> bool {
         cmd("PERSIST").arg(key)
     }
 
     /// Get the time to live for a key in seconds.
-    fn ttl<K: ToRedisArgs>(key: K) {
+    /// Returns -1 if key exists but has no expiration time, -2 if key does not exist.
+    fn ttl<K: ToRedisArgs>(key: K) -> isize {
         cmd("TTL").arg(key)
     }
 
     /// Get the time to live for a key in milliseconds.
-    fn pttl<K: ToRedisArgs>(key: K) {
+    /// Returns -1 if key exists but has no expiration time, -2 if key does not exist.
+    fn pttl<K: ToRedisArgs>(key: K) -> isize {
         cmd("PTTL").arg(key)
     }
 
     /// Get the value of a key and set expiration
-    fn get_ex<K: ToRedisArgs>(key: K, expire_at: Expiry) {
+    fn get_ex<K: ToRedisArgs>(key: K, expire_at: Expiry) -> Option<String> {
         cmd("GETEX").arg(key).arg(expire_at)
     }
 
     /// Get the value of a key and delete it
-    fn get_del<K: ToRedisArgs>(key: K) {
+    fn get_del<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd("GETDEL").arg(key)
     }
 
     /// Rename a key.
+    /// Errors if key does not exist.
     fn rename<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
         cmd("RENAME").arg(key).arg(new_key)
     }
 
     /// Rename a key, only if the new key does not exist.
-    fn rename_nx<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) {
+    /// Errors if key does not exist.
+    /// Returns whether the key was renamed, or false if the new key already exists.
+    fn rename_nx<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) -> bool {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
-    /// Unlink one or more keys.
-    fn unlink<K: ToRedisArgs>(key: K) {
+    /// Unlink one or more keys. This is a non-blocking version of `DEL`.
+    /// Returns number of keys unlinked.
+    fn unlink<K: ToRedisArgs>(key: K) -> usize {
         cmd("UNLINK").arg(key)
     }
 
     // common string operations
 
     /// Append a value to a key.
-    fn append<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) {
+    /// Returns length of string after operation.
+    fn append<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("APPEND").arg(key).arg(value)
     }
 
     /// Increment the numeric value of a key by the given amount.  This
     /// issues a `INCRBY` or `INCRBYFLOAT` depending on the type.
+    /// If the key does not exist, it is set to 0 before performing the operation.
     fn incr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) -> isize {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "INCRBYFLOAT"
@@ -314,63 +331,72 @@ implement_commands! {
     }
 
     /// Decrement the numeric value of a key by the given amount.
-    fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) {
+    /// If the key does not exist, it is set to 0 before performing the operation.
+    fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) -> isize {
         cmd("DECRBY").arg(key).arg(delta)
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
-    fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) {
+    /// Returns the original bit value stored at offset.
+    fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) -> u8 {
         cmd("SETBIT").arg(key).arg(offset).arg(i32::from(value))
     }
 
     /// Returns the bit value at offset in the string value stored at key.
-    fn getbit<K: ToRedisArgs>(key: K, offset: usize) {
+    fn getbit<K: ToRedisArgs>(key: K, offset: usize) -> u8 {
         cmd("GETBIT").arg(key).arg(offset)
     }
 
     /// Count set bits in a string.
-    fn bitcount<K: ToRedisArgs>(key: K) {
+    /// Returns 0 if key does not exist.
+    fn bitcount<K: ToRedisArgs>(key: K) -> usize {
         cmd("BITCOUNT").arg(key)
     }
 
     /// Count set bits in a string in a range.
-    fn bitcount_range<K: ToRedisArgs>(key: K, start: usize, end: usize) {
+    /// Returns 0 if key does not exist.
+    fn bitcount_range<K: ToRedisArgs>(key: K, start: usize, end: usize) -> usize {
         cmd("BITCOUNT").arg(key).arg(start).arg(end)
     }
 
     /// Perform a bitwise AND between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
+    /// Returns size of destination string after operation.
+    fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise OR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
+    /// Returns size of destination string after operation.
+    fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise XOR between multiple keys (containing string values)
     /// and store the result in the destination key.
-    fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) {
+    /// Returns size of destination string after operation.
+    fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
     }
 
     /// Perform a bitwise NOT of the key (containing string values)
     /// and store the result in the destination key.
-    fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) {
+    /// Returns size of destination string after operation.
+    fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) -> usize {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
     /// Get the length of the value stored in a key.
-    fn strlen<K: ToRedisArgs>(key: K) {
+    /// 0 if key does not exist.
+    fn strlen<K: ToRedisArgs>(key: K) -> usize {
         cmd("STRLEN").arg(key)
     }
 
     // hash operations
 
     /// Gets a single (or multiple) fields from a hash.
-    fn hget<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+    fn hget<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) -> Option<String> {
         cmd(if field.num_of_args() <= 1 { "HGET" } else { "HMGET" }).arg(key).arg(field)
     }
 
@@ -380,7 +406,8 @@ implement_commands! {
     }
 
     /// Deletes a single (or multiple) fields from a hash.
-    fn hdel<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+    /// Returns number of fields deleted.
+    fn hdel<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) -> usize {
         cmd("HDEL").arg(key).arg(field)
     }
 
@@ -390,7 +417,8 @@ implement_commands! {
     }
 
     /// Sets a single field in a hash.
-    fn hset<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) {
+    /// Returns number of fields added.
+    fn hset<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) -> usize {
         cmd("HSET").arg(key).arg(field).arg(value)
     }
 
@@ -400,7 +428,8 @@ implement_commands! {
     }
 
     /// Sets a single field in a hash if it does not exist.
-    fn hset_nx<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) {
+    /// Returns whether the field was added.
+    fn hset_nx<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) -> bool {
         cmd("HSETNX").arg(key).arg(field).arg(value)
     }
 
@@ -410,7 +439,8 @@ implement_commands! {
     }
 
     /// Increments a value.
-    fn hincr<K: ToRedisArgs, F: ToRedisArgs, D: ToRedisArgs>(key: K, field: F, delta: D) {
+    /// Returns the new value of the field after incrementation.
+    fn hincr<K: ToRedisArgs, F: ToRedisArgs, D: ToRedisArgs>(key: K, field: F, delta: D) -> f64 {
         cmd(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
             "HINCRBYFLOAT"
         } else {
@@ -419,72 +449,99 @@ implement_commands! {
     }
 
     /// Checks if a field in a hash exists.
-    fn hexists<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
+    fn hexists<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) -> bool {
         cmd("HEXISTS").arg(key).arg(field)
     }
 
     /// Get one or more fields' TTL in seconds.
-    fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+    fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Get one or more fields' TTL in milliseconds.
-    fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+    fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HPTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Set one or more fields' time to live in seconds.
-    fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) {
+    /// Returns an array where each element corresponds to the field at the same index in the fields argument.
+    /// Each element of the array is either:
+    /// 0 if the specified condition has not been met.
+    /// 1 if the expiration time was updated.
+    /// 2 if called with 0 seconds.
+    /// Errors if provided key exists but is not a hash.
+    fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp> {
        cmd("HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
+
     /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
-    fn hexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) {
+    /// Returns an array where each element corresponds to the field at the same index in the fields argument.
+    /// Each element of the array is either:
+    /// 0 if the specified condition has not been met.
+    /// 1 if the expiration time was updated.
+    /// 2 if called with a time in the past.
+    /// Errors if provided key exists but is not a hash.
+    fn hexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
-    fn hexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+    fn hexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Remove the expiration from a key.
-    fn hpersist<K: ToRedisArgs, F :ToRedisArgs>(key: K, fields: F) {
+    /// Returns 1 if the expiration was removed.
+    fn hpersist<K: ToRedisArgs, F :ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp{
         cmd("HPERSIST").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Set one or more fields' time to live in milliseconds.
-    fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) {
+    /// Returns an array where each element corresponds to the field at the same index in the fields argument.
+    /// Each element of the array is either:
+    /// 0 if the specified condition has not been met.
+    /// 1 if the expiration time was updated.
+    /// 2 if called with 0 seconds.
+    /// Errors if provided key exists but is not a hash.
+    fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
-    fn hpexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) {
+    /// Returns an array where each element corresponds to the field at the same index in the fields argument.
+    /// Each element of the array is either:
+    /// 0 if the specified condition has not been met.
+    /// 1 if the expiration time was updated.
+    /// 2 if called with a time in the past.
+    /// Errors if provided key exists but is not a hash.
+    fn hpexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
-    fn hpexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+    fn hpexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HPEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Gets all the keys in a hash.
-    fn hkeys<K: ToRedisArgs>(key: K) {
+    fn hkeys<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("HKEYS").arg(key)
     }
 
     /// Gets all the values in a hash.
-    fn hvals<K: ToRedisArgs>(key: K) {
+    fn hvals<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("HVALS").arg(key)
     }
 
     /// Gets all the fields and values in a hash.
-    fn hgetall<K: ToRedisArgs>(key: K) {
+    fn hgetall<K: ToRedisArgs>(key: K) -> std::collections::HashMap<String, String> {
         cmd("HGETALL").arg(key)
     }
 
     /// Gets the length of a hash.
-    fn hlen<K: ToRedisArgs>(key: K) {
+    /// Returns 0 if key does not exist.
+    fn hlen<K: ToRedisArgs>(key: K) -> usize {
         cmd("HLEN").arg(key)
     }
 
