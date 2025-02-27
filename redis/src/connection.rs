@@ -1184,7 +1184,7 @@ fn execute_connection_pipeline(
     rv: &mut Connection,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
 ) -> RedisResult<AuthResult> {
-    if pipeline.len() == 0 {
+    if pipeline.is_empty() {
         return Ok(AuthResult::Succeeded);
     }
     let results = rv.req_packed_commands(&pipeline.get_packed_pipeline(), 0, pipeline.len())?;

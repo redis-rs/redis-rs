@@ -97,7 +97,7 @@ async fn execute_connection_pipeline(
     rv: &mut impl ConnectionLike,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
 ) -> RedisResult<AuthResult> {
-    if pipeline.len() == 0 {
+    if pipeline.is_empty() {
         return Ok(AuthResult::Succeeded);
     }
 

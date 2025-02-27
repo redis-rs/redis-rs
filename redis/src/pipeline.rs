@@ -87,8 +87,16 @@ impl Pipeline {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// Returns the number of commands currently queued by the usr in the pipeline.
+    ///
+    /// Depending on its configuration (e.g. `atomic`), the pipeline may send more commands to the server than the returned length
+    pub fn len(&self) -> usize {
         self.commands.len()
+    }
+
+    /// Returns `true` is the pipeline contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
