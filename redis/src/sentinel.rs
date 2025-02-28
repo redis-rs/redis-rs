@@ -151,6 +151,7 @@ use crate::{
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
 pub struct Sentinel {
+    min_other_sentinels: usize,
     sentinels_connection_info: Vec<ConnectionInfo>,
     connections_cache: Vec<Option<Connection>>,
     #[cfg(feature = "aio")]
@@ -228,7 +229,8 @@ fn sentinel_replicas_cmd(master_name: &str) -> crate::Cmd {
     cmd
 }
 
-fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str) -> bool {
+fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str, min_other_sentinels: usize) -> bool {
+    //TODO: Verify the number of other sentinels we see is >= min_other_sentinels, to avoid a split brain bug.
     master_info.get("name").map(|s| s.as_str()) == Some(service_name)
         && master_info.contains_key("ip")
         && master_info.contains_key("port")
@@ -326,16 +328,16 @@ fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
+    min_other_sentinels: usize,
     #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
-    for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
+    for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name, min_other_sentinels)) {
         #[cfg(not(feature = "tls-rustls"))]
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if check_role(&connection_info, "master") {
-            return Ok(connection_info);
-        }
+        return Ok(connection_info);
+        //redis-py does not check roles
     }
 
     fail!((
@@ -361,16 +363,16 @@ async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
+    min_other_sentinels: usize,
     #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
 ) -> RedisResult<ConnectionInfo> {
-    for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
+    for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name, min_other_sentinels)) {
         #[cfg(not(feature = "tls-rustls"))]
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if async_check_role(&connection_info, "master").await {
-            return Ok(connection_info);
-        }
+        //redis-py does not seem to check role
+        return Ok(connection_info);
     }
 
     fail!((
@@ -566,6 +568,7 @@ impl Sentinel {
             async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
 
             Ok(Sentinel {
+                min_other_sentinels: 0,
                 sentinels_connection_info,
                 connections_cache,
                 async_connections_cache,
@@ -580,6 +583,7 @@ impl Sentinel {
             async_connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
 
             Ok(Sentinel {
+                min_other_sentinels: 0,
                 sentinels_connection_info,
                 connections_cache,
                 async_connections_cache,
@@ -590,6 +594,7 @@ impl Sentinel {
         #[cfg(all(not(feature = "aio"), feature = "tls-rustls"))]
         {
             Ok(Sentinel {
+                min_other_sentinels: 0,
                 sentinels_connection_info,
                 connections_cache,
                 replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
@@ -600,6 +605,7 @@ impl Sentinel {
         #[cfg(all(not(feature = "aio"), not(feature = "tls-rustls")))]
         {
             Ok(Sentinel {
+                min_other_sentinels: 0,
                 sentinels_connection_info,
                 connections_cache,
                 replica_start_index: random_replica_index(NonZeroUsize::new(1000000).unwrap()),
@@ -658,7 +664,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
         let masters = self.get_sentinel_masters()?;
-        find_valid_master(masters, service_name, node_connection_info)
+        find_valid_master(masters, service_name, self.min_other_sentinels, node_connection_info)
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -668,7 +674,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
         let masters = self.get_sentinel_masters()?;
-        find_valid_master(masters, service_name, node_connection_info, &self.certs)
+        find_valid_master(masters, service_name, node_connection_info, self.min_other_sentinels, &self.certs)
     }
 
     #[cfg(not(feature = "tls-rustls"))]
@@ -777,7 +783,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
         let masters = self.async_get_sentinel_masters().await?;
-        async_find_valid_master(masters, service_name, node_connection_info).await
+        async_find_valid_master(masters, service_name, self.min_other_sentinels, node_connection_info).await
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -787,7 +793,7 @@ impl Sentinel {
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
         let masters = self.async_get_sentinel_masters().await?;
-        async_find_valid_master(masters, service_name, node_connection_info, &self.certs).await
+        async_find_valid_master(masters, service_name, node_connection_info, self.min_other_sentinels, &self.certs).await
     }
 
     #[cfg(not(feature = "tls-rustls"))]
@@ -953,8 +959,8 @@ impl SentinelClient {
             server_type,
         })
     }
-
-    fn get_client(&mut self) -> RedisResult<Client> {
+    
+    pub fn get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => self
                 .sentinel
