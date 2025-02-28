@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use std::path::Path;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use std::sync::Arc;
 use std::{
     future::Future,
@@ -13,12 +13,15 @@ use std::{
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(
+    feature = "async-std-native-tls-comp",
+    not(feature = "async-std-rustls-comp")
+))]
 use async_native_tls::{TlsConnector, TlsStream};
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use crate::connection::create_rustls_config;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use futures_rustls::{client::TlsStream, TlsConnector};
 
 use super::TaskHandle;
@@ -40,7 +43,10 @@ async fn connect_tcp(
     Ok(std_socket.into())
 }
 
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+#[cfg(any(
+    feature = "async-std-rustls-comp",
+    feature = "async-std-native-tls-comp"
+))]
 use crate::connection::TlsConnParams;
 
 pin_project_lite::pin_project! {
@@ -190,7 +196,10 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
 
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    #[cfg(all(
+        feature = "async-std-native-tls-comp",
+        not(feature = "async-std-rustls-comp")
+    ))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
@@ -216,7 +225,7 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "async-std-rustls-comp")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
