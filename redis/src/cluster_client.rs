@@ -110,7 +110,13 @@ impl ClusterParams {
 
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
         let tls_params = if value.danger_accept_invalid_hostnames {
-            let mut tls_params = tls_params.unwrap_or_default();
+            let mut tls_params = tls_params.unwrap_or(TlsConnParams {
+                #[cfg(feature = "tls-rustls")]
+                client_tls_params: None,
+                #[cfg(feature = "tls-rustls")]
+                root_cert_store: None,
+                danger_accept_invalid_hostnames: false,
+            });
             tls_params.danger_accept_invalid_hostnames = true;
             Some(tls_params)
         } else {
