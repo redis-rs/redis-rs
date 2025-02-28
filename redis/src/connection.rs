@@ -43,7 +43,7 @@ use rustls_native_certs::load_native_certs;
 use crate::tls::ClientTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct TlsConnParams {
     #[cfg(feature = "tls-rustls")]
@@ -189,8 +189,11 @@ impl ConnectionAddr {
                 params.danger_accept_invalid_hostnames = insecure;
             } else if insecure {
                 *tls_params = Some(TlsConnParams {
+                    #[cfg(feature = "tls-rustls")]
+                    client_tls_params: None,
+                    #[cfg(feature = "tls-rustls")]
+                    root_cert_store: None,
                     danger_accept_invalid_hostnames: insecure,
-                    ..Default::default()
                 });
             }
         }
