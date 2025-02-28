@@ -316,10 +316,9 @@ impl ClusterClientBuilder {
     /// Configure hostname verification when connecting with TLS.
     ///
     /// If `insecure` is true, this **disables** hostname verification, while
-    /// leaving other aspects of certificate checking enabled (but that isn't
-    /// worth much: without hostname verification, TLS as a whole is not
-    /// secure). This mode is similar to what `redis-cli` does: TLS connections
-    /// do check certificates, but hostname errors are ignored.
+    /// leaving other aspects of certificate checking enabled. This mode is
+    /// similar to what `redis-cli` does: TLS connections do check certificates,
+    /// but hostname errors are ignored.
     ///
     /// # Warning
     ///
