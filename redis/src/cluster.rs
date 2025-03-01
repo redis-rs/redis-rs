@@ -308,7 +308,7 @@ where
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
             auto_reconnect: RefCell::new(true),
-            read_timeout: RefCell::new(Some(cluster_params.response_timeout)),
+            read_timeout: RefCell::new(cluster_params.response_timeout),
             write_timeout: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,

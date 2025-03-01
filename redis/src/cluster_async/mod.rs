@@ -135,7 +135,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 struct ClientSideState {
     protocol: ProtocolVersion,
     _task_handle: HandleContainer,
-    response_timeout: Duration,
+    response_timeout: Option<Duration>,
     runtime: Runtime,
 }
 
@@ -188,38 +188,41 @@ where
     pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
-        self.sender
-            .send(Message {
-                cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
-                    routing: routing.into(),
-                },
-                sender,
-            })
-            .await
-            .map_err(|_| {
-                RedisError::from(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "redis_cluster: Unable to send command",
-                ))
-            })?;
-        self.state
-            .runtime
-            .timeout(self.state.response_timeout, async move {
-                receiver
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(RedisError::from(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "redis_cluster: Unable to receive command",
-                        )))
-                    })
-                    .map(|response| match response {
-                        Response::Single(value) => value,
-                        Response::Multiple(_) => unreachable!(),
-                    })
-            })
-            .await?
+        let request = async {
+            self.sender
+                .send(Message {
+                    cmd: CmdArg::Cmd {
+                        cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
+                        routing: routing.into(),
+                    },
+                    sender,
+                })
+                .await
+                .map_err(|_| {
+                    RedisError::from(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "redis_cluster: Unable to send command",
+                    ))
+                })?;
+
+            receiver
+                .await
+                .unwrap_or_else(|_| {
+                    Err(RedisError::from(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "redis_cluster: Unable to receive command",
+                    )))
+                })
+                .map(|response| match response {
+                    Response::Single(value) => value,
+                    Response::Multiple(_) => unreachable!(),
+                })
+        };
+
+        match self.state.response_timeout {
+            Some(duration) => self.state.runtime.timeout(duration, request).await?,
+            None => request.await,
+        }
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be sent to a random node.
@@ -231,31 +234,33 @@ where
         route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
-        self.sender
-            .send(Message {
-                cmd: CmdArg::Pipeline {
-                    pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
-                    offset,
-                    count,
-                    route: route.into(),
-                },
-                sender,
-            })
-            .await
-            .map_err(|_| closed_connection_error())?;
 
-        self.state
-            .runtime
-            .timeout(self.state.response_timeout, async move {
-                receiver
-                    .await
-                    .unwrap_or_else(|_| Err(closed_connection_error()))
-                    .map(|response| match response {
-                        Response::Multiple(values) => values,
-                        Response::Single(_) => unreachable!(),
-                    })
-            })
-            .await?
+        let request = async {
+            self.sender
+                .send(Message {
+                    cmd: CmdArg::Pipeline {
+                        pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
+                        offset,
+                        count,
+                        route: route.into(),
+                    },
+                    sender,
+                })
+                .await
+                .map_err(|_| closed_connection_error())?;
+            receiver
+                .await
+                .unwrap_or_else(|_| Err(closed_connection_error()))
+                .map(|response| match response {
+                    Response::Multiple(values) => values,
+                    Response::Single(_) => unreachable!(),
+                })
+        };
+
+        match self.state.response_timeout {
+            Some(duration) => self.state.runtime.timeout(duration, request).await?,
+            None => request.await,
+        }
     }
 
     /// Subscribes to a new channel(s).    
@@ -1327,12 +1332,16 @@ where
 {
     let read_from_replicas = params.read_from_replicas;
     let connection_timeout = params.connection_timeout;
+    let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
     let tcp_settings = params.tcp_settings.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
         .set_tcp_settings(tcp_settings);
+    if let Some(response_timeout) = response_timeout {
+        config = config.set_response_timeout(response_timeout);
+    };
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }

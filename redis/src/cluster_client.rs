@@ -89,7 +89,7 @@ pub(crate) struct ClusterParams {
     pub(crate) retry_params: RetryParams,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) connection_timeout: Duration,
-    pub(crate) response_timeout: Duration,
+    pub(crate) response_timeout: Option<Duration>,
     pub(crate) protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
@@ -131,7 +131,7 @@ impl ClusterParams {
             retry_params: value.retries_configuration,
             tls_params,
             connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
-            response_timeout: value.response_timeout.unwrap_or(Duration::MAX),
+            response_timeout: value.response_timeout,
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
@@ -143,9 +143,8 @@ impl ClusterParams {
         if let Some(connection_timeout) = config.connection_timeout {
             self.connection_timeout = connection_timeout;
         }
-        if let Some(response_timeout) = config.response_timeout {
-            self.response_timeout = response_timeout;
-        }
+        self.response_timeout = config.response_timeout;
+
         #[cfg(feature = "cluster-async")]
         if let Some(async_push_sender) = config.async_push_sender {
             self.async_push_sender = Some(async_push_sender);
