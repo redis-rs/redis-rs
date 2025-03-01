@@ -386,29 +386,34 @@ impl Pipeline {
         // If `Some`, the value inside defines how the response should look like
         expectation: Option<PipelineResponseExpectation>,
         timeout: Option<Duration>,
-    ) -> Result<Value, Option<RedisError>> {
+    ) -> Result<Value, RedisError> {
         let (sender, receiver) = oneshot::channel();
 
-        self.sender
-            .send(PipelineMessage {
-                input,
-                expectation,
-                output: sender,
-            })
-            .await
-            .map_err(|_| None)?;
+        let request = async {
+            self.sender
+                .send(PipelineMessage {
+                    input,
+                    expectation,
+                    output: sender,
+                })
+                .await
+                .map_err(|_| None)?;
+
+            receiver.await
+            // The `sender` was dropped which likely means that the stream part
+            // failed for one reason or another
+            .map_err(|_| None)
+            .and_then(|res| res.map_err(Some))
+        };
 
         match timeout {
-            Some(timeout) => match Runtime::locate().timeout(timeout, receiver).await {
+            Some(timeout) => match Runtime::locate().timeout(timeout, request).await {
                 Ok(res) => res,
-                Err(elapsed) => Ok(Err(elapsed.into())),
+                Err(elapsed) => Err(Some(elapsed.into())),
             },
-            None => receiver.await,
+            None => request.await,
         }
-        // The `sender` was dropped which likely means that the stream part
-        // failed for one reason or another
-        .map_err(|_| None)
-        .and_then(|res| res.map_err(Some))
+        .map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 }
 
@@ -588,8 +593,7 @@ impl MultiplexedConnection {
                             }),
                             self.response_timeout,
                         )
-                        .await
-                        .map_err(|err| err.unwrap_or_else(closed_connection_error))?;
+                        .await?;
                     let replies: Vec<Value> = crate::types::from_owned_redis_value(result)?;
                     return cacheable_command.resolve(cache_manager, replies.into_iter());
                 }
@@ -599,7 +603,6 @@ impl MultiplexedConnection {
         self.pipeline
             .send_recv(cmd.get_packed_command(), None, self.response_timeout)
             .await
-            .map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -626,12 +629,11 @@ impl MultiplexedConnection {
                     }),
                     self.response_timeout,
                 )
-                .await
-                .map_err(|err| err.unwrap_or_else(closed_connection_error))?;
+                .await?;
 
             return cacheable_pipeline.resolve(cache_manager, result);
         }
-        let result = self
+        let value = self
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
@@ -642,10 +644,7 @@ impl MultiplexedConnection {
                 }),
                 self.response_timeout,
             )
-            .await
-            .map_err(|err| err.unwrap_or_else(closed_connection_error));
-
-        let value = result?;
+            .await?;
         match value {
             Value::Array(values) => Ok(values),
             _ => Ok(vec![value]),
