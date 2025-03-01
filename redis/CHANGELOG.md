@@ -1,3 +1,22 @@
+### 0.29.1 (2025-03-01)
+
+#### Changes & Bug fixes
+
+* Update rustls-native-certs. ([#1498](https://github.com/redis-rs/redis-rs/pull//1498))
+* Async cluster connection: Move response timeout out.  ([#1532](https://github.com/redis-rs/redis-rs/pull//1532))
+* Expose `Pipeline.len()` function as public ([#1539](https://github.com/redis-rs/redis-rs/pull//1539) by @Harry-Lees)
+* Implement `danger_accept_invalid_hostnames` option. ([#1529](https://github.com/redis-rs/redis-rs/pull//1529) by @jorendorff)
+* Timeout on queuing requests. ([#1552](https://github.com/redis-rs/redis-rs/pull//1552))
+
+#### Documentation improvements
+
+* docs: Fix double quotes ([#1537](https://github.com/redis-rs/redis-rs/pull//1537) by @somechris)
+* docs: added CLIENT SETINFO optional feature ([#1536](https://github.com/redis-rs/redis-rs/pull//1536) by @bourdeau)
+
+#### CI improvements
+
+* Run most cluster tests in secure mode when rustls is enabled ([#1534](https://github.com/redis-rs/redis-rs/pull//1534) by @jorendorff)
+
 ### 0.29.0 (2025-02-16)
 
 #### Changes & Bug fixes
