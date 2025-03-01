@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths},
+    utils::{build_keys_and_certs_for_tls_ext, get_random_available_port, TlsFilePaths},
 };
 
 pub struct RedisClusterConfiguration {
@@ -14,6 +14,7 @@ pub struct RedisClusterConfiguration {
     pub tls_insecure: bool,
     pub mtls_enabled: bool,
     pub ports: Vec<u16>,
+    pub certs_with_ip_alts: bool,
 }
 
 impl RedisClusterConfiguration {
@@ -35,6 +36,7 @@ impl Default for RedisClusterConfiguration {
             tls_insecure: true,
             mtls_enabled: false,
             ports: vec![],
+            certs_with_ip_alts: true,
         }
     }
 }
@@ -109,6 +111,7 @@ impl RedisCluster {
             tls_insecure,
             mtls_enabled,
             ports,
+            certs_with_ip_alts,
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -131,7 +134,7 @@ impl RedisCluster {
                 .prefix("redis")
                 .tempdir()
                 .expect("failed to create tempdir");
-            let files = build_keys_and_certs_for_tls(&tempdir);
+            let files = build_keys_and_certs_for_tls_ext(&tempdir, certs_with_ip_alts);
             folders.push(tempdir);
             tls_paths = Some(files);
             is_tls = true;

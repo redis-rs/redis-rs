@@ -10,7 +10,7 @@ mod cluster {
 
     use crate::support::*;
     use redis::{
-        cluster::{cluster_pipe, ClusterClient},
+        cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
         Value,
@@ -20,11 +20,7 @@ mod cluster {
         server::use_protocol,
     };
 
-    #[test]
-    fn test_cluster_basics() {
-        let cluster = TestClusterContext::new();
-        let mut con = cluster.connection();
-
+    fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
             .arg("{x}key1")
             .arg(b"foo")
@@ -44,6 +40,52 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_basics() {
+        let cluster = TestClusterContext::new();
+        smoke_test_connection(cluster.connection());
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_default_reject_invalid_hostnames() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // Only TLS causes invalid certificates to be rejected as desired.
+            return;
+        }
+
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            tls_insecure: false,
+            certs_with_ip_alts: false,
+            ..Default::default()
+        });
+        assert!(cluster.client.get_connection().is_err());
+    }
+
+    #[cfg(feature = "tls-rustls-insecure")]
+    #[test]
+    fn test_danger_accept_invalid_hostnames() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            // No point testing this TLS-specific mode in non-TLS configurations.
+            return;
+        }
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                tls_insecure: false,
+                certs_with_ip_alts: false,
+                ..Default::default()
+            },
+            |builder| builder.danger_accept_invalid_hostnames(true),
+        );
+
+        smoke_test_connection(cluster.connection());
+    }
+
+    #[test]
     fn test_cluster_with_username_and_password() {
         let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
             builder
@@ -52,24 +94,7 @@ mod cluster {
         });
         cluster.disable_default_user();
 
-        let mut con = cluster.connection();
-
-        redis::cmd("SET")
-            .arg("{x}key1")
-            .arg(b"foo")
-            .exec(&mut con)
-            .unwrap();
-        redis::cmd("SET")
-            .arg(&["{x}key2", "bar"])
-            .exec(&mut con)
-            .unwrap();
-
-        assert_eq!(
-            redis::cmd("MGET")
-                .arg(&["{x}key1", "{x}key2"])
-                .query(&mut con),
-            Ok(("foo".to_string(), b"bar".to_vec()))
-        );
+        smoke_test_connection(cluster.connection());
     }
 
     #[test]

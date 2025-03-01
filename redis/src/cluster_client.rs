@@ -9,10 +9,6 @@ use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(feature = "cluster-async")]
@@ -32,6 +28,8 @@ struct BuilderParams {
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
@@ -101,13 +99,28 @@ pub(crate) struct ClusterParams {
 impl ClusterParams {
     fn from(value: BuilderParams) -> RedisResult<Self> {
         #[cfg(not(feature = "tls-rustls"))]
-        let tls_params = None;
+        let tls_params: Option<TlsConnParams> = None;
 
         #[cfg(feature = "tls-rustls")]
         let tls_params = {
             let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
 
             retrieved_tls_params.transpose()?
+        };
+
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        let tls_params = if value.danger_accept_invalid_hostnames {
+            let mut tls_params = tls_params.unwrap_or(TlsConnParams {
+                #[cfg(feature = "tls-rustls")]
+                client_tls_params: None,
+                #[cfg(feature = "tls-rustls")]
+                root_cert_store: None,
+                danger_accept_invalid_hostnames: false,
+            });
+            tls_params.danger_accept_invalid_hostnames = true;
+            Some(tls_params)
+        } else {
+            tls_params
         };
 
         Ok(Self {
@@ -303,6 +316,25 @@ impl ClusterClientBuilder {
     #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
         self.builder_params.tls = Some(tls);
+        self
+    }
+
+    /// Configure hostname verification when connecting with TLS.
+    ///
+    /// If `insecure` is true, this **disables** hostname verification, while
+    /// leaving other aspects of certificate checking enabled. This mode is
+    /// similar to what `redis-cli` does: TLS connections do check certificates,
+    /// but hostname errors are ignored.
+    ///
+    /// # Warning
+    ///
+    /// You should think very carefully before you use this method. If hostname
+    /// verification is not used, any valid certificate for any site will be
+    /// trusted for use from any other. This introduces a significant
+    /// vulnerability to man-in-the-middle attacks.
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    pub fn danger_accept_invalid_hostnames(mut self, insecure: bool) -> ClusterClientBuilder {
+        self.builder_params.danger_accept_invalid_hostnames = insecure;
         self
     }
 
