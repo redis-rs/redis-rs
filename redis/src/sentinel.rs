@@ -1119,7 +1119,10 @@ impl SentinelClientBuilder {
                     host: _,
                     port: _,
                     ref mut insecure,
+                    #[cfg(feature = "tls-rustls")]
                     ref mut tls_params,
+                    #[cfg(not(feature = "tls-rustls"))]
+                        tls_params: _,
                 } => {
                     if let Some(tls_mode) = self.client_to_sentinel_params.tls_mode {
                         match tls_mode {

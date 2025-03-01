@@ -250,5 +250,5 @@ jobs:
         - uses: Swatinem/rust-cache@v2
 
         - run: |
-            cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
+            cargo install --git https://github.com/nihohit/flag-frenzy.git
             flag-frenzy --package redis
