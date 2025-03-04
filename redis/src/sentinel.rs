@@ -336,6 +336,7 @@ fn find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
+        println!("{:#?}", connection_info);
         return Ok(connection_info);
         //redis-py does not check roles
     }
@@ -959,7 +960,7 @@ impl SentinelClient {
             server_type,
         })
     }
-    
+
     pub fn get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => self
