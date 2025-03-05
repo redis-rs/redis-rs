@@ -564,84 +564,76 @@ where
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
-            let mut connections = stream::iter(addrs)
-                .fold(
-                    mem::take(&mut write_guard.0),
-                    |mut connections, addr| async {
-                        let conn = Self::get_or_create_conn(
-                            &addr,
-                            connections.remove(&addr),
-                            &inner.cluster_params,
-                        )
-                        .await;
-                        if let Ok(conn) = conn {
-                            connections.insert(addr, conn);
-                        }
-                        connections
-                    },
-                )
-                .await;
-            write_guard.0 = mem::take(&mut connections);
+
+            Self::refresh_connections_locked(&inner, &mut write_guard.0, addrs).await;
         }
     }
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(inner: Core<C>) -> RedisResult<()> {
         let mut write_guard = inner.conn_lock.write().await;
-        let mut connections = mem::take(&mut write_guard.0);
-        let slots = &mut write_guard.1;
+        let (connections, slots) = &mut *write_guard;
+
         let mut result = Ok(());
-        for (addr, conn) in connections.iter_mut() {
-            let value = match conn
-                .req_packed_command(&slot_cmd())
-                .await
-                .and_then(|value| value.extract_error())
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    result = Err(err);
-                    continue;
-                }
-            };
-            match parse_slots(
-                value,
-                inner.cluster_params.tls,
-                addr.rsplit_once(':').unwrap().0,
-            )
-            .and_then(|v: Vec<Slot>| Self::build_slot_map(slots, v))
-            {
-                Ok(_) => {
-                    result = Ok(());
-                    break;
-                }
-                Err(err) => result = Err(err),
+        for (addr, conn) in &mut *connections {
+            result = async {
+                let value = conn
+                    .req_packed_command(&slot_cmd())
+                    .await
+                    .and_then(|value| value.extract_error())?;
+                let v: Vec<Slot> = parse_slots(
+                    value,
+                    inner.cluster_params.tls,
+                    addr.rsplit_once(':').unwrap().0,
+                )?;
+                Self::build_slot_map(slots, v)
+            }
+            .await;
+            if result.is_ok() {
+                break;
             }
         }
         result?;
 
-        let mut nodes = write_guard.1.values().flatten().collect::<Vec<_>>();
+        let mut nodes = slots.values().flatten().cloned().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
-        let nodes_len = nodes.len();
-        let addresses_and_connections_iter = nodes
-            .into_iter()
-            .map(|addr| (addr, connections.remove(addr)));
+        Self::refresh_connections_locked(&inner, connections, nodes).await;
 
-        write_guard.0 = stream::iter(addresses_and_connections_iter)
+        Ok(())
+    }
+
+    async fn refresh_connections_locked(
+        inner: &Core<C>,
+        connections: &mut ConnectionMap<C>,
+        nodes: Vec<String>,
+    ) {
+        let nodes_len = nodes.len();
+
+        let addresses_and_connections_iter = nodes.into_iter().map(|addr| {
+            let value = connections.remove(&addr);
+            (addr, value)
+        });
+
+        let inner = &inner;
+        *connections = stream::iter(addresses_and_connections_iter)
+            .map(|(addr, connection)| async move {
+                (
+                    addr.clone(),
+                    Self::get_or_create_conn(&addr, connection, &inner.cluster_params).await,
+                )
+            })
+            .buffer_unordered(nodes_len.max(8))
             .fold(
                 HashMap::with_capacity(nodes_len),
-                |mut connections, (addr, connection)| async {
-                    let conn =
-                        Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
-                    if let Ok(conn) = conn {
-                        connections.insert(addr.to_string(), conn);
+                |mut connections, (addr, result)| async move {
+                    if let Ok(conn) = result {
+                        connections.insert(addr, conn);
                     }
                     connections
                 },
             )
             .await;
-
-        Ok(())
     }
 
     fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
