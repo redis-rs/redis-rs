@@ -263,7 +263,7 @@ where
         }
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
@@ -345,8 +345,7 @@ where
     }
 }
 
-type ConnectionFuture<C> = future::Shared<BoxFuture<'static, C>>;
-type ConnectionMap<C> = HashMap<String, ConnectionFuture<C>>;
+type ConnectionMap<C> = HashMap<String, C>;
 
 /// This is the internal representation of an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
@@ -465,7 +464,7 @@ where
                     let addr = info.addr.to_string();
                     let result = connect_and_check(&addr, params).await;
                     match result {
-                        Ok(conn) => Ok((addr, async { conn }.boxed().shared())),
+                        Ok(conn) => Ok((addr, conn)),
                         Err(e) => {
                             debug!("Failed to connect to initial node: {:?}", e);
                             Err(e)
@@ -576,7 +575,7 @@ where
                         )
                         .await;
                         if let Ok(conn) = conn {
-                            connections.insert(addr, async { conn }.boxed().shared());
+                            connections.insert(addr, conn);
                         }
                         connections
                     },
@@ -593,7 +592,6 @@ where
         let slots = &mut write_guard.1;
         let mut result = Ok(());
         for (addr, conn) in connections.iter_mut() {
-            let mut conn = conn.clone().await;
             let value = match conn
                 .req_packed_command(&slot_cmd())
                 .await
@@ -636,7 +634,7 @@ where
                     let conn =
                         Self::get_or_create_conn(addr, connection, &inner.cluster_params).await;
                     if let Ok(conn) = conn {
-                        connections.insert(addr.to_string(), async { conn }.boxed().shared());
+                        connections.insert(addr.to_string(), conn);
                     }
                     connections
                 },
@@ -911,7 +909,7 @@ where
                 .slot_addr_for_route(&route)
                 .map(|addr| addr.to_string()),
             InternalSingleNodeRouting::Connection { identifier, conn } => {
-                return Ok((identifier, conn.await));
+                return Ok((identifier, conn));
             }
             InternalSingleNodeRouting::Redirect { redirect, .. } => {
                 drop(read_guard);
@@ -920,7 +918,7 @@ where
             }
             InternalSingleNodeRouting::ByAddress(address) => {
                 if let Some(conn) = read_guard.0.get(&address).cloned() {
-                    return Ok((address, conn.await));
+                    return Ok((address, conn));
                 } else {
                     return Err((
                         ErrorKind::ClientError,
@@ -938,7 +936,7 @@ where
         drop(read_guard);
 
         let addr_conn_option = match conn {
-            Some((addr, Some(conn))) => Some((addr, conn.await)),
+            Some((addr, Some(conn))) => Some((addr, conn)),
             Some((addr, None)) => connect_check_and_add(core.clone(), addr.clone())
                 .await
                 .ok()
@@ -950,11 +948,9 @@ where
             Some(tuple) => tuple,
             None => {
                 let read_guard = core.conn_lock.read().await;
-                if let Some((random_addr, random_conn_future)) =
-                    get_random_connection(&read_guard.0)
-                {
+                if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
                     drop(read_guard);
-                    (random_addr, random_conn_future.await)
+                    (random_addr, random_conn)
                 } else {
                     return Err(
                         (ErrorKind::ClusterConnectionNotFound, "No connections found").into(),
@@ -979,7 +975,7 @@ where
         let conn = read_guard.0.get(&addr).cloned();
         drop(read_guard);
         let mut conn = match conn {
-            Some(conn) => conn.await,
+            Some(conn) => conn,
             None => connect_check_and_add(core.clone(), addr.clone()).await?,
         };
         if asking {
@@ -1111,11 +1107,10 @@ where
 
     async fn get_or_create_conn(
         addr: &str,
-        conn_option: Option<ConnectionFuture<C>>,
+        conn_option: Option<C>,
         params: &ClusterParams,
     ) -> RedisResult<C> {
-        if let Some(conn) = conn_option {
-            let mut conn = conn.await;
+        if let Some(mut conn) = conn_option {
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
                 Err(_) => connect_and_check(addr, params.clone()).await,
@@ -1315,11 +1310,7 @@ where
     match connect_and_check::<C>(&addr, core.cluster_params.clone()).await {
         Ok(conn) => {
             let conn_clone = conn.clone();
-            core.conn_lock
-                .write()
-                .await
-                .0
-                .insert(addr, async { conn_clone }.boxed().shared());
+            core.conn_lock.write().await.0.insert(addr, conn_clone);
             Ok(conn)
         }
         Err(err) => Err(err),
@@ -1374,7 +1365,7 @@ where
     Ok(())
 }
 
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, ConnectionFuture<C>)>
+fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(String, C)>
 where
     C: Clone,
 {
