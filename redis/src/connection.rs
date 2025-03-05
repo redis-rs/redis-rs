@@ -75,7 +75,7 @@ fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpSt
 pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "redis+unix" | "unix" => Some(result),
+            "redis" | "rediss" | "valkey" | "valkeys" | "redis+unix" | "unix" => Some(result),
             _ => None,
         },
         Err(_) => None,
@@ -2217,6 +2217,8 @@ mod tests {
         let cases = vec![
             ("redis://127.0.0.1", true),
             ("redis://[::1]", true),
+            ("valkey://127.0.0.1", true),
+            ("valkey://[::1]", true),
             ("redis+unix:///run/redis.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
