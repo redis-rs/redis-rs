@@ -1,6 +1,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
+#[allow(unused_imports)]
 use crate::types::{ExistenceCheck, ExpireOption, Expiry, FromRedisValue, IntegerReplyOrNoOp, NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs};
 
 #[macro_use]
@@ -256,7 +257,7 @@ implement_commands! {
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time,.
+	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn pexpire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("PEXPIRETIME").arg(key)
     }
