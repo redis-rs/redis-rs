@@ -1,4 +1,5 @@
 // Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
+#[allow(unused_macros)]
 macro_rules! implement_command {
 	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
 	(

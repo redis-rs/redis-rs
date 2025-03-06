@@ -259,7 +259,7 @@ implement_commands! {
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time,.
+	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn pexpire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("PEXPIRETIME").arg(key)
     }
