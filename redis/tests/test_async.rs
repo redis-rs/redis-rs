@@ -9,7 +9,7 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     use redis::aio::ConnectionManager;
     use redis::{
-        aio::{ConnectionLike, MultiplexedConnection},
+        aio::{AsyncTransactionConfig, ConnectionLike, MultiplexedConnection},
         cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
@@ -431,6 +431,39 @@ mod basic_async {
 
                 let x: i32 = con.get("x").await.unwrap();
                 assert_eq!(x, 42);
+
+                Ok::<_, RedisError>(())
+            },
+            runtime,
+        );
+    }
+
+    #[rstest]
+    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    fn test_transaction_async(#[case] runtime: RuntimeType) {
+        test_with_all_connection_types(
+            |con| async move {
+                let mut pipe = redis::pipe();
+                pipe.set("x", 42)
+                    .ignore()
+                    .set("y", 21)
+                    .ignore()
+                    .get("x")
+                    .get("y");
+
+                let res: Result<_, RedisError> = redis::aio::transaction_async(
+                    con,
+                    &["x", "y"],
+                    &mut pipe,
+                    Some(AsyncTransactionConfig { max_retries: 10 }),
+                )
+                .await;
+                let last_value: Vec<redis::Value> = res.unwrap();
+                let x: i32 = redis::from_redis_value(&last_value[2]).unwrap();
+                let y: i32 = redis::from_redis_value(&last_value[3]).unwrap();
+                assert_eq!(x, 42);
+                assert_eq!(y, 21);
 
                 Ok::<_, RedisError>(())
             },
