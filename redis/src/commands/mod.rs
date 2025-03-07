@@ -2395,6 +2395,8 @@ impl<T> Commands for T where T: ConnectionLike {}
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
+impl<T> TypedCommands for T where T: ConnectionLike {}
+
 #[cfg(feature = "aio")]
 impl<T> AsyncTypedCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
