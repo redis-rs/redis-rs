@@ -2962,85 +2962,85 @@ pub(crate) fn closed_connection_error() -> RedisError {
 /// Possible types of value held in Redis, from https://redis.io/docs/latest/commands/type/
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueType {
-	/// Generally returned by anything that returns a single element. https://redis.io/docs/latest/develop/data-types/strings/
-	String,
-	/// A list of String values. https://redis.io/docs/latest/develop/data-types/lists/
-	List,
-	/// A set of unique String values. https://redis.io/docs/latest/develop/data-types/sets/
-	Set,
-	/// A sorted set of String values. https://redis.io/docs/latest/develop/data-types/sorted-sets/
-	ZSet,
-	/// A collection of field-value pairs. https://redis.io/docs/latest/develop/data-types/hashes/
-	Hash,
-	/// A Redis Stream. https://redis.io/docs/latest/develop/data-types/stream
-	Stream,
-	/// Any other value type not explicitly defined in https://redis.io/docs/latest/commands/type/
-	Unknown(String)
+    /// Generally returned by anything that returns a single element. https://redis.io/docs/latest/develop/data-types/strings/
+    String,
+    /// A list of String values. https://redis.io/docs/latest/develop/data-types/lists/
+    List,
+    /// A set of unique String values. https://redis.io/docs/latest/develop/data-types/sets/
+    Set,
+    /// A sorted set of String values. https://redis.io/docs/latest/develop/data-types/sorted-sets/
+    ZSet,
+    /// A collection of field-value pairs. https://redis.io/docs/latest/develop/data-types/hashes/
+    Hash,
+    /// A Redis Stream. https://redis.io/docs/latest/develop/data-types/stream
+    Stream,
+    /// Any other value type not explicitly defined in https://redis.io/docs/latest/commands/type/
+    Unknown(String),
 }
 
 impl FromRedisValue for ValueType {
-	fn from_redis_value(v: &Value) -> RedisResult<Self> {
-		match v {
-			Value::SimpleString(s) => match s.as_str() {
-				"string" => Ok(ValueType::String),
-				"list" => Ok(ValueType::List),
-				"set" => Ok(ValueType::Set),
-				"zset" => Ok(ValueType::ZSet),
-				"hash" => Ok(ValueType::Hash),
-				"stream" => Ok(ValueType::Stream),
-				_ => Ok(ValueType::Unknown(s.clone()))
-			},
-			_ => invalid_type_error!(v, "Value type should be a simple string")
-		}
-	}
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::SimpleString(s) => match s.as_str() {
+                "string" => Ok(ValueType::String),
+                "list" => Ok(ValueType::List),
+                "set" => Ok(ValueType::Set),
+                "zset" => Ok(ValueType::ZSet),
+                "hash" => Ok(ValueType::Hash),
+                "stream" => Ok(ValueType::Stream),
+                _ => Ok(ValueType::Unknown(s.clone())),
+            },
+            _ => invalid_type_error!(v, "Value type should be a simple string"),
+        }
+    }
 
-	fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
-		match v {
-			Value::SimpleString(s) => match s.as_str() {
-				"string" => Ok(ValueType::String),
-				"list" => Ok(ValueType::List),
-				"set" => Ok(ValueType::Set),
-				"zset" => Ok(ValueType::ZSet),
-				"hash" => Ok(ValueType::Hash),
-				"stream" => Ok(ValueType::Stream),
-				_ => Ok(ValueType::Unknown(s))
-			},
-			_ => invalid_type_error!(v, "Value type should be a simple string")
-		}
-	}
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        match v {
+            Value::SimpleString(s) => match s.as_str() {
+                "string" => Ok(ValueType::String),
+                "list" => Ok(ValueType::List),
+                "set" => Ok(ValueType::Set),
+                "zset" => Ok(ValueType::ZSet),
+                "hash" => Ok(ValueType::Hash),
+                "stream" => Ok(ValueType::Stream),
+                _ => Ok(ValueType::Unknown(s)),
+            },
+            _ => invalid_type_error!(v, "Value type should be a simple string"),
+        }
+    }
 }
 
 /// Returned by typed commands which either return a positive integer, or some negative integer indicating some kind of no-op.
 pub enum IntegerReplyOrNoOp {
-	/// A positive integer reply indicating success of some kind.
-	#[allow(dead_code)]
-	IntegerReply(u64),
-	/// The field/key you are trying to operate on does not exist.
-	NotExists,
-	/// The field/key you are trying to operate on exists, but is not of the correct type, or does not have some property you are trying to affect.
-	ExistsButNotRelevant
+    /// A positive integer reply indicating success of some kind.
+    #[allow(dead_code)]
+    IntegerReply(u64),
+    /// The field/key you are trying to operate on does not exist.
+    NotExists,
+    /// The field/key you are trying to operate on exists, but is not of the correct type, or does not have some property you are trying to affect.
+    ExistsButNotRelevant,
 }
 
 impl FromRedisValue for IntegerReplyOrNoOp {
-	fn from_redis_value(v: &Value) -> RedisResult<Self> {
-		match v {
-			Value::Int(s) => match s {
-				-2 => Ok(IntegerReplyOrNoOp::NotExists),
-				-1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-				_ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as u64))
-			},
-			_ => invalid_type_error!(v, "Value should be an integer")
-		}
-	}
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(s) => match s {
+                -2 => Ok(IntegerReplyOrNoOp::NotExists),
+                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as u64)),
+            },
+            _ => invalid_type_error!(v, "Value should be an integer"),
+        }
+    }
 
-	fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
-		match v {
-			Value::Int(s) => match s {
-				-2 => Ok(IntegerReplyOrNoOp::NotExists),
-				-1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-				_ => Ok(IntegerReplyOrNoOp::IntegerReply(s as u64))
-			},
-			_ => invalid_type_error!(v, "Value should be an integer")
-		}
-	}
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(s) => match s {
+                -2 => Ok(IntegerReplyOrNoOp::NotExists),
+                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as u64)),
+            },
+            _ => invalid_type_error!(v, "Value should be an integer"),
+        }
+    }
 }

@@ -253,13 +253,13 @@ implement_commands! {
     }
 
     /// Get the absolute Unix expiration timestamp in seconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn expire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("EXPIRETIME").arg(key)
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn pexpire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("PEXPIRETIME").arg(key)
     }
@@ -271,13 +271,13 @@ implement_commands! {
     }
 
     /// Get the time to live for a key in seconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn ttl<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("TTL").arg(key)
     }
 
     /// Get the time to live for a key in milliseconds.
-	/// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     fn pttl<K: ToRedisArgs>(key: K) -> isize {
         cmd("PTTL").arg(key)
     }
