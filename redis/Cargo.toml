@@ -279,5 +279,8 @@ name = "async-typed"
 required-features = ["aio"]
 
 [[example]]
+name = "typed"
+
+[[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
