@@ -426,7 +426,7 @@ assert_eq!(b, 5);
 ```
 
 Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-it will not automatically be loaded and retried. The script can be loaded using the 
+it will not automatically be loaded and retried. The script can be loaded using the
 [`load`](ScriptInvocation::load) operation.
 "##
 )]
@@ -653,11 +653,11 @@ pub mod cluster_async;
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 mod tls;
 
-#[cfg(feature = "tls-rustls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
+#[cfg(feature = "tls-rustls-no-provider")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls-no-provider")))]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]

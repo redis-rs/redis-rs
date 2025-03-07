@@ -7,7 +7,7 @@ use redis::{aio, cmd};
 use redis::{ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
 use redis_test::server::{use_protocol, Module, RedisServer};
 use redis_test::utils::{get_random_available_port, TlsFilePaths};
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 use std::{
     fs::File,
     io::{BufReader, Read},
@@ -16,7 +16,7 @@ use std::{io, thread::sleep, time::Duration};
 
 #[cfg(feature = "cache-aio")]
 use redis::caching::CacheConfig;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 use redis::{ClientTlsConfig, TlsCertificates};
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
@@ -142,7 +142,7 @@ pub struct TestContext {
 }
 
 pub(crate) fn start_tls_crypto_provider() {
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         // we don't care about success, because failure means that the provider was set from another thread.
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -154,7 +154,7 @@ impl TestContext {
         TestContext::with_modules(&[], false)
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     pub fn new_with_mtls() -> TestContext {
         Self::with_modules(&[], true)
     }
@@ -405,7 +405,7 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
         || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
@@ -434,7 +434,7 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     tls_file_params: &Option<TlsFilePaths>,
@@ -454,7 +454,7 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     }
 }
 
-#[cfg(not(feature = "tls-rustls"))]
+#[cfg(not(feature = "tls-rustls-no-provider"))]
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     _tls_file_params: &Option<TlsFilePaths>,
@@ -463,7 +463,7 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     redis::Client::open(connection_info)
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 pub(crate) mod mtls_test {
     use super::*;
     use redis::{cluster::ClusterClient, ConnectionInfo, RedisError};

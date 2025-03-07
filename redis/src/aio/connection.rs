@@ -334,7 +334,7 @@ where
         Self(con)
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
@@ -469,7 +469,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
                 .0
         }
 
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-no-provider"))]
         ConnectionAddr::TcpTls {
             ref host,
             port,
@@ -490,7 +490,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             .0
         }
 
-        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
+        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls-no-provider")))]
         ConnectionAddr::TcpTls { .. } => {
             fail!((
                 ErrorKind::InvalidClientConfig,

@@ -12,12 +12,12 @@ use redis::aio::ConnectionLike;
 use redis::cluster_async::Connect;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 use redis_test::cluster::ClusterType;
 use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
 use redis_test::server::{use_protocol, RedisServer};
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 use super::load_certs_from_file;
 
 pub struct TestClusterContext {
@@ -90,7 +90,7 @@ impl TestClusterContext {
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
         start_tls_crypto_provider();
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(feature = "tls-rustls-no-provider")]
         let tls_insecure = cluster_config.tls_insecure;
         let mtls_enabled = cluster_config.mtls_enabled;
         let cluster = RedisCluster::new(cluster_config);
@@ -101,7 +101,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
             .use_protocol(use_protocol());
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(feature = "tls-rustls-no-provider")]
         if mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !tls_insecure) {
             if let Some(tls_file_paths) = &cluster.tls_paths {
                 builder = builder.certs(load_certs_from_file(tls_file_paths));
