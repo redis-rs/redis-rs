@@ -27,6 +27,8 @@ async fn main() -> redis::RedisResult<()> {
     let value_type = con.key_type("hello").await?;
     assert_eq!(value_type, redis::ValueType::String);
 
+    con.del("mylist").await?;
+
     con.lpush("mylist", "a").await?;
     con.lpush("mylist", "b").await?;
     con.lpush("mylist", "c").await?;

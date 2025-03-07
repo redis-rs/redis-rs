@@ -1,7 +1,6 @@
 use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
-#[allow(unused_imports)]
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FromRedisValue, IntegerReplyOrNoOp, NumericBehavior,
     RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
@@ -2388,6 +2387,8 @@ impl<T> Commands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
+
+impl<T> TypedCommands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> AsyncTypedCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
