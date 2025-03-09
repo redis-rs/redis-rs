@@ -112,24 +112,35 @@ json = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = [
-  "dep:rustls",
-  "rustls/std",
-  "rustls/ring",
-  "dep:rustls-native-certs",
+tls-rustls = ["tls-rustls-no-provider", "rustls/ring"]
+tls-rustls-insecure = ["tls-rustls-no-provider-insecure", "rustls/ring"]
+tls-rustls-webpki-roots = ["tls-rustls-no-provider-webpki-roots", "rustls/ring"]
+tls-rustls-no-provider = ["dep:rustls", "rustls/std", "dep:rustls-native-certs"]
+tls-rustls-no-provider-insecure = ["tls-rustls-no-provider"]
+tls-rustls-no-provider-webpki-roots = [
+  "tls-rustls-no-provider",
+  "dep:webpki-roots",
 ]
-tls-rustls-insecure = ["tls-rustls"]
-tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 async-std-comp = ["aio", "dep:async-std"]
 async-std-native-tls-comp = [
   "async-std-comp",
   "dep:async-native-tls",
   "tls-native-tls",
 ]
-async-std-rustls-comp = ["async-std-comp", "dep:futures-rustls", "tls-rustls"]
+async-std-rustls-comp = ["async-std-rustls-no-provider-comp", "rustls/ring"]
+async-std-rustls-no-provider-comp = [
+  "async-std-comp",
+  "dep:futures-rustls",
+  "tls-rustls-no-provider",
+]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
-tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
+tokio-rustls-comp = ["tokio-rustls-no-provider-comp", "rustls/ring"]
+tokio-rustls-no-provider-comp = [
+  "tokio-comp",
+  "tls-rustls-no-provider",
+  "dep:tokio-rustls",
+]
 connection-manager = ["dep:futures-channel", "aio", "dep:backon"]
 streams = []
 cluster-async = ["aio", "cluster", "dep:futures-sink", "dep:log"]

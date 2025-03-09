@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use std::path::Path;
-#[cfg(feature = "async-std-rustls-comp")]
+#[cfg(feature = "async-std-rustls-no-provider-comp")]
 use std::sync::Arc;
 use std::{
     future::Future,
@@ -19,9 +19,9 @@ use crate::types::RedisResult;
 ))]
 use async_native_tls::{TlsConnector, TlsStream};
 
-#[cfg(feature = "async-std-rustls-comp")]
+#[cfg(feature = "async-std-rustls-no-provider-comp")]
 use crate::connection::create_rustls_config;
-#[cfg(feature = "async-std-rustls-comp")]
+#[cfg(feature = "async-std-rustls-no-provider-comp")]
 use futures_rustls::{client::TlsStream, TlsConnector};
 
 use super::TaskHandle;
@@ -225,7 +225,7 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }
 
-    #[cfg(feature = "async-std-rustls-comp")]
+    #[cfg(feature = "async-std-rustls-no-provider-comp")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,

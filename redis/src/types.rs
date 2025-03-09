@@ -664,7 +664,7 @@ impl From<native_tls::Error> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 impl From<rustls::Error> for RedisError {
     fn from(err: rustls::Error) -> RedisError {
         RedisError {
@@ -677,7 +677,7 @@ impl From<rustls::Error> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
@@ -690,7 +690,7 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 impl From<rustls_native_certs::Error> for RedisError {
     fn from(err: rustls_native_certs::Error) -> RedisError {
         RedisError {
