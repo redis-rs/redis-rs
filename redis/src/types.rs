@@ -2512,9 +2512,7 @@ macro_rules! from_redis_value_for_tuple {
                         Value::Array(ch) => {
                            if  let [$($name),*] = &ch[..] {
                             rv.push(($(from_redis_value(&$name)?),*),)
-                           } else {
-                                unreachable!()
-                            };
+                           };
                         },
                         _ => {},
 
@@ -2554,9 +2552,7 @@ macro_rules! from_redis_value_for_tuple {
                             // TODO - this copies when we could've used the owned value. need to find out how to do this.
                         if  let [$($name),*] = &ch[..] {
                             rv.push(($(from_redis_value($name)?),*),)
-                           } else {
-                                unreachable!()
-                            };
+                           };
                         },
                         _ => {},
                     }

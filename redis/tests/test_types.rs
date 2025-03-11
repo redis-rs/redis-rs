@@ -1,7 +1,11 @@
 mod support;
 
 mod types {
-    use std::{rc::Rc, sync::Arc};
+    use std::{
+        collections::{HashMap, HashSet},
+        rc::Rc,
+        sync::Arc,
+    };
 
     use redis::{ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value};
 
@@ -843,6 +847,124 @@ mod types {
                     }
                 ])
             )
+        }
+    }
+
+    #[test]
+    fn test_complex_nested_tuples() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let value = Value::Array(vec![
+                Value::Array(vec![
+                    Value::BulkString(b"Hi1".to_vec()),
+                    Value::BulkString(b"Bye1".to_vec()),
+                    Value::BulkString(b"Hi2".to_vec()),
+                    Value::BulkString(b"Bye2".to_vec()),
+                ]),
+                Value::Array(vec![
+                    Value::BulkString(b"S1".to_vec()),
+                    Value::BulkString(b"S2".to_vec()),
+                    Value::BulkString(b"S3".to_vec()),
+                ]),
+                Value::Array(vec![
+                    Value::BulkString(b"Hi3".to_vec()),
+                    Value::BulkString(b"Bye3".to_vec()),
+                    Value::BulkString(b"Hi4".to_vec()),
+                    Value::BulkString(b"Bye4".to_vec()),
+                ]),
+                Value::Array(vec![
+                    Value::BulkString(b"S4".to_vec()),
+                    Value::BulkString(b"S5".to_vec()),
+                    Value::BulkString(b"S6".to_vec()),
+                ]),
+            ]);
+            let res: Vec<(HashMap<String, String>, Vec<String>)> =
+                parse_mode.parse_redis_value(value).unwrap();
+
+            let mut expected_map1 = HashMap::new();
+            expected_map1.insert("Hi1".to_string(), "Bye1".to_string());
+            expected_map1.insert("Hi2".to_string(), "Bye2".to_string());
+
+            let mut expected_map2 = HashMap::new();
+            expected_map2.insert("Hi3".to_string(), "Bye3".to_string());
+            expected_map2.insert("Hi4".to_string(), "Bye4".to_string());
+
+            assert_eq!(
+                res,
+                vec![
+                    (
+                        expected_map1,
+                        vec!["S1".to_string(), "S2".to_string(), "S3".to_string()]
+                    ),
+                    (
+                        expected_map2,
+                        vec!["S4".to_string(), "S5".to_string(), "S6".to_string()]
+                    )
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn test_complex_nested_tuples_resp3() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let value = Value::Array(vec![
+                Value::Map(vec![
+                    (
+                        Value::BulkString(b"Hi1".to_vec()),
+                        Value::BulkString(b"Bye1".to_vec()),
+                    ),
+                    (
+                        Value::BulkString(b"Hi2".to_vec()),
+                        Value::BulkString(b"Bye2".to_vec()),
+                    ),
+                ]),
+                Value::Set(vec![
+                    Value::BulkString(b"S1".to_vec()),
+                    Value::BulkString(b"S2".to_vec()),
+                    Value::BulkString(b"S3".to_vec()),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::BulkString(b"Hi3".to_vec()),
+                        Value::BulkString(b"Bye3".to_vec()),
+                    ),
+                    (
+                        Value::BulkString(b"Hi4".to_vec()),
+                        Value::BulkString(b"Bye4".to_vec()),
+                    ),
+                ]),
+                Value::Set(vec![
+                    Value::BulkString(b"S4".to_vec()),
+                    Value::BulkString(b"S5".to_vec()),
+                    Value::BulkString(b"S6".to_vec()),
+                ]),
+            ]);
+            let res: Vec<(HashMap<String, String>, HashSet<String>)> =
+                parse_mode.parse_redis_value(value).unwrap();
+
+            let mut expected_map1 = HashMap::new();
+            expected_map1.insert("Hi1".to_string(), "Bye1".to_string());
+            expected_map1.insert("Hi2".to_string(), "Bye2".to_string());
+            let mut expected_set1 = HashSet::new();
+            expected_set1.insert("S1".to_string());
+            expected_set1.insert("S2".to_string());
+            expected_set1.insert("S3".to_string());
+
+            let mut expected_map2 = HashMap::new();
+            expected_map2.insert("Hi3".to_string(), "Bye3".to_string());
+            expected_map2.insert("Hi4".to_string(), "Bye4".to_string());
+            let mut expected_set2 = HashSet::new();
+            expected_set2.insert("S4".to_string());
+            expected_set2.insert("S5".to_string());
+            expected_set2.insert("S6".to_string());
+
+            assert_eq!(
+                res,
+                vec![
+                    (expected_map1, expected_set1),
+                    (expected_map2, expected_set2)
+                ]
+            );
         }
     }
 }
