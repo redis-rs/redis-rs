@@ -6,8 +6,6 @@ use crate::{
     Cmd, ErrorKind, RedisResult,
 };
 
-use super::ConnectionFuture;
-
 #[derive(Clone)]
 pub(super) enum InternalRoutingInfo<C> {
     SingleNode(InternalSingleNodeRouting<C>),
@@ -40,7 +38,7 @@ pub(super) enum InternalSingleNodeRouting<C> {
     ByAddress(String),
     Connection {
         identifier: String,
-        conn: ConnectionFuture<C>,
+        conn: C,
     },
     Redirect {
         redirect: Redirect,
