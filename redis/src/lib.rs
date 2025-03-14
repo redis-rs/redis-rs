@@ -641,6 +641,10 @@ pub mod cluster_routing;
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
 
+#[cfg(all(feature = "bb8", feature = "aio"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "bb8", feature = "aio"))))]
+mod bb8;
+
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
