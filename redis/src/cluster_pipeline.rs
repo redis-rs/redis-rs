@@ -24,7 +24,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
         "KEYS" |
         "LASTSAVE" |
         "MGET" | "MOVE" | "MSET" | "MSETNX" |
-        "PFMERGE" | "PFCOUNT" | "PING" | "PUBLISH" |
+        "PING" | "PUBLISH" |
         "RANDOMKEY" | "RENAME" | "RENAMENX" | "RPOPLPUSH" |
         "SAVE" | "SCAN" |
         // All commands that start with "SCRIPT"
@@ -62,7 +62,7 @@ pub struct ClusterPipeline {
 /// KEYS
 /// LASTSAVE
 /// MGET, MOVE, MSET, MSETNX
-/// PFMERGE, PFCOUNT, PING, PUBLISH
+/// PING, PUBLISH
 /// RANDOMKEY, RENAME, RENAMENX, RPOPLPUSH
 /// SAVE, SCAN, SCRIPT EXISTS, SCRIPT FLUSH, SCRIPT KILL, SCRIPT LOAD, SDIFF, SDIFFSTORE,
 /// SENTINEL GET MASTER ADDR BY NAME, SENTINEL MASTER, SENTINEL MASTERS, SENTINEL MONITOR,

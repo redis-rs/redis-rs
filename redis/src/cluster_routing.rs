@@ -312,6 +312,45 @@ where
     })
 }
 
+/// Takes the given `routable` with possibly multiple keys and creates a single-slot routing info.
+/// This is used for commands like PFCOUNT or PFMERGE, where it is required that the command's keys
+/// are hashed to the same slots and there is no way how the command might be split on the client.
+///
+/// If all keys are not routed to the same slot, `None` variant is returned and invoking of such
+/// command fails with UNROUTABLE_ERROR.
+fn multiple_keys_same_slot<R>(
+    routable: &R,
+    cmd: &[u8],
+    first_key_index: usize,
+) -> Option<RoutingInfo>
+where
+    R: Routable + ?Sized,
+{
+    let is_readonly = is_readonly_cmd(cmd);
+    let mut slots = HashSet::new();
+    let mut key_index = 0;
+    while let Some(key) = routable.arg_idx(first_key_index + key_index) {
+        slots.insert(get_slot(key));
+        key_index += 1;
+    }
+
+    if slots.len() != 1 {
+        return None;
+    }
+
+    let slot = slots.into_iter().next().unwrap();
+    Some(RoutingInfo::SingleNode(
+        SingleNodeRoutingInfo::SpecificNode(Route::new(
+            slot,
+            if is_readonly {
+                SlotAddr::ReplicaOptional
+            } else {
+                SlotAddr::Master
+            },
+        )),
+    ))
+}
+
 impl ResponsePolicy {
     /// Parse the command for the matching response policy.
     pub fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
@@ -473,6 +512,7 @@ impl RoutingInfo {
 
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
             b"MSET" => multi_shard(r, cmd, 1, true),
+            b"PFCOUNT" | b"PFMERGE" => multiple_keys_same_slot(r, cmd, 1),
             // TODO - special handling - b"SCAN"
             b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
             b"EVALSHA" | b"EVAL" => {
@@ -1105,6 +1145,71 @@ mod tests {
             }),
             "{routing:?}"
         );
+    }
+
+    #[test]
+    fn test_multiple_keys_same_slot() {
+        // single key
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("hll-1");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
+            ))
+        ));
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("hll-1");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
+            ))
+        ));
+
+        // multiple keys
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("{hll}-1").arg("{hll}-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
+            ))
+        ));
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("{hll}-1").arg("{hll}-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
+            ))
+        ));
+
+        // same-slot violation
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("hll-1").arg("hll-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("hll-1").arg("hll-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        // missing keys
+        let cmd = crate::cmd("PFCOUNT");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        let cmd = crate::cmd("PFMERGE");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
     }
 
     #[test]
