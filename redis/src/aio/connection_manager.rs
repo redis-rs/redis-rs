@@ -1,6 +1,7 @@
 use super::{AsyncPushSender, HandleContainer, RedisFuture};
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
+    caching::CacheManager,
     cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
@@ -37,6 +38,8 @@ pub struct ConnectionManagerConfig {
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
     tcp_settings: crate::io::tcp::TcpSettings,
+    #[cfg(feature = "cache-aio")]
+    pub(crate) cache_config: Option<crate::caching::CacheConfig>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -51,6 +54,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             push_sender,
             resubscribe_automatically,
             tcp_settings,
+            cache_config,
         } = &self;
         f.debug_struct("ConnectionManagerConfig")
             .field("exponent_base", &exponent_base)
@@ -69,6 +73,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
                 },
             )
             .field("tcp_settings", &tcp_settings)
+            .field("cache_config", &cache_config)
             .finish()
     }
 }
@@ -176,6 +181,15 @@ impl ConnectionManagerConfig {
             ..self
         }
     }
+
+    /// Set the cache behavior.
+    #[cfg(feature = "cache-aio")]
+    pub fn set_cache_config(self, cache_config: crate::caching::CacheConfig) -> Self {
+        Self {
+            cache_config: Some(cache_config),
+            ..self
+        }
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -190,6 +204,8 @@ impl Default for ConnectionManagerConfig {
             push_sender: None,
             resubscribe_automatically: false,
             tcp_settings: Default::default(),
+            #[cfg(feature = "cache-aio")]
+            cache_config: None,
         }
     }
 }
@@ -207,6 +223,8 @@ struct Internals {
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    #[cfg(feature = "cache-aio")]
+    cache_manager: Option<CacheManager>,
     _task_handle: HandleContainer,
 }
 
@@ -372,6 +390,15 @@ impl ConnectionManager {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
         connection_config = connection_config.set_tcp_settings(config.tcp_settings);
+        #[cfg(feature = "cache-aio")]
+        let cache_manager = config
+            .cache_config
+            .as_ref()
+            .map(|cache_config| CacheManager::new(*cache_config));
+        #[cfg(feature = "cache-aio")]
+        if let Some(cache_manager) = cache_manager.as_ref() {
+            connection_config = connection_config.set_cache_manager(cache_manager.clone());
+        }
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
         let _task_handle = HandleContainer::new(
@@ -407,6 +434,8 @@ impl ConnectionManager {
             retry_strategy,
             connection_config,
             subscription_tracker,
+            #[cfg(feature = "cache-aio")]
+            cache_manager,
             _task_handle,
         }));
 
@@ -620,6 +649,13 @@ impl ConnectionManager {
         self.update_subscription_tracker(SubscriptionAction::PUnsubscribe, channel_pattern)
             .await;
         Ok(())
+    }
+
+    /// Gets [`CacheStatistics`] for current connection if caching is enabled.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn get_cache_statistics(&self) -> Option<crate::caching::CacheStatistics> {
+        self.0.cache_manager.as_ref().map(|cm| cm.statistics())
     }
 }
 

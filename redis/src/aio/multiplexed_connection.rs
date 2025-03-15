@@ -508,14 +508,24 @@ impl MultiplexedConnection {
         }
 
         #[cfg(feature = "cache-aio")]
+        let cache_config = config.cache.as_ref().map(|cache| match cache {
+            crate::client::Cache::Config(cache_config) => *cache_config,
+            crate::client::Cache::Manager(cache_manager) => cache_manager.cache_config,
+        });
+        #[cfg(feature = "cache-aio")]
         let cache_manager_opt = config
-            .cache_config
-            .map(|config| {
+            .cache
+            .map(|cache| {
                 check_resp3!(
                     connection_info.protocol,
                     "Can only enable client side caching in a connection using RESP3"
                 );
-                Ok(CacheManager::new(config))
+                match cache {
+                    crate::client::Cache::Config(cache_config) => {
+                        Ok(CacheManager::new(cache_config))
+                    }
+                    crate::client::Cache::Manager(cache_manager) => Ok(cache_manager),
+                }
             })
             .transpose()?;
 
@@ -539,7 +549,7 @@ impl MultiplexedConnection {
                 connection_info,
                 &mut con,
                 #[cfg(feature = "cache-aio")]
-                config.cache_config,
+                cache_config,
             );
 
             futures_util::pin_mut!(auth);
