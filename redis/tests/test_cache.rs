@@ -665,9 +665,8 @@ fn test_connection_manager_maintains_statistics_after_crashes(
             let addr = ctx.server.client_addr().clone();
             drop(ctx);
 
-            let result = manager
-                .send_packed_command(get_cmd("GET", test_with_optin).arg("key_1"))
-                .await;
+            let result: Result<redis::Value, RedisError> =
+                manager.send_packed_command(&redis::cmd("PING")).await;
             assert!(result.unwrap_err().is_unrecoverable_error());
 
             let _server =
