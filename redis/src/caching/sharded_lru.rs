@@ -123,6 +123,14 @@ impl ShardedLRU {
                 .increase_invalidate(cache_holder.value_list.len());
         }
     }
+
+    pub(crate) fn invalidate_all(&self) {
+        for shard in &self.shards {
+            let mut shard = shard.lock().unwrap();
+            self.statistics.increase_invalidate(shard.len());
+            shard.clear();
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -203,6 +211,75 @@ mod tests {
             sharded_lru.get(REDIS_KEY, CMD_KEY_2),
             None,
             "Cache must be expired"
+        );
+    }
+
+    #[test]
+    fn test_invalidate() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            Value::Boolean(true),
+            Instant::now().add(Duration::from_secs(10)),
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            Some(Value::Boolean(true))
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            None,
+            "Using different cmd key must result in cache miss"
+        );
+
+        sharded_lru.invalidate(&REDIS_KEY.to_vec());
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            None,
+            "Cache must be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_invalidate_all() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+
+        let another_key = "foobar";
+
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            Value::Boolean(true),
+            Instant::now().add(Duration::from_secs(10)),
+        );
+        sharded_lru.insert(
+            another_key.as_bytes(),
+            CMD_KEY,
+            Value::Boolean(true),
+            Instant::now().add(Duration::from_secs(10)),
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            Some(Value::Boolean(true))
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            None,
+            "Using different cmd key must result in cache miss"
+        );
+
+        sharded_lru.invalidate_all();
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            None,
+            "Cache must be invalidated"
+        );
+        assert_eq!(
+            sharded_lru.get(another_key.as_bytes(), CMD_KEY),
+            None,
+            "Cache must be invalidated"
         );
     }
 }
