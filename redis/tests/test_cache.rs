@@ -662,6 +662,11 @@ fn test_connection_manager_maintains_statistics_after_crashes(
             assert_hit!(&manager, 0);
             assert_miss!(&manager, 1);
 
+            let val: Option<String> = get.query_async(&mut manager).await.unwrap();
+            assert_eq!(val, None);
+            assert_hit!(&manager, 1);
+            assert_miss!(&manager, 1);
+
             let addr = ctx.server.client_addr().clone();
             drop(ctx);
 
@@ -679,9 +684,9 @@ fn test_connection_manager_maintains_statistics_after_crashes(
             }
 
             assert_eq!(val, None);
-            // key_1's value should be returned from cache even if it doesn't exist in server yet.
+            // The key should've been invalidated after the disconnect
             assert_hit!(&manager, 1);
-            assert_miss!(&manager, 1);
+            assert_miss!(&manager, 2);
 
             Ok(())
         },
