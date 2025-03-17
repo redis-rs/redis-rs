@@ -486,6 +486,7 @@ impl ConnectionManager {
     /// The `current` guard points to the shared future that was active
     /// when the connection loss was detected.
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
+        #[cfg(feature = "cache-aio")]
         if let Some(manager) = self.0.cache_manager.as_ref() {
             manager.invalidate_all();
         }
