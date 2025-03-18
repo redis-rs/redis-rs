@@ -18,7 +18,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
         // All commands that start with "CONFIG"
         "CONFIG" | "CONFIG GET" | "CONFIG RESETSTAT" | "CONFIG REWRITE" | "CONFIG SET" |
         "DBSIZE" |
-        "ECHO" | "EVALSHA" |
+        "ECHO" |
         "FLUSHALL" | "FLUSHDB" |
         "INFO" |
         "KEYS" |
