@@ -305,6 +305,7 @@ impl CacheManager {
         (cp, packed_pipeline, pipeline_response_counts)
     }
 
+    #[cfg(feature = "connection-manager")]
     pub(crate) fn invalidate_all(&self) {
         self.lru.invalidate_all();
     }

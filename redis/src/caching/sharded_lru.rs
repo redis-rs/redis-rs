@@ -124,6 +124,7 @@ impl ShardedLRU {
         }
     }
 
+    #[cfg(any(test, feature = "connection-manager"))]
     pub(crate) fn invalidate_all(&self) {
         for shard in &self.shards {
             let mut shard = shard.lock().unwrap();
