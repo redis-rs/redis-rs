@@ -139,6 +139,7 @@ tcp_nodelay = []
 num-bigint = []
 disable-client-setinfo = []
 cache-aio = ["aio", "dep:lru"]
+verbose = ["dep:log"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
