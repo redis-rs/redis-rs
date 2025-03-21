@@ -304,6 +304,11 @@ impl CacheManager {
         };
         (cp, packed_pipeline, pipeline_response_counts)
     }
+
+    #[cfg(feature = "connection-manager")]
+    pub(crate) fn invalidate_all(&self) {
+        self.lru.invalidate_all();
+    }
 }
 
 /// Checks if the given command is cacheable and supports multiple keys.

@@ -16,6 +16,8 @@ use crate::tls::{inner_build_with_tls, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
+#[cfg(all(feature = "cache-aio", feature = "connection-manager"))]
+use crate::caching::CacheManager;
 
 /// The client type.
 #[derive(Debug, Clone)]
@@ -161,6 +163,14 @@ impl Client {
     }
 }
 
+#[cfg(feature = "cache-aio")]
+#[derive(Clone)]
+pub(crate) enum Cache {
+    Config(CacheConfig),
+    #[cfg(feature = "connection-manager")]
+    Manager(CacheManager),
+}
+
 /// Options for creation of async connection
 #[cfg(feature = "aio")]
 #[derive(Clone, Default)]
@@ -171,7 +181,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) connection_timeout: Option<std::time::Duration>,
     pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
     #[cfg(feature = "cache-aio")]
-    pub(crate) cache_config: Option<CacheConfig>,
+    pub(crate) cache: Option<Cache>,
     pub(crate) tcp_settings: TcpSettings,
 }
 
@@ -234,7 +244,13 @@ impl AsyncConnectionConfig {
     /// Sets cache config for MultiplexedConnection, check CacheConfig for more details.
     #[cfg(feature = "cache-aio")]
     pub fn set_cache_config(mut self, cache_config: CacheConfig) -> Self {
-        self.cache_config = Some(cache_config);
+        self.cache = Some(Cache::Config(cache_config));
+        self
+    }
+
+    #[cfg(all(feature = "cache-aio", feature = "connection-manager"))]
+    pub(crate) fn set_cache_manager(mut self, cache_manager: CacheManager) -> Self {
+        self.cache = Some(Cache::Manager(cache_manager));
         self
     }
 
