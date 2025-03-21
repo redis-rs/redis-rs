@@ -45,7 +45,7 @@ mod cluster {
         smoke_test_connection(cluster.connection());
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     #[test]
     fn test_default_reject_invalid_hostnames() {
         use redis_test::cluster::ClusterType;
@@ -63,7 +63,7 @@ mod cluster {
         assert!(cluster.client.get_connection().is_err());
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(feature = "tls-rustls-no-provider-insecure")]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
         use redis_test::cluster::ClusterType;
@@ -1127,7 +1127,7 @@ mod cluster {
         assert_eq!(result, Value::SimpleString("PONG".to_string()));
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     mod mtls_test {
         use super::*;
         use crate::support::mtls_test::create_cluster_client_from_cluster;

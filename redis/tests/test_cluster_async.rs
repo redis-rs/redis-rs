@@ -380,7 +380,7 @@ mod cluster_async {
         .unwrap()
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
@@ -408,7 +408,7 @@ mod cluster_async {
         .unwrap();
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(feature = "tls-rustls-no-provider-insecure")]
     #[rstest]
     #[case::tokio(RuntimeType::Tokio)]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
@@ -2955,7 +2955,7 @@ mod cluster_async {
         }
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     mod mtls_test {
         use crate::support::mtls_test::create_cluster_client_from_cluster;
         use redis::ConnectionInfo;
