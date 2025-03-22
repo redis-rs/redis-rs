@@ -1,21 +1,33 @@
+### 0.29.2 (2025-03-21)
+
+#### Changes & Bug fixes
+
+* Add Valkey URL scheme ([#1558](https://github.com/redis-rs/redis-rs/pull/1558) by @displexic)
+* Fix unreachable error when parsing a nested tuple.  ([#1562](https://github.com/redis-rs/redis-rs/pull/1562) by @nihohit)
+* Remove PFCOUNT and PFMERGE from the list of illegal cluster pipeline commands (#1565) ([#1566](https://github.com/redis-rs/redis-rs/pull/1566) by @stepanmracek)
+* Remove EVALSHA from the list of illegal cluster pipeline commands ([#1568](https://github.com/redis-rs/redis-rs/pull/1568) by @stepanmracek)
+* feat: Add bb8 support for async client ([#1564](https://github.com/redis-rs/redis-rs/pull/1564) by @Xuanwo)
+* Add cache support to ConnectionManager. ([#1567](https://github.com/redis-rs/redis-rs/pull/1567) by @nihohit)
+* perf: Run reconnection attempts concurrently ([#1557](https://github.com/redis-rs/redis-rs/pull/1557) by @Marwes)
+
 ### 0.29.1 (2025-03-01)
 
 #### Changes & Bug fixes
 
-* Update rustls-native-certs. ([#1498](https://github.com/redis-rs/redis-rs/pull//1498))
-* Async cluster connection: Move response timeout out.  ([#1532](https://github.com/redis-rs/redis-rs/pull//1532))
-* Expose `Pipeline.len()` function as public ([#1539](https://github.com/redis-rs/redis-rs/pull//1539) by @Harry-Lees)
-* Implement `danger_accept_invalid_hostnames` option. ([#1529](https://github.com/redis-rs/redis-rs/pull//1529) by @jorendorff)
-* Timeout on queuing requests. ([#1552](https://github.com/redis-rs/redis-rs/pull//1552))
+* Update rustls-native-certs. ([#1498](https://github.com/redis-rs/redis-rs/pull/1498))
+* Async cluster connection: Move response timeout out.  ([#1532](https://github.com/redis-rs/redis-rs/pull/1532))
+* Expose `Pipeline.len()` function as public ([#1539](https://github.com/redis-rs/redis-rs/pull/1539) by @Harry-Lees)
+* Implement `danger_accept_invalid_hostnames` option. ([#1529](https://github.com/redis-rs/redis-rs/pull/1529) by @jorendorff)
+* Timeout on queuing requests. ([#1552](https://github.com/redis-rs/redis-rs/pull/1552))
 
 #### Documentation improvements
 
-* docs: Fix double quotes ([#1537](https://github.com/redis-rs/redis-rs/pull//1537) by @somechris)
-* docs: added CLIENT SETINFO optional feature ([#1536](https://github.com/redis-rs/redis-rs/pull//1536) by @bourdeau)
+* docs: Fix double quotes ([#1537](https://github.com/redis-rs/redis-rs/pull/1537) by @somechris)
+* docs: added CLIENT SETINFO optional feature ([#1536](https://github.com/redis-rs/redis-rs/pull/1536) by @bourdeau)
 
 #### CI improvements
 
-* Run most cluster tests in secure mode when rustls is enabled ([#1534](https://github.com/redis-rs/redis-rs/pull//1534) by @jorendorff)
+* Run most cluster tests in secure mode when rustls is enabled ([#1534](https://github.com/redis-rs/redis-rs/pull/1534) by @jorendorff)
 
 ### 0.29.0 (2025-02-16)
 
