@@ -15,7 +15,7 @@ use crate::connection::TlsConnParams;
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-no-provider")]
 use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 
 /// Parameters specific to builder, so that
@@ -27,9 +27,12 @@ struct BuilderParams {
     username: Option<String>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     certs: Option<TlsCertificates>,
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(any(
+        feature = "tls-rustls-no-provider-insecure",
+        feature = "tls-native-tls"
+    ))]
     danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
@@ -101,22 +104,25 @@ pub(crate) struct ClusterParams {
 
 impl ClusterParams {
     fn from(value: BuilderParams) -> RedisResult<Self> {
-        #[cfg(not(feature = "tls-rustls"))]
+        #[cfg(not(feature = "tls-rustls-no-provider"))]
         let tls_params: Option<TlsConnParams> = None;
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(feature = "tls-rustls-no-provider")]
         let tls_params = {
             let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
 
             retrieved_tls_params.transpose()?
         };
 
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        #[cfg(any(
+            feature = "tls-rustls-no-provider-insecure",
+            feature = "tls-native-tls"
+        ))]
         let tls_params = if value.danger_accept_invalid_hostnames {
             let mut tls_params = tls_params.unwrap_or(TlsConnParams {
-                #[cfg(feature = "tls-rustls")]
+                #[cfg(feature = "tls-rustls-no-provider")]
                 client_tls_params: None,
-                #[cfg(feature = "tls-rustls")]
+                #[cfg(feature = "tls-rustls-no-provider")]
                 root_cert_store: None,
                 danger_accept_invalid_hostnames: false,
             });
@@ -316,7 +322,7 @@ impl ClusterClientBuilder {
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
-    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls-no-provider"))]
     pub fn tls(mut self, tls: TlsMode) -> ClusterClientBuilder {
         self.builder_params.tls = Some(tls);
         self
@@ -335,7 +341,10 @@ impl ClusterClientBuilder {
     /// verification is not used, any valid certificate for any site will be
     /// trusted for use from any other. This introduces a significant
     /// vulnerability to man-in-the-middle attacks.
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(any(
+        feature = "tls-rustls-no-provider-insecure",
+        feature = "tls-native-tls"
+    ))]
     pub fn danger_accept_invalid_hostnames(mut self, insecure: bool) -> ClusterClientBuilder {
         self.builder_params.danger_accept_invalid_hostnames = insecure;
         self
@@ -357,7 +366,7 @@ impl ClusterClientBuilder {
     ///
     /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tls-rustls-no-provider")]
     pub fn certs(mut self, certificates: TlsCertificates) -> ClusterClientBuilder {
         if self.builder_params.tls.is_none() {
             self.builder_params.tls = Some(TlsMode::Secure);
