@@ -131,7 +131,7 @@ use rand::Rng;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
-
+use std::os::linux::raw::stat;
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
 
@@ -142,11 +142,8 @@ use crate::client::AsyncConnectionConfig;
 use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
-use crate::{
-    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
-    ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
-    RedisError, TlsMode, Value,
-};
+use crate::{connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, Value};
+use crate::aio::MultiplexedConnection;
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
@@ -233,8 +230,8 @@ fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str) ->
         && master_info.contains_key("ip")
         && master_info.contains_key("port")
         && master_info.get("flags").is_some_and(|flags| {
-            flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
-        })
+        flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
+    })
         && master_info["port"].parse::<u16>().is_ok()
 }
 
@@ -242,8 +239,8 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
     replica_info.contains_key("ip")
         && replica_info.contains_key("port")
         && replica_info
-            .get("flags")
-            .is_some_and(|flags| !flags.contains("s_down") && !flags.contains("o_down"))
+        .get("flags")
+        .is_some_and(|flags| !flags.contains("s_down") && !flags.contains("o_down"))
         && replica_info["port"].parse::<u16>().is_ok()
 }
 
@@ -295,25 +292,80 @@ fn valid_addrs<'a>(
         })
 }
 
-fn check_role_result(result: &RedisResult<Vec<Value>>, target_role: &str) -> bool {
-    if let Ok(values) = result {
-        if !values.is_empty() {
-            if let Ok(role) = String::from_redis_value(&values[0]) {
-                return role.to_ascii_lowercase() == target_role;
-            }
-        }
+fn determine_master_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+    let client = Client::open(connection_info.clone())?;
+    let mut conn = client.get_connection()?;
+
+    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
+    let role = check_role(&mut conn);
+    if role.is_ok_and(|x| matches!(x, Role::Primary { .. })) {
+        return Ok(true);
     }
-    false
+
+    //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
+    let role = check_info_replication(&mut conn);
+    if role.is_ok_and(|x| x == "master") {
+        return Ok(true);
+    }
+
+    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
+    Ok(false)
 }
 
-fn check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
-    if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_connection() {
-            let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query(&mut conn);
-            return check_role_result(&result, target_role);
+fn determine_slave_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+    let client = Client::open(connection_info.clone())?;
+    let mut conn = client.get_connection()?;
+
+    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
+    let role = check_role(&mut conn);
+    if role.is_ok_and( |x| matches!(x, Role::Replica { .. })) {
+        return Ok(true);
+    }
+
+    //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
+    let role = check_info_replication(&mut conn);
+    if role.is_ok_and(|x|  x == "slave") {
+        return Ok(true);
+    }
+
+    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
+    Ok(false)
+}
+
+fn old_check_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
+    let client = Client::open(connection_info.clone())?;
+    let mut conn = client.get_connection()?;
+    let role: RedisResult<Role> = crate::cmd("ROLE").query(&mut conn);
+    return role
+}
+
+fn check_role(conn: &mut Connection) -> RedisResult<Role> {
+    let role: RedisResult<Role> = crate::cmd("ROLE").query(conn);
+    role
+}
+
+
+fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
+    let info: String = crate::cmd("INFO").arg("REPLICATION").query(conn)?;
+
+    //Taken from test_sentinel parse_replication_info
+    let info_map = parse_replication_info(info);
+    match info_map.get("role") {
+        Some(x) => {Ok(x.clone())},
+        None => {
+            Err(RedisError::from((ErrorKind::ParseError, "parse error")))
         }
     }
-    false
+}
+
+fn parse_replication_info(value: String) -> HashMap<String, String> {
+    let info_map: std::collections::HashMap<String, String> = value
+        .split("\r\n")
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .filter_map(|line| line.split_once(':'))
+        .map(|(key, val)| (key.to_string(), val.to_string()))
+        .collect();
+    info_map
 }
 
 /// Searches for a valid master with the given name in the list of masters returned by
@@ -333,7 +385,7 @@ fn find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if check_role(&connection_info, "master") {
+        if determine_master_from_role_or_info_replication(&connection_info).is_ok_and(|x| x == true) {
             return Ok(connection_info);
         }
     }
@@ -345,14 +397,64 @@ fn find_valid_master(
 }
 
 #[cfg(feature = "aio")]
-async fn async_check_role(connection_info: &ConnectionInfo, target_role: &str) -> bool {
-    if let Ok(client) = Client::open(connection_info.clone()) {
-        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
-            let result: RedisResult<Vec<Value>> = crate::cmd("ROLE").query_async(&mut conn).await;
-            return check_role_result(&result, target_role);
+async fn async_determine_master_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+    let client = Client::open(connection_info.clone())?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
+
+    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
+    let role = async_check_role(&mut conn).await;
+    if role.is_ok_and(|x| matches!(x, Role::Primary { .. })) {
+        return Ok(true);
+    }
+
+    //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
+    let role = async_check_info_replication(&mut conn).await;
+    if role.is_ok_and(|x| x == "master") {
+        return Ok(true);
+    }
+
+    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
+    Ok(false)
+}
+
+async fn async_determine_slave_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+    let client = Client::open(connection_info.clone())?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
+
+    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
+    let role = async_check_role(&mut conn).await;
+    if role.is_ok_and(|x| matches!(x, Role::Replica { .. })) {
+        return Ok(true);
+    }
+
+    //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
+    let role = async_check_info_replication(&mut conn).await;
+    if role.is_ok_and(|x| x == "slave") {
+        return Ok(true);
+    }
+
+    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
+    Ok(false)
+}
+
+
+#[cfg(feature = "aio")]
+async fn async_check_role(conn: &mut MultiplexedConnection) -> RedisResult<Role> {
+    let role: RedisResult<Role> = crate::cmd("ROLE").query_async(conn).await;
+    role
+}
+
+#[cfg(feature = "aio")]
+async fn async_check_info_replication(conn: &mut MultiplexedConnection) -> RedisResult<String> {
+    let info: String = crate::cmd("INFO").arg("REPLICATION").query_async(conn).await?;
+    //Taken from test_sentinel parse_replication_info
+    let info_map = parse_replication_info(info);
+    match info_map.get("role") {
+        Some(x) => {Ok(x.clone())},
+        None => {
+            Err(RedisError::from((ErrorKind::ParseError, "parse error")))
         }
     }
-    false
 }
 
 /// Async version of [find_valid_master].
@@ -368,7 +470,7 @@ async fn async_find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if async_check_role(&connection_info, "master").await {
+        if async_determine_master_from_role_or_info_replication(&connection_info).await.is_ok_and(|x| x == true) {
             return Ok(connection_info);
         }
     }
@@ -390,7 +492,7 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| check_role(connection_info, "slave"))
+        .filter(|connection_info| old_check_role(connection_info).is_ok_and(|x| x == Role::Replica ))
         .collect())
 }
 
@@ -406,7 +508,7 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| check_role(connection_info, "slave"))
+        .filter(|connection_info| old_check_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. })))
         .collect())
 }
 
@@ -416,7 +518,7 @@ async fn async_get_valid_replicas_addresses(
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
-        if async_check_role(&connection_info, "slave").await {
+        if async_determine_slave_from_role_or_info_replication(&connection_info).await {
             Some(connection_info)
         } else {
             None
@@ -440,10 +542,16 @@ async fn async_get_valid_replicas_addresses(
     certs: &Option<TlsCertificates>,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
-        if async_check_role(&connection_info, "slave").await {
-            Some(connection_info)
-        } else {
-            None
+        match async_determine_slave_from_role_or_info_replication(&connection_info).await {
+            Ok(x) => {
+                if x {
+                    Some(connection_info)
+                }
+                else {
+                    None
+                }
+            },
+            Err(_e) => None
         }
     }
 
@@ -1122,7 +1230,7 @@ impl SentinelClientBuilder {
                     #[cfg(feature = "tls-rustls")]
                     ref mut tls_params,
                     #[cfg(not(feature = "tls-rustls"))]
-                        tls_params: _,
+                    tls_params: _,
                 } => {
                     if let Some(tls_mode) = self.client_to_sentinel_params.tls_mode {
                         match tls_mode {
