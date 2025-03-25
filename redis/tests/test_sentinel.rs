@@ -103,59 +103,56 @@ fn assert_connect_to_known_replicas(
     }
 }
 
-    #[test]
-    fn test_sentinel_role_no_permission() {
-        let master_name = "master1";
-        let mut context = TestSentinelContext::new(2, 3, 3);
-        for sentinel in context.sentinels_connection_info() {
-            let mut conn = Client::open(sentinel.clone())
-                .unwrap()
-                .get_connection()
-                .unwrap();
-            let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
-            println!("role: {:?}", role);
-            assert!(matches!(role, Role::Sentinel { .. }));
-        }
+#[test]
+fn test_sentinel_role_no_permission() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
 
-        let mut master_client = SentinelClient::build(
-            context.sentinels_connection_info().clone(),
-            String::from(master_name),
-            Some(context.sentinel_node_connection_info()),
-            redis::sentinel::SentinelServerType::Master,
-        )
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    let user : String = redis::cmd("ACL").arg("whoami").query(&mut master_con).unwrap();
+    //Remove ROLE permission for the given user on master
+    let _ : () = redis::cmd("ACL").arg("SETUSER").arg(&user).arg("-role").query(&mut master_con).unwrap();
+
+    //Remove ROLE permission for the given user on replicas
+    for _ in 0..number_of_replicas {
+        let replica_client = sentinel
+            .replica_rotate_for(master_name, Some(&node_conn_info))
             .unwrap();
-
-        let mut replica_client = SentinelClient::build(
-            context.sentinels_connection_info().clone(),
-            String::from(master_name),
-            Some(context.sentinel_node_connection_info()),
-            redis::sentinel::SentinelServerType::Replica,
-        )
-            .unwrap();
-
-        let mut master_con = master_client.get_connection().unwrap();
-        let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
-        println!("role: {:?}", role);
-
-        assert!(matches!(role, Role::Primary { .. }));
-
-        assert_is_connection_to_master(&mut master_con);
-
-        let node_conn_info = context.sentinel_node_connection_info();
-        let sentinel = context.sentinel_mut();
-        let master_client = sentinel
-            .master_for(master_name, Some(&node_conn_info))
-            .unwrap();
-
-        for _ in 0..20 {
-            let mut replica_con = replica_client.get_connection().unwrap();
-            let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
-            println!("role: {:?}", role);
-            assert!(matches!(role, Role::Replica { .. }));
-
-            assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
-        }
+        let mut replica_con = replica_client.get_connection().unwrap();
+        let _ : () = redis::cmd("ACL").arg("SETUSER").arg(&user).arg("-role").query(&mut master_con).unwrap();
     }
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    assert_is_connection_to_master(&mut master_con);
+
+    let replica_conn_infos = connect_to_all_replicas(
+        sentinel,
+        master_name,
+        &master_client,
+        &node_conn_info,
+        number_of_replicas,
+    );
+
+    assert_connect_to_known_replicas(
+        sentinel,
+        &replica_conn_infos,
+        master_name,
+        &master_client,
+        &node_conn_info,
+        10,
+    );
+}
 
 #[test]
 fn test_sentinel_connect_to_random_replica() {
