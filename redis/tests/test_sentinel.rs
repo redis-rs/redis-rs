@@ -126,7 +126,7 @@ fn test_sentinel_role_no_permission() {
             .replica_rotate_for(master_name, Some(&node_conn_info))
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
-        let _ : () = redis::cmd("ACL").arg("SETUSER").arg(&user).arg("-role").query(&mut master_con).unwrap();
+        let _ : () = redis::cmd("ACL").arg("SETUSER").arg(&user).arg("-role").query(&mut replica_con).unwrap();
     }
 
     let master_client = sentinel
@@ -169,13 +169,13 @@ fn test_sentinel_connect_to_random_replica() {
 
     assert_is_connection_to_master(&mut master_con);
 
-    let replica_conn_infos = connect_to_all_replicas(
-        sentinel,
-        master_name,
-        &master_client,
-        &node_conn_info,
-        number_of_replicas,
-    );
+    let mut replica_con = sentinel
+        .replica_for(master_name, Some(&node_conn_info))
+        .unwrap()
+        .get_connection()
+        .unwrap();
+
+    assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
 }
 
 #[test]
