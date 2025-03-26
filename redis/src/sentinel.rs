@@ -311,26 +311,6 @@ fn determine_master_from_role_or_info_replication(connection_info: &ConnectionIn
     Ok(false)
 }
 
-fn determine_slave_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
-    let client = Client::open(connection_info.clone())?;
-    let mut conn = client.get_connection()?;
-
-    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
-    let role = check_role(&mut conn);
-    if role.is_ok_and( |x| matches!(x, Role::Replica { .. })) {
-        return Ok(true);
-    }
-
-    //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
-    let role = check_info_replication(&mut conn);
-    if role.is_ok_and(|x|  x == "slave") {
-        return Ok(true);
-    }
-
-    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
-    Ok(false)
-}
-
 fn get_node_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_connection()?;
@@ -382,7 +362,7 @@ fn find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if determine_master_from_role_or_info_replication(&connection_info).is_ok_and(|x| x == true) {
+        if determine_master_from_role_or_info_replication(&connection_info).is_ok_and(|x| x) {
             return Ok(connection_info);
         }
     }
@@ -467,7 +447,7 @@ async fn async_find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if async_determine_master_from_role_or_info_replication(&connection_info).await.is_ok_and(|x| x == true) {
+        if async_determine_master_from_role_or_info_replication(&connection_info).await.is_ok_and(|x| x) {
             return Ok(connection_info);
         }
     }
