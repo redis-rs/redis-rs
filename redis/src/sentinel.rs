@@ -142,7 +142,7 @@ use crate::client::AsyncConnectionConfig;
 use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
-use crate::{connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, Value};
+use crate::{connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode};
 use crate::aio::MultiplexedConnection;
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -332,16 +332,14 @@ fn determine_slave_from_role_or_info_replication(connection_info: &ConnectionInf
     Ok(false)
 }
 
-fn old_check_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
+fn get_node_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_connection()?;
-    let role: RedisResult<Role> = crate::cmd("ROLE").query(&mut conn);
-    return role
+    crate::cmd("ROLE").query(&mut conn)
 }
 
 fn check_role(conn: &mut Connection) -> RedisResult<Role> {
-    let role: RedisResult<Role> = crate::cmd("ROLE").query(conn);
-    role
+    crate::cmd("ROLE").query(conn)
 }
 
 
@@ -492,7 +490,7 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| old_check_role(connection_info).is_ok_and(|x| x == Role::Replica ))
+        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| x == Role::Replica ))
         .collect())
 }
 
@@ -508,7 +506,7 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| old_check_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. })))
+        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. })))
         .collect())
 }
 
