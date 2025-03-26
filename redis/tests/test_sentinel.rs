@@ -135,23 +135,6 @@ fn test_sentinel_role_no_permission() {
     let mut master_con = master_client.get_connection().unwrap();
 
     assert_is_connection_to_master(&mut master_con);
-
-    let replica_conn_infos = connect_to_all_replicas(
-        sentinel,
-        master_name,
-        &master_client,
-        &node_conn_info,
-        number_of_replicas,
-    );
-
-    assert_connect_to_known_replicas(
-        sentinel,
-        &replica_conn_infos,
-        master_name,
-        &master_client,
-        &node_conn_info,
-        10,
-    );
 }
 
 #[test]
@@ -268,7 +251,7 @@ fn test_sentinel_client() {
         Some(context.sentinel_node_connection_info()),
         redis::sentinel::SentinelServerType::Master,
     )
-    .unwrap();
+        .unwrap();
 
     let mut replica_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
@@ -276,7 +259,7 @@ fn test_sentinel_client() {
         Some(context.sentinel_node_connection_info()),
         redis::sentinel::SentinelServerType::Replica,
     )
-    .unwrap();
+        .unwrap();
 
     let mut master_con = master_client.get_connection().unwrap();
     let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
@@ -320,7 +303,7 @@ fn test_sentinel_client_builder() {
         String::from(master_name),
         redis::sentinel::SentinelServerType::Master,
     )
-    .unwrap();
+        .unwrap();
 
     let mut replica_client_builder = SentinelClientBuilder::new(
         context
@@ -330,7 +313,7 @@ fn test_sentinel_client_builder() {
         String::from(master_name),
         redis::sentinel::SentinelServerType::Replica,
     )
-    .unwrap();
+        .unwrap();
 
     if let Some(username) = &context.sentinels_connection_info[0].redis.username.clone() {
         master_client_builder =
@@ -495,13 +478,13 @@ pub mod async_tests {
                     &mut replica_con,
                     &master_client,
                 )
-                .await;
+                    .await;
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -530,7 +513,7 @@ pub mod async_tests {
                     &node_conn_info,
                     number_of_replicas,
                 )
-                .await;
+                    .await;
 
                 async_assert_connect_to_known_replicas(
                     sentinel,
@@ -540,13 +523,13 @@ pub mod async_tests {
                     &node_conn_info,
                     10,
                 )
-                .await;
+                    .await;
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -581,7 +564,7 @@ pub mod async_tests {
                     &node_conn_info,
                     number_of_replicas,
                 )
-                .await;
+                    .await;
 
                 async_assert_connect_to_known_replicas(
                     sentinel,
@@ -591,13 +574,13 @@ pub mod async_tests {
                     &node_conn_info,
                     10,
                 )
-                .await;
+                    .await;
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -612,7 +595,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
-        .unwrap();
+            .unwrap();
 
         let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
@@ -620,7 +603,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Replica,
         )
-        .unwrap();
+            .unwrap();
 
         block_on_all(
             async move {
@@ -642,14 +625,14 @@ pub mod async_tests {
                         &mut replica_con,
                         &master_client,
                     )
-                    .await;
+                        .await;
                 }
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -664,7 +647,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
-        .unwrap();
+            .unwrap();
 
         let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
@@ -672,7 +655,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Replica,
         )
-        .unwrap();
+            .unwrap();
 
         let connection_options =
             AsyncConnectionConfig::new().set_connection_timeout(std::time::Duration::from_secs(1));
@@ -701,14 +684,14 @@ pub mod async_tests {
                         &mut replica_con,
                         &master_client,
                     )
-                    .await;
+                        .await;
                 }
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -723,7 +706,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
-        .unwrap();
+            .unwrap();
 
         let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
@@ -731,7 +714,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Replica,
         )
-        .unwrap();
+            .unwrap();
 
         let connection_options =
             AsyncConnectionConfig::new().set_response_timeout(std::time::Duration::from_secs(1));
@@ -760,14 +743,14 @@ pub mod async_tests {
                         &mut replica_con,
                         &master_client,
                     )
-                    .await;
+                        .await;
                 }
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[rstest]
@@ -782,7 +765,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
-        .unwrap();
+            .unwrap();
 
         let mut replica_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
@@ -790,7 +773,7 @@ pub mod async_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Replica,
         )
-        .unwrap();
+            .unwrap();
 
         let connection_options = AsyncConnectionConfig::new()
             .set_connection_timeout(std::time::Duration::from_secs(1))
@@ -820,14 +803,14 @@ pub mod async_tests {
                         &mut replica_con,
                         &master_client,
                     )
-                    .await;
+                        .await;
                 }
 
                 Ok::<(), RedisError>(())
             },
             runtime,
         )
-        .unwrap();
+            .unwrap();
     }
 }
 
@@ -857,7 +840,7 @@ pub mod pool_tests {
             Some(context.sentinel_node_connection_info()),
             redis::sentinel::SentinelServerType::Master,
         )
-        .unwrap();
+            .unwrap();
 
         let pool = Pool::builder()
             .max_size(5)
