@@ -131,7 +131,6 @@ use rand::Rng;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
-use std::os::linux::raw::stat;
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
 
