@@ -2208,6 +2208,54 @@ assert_eq!(b, 5);
     fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) {
         &mut invocation.eval_cmd()
     }
+
+    // cleanup commands
+
+    /// Deletes all the keys of all databases
+    ///
+    /// Whether the flushing happens asynchronously or synchronously depends on the configuration
+    /// of your Redis server.
+    ///
+    /// To enforce a flush mode, use [`Commands::flushall_options`].
+    ///
+    /// ```text
+    /// FLUSHALL
+    /// ```
+    fn flushall<>() {
+        &mut cmd("FLUSHALL")
+    }
+
+    /// Deletes all the keys of all databases with options
+    ///
+    /// ```text
+    /// FLUSHALL [ASYNC|SYNC]
+    /// ```
+    fn flushall_options<>(options: &'a FlushAllOptions) {
+        cmd("FLUSHALL").arg(options)
+    }
+
+    /// Deletes all the keys of the current database
+    ///
+    /// Whether the flushing happens asynchronously or synchronously depends on the configuration
+    /// of your Redis server.
+    ///
+    /// To enforce a flush mode, use [`Commands::flushdb_options`].
+    ///
+    /// ```text
+    /// FLUSHDB
+    /// ```
+    fn flushdb<>() {
+        &mut cmd("FLUSHDB")
+    }
+
+    /// Deletes all the keys of the current database with options
+    ///
+    /// ```text
+    /// FLUSHDB [ASYNC|SYNC]
+    /// ```
+    fn flushdb_options<>(options: &'a FlushDbOptions) {
+        cmd("FLUSHDB").arg(options)
+    }
 }
 
 /// Allows pubsub callbacks to stop receiving messages.
@@ -2591,6 +2639,48 @@ impl ToRedisArgs for SetOptions {
         }
     }
 }
+
+/// Options for the [FLUSHALL](https://redis.io/commands/flushall) command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, FlushAllOptions};
+/// fn flushall_sync(
+///     con: &mut redis::Connection,
+/// ) -> RedisResult<()> {
+///     let opts = FlushAllOptions{blocking: true};
+///     con.flushall_options(&opts)
+/// }
+/// ```
+#[derive(Clone, Copy, Default)]
+pub struct FlushAllOptions {
+    /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
+    pub blocking: bool,
+}
+
+impl FlushAllOptions {
+    /// Set whether to run blocking (`SYNC`) or non-blocking (`ASYNC`) flush
+    pub fn blocking(mut self, blocking: bool) -> Self {
+        self.blocking = blocking;
+        self
+    }
+}
+
+impl ToRedisArgs for FlushAllOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.blocking {
+            out.write_arg(b"SYNC");
+        } else {
+            out.write_arg(b"ASYNC");
+        };
+    }
+}
+
+/// Options for the [FLUSHDB](https://redis.io/commands/flushdb) command
+pub type FlushDbOptions = FlushAllOptions;
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
