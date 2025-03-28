@@ -527,8 +527,9 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 // public api
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 pub use crate::client::AsyncConnectionConfig;
+#[cfg(feature = "net")]
 pub use crate::client::Client;
 #[cfg(feature = "cache-aio")]
 pub use crate::cmd::CommandCacheConfig;
@@ -537,9 +538,11 @@ pub use crate::commands::{
     Commands, ControlFlow, Direction, LposOptions, PubSubCommands, ScanOptions, SetOptions,
 };
 pub use crate::connection::{
-    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
+    parse_redis_url, transaction, ConnectionAddr, ConnectionInfo, ConnectionLike,
+    IntoConnectionInfo, Msg, RedisConnectionInfo, TlsMode,
 };
+#[cfg(feature = "net")]
+pub use crate::connection::{Connection, PubSub};
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
 

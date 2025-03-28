@@ -1,14 +1,15 @@
+#[cfg(feature = "net")]
 use std::time::Duration;
 
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 use crate::aio::AsyncPushSender;
-#[cfg(feature = "aio")]
+#[cfg(feature = "net")]
+use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo};
+#[cfg(all(feature = "aio", feature = "net"))]
 use crate::io::tcp::TcpSettings;
-use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
-    types::{RedisResult, Value},
-};
-#[cfg(feature = "aio")]
+#[cfg(feature = "net")]
+use crate::types::{RedisResult, Value};
+#[cfg(all(feature = "aio", feature = "net"))]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
@@ -20,6 +21,7 @@ use crate::caching::CacheConfig;
 use crate::caching::CacheManager;
 
 /// The client type.
+#[cfg(feature = "net")]
 #[derive(Debug, Clone)]
 pub struct Client {
     pub(crate) connection_info: ConnectionInfo,
@@ -41,6 +43,7 @@ pub struct Client {
 /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// let con = client.get_connection().unwrap();
 /// ```
+#[cfg(feature = "net")]
 impl Client {
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
@@ -172,7 +175,7 @@ pub(crate) enum Cache {
 }
 
 /// Options for creation of async connection
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 #[derive(Clone, Default)]
 pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a response from the server
@@ -185,7 +188,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) tcp_settings: TcpSettings,
 }
 
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 impl AsyncConnectionConfig {
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
@@ -265,7 +268,7 @@ impl AsyncConnectionConfig {
 
 /// To enable async support you need to chose one of the supported runtimes and active its
 /// corresponding feature: `tokio-comp` or `async-std-comp`
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl Client {
     /// Returns an async connection from the client.
@@ -786,6 +789,7 @@ impl Client {
         crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
+    #[cfg(feature = "net")]
     async fn get_multiplexed_async_connection_inner<T>(
         &self,
         config: &AsyncConnectionConfig,
@@ -801,6 +805,7 @@ impl Client {
         Ok(connection)
     }
 
+    #[cfg(feature = "net")]
     async fn create_multiplexed_async_connection_inner<T>(
         &self,
         config: &AsyncConnectionConfig,
@@ -822,6 +827,7 @@ impl Client {
         .await
     }
 
+    #[cfg(feature = "net")]
     async fn get_simple_async_connection_dynamically(
         &self,
         tcp_settings: &TcpSettings,
@@ -841,6 +847,7 @@ impl Client {
         }
     }
 
+    #[cfg(feature = "net")]
     async fn get_simple_async_connection<T>(
         &self,
         tcp_settings: &TcpSettings,
@@ -882,9 +889,10 @@ impl Client {
     }
 }
 
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", feature = "net"))]
 use crate::aio::Runtime;
 
+#[cfg(feature = "net")]
 impl ConnectionLike for Client {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         self.get_connection()?.req_packed_command(cmd)

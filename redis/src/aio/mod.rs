@@ -1,16 +1,22 @@
 //! Adds async IO support to redis.
 use crate::cmd::Cmd;
+#[cfg(feature = "net")]
 use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
     RedisConnectionInfo,
 };
-use crate::types::{RedisFuture, RedisResult, Value};
+#[cfg(feature = "net")]
+use crate::types::RedisResult;
+use crate::types::{RedisFuture, Value};
 use crate::PushInfo;
 use ::tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "net")]
 use futures_util::Future;
+#[cfg(feature = "net")]
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
+#[cfg(feature = "net")]
 use std::pin::Pin;
 
 /// Enables the async_std compatibility
@@ -26,12 +32,16 @@ use crate::connection::TlsConnParams;
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
 pub mod tokio;
 
+#[cfg(feature = "net")]
 mod pubsub;
+#[cfg(feature = "net")]
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 
 /// Represents the ability of connecting via TCP or via Unix socket
+#[cfg(feature = "net")]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
+    #[cfg(feature = "net")]
     async fn connect_tcp(
         socket_addr: SocketAddr,
         tcp_settings: &crate::io::tcp::TcpSettings,
@@ -90,6 +100,7 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 }
 
+#[cfg(feature = "net")]
 async fn execute_connection_pipeline(
     rv: &mut impl ConnectionLike,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
@@ -104,6 +115,7 @@ async fn execute_connection_pipeline(
 }
 
 // Initial setup for every connection.
+#[cfg(feature = "net")]
 async fn setup_connection(
     connection_info: &RedisConnectionInfo,
     con: &mut impl ConnectionLike,
@@ -136,18 +148,25 @@ async fn setup_connection(
     Ok(())
 }
 
+#[cfg(feature = "net")]
 mod connection;
+#[cfg(feature = "net")]
 pub use connection::*;
+#[cfg(feature = "net")]
 mod multiplexed_connection;
+#[cfg(feature = "net")]
 pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
 mod connection_manager;
 #[cfg(feature = "connection-manager")]
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
+#[cfg(feature = "net")]
 mod runtime;
+#[cfg(feature = "net")]
 pub(super) use runtime::*;
 
+#[cfg(feature = "net")]
 macro_rules! check_resp3 {
     ($protocol: expr) => {
         use crate::types::ProtocolVersion;
@@ -170,6 +189,7 @@ macro_rules! check_resp3 {
     };
 }
 
+#[cfg(feature = "net")]
 pub(crate) use check_resp3;
 
 /// An error showing that the receiver

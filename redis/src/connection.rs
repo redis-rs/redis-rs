@@ -1,29 +1,37 @@
 use std::borrow::Cow;
+#[cfg(feature = "net")]
 use std::collections::VecDeque;
 use std::fmt;
+#[cfg(feature = "net")]
 use std::io::{self, Write};
+#[cfg(feature = "net")]
 use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
+#[cfg(feature = "net")]
 use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
+#[cfg(feature = "net")]
 use crate::io::tcp::{stream_with_settings, TcpSettings};
+#[cfg(feature = "net")]
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
+    ToRedisArgs, Value,
 };
+#[cfg(feature = "net")]
+use crate::types::{ServerError, ServerErrorKind, SyncPushSender};
 use crate::{from_owned_redis_value, ProtocolVersion};
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-
+#[cfg(feature = "net")]
 use crate::commands::resp3_hello;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::{TlsConnector, TlsStream};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
@@ -57,12 +65,14 @@ pub struct TlsConnParams {
 static DEFAULT_PORT: u16 = 6379;
 
 #[inline(always)]
+#[cfg(feature = "net")]
 fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
     stream_with_settings(socket, &TcpSettings::default())
 }
 
 #[inline(always)]
+#[cfg(feature = "net")]
 fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
     stream_with_settings(socket, &TcpSettings::default())
@@ -470,6 +480,7 @@ impl IntoConnectionInfo for url::Url {
     }
 }
 
+#[cfg(feature = "net")]
 struct TcpConnection {
     reader: TcpStream,
     open: bool,
@@ -493,6 +504,7 @@ struct UnixConnection {
     open: bool,
 }
 
+#[cfg(feature = "net")]
 enum ActualConnection {
     Tcp(TcpConnection),
     #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -627,6 +639,7 @@ impl rustls::client::danger::ServerCertVerifier for AcceptInvalidHostnamesCertVe
 }
 
 /// Represents a stateful redis TCP connection.
+#[cfg(feature = "net")]
 pub struct Connection {
     con: ActualConnection,
     parser: Parser,
@@ -650,6 +663,7 @@ pub struct Connection {
 }
 
 /// Represents a pubsub connection.
+#[cfg(feature = "net")]
 pub struct PubSub<'a> {
     con: &'a mut Connection,
     waiting_messages: VecDeque<Msg>,
@@ -663,6 +677,7 @@ pub struct Msg {
     pattern: Option<Value>,
 }
 
+#[cfg(feature = "net")]
 impl ActualConnection {
     pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
         Ok(match *addr {
@@ -1067,6 +1082,7 @@ pub(crate) fn create_rustls_config(
     }
 }
 
+#[cfg(feature = "net")]
 fn authenticate_cmd(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
@@ -1082,6 +1098,7 @@ fn authenticate_cmd(
     command
 }
 
+#[cfg(feature = "net")]
 pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
@@ -1115,6 +1132,7 @@ pub fn connect(
     Ok(con)
 }
 
+#[cfg(feature = "net")]
 pub(crate) struct ConnectionSetupComponents {
     resp3_auth_cmd_idx: Option<usize>,
     resp2_auth_cmd_idx: Option<usize>,
@@ -1123,6 +1141,7 @@ pub(crate) struct ConnectionSetupComponents {
     cache_cmd_idx: Option<usize>,
 }
 
+#[cfg(feature = "net")]
 pub(crate) fn connection_setup_pipeline(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
@@ -1209,6 +1228,7 @@ pub(crate) fn connection_setup_pipeline(
     )
 }
 
+#[cfg(feature = "net")]
 fn check_resp3_auth(result: &Value) -> RedisResult<()> {
     if let Value::ServerError(err) = result {
         return Err(get_resp3_hello_command_error(err.clone().into()));
@@ -1216,12 +1236,14 @@ fn check_resp3_auth(result: &Value) -> RedisResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "net")]
 #[derive(PartialEq)]
 pub(crate) enum AuthResult {
     Succeeded,
     ShouldRetryWithoutUsername,
 }
 
+#[cfg(feature = "net")]
 fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
     let err = match result {
         Value::Okay => {
@@ -1251,6 +1273,7 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
     Ok(AuthResult::ShouldRetryWithoutUsername)
 }
 
+#[cfg(feature = "net")]
 fn check_db_select(value: &Value) -> RedisResult<()> {
     let Value::ServerError(err) = value else {
         return Ok(());
@@ -1283,6 +1306,7 @@ fn check_caching(result: &Value) -> RedisResult<()> {
     }
 }
 
+#[cfg(feature = "net")]
 pub(crate) fn check_connection_setup(
     results: Vec<Value>,
     ConnectionSetupComponents {
@@ -1328,6 +1352,7 @@ pub(crate) fn check_connection_setup(
     Ok(AuthResult::Succeeded)
 }
 
+#[cfg(feature = "net")]
 fn execute_connection_pipeline(
     rv: &mut Connection,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
@@ -1340,6 +1365,7 @@ fn execute_connection_pipeline(
     check_connection_setup(results, instructions)
 }
 
+#[cfg(feature = "net")]
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
@@ -1448,6 +1474,7 @@ pub trait ConnectionLike {
 ///
 /// You generally do not much with this object other than passing it to
 /// `Cmd` objects.
+#[cfg(feature = "net")]
 impl Connection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// does not read a response.  This is useful for commands like
@@ -1705,6 +1732,7 @@ impl Connection {
     }
 }
 
+#[cfg(feature = "net")]
 impl ConnectionLike for Connection {
     /// Sends a [Cmd] into the TCP socket and reads a single response from it.
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
@@ -1872,6 +1900,7 @@ where
 /// }
 /// # }
 /// ```
+#[cfg(feature = "net")]
 impl<'a> PubSub<'a> {
     fn new(con: &'a mut Connection) -> Self {
         Self {
@@ -1966,6 +1995,7 @@ impl<'a> PubSub<'a> {
     }
 }
 
+#[cfg(feature = "net")]
 impl Drop for PubSub<'_> {
     fn drop(&mut self) {
         let _ = self.con.exit_pubsub();
@@ -2148,6 +2178,7 @@ pub fn transaction<
 //TODO: for both clearing logic support sharded channels.
 
 /// Common logic for clearing subscriptions in RESP2 async/sync
+#[cfg(feature = "net")]
 pub fn resp2_is_pub_sub_state_cleared(
     received_unsub: &mut bool,
     received_punsub: &mut bool,
@@ -2163,6 +2194,7 @@ pub fn resp2_is_pub_sub_state_cleared(
 }
 
 /// Common logic for clearing subscriptions in RESP3 async/sync
+#[cfg(feature = "net")]
 pub fn resp3_is_pub_sub_state_cleared(
     received_unsub: &mut bool,
     received_punsub: &mut bool,
@@ -2177,6 +2209,7 @@ pub fn resp3_is_pub_sub_state_cleared(
     *received_unsub && *received_punsub && num == 0
 }
 
+#[cfg(feature = "net")]
 pub fn no_sub_err_is_pub_sub_state_cleared(
     received_unsub: &mut bool,
     received_punsub: &mut bool,
@@ -2195,6 +2228,7 @@ pub fn no_sub_err_is_pub_sub_state_cleared(
 }
 
 /// Common logic for checking real cause of hello3 command error
+#[cfg(feature = "net")]
 pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
     if let Some(detail) = err.detail() {
         if detail.starts_with("unknown command `HELLO`") {

@@ -1,5 +1,7 @@
 use crate::cmd::{cmd, Cmd, Iter};
-use crate::connection::{Connection, ConnectionLike, Msg};
+#[cfg(feature = "net")]
+use crate::connection::Connection;
+use crate::connection::{ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite,
@@ -30,6 +32,7 @@ use crate::streams;
 
 #[cfg(feature = "acl")]
 use crate::acl;
+#[cfg(feature = "net")]
 use crate::RedisConnectionInfo;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
@@ -2283,6 +2286,7 @@ impl<T> Commands for T where T: ConnectionLike {}
 #[cfg(feature = "aio")]
 impl<T> AsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sync + Sized {}
 
+#[cfg(feature = "net")]
 impl PubSubCommands for Connection {
     fn subscribe<C, F, U>(&mut self, channels: C, mut func: F) -> RedisResult<U>
     where
@@ -2593,6 +2597,7 @@ impl ToRedisArgs for SetOptions {
 }
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
+#[cfg(feature = "net")]
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");

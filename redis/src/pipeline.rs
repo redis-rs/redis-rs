@@ -72,7 +72,7 @@ impl Pipeline {
         self
     }
 
-    #[cfg(feature = "aio")]
+    #[cfg(all(feature = "aio", feature = "net"))]
     pub(crate) fn is_transaction(&self) -> bool {
         self.transaction_mode
     }
@@ -82,7 +82,7 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
-    #[cfg(feature = "aio")]
+    #[cfg(all(feature = "aio", feature = "net"))]
     pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
         write_pipeline(out, &self.commands, self.transaction_mode)
     }
