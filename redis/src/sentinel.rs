@@ -135,9 +135,9 @@ use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
 
 #[cfg(feature = "aio")]
-use crate::client::AsyncConnectionConfig;
-
 use crate::aio::MultiplexedConnection;
+#[cfg(feature = "aio")]
+use crate::client::AsyncConnectionConfig;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
@@ -399,6 +399,7 @@ async fn async_determine_master_from_role_or_info_replication(
     Ok(false)
 }
 
+#[cfg(feature = "aio")]
 async fn async_determine_slave_from_role_or_info_replication(
     connection_info: &ConnectionInfo,
 ) -> RedisResult<bool> {
@@ -479,7 +480,9 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| x == Role::Replica))
+        .filter(|connection_info| {
+            get_node_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. }))
+        })
         .collect())
 }
 
