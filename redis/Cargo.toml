@@ -46,11 +46,10 @@ pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 tokio = { version = "1", features = [
   "rt",
-  "net",
   "time",
   "sync",
 ], optional = true }
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.5", features = ["all"], optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.7.1" }
@@ -108,14 +107,16 @@ hashbrown = { version = "0.15", optional = true }
 lru = { version = "0.13", optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script", "keep-alive"]
+default = ["acl", "streams", "geospatial", "script", "keep-alive", "net"]
+net = ["dep:socket2", "tokio/net"]
 acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
-tls-native-tls = ["dep:native-tls"]
+tls-native-tls = ["net", "dep:native-tls"]
 tls-rustls = [
+  "net",
   "dep:rustls",
   "rustls/std",
   "rustls/ring",

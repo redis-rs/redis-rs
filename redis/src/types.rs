@@ -338,7 +338,7 @@ pub enum PushKind {
 }
 
 impl PushKind {
-    #[cfg(feature = "aio")]
+    #[cfg(all(feature = "aio", feature = "net"))]
     pub(crate) fn has_reply(&self) -> bool {
         matches!(
             self,
@@ -892,6 +892,7 @@ impl RedisError {
         self.kind() == ErrorKind::IoError
     }
 
+    #[cfg(feature = "net")]
     pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
         match &self.repr {
             ErrorRepr::IoError(e) => Some(e),
@@ -2723,6 +2724,7 @@ pub struct PushInfo {
 }
 
 impl PushInfo {
+    #[cfg(feature = "net")]
     pub(crate) fn disconnect() -> Self {
         PushInfo {
             kind: crate::PushKind::Disconnection,
@@ -2731,10 +2733,11 @@ impl PushInfo {
     }
 }
 
+#[cfg(feature = "net")]
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
 // A consistent error value for connections closed without a reason.
-#[cfg(any(feature = "aio", feature = "r2d2"))]
+#[cfg(all(any(feature = "aio", feature = "r2d2"), feature = "net"))]
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
 }
