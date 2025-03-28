@@ -508,15 +508,10 @@ mod cluster_async {
                     let role: String = info.get("role").expect("cluster role");
 
                     if role == "master" {
-                        async {
-                            Ok(redis::Cmd::new()
-                                .arg("FLUSHALL")
-                                .exec_async(&mut conn)
-                                .await?)
-                        }
-                        .timeout(futures_time::time::Duration::from_secs(3))
-                        .await
-                        .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
+                        async { Ok(conn.flushall::<()>().await?) }
+                            .timeout(futures_time::time::Duration::from_secs(3))
+                            .await
+                            .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
                     }
 
                     node_conns.push(conn);
