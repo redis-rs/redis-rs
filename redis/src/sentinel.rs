@@ -126,23 +126,27 @@
 //!
 
 #[cfg(feature = "aio")]
+use crate::aio::MultiplexedConnection as AsyncConnection;
+#[cfg(feature = "aio")]
 use futures_util::StreamExt;
 use rand::Rng;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
-#[cfg(feature = "aio")]
-use crate::aio::MultiplexedConnection as AsyncConnection;
 
 #[cfg(feature = "aio")]
 use crate::client::AsyncConnectionConfig;
 
+use crate::aio::MultiplexedConnection;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
-use crate::{connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode};
-use crate::aio::MultiplexedConnection;
+use crate::{
+    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
+    ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
+    RedisError, Role, TlsMode,
+};
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
@@ -229,8 +233,8 @@ fn is_master_valid(master_info: &HashMap<String, String>, service_name: &str) ->
         && master_info.contains_key("ip")
         && master_info.contains_key("port")
         && master_info.get("flags").is_some_and(|flags| {
-        flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
-    })
+            flags.contains("master") && !flags.contains("s_down") && !flags.contains("o_down")
+        })
         && master_info["port"].parse::<u16>().is_ok()
 }
 
@@ -238,8 +242,8 @@ fn is_replica_valid(replica_info: &HashMap<String, String>) -> bool {
     replica_info.contains_key("ip")
         && replica_info.contains_key("port")
         && replica_info
-        .get("flags")
-        .is_some_and(|flags| !flags.contains("s_down") && !flags.contains("o_down"))
+            .get("flags")
+            .is_some_and(|flags| !flags.contains("s_down") && !flags.contains("o_down"))
         && replica_info["port"].parse::<u16>().is_ok()
 }
 
@@ -291,7 +295,9 @@ fn valid_addrs<'a>(
         })
 }
 
-fn determine_master_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+fn determine_master_from_role_or_info_replication(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<bool> {
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_connection()?;
 
@@ -321,17 +327,14 @@ fn check_role(conn: &mut Connection) -> RedisResult<Role> {
     crate::cmd("ROLE").query(conn)
 }
 
-
 fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
     let info: String = crate::cmd("INFO").arg("REPLICATION").query(conn)?;
 
     //Taken from test_sentinel parse_replication_info
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
-        Some(x) => {Ok(x.clone())},
-        None => {
-            Err(RedisError::from((ErrorKind::ParseError, "parse error")))
-        }
+        Some(x) => Ok(x.clone()),
+        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
     }
 }
 
@@ -374,7 +377,9 @@ fn find_valid_master(
 }
 
 #[cfg(feature = "aio")]
-async fn async_determine_master_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+async fn async_determine_master_from_role_or_info_replication(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<bool> {
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
@@ -394,7 +399,9 @@ async fn async_determine_master_from_role_or_info_replication(connection_info: &
     Ok(false)
 }
 
-async fn async_determine_slave_from_role_or_info_replication(connection_info: &ConnectionInfo) -> RedisResult<bool> {
+async fn async_determine_slave_from_role_or_info_replication(
+    connection_info: &ConnectionInfo,
+) -> RedisResult<bool> {
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
@@ -414,7 +421,6 @@ async fn async_determine_slave_from_role_or_info_replication(connection_info: &C
     Ok(false)
 }
 
-
 #[cfg(feature = "aio")]
 async fn async_check_role(conn: &mut MultiplexedConnection) -> RedisResult<Role> {
     let role: RedisResult<Role> = crate::cmd("ROLE").query_async(conn).await;
@@ -423,14 +429,15 @@ async fn async_check_role(conn: &mut MultiplexedConnection) -> RedisResult<Role>
 
 #[cfg(feature = "aio")]
 async fn async_check_info_replication(conn: &mut MultiplexedConnection) -> RedisResult<String> {
-    let info: String = crate::cmd("INFO").arg("REPLICATION").query_async(conn).await?;
+    let info: String = crate::cmd("INFO")
+        .arg("REPLICATION")
+        .query_async(conn)
+        .await?;
     //Taken from test_sentinel parse_replication_info
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
-        Some(x) => {Ok(x.clone())},
-        None => {
-            Err(RedisError::from((ErrorKind::ParseError, "parse error")))
-        }
+        Some(x) => Ok(x.clone()),
+        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
     }
 }
 
@@ -447,7 +454,10 @@ async fn async_find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if async_determine_master_from_role_or_info_replication(&connection_info).await.is_ok_and(|x| x) {
+        if async_determine_master_from_role_or_info_replication(&connection_info)
+            .await
+            .is_ok_and(|x| x)
+        {
             return Ok(connection_info);
         }
     }
@@ -469,7 +479,7 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| x == Role::Replica ))
+        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| x == Role::Replica))
         .collect())
 }
 
@@ -485,7 +495,9 @@ fn get_valid_replicas_addresses(
 
     Ok(addresses
         .into_iter()
-        .filter(|connection_info| get_node_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. })))
+        .filter(|connection_info| {
+            get_node_role(connection_info).is_ok_and(|x| matches!(x, Role::Replica { .. }))
+        })
         .collect())
 }
 
@@ -523,12 +535,11 @@ async fn async_get_valid_replicas_addresses(
             Ok(x) => {
                 if x {
                     Some(connection_info)
-                }
-                else {
+                } else {
                     None
                 }
-            },
-            Err(_e) => None
+            }
+            Err(_e) => None,
         }
     }
 
@@ -1207,7 +1218,7 @@ impl SentinelClientBuilder {
                     #[cfg(feature = "tls-rustls")]
                     ref mut tls_params,
                     #[cfg(not(feature = "tls-rustls"))]
-                    tls_params: _,
+                        tls_params: _,
                 } => {
                     if let Some(tls_mode) = self.client_to_sentinel_params.tls_mode {
                         match tls_mode {
