@@ -1,5 +1,5 @@
 #[cfg(feature = "cluster-async")]
-use crate::aio::AsyncPushSender;
+use crate::aio::{AsyncPushSender, DNSResolver};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 #[cfg(feature = "cluster-async")]
 use crate::io::tcp::TcpSettings;
@@ -39,6 +39,8 @@ struct BuilderParams {
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
+    #[cfg(feature = "cluster-async")]
+    dns_resolver: Option<Arc<dyn DNSResolver>>,
 }
 
 #[derive(Clone)]
@@ -97,6 +99,8 @@ pub(crate) struct ClusterParams {
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) dns_resolver: Option<Arc<dyn DNSResolver>>,
 }
 
 impl ClusterParams {
@@ -140,6 +144,8 @@ impl ClusterParams {
             async_push_sender: value.async_push_sender,
             #[cfg(feature = "cluster-async")]
             tcp_settings: value.tcp_settings,
+            #[cfg(feature = "cluster-async")]
+            dns_resolver: value.dns_resolver,
         })
     }
 
@@ -450,6 +456,15 @@ impl ClusterClientBuilder {
     #[cfg(feature = "cluster-async")]
     pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
         self.builder_params.tcp_settings = tcp_settings;
+        self
+    }
+
+    /// Set the DNS resolver for the underlying TCP connection.
+    ///
+    /// The parameter resolver must implement the [`crate::aio::DNSResolver`] trait.
+    #[cfg(feature = "cluster-async")]
+    pub fn dns_resolver(mut self, resolver: impl DNSResolver) -> ClusterClientBuilder {
+        self.builder_params.dns_resolver = Some(Arc::new(resolver));
         self
     }
 }
