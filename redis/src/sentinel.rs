@@ -510,10 +510,15 @@ async fn async_get_valid_replicas_addresses(
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
-        if async_determine_slave_from_role_or_info_replication(&connection_info).await {
-            Some(connection_info)
-        } else {
-            None
+        match async_determine_slave_from_role_or_info_replication(&connection_info).await {
+            Ok(x) => {
+                if x {
+                    Some(connection_info)
+                } else {
+                    None
+                }
+            }
+            Err(_e) => None,
         }
     }
 
