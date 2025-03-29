@@ -1318,6 +1318,7 @@ where
     let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
     let tcp_settings = params.tcp_settings.clone();
+    let dns_resolver = params.async_dns_resolver.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
@@ -1327,6 +1328,9 @@ where
     };
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
+    }
+    if let Some(resolver) = dns_resolver {
+        config = config.set_dns_resolver_internal(resolver.clone());
     }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,

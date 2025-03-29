@@ -4,14 +4,18 @@ use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
     RedisConnectionInfo,
 };
+use crate::io::AsyncDNSResolver;
 use crate::types::{RedisFuture, RedisResult, Value};
-use crate::PushInfo;
+use crate::{ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::Future;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
+
+#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+use ::async_std::net::ToSocketAddrs;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -225,5 +229,38 @@ where
 {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         self.as_ref().send(info)
+    }
+}
+
+/// Default DNS resolver which uses the system's DNS resolver.
+#[derive(Clone)]
+pub(crate) struct DefaultAsyncDNSResolver;
+
+impl AsyncDNSResolver for DefaultAsyncDNSResolver {
+    fn resolve<'a, 'b: 'a>(
+        &'a self,
+        host: &'b str,
+        port: u16,
+    ) -> RedisFuture<'a, Box<dyn Iterator<Item = SocketAddr> + Send + 'a>> {
+        Box::pin(get_socket_addrs(host, port))
+    }
+}
+
+async fn get_socket_addrs(
+    host: &str,
+    port: u16,
+) -> RedisResult<Box<dyn Iterator<Item = SocketAddr> + Send + '_>> {
+    #[cfg(feature = "tokio-comp")]
+    let socket_addrs = ::tokio::net::lookup_host((host, port)).await?;
+    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
+    let socket_addrs = (host, port).to_socket_addrs().await?;
+
+    let mut socket_addrs = socket_addrs.peekable();
+    match socket_addrs.peek() {
+        Some(_) => Ok(Box::new(socket_addrs)),
+        None => Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "No address found for host",
+        ))),
     }
 }
