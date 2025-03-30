@@ -4,6 +4,7 @@ use lru::LruCache;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,6 +19,7 @@ pub(crate) struct CacheCmdEntry {
 /// CacheItem keeps information about a key's expiry time and cached response for each key, command pair.
 pub(crate) struct CacheItem {
     expire_time: Instant,
+    epoch: usize,
     value_list: Vec<CacheCmdEntry>,
 }
 
@@ -26,6 +28,7 @@ type LRUCacheShard = LruCache<RedisKey, CacheItem>;
 pub(crate) struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
     pub(crate) statistics: Arc<Statistics>,
+    last_epoch: AtomicUsize,
 }
 
 impl ShardedLRU {
@@ -48,7 +51,11 @@ impl ShardedLRU {
             shards.push(std::sync::Mutex::new(shard));
         }
         let statistics = Arc::new(Statistics::default());
-        ShardedLRU { shards, statistics }
+        ShardedLRU {
+            shards,
+            statistics,
+            last_epoch: AtomicUsize::new(0),
+        }
     }
 
     /// get_shard will get MutexGuard for a shard determined by key, if lock is poisoned it'll be recovered.
@@ -59,11 +66,20 @@ impl ShardedLRU {
         lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub(crate) fn get<'a>(&self, redis_key: &'a [u8], redis_cmd: &'a [u8]) -> Option<Value> {
+    pub(crate) fn get<'a>(
+        &self,
+        redis_key: &'a [u8],
+        redis_cmd: &'a [u8],
+        epoch: usize,
+    ) -> Option<Value> {
         let mut lru_cache = self.get_shard(redis_key);
         if let Some(cache_item) = lru_cache.get_mut(redis_key) {
-            if Instant::now() > cache_item.expire_time {
-                // Key is expired.
+            // If one of following conditions are true, cache item is invalid and can't be trusted to use:
+            // Epoch of client is not same, it means cache item is created by another redis connection.
+            // Expire time of key has been passed, value could be stale.
+            let cache_item_is_invalid =
+                cache_item.epoch != epoch || Instant::now() > cache_item.expire_time;
+            if cache_item_is_invalid {
                 self.statistics
                     .increase_invalidate(cache_item.value_list.len());
                 self.statistics.increase_miss(1);
@@ -88,33 +104,37 @@ impl ShardedLRU {
         cmd_key: &[u8],
         value: Value,
         expire_time: Instant,
+        epoch: usize,
     ) {
         let mut lru_cache = self.get_shard(redis_key);
         if let Some(ch) = lru_cache.peek_mut(redis_key) {
-            for entry in &mut ch.value_list {
-                if entry.cmd == cmd_key {
-                    entry.value = value;
-                    ch.expire_time = expire_time;
-                    return;
+            if ch.epoch == epoch {
+                for entry in &mut ch.value_list {
+                    if entry.cmd == cmd_key {
+                        entry.value = value;
+                        ch.expire_time = expire_time;
+                        return;
+                    }
                 }
+                ch.value_list.push(CacheCmdEntry {
+                    cmd: cmd_key.to_vec(),
+                    value,
+                });
+                ch.expire_time = expire_time;
+                return;
             }
-            ch.value_list.push(CacheCmdEntry {
-                cmd: cmd_key.to_vec(),
-                value,
-            });
-            ch.expire_time = expire_time;
-        } else {
-            let _ = lru_cache.push(
-                redis_key.to_vec(),
-                CacheItem {
-                    expire_time,
-                    value_list: vec![CacheCmdEntry {
-                        cmd: cmd_key.to_vec(),
-                        value,
-                    }],
-                },
-            );
         }
+        let _ = lru_cache.push(
+            redis_key.to_vec(),
+            CacheItem {
+                expire_time,
+                value_list: vec![CacheCmdEntry {
+                    cmd: cmd_key.to_vec(),
+                    value,
+                }],
+                epoch,
+            },
+        );
     }
 
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
@@ -124,13 +144,8 @@ impl ShardedLRU {
         }
     }
 
-    #[cfg(any(test, feature = "connection-manager"))]
-    pub(crate) fn invalidate_all(&self) {
-        for shard in &self.shards {
-            let mut shard = shard.lock().unwrap();
-            self.statistics.increase_invalidate(shard.len());
-            shard.clear();
-        }
+    pub(crate) fn increase_epoch(&self) -> usize {
+        self.last_epoch.fetch_add(1, Ordering::Relaxed)
     }
 }
 #[cfg(test)]
@@ -151,13 +166,14 @@ mod tests {
             CMD_KEY,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
+            0,
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             Some(Value::Boolean(true))
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, 0),
             None,
             "Using different cmd key must result in cache miss"
         );
@@ -167,15 +183,16 @@ mod tests {
             CMD_KEY,
             Value::Boolean(false),
             Instant::now().add(Duration::from_millis(5)),
+            0,
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             Some(Value::Boolean(false)),
             "Old value must be overwritten"
         );
         std::thread::sleep(Duration::from_millis(6));
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             None,
             "Cache must be expired"
         );
@@ -190,6 +207,7 @@ mod tests {
             CMD_KEY,
             Value::Int(1),
             Instant::now().add(Duration::from_secs(10)),
+            0,
         );
         // Second insert must override expire of the redis key.
         sharded_lru.insert(
@@ -197,19 +215,23 @@ mod tests {
             CMD_KEY_2,
             Value::Int(2),
             Instant::now().add(Duration::from_millis(5)),
+            0,
         );
 
-        assert_eq!(sharded_lru.get(REDIS_KEY, CMD_KEY), Some(Value::Int(1)));
-        assert_eq!(sharded_lru.get(REDIS_KEY, CMD_KEY_2), Some(Value::Int(2)));
+        assert_eq!(sharded_lru.get(REDIS_KEY, CMD_KEY, 0), Some(Value::Int(1)));
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, 0),
+            Some(Value::Int(2))
+        );
 
         std::thread::sleep(Duration::from_millis(6));
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             None,
             "Cache must be expired"
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, 0),
             None,
             "Cache must be expired"
         );
@@ -224,27 +246,28 @@ mod tests {
             CMD_KEY,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
+            0,
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             Some(Value::Boolean(true))
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, 0),
             None,
             "Using different cmd key must result in cache miss"
         );
 
         sharded_lru.invalidate(&REDIS_KEY.to_vec());
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             None,
             "Cache must be invalidated"
         );
     }
 
     #[test]
-    fn test_invalidate_all() {
+    fn test_epoch_change() {
         let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
 
         let another_key = "foobar";
@@ -254,31 +277,32 @@ mod tests {
             CMD_KEY,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
+            0,
         );
         sharded_lru.insert(
             another_key.as_bytes(),
             CMD_KEY,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
+            0,
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 0),
             Some(Value::Boolean(true))
         );
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY_2),
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, 0),
             None,
             "Using different cmd key must result in cache miss"
         );
 
-        sharded_lru.invalidate_all();
         assert_eq!(
-            sharded_lru.get(REDIS_KEY, CMD_KEY),
+            sharded_lru.get(REDIS_KEY, CMD_KEY, 1),
             None,
             "Cache must be invalidated"
         );
         assert_eq!(
-            sharded_lru.get(another_key.as_bytes(), CMD_KEY),
+            sharded_lru.get(another_key.as_bytes(), CMD_KEY, 1),
             None,
             "Cache must be invalidated"
         );
