@@ -16,7 +16,7 @@ bench = false
 redis = { version = "0.29.0", path = "../redis" }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
-tempfile = "=3.17.1"
+tempfile = "=3.19.1"
 socket2 = "0.5"
 rand = "0.9"
 
