@@ -2,8 +2,8 @@ use crate::cmd::{cmd, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
-    ExistenceCheck, ExpireOption, Expiry, FromRedisValue, NumericBehavior, RedisResult, RedisWrite,
-    SetExpiry, ToRedisArgs,
+    ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, NumericBehavior,
+    RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
 };
 
 #[macro_use]
@@ -58,7 +58,9 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"HEXISTS"
             | b"HEXPIRETIME"
             | b"HGET"
+            | b"HGETEX"
             | b"HGETALL"
+            | b"HGETDEL"
             | b"HKEYS"
             | b"HLEN"
             | b"HMGET"
@@ -66,6 +68,7 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"HPTTL"
             | b"HPEXPIRETIME"
             | b"HSCAN"
+            | b"HSETEX"
             | b"HSTRLEN"
             | b"HTTL"
             | b"HVALS"
@@ -273,15 +276,7 @@ implement_commands! {
 
     /// Get the value of a key and set expiration
     fn get_ex<K: ToRedisArgs>(key: K, expire_at: Expiry) {
-        let (option, time_arg) = match expire_at {
-            Expiry::EX(sec) => ("EX", Some(sec)),
-            Expiry::PX(ms) => ("PX", Some(ms)),
-            Expiry::EXAT(timestamp_sec) => ("EXAT", Some(timestamp_sec)),
-            Expiry::PXAT(timestamp_ms) => ("PXAT", Some(timestamp_ms)),
-            Expiry::PERSIST => ("PERSIST", None),
-        };
-
-        cmd("GETEX").arg(key).arg(option).arg(time_arg)
+        cmd("GETEX").arg(key).arg(expire_at)
     }
 
     /// Get the value of a key and delete it
@@ -382,14 +377,29 @@ implement_commands! {
         cmd(if field.num_of_args() <= 1 { "HGET" } else { "HMGET" }).arg(key).arg(field)
     }
 
+    /// Get the value of one or more fields of a given hash key, and optionally set their expiration
+    fn hget_ex<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) {
+        cmd("HGETEX").arg(key).arg(expire_at).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
     /// Deletes a single (or multiple) fields from a hash.
     fn hdel<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) {
         cmd("HDEL").arg(key).arg(field)
     }
 
+    /// Get and delete the value of one or more fields of a given hash key
+    fn hget_del<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) {
+        cmd("HGETDEL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
+    }
+
     /// Sets a single field in a hash.
     fn hset<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) {
         cmd("HSET").arg(key).arg(field).arg(value)
+    }
+
+    /// Set the value of one or more fields of a given hash key, and optionally set their expiration
+    fn hset_ex<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &'a HashFieldExpirationOptions, fields_values: &'a [(F, V)]) {
+        cmd("HSETEX").arg(key).arg(hash_field_expiration_options).arg("FIELDS").arg(fields_values.len()).arg(fields_values)
     }
 
     /// Sets a single field in a hash if it does not exist.
@@ -2681,6 +2691,98 @@ impl ToRedisArgs for FlushAllOptions {
 
 /// Options for the [FLUSHDB](https://redis.io/commands/flushdb) command
 pub type FlushDbOptions = FlushAllOptions;
+
+/// Options for the HSETEX command
+#[derive(Clone, Copy, Default)]
+pub struct HashFieldExpirationOptions {
+    existence_check: Option<FieldExistenceCheck>,
+    expiration: Option<SetExpiry>,
+}
+
+impl HashFieldExpirationOptions {
+    /// Set the field(s) existence check for the HSETEX command
+    pub fn set_existence_check(mut self, field_existence_check: FieldExistenceCheck) -> Self {
+        self.existence_check = Some(field_existence_check);
+        self
+    }
+
+    /// Set the expiration option for the field(s) in the HSETEX command
+    pub fn set_expiration(mut self, expiration: SetExpiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+}
+
+impl ToRedisArgs for HashFieldExpirationOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref existence_check) = self.existence_check {
+            match existence_check {
+                FieldExistenceCheck::FNX => {
+                    out.write_arg(b"FNX");
+                }
+                FieldExistenceCheck::FXX => {
+                    out.write_arg(b"FXX");
+                }
+            }
+        }
+
+        if let Some(ref expiration) = self.expiration {
+            match expiration {
+                SetExpiry::EX(secs) => {
+                    out.write_arg(b"EX");
+                    out.write_arg(format!("{}", secs).as_bytes());
+                }
+                SetExpiry::PX(millis) => {
+                    out.write_arg(b"PX");
+                    out.write_arg(format!("{}", millis).as_bytes());
+                }
+                SetExpiry::EXAT(unix_time) => {
+                    out.write_arg(b"EXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::PXAT(unix_time) => {
+                    out.write_arg(b"PXAT");
+                    out.write_arg(format!("{}", unix_time).as_bytes());
+                }
+                SetExpiry::KEEPTTL => {
+                    out.write_arg(b"KEEPTTL");
+                }
+            }
+        }
+    }
+}
+
+impl ToRedisArgs for Expiry {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            Expiry::EX(sec) => {
+                out.write_arg(b"EX");
+                out.write_arg(sec.to_string().as_bytes());
+            }
+            Expiry::PX(ms) => {
+                out.write_arg(b"PX");
+                out.write_arg(ms.to_string().as_bytes());
+            }
+            Expiry::EXAT(timestamp_sec) => {
+                out.write_arg(b"EXAT");
+                out.write_arg(timestamp_sec.to_string().as_bytes());
+            }
+            Expiry::PXAT(timestamp_ms) => {
+                out.write_arg(b"PXAT");
+                out.write_arg(timestamp_ms.to_string().as_bytes());
+            }
+            Expiry::PERSIST => {
+                out.write_arg(b"PERSIST");
+            }
+        }
+    }
+}
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {

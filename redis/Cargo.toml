@@ -196,6 +196,7 @@ once_cell = "1"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.24"
+rand = "0.9"
 
 [[test]]
 name = "test_async"
