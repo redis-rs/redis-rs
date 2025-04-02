@@ -564,7 +564,10 @@ struct AcceptInvalidHostnamesCertVerifier {
 fn is_hostname_error(err: &rustls::Error) -> bool {
     matches!(
         err,
-        rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)
+        rustls::Error::InvalidCertificate(
+            rustls::CertificateError::NotValidForName
+                | rustls::CertificateError::NotValidForNameContext { .. }
+        )
     )
 }
 
