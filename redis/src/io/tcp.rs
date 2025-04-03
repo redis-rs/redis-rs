@@ -40,6 +40,7 @@ impl TcpSettings {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TcpSettings {
     fn default() -> Self {
         Self {
