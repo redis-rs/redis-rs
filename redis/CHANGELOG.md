@@ -1,3 +1,15 @@
+### 0.29.3 (2025-04-04)
+
+#### Changes & Bug fixes
+
+* re-export socket2. ([#1573](https://github.com/redis-rs/redis-rs/pull/1573) by @nihohit)
+* Add commands to flush database(s) ([#1576](https://github.com/redis-rs/redis-rs/pull/1576) by @somechris)
+* Fix valkey(s) url schemes not able to be converted to connection infos; Add valkey+unix url scheme ([#1574](https://github.com/redis-rs/redis-rs/pull/1574) by @MarkusTieger)
+* A spec compliant version, with less changed code. ([#1572](https://github.com/redis-rs/redis-rs/pull/1572) by @65001)
+* Support bb8 for cluster client ([#1577](https://github.com/redis-rs/redis-rs/pull/1577) by @wiserfz)
+* Support custom DNS resolver for async client ([#1581](https://github.com/redis-rs/redis-rs/pull/1581) by @wiserfz)
+* Update danger_accept_invalid_hostnames for rustls 0.23.24 ([#1592](https://github.com/redis-rs/redis-rs/pull/1592) by @jorendorff)
+
 ### 0.29.2 (2025-03-21)
 
 #### Changes & Bug fixes
