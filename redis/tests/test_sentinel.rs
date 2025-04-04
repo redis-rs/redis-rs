@@ -104,16 +104,66 @@ fn assert_connect_to_known_replicas(
 }
 
 #[test]
-fn test_sentinel_connect_to_random_replica() {
+fn test_sentinel_role_no_permission() {
+    let number_of_replicas = 3;
     let master_name = "master1";
-    let mut context = TestSentinelContext::new(2, 3, 3);
-    let node_conn_info: SentinelNodeConnectionInfo = context.sentinel_node_connection_info();
-    let sentinel = context.sentinel_mut();
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
 
     let master_client = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap();
     let mut master_con = master_client.get_connection().unwrap();
+
+    let user: String = redis::cmd("ACL")
+        .arg("whoami")
+        .query(&mut master_con)
+        .unwrap();
+    //Remove ROLE permission for the given user on master
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("-role")
+        .query(&mut master_con)
+        .unwrap();
+
+    //Remove ROLE permission for the given user on replicas
+    for _ in 0..number_of_replicas {
+        let replica_client = sentinel
+            .replica_rotate_for(master_name, Some(&node_conn_info))
+            .unwrap();
+        let mut replica_con = replica_client.get_connection().unwrap();
+        let _: () = redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg(&user)
+            .arg("-role")
+            .query(&mut replica_con)
+            .unwrap();
+    }
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    assert_is_connection_to_master(&mut master_con);
+}
+
+#[test]
+fn test_sentinel_connect_to_random_replica() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    assert_is_connection_to_master(&mut master_con);
 
     let mut replica_con = sentinel
         .replica_for(master_name, Some(&node_conn_info))
@@ -121,7 +171,6 @@ fn test_sentinel_connect_to_random_replica() {
         .get_connection()
         .unwrap();
 
-    assert_is_connection_to_master(&mut master_con);
     assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
 }
 
