@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 #[cfg(feature = "aio")]
-use crate::aio::AsyncPushSender;
+use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
-use crate::io::tcp::TcpSettings;
+use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
@@ -183,6 +183,7 @@ pub struct AsyncConnectionConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache: Option<Cache>,
     pub(crate) tcp_settings: TcpSettings,
+    pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
 }
 
 #[cfg(feature = "aio")]
@@ -261,6 +262,21 @@ impl AsyncConnectionConfig {
             ..self
         }
     }
+
+    /// Set the DNS resolver for the underlying TCP connection.
+    ///
+    /// The parameter resolver must implement the [`crate::aio::DNSResolver`] trait.
+    pub fn set_dns_resolver(self, dns_resolver: impl AsyncDNSResolver) -> Self {
+        self.set_dns_resolver_internal(std::sync::Arc::new(dns_resolver))
+    }
+
+    pub(super) fn set_dns_resolver_internal(
+        mut self,
+        dns_resolver: std::sync::Arc<dyn AsyncDNSResolver>,
+    ) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
 }
 
 /// To enable async support you need to chose one of the supported runtimes and active its
@@ -276,7 +292,10 @@ impl Client {
     #[allow(deprecated)]
     pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
         let con = self
-            .get_simple_async_connection_dynamically(&TcpSettings::default())
+            .get_simple_async_connection_dynamically(
+                &DefaultAsyncDNSResolver,
+                &TcpSettings::default(),
+            )
             .await?;
 
         crate::aio::Connection::new(&self.connection_info.redis, con).await
@@ -811,8 +830,12 @@ impl Client {
     where
         T: crate::aio::RedisRuntime,
     {
+        let resolver = config
+            .dns_resolver
+            .as_deref()
+            .unwrap_or(&DefaultAsyncDNSResolver);
         let con = self
-            .get_simple_async_connection::<T>(&config.tcp_settings)
+            .get_simple_async_connection::<T>(resolver, &config.tcp_settings)
             .await?;
         crate::aio::MultiplexedConnection::new_with_config(
             &self.connection_info.redis,
@@ -824,32 +847,40 @@ impl Client {
 
     async fn get_simple_async_connection_dynamically(
         &self,
+        dns_resolver: &dyn AsyncDNSResolver,
         tcp_settings: &TcpSettings,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>> {
         match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(tcp_settings)
-                    .await
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(
+                    dns_resolver,
+                    tcp_settings,
+                )
+                .await
             }
 
             #[cfg(feature = "async-std-comp")]
             Runtime::AsyncStd => {
-                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>(tcp_settings)
-                    .await
+                self.get_simple_async_connection::<crate::aio::async_std::AsyncStd>(
+                    dns_resolver,
+                    tcp_settings,
+                )
+                .await
             }
         }
     }
 
     async fn get_simple_async_connection<T>(
         &self,
+        dns_resolver: &dyn AsyncDNSResolver,
         tcp_settings: &TcpSettings,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
     where
         T: crate::aio::RedisRuntime,
     {
         Ok(
-            crate::aio::connect_simple::<T>(&self.connection_info, tcp_settings)
+            crate::aio::connect_simple::<T>(&self.connection_info, dns_resolver, tcp_settings)
                 .await?
                 .boxed(),
         )
@@ -865,7 +896,10 @@ impl Client {
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
         let connection = self
-            .get_simple_async_connection_dynamically(&TcpSettings::default())
+            .get_simple_async_connection_dynamically(
+                &DefaultAsyncDNSResolver,
+                &TcpSettings::default(),
+            )
             .await?;
 
         crate::aio::PubSub::new(&self.connection_info.redis, connection).await

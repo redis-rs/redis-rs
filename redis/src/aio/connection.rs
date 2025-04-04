@@ -2,8 +2,8 @@
 
 #[cfg(feature = "async-std-comp")]
 use super::async_std;
-use super::ConnectionLike;
-use super::{setup_connection, AsyncStream, RedisRuntime};
+use super::{setup_connection, AsyncStream, DefaultAsyncDNSResolver, RedisRuntime};
+use super::{AsyncDNSResolver, ConnectionLike};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     resp2_is_pub_sub_state_cleared, resp3_is_pub_sub_state_cleared, ConnectionAddr, ConnectionInfo,
@@ -12,20 +12,15 @@ use crate::connection::{
 use crate::io::tcp::TcpSettings;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
-use crate::types::{ErrorKind, FromRedisValue, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{FromRedisValue, RedisFuture, RedisResult, Value};
 use crate::{from_owned_redis_value, ProtocolVersion, ToRedisArgs};
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-#[cfg(feature = "tokio-comp")]
-use ::tokio::net::lookup_host;
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
 use futures_util::future::select_ok;
 use futures_util::{
     future::FutureExt,
     stream::{Stream, StreamExt},
 };
-use std::net::SocketAddr;
 use std::pin::Pin;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
@@ -219,7 +214,12 @@ pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,
 {
-    let con = connect_simple::<C>(connection_info, &TcpSettings::default()).await?;
+    let con = connect_simple::<C>(
+        connection_info,
+        &DefaultAsyncDNSResolver,
+        &TcpSettings::default(),
+    )
+    .await?;
     Connection::new(&connection_info.redis, con).await
 }
 
@@ -334,7 +334,7 @@ where
         Self(con)
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     pub async fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         let mut cmd = cmd("SUBSCRIBE");
         cmd.arg(channel);
@@ -438,32 +438,14 @@ where
     }
 }
 
-async fn get_socket_addrs(
-    host: &str,
-    port: u16,
-) -> RedisResult<impl Iterator<Item = SocketAddr> + Send + '_> {
-    #[cfg(feature = "tokio-comp")]
-    let socket_addrs = lookup_host((host, port)).await?;
-    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-    let socket_addrs = (host, port).to_socket_addrs().await?;
-
-    let mut socket_addrs = socket_addrs.peekable();
-    match socket_addrs.peek() {
-        Some(_) => Ok(socket_addrs),
-        None => Err(RedisError::from((
-            ErrorKind::InvalidClientConfig,
-            "No address found for host",
-        ))),
-    }
-}
-
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
+    dns_resolver: &dyn AsyncDNSResolver,
     tcp_settings: &TcpSettings,
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addrs = get_socket_addrs(host, port).await?;
+            let socket_addrs = dns_resolver.resolve(host, port).await?;
             select_ok(socket_addrs.map(|addr| Box::pin(<T>::connect_tcp(addr, tcp_settings))))
                 .await?
                 .0
@@ -476,7 +458,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
             ref tls_params,
         } => {
-            let socket_addrs = get_socket_addrs(host, port).await?;
+            let socket_addrs = dns_resolver.resolve(host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
                 Box::pin(<T>::connect_tcp_tls(
                     host,
@@ -493,7 +475,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
         ConnectionAddr::TcpTls { .. } => {
             fail!((
-                ErrorKind::InvalidClientConfig,
+                crate::types::ErrorKind::InvalidClientConfig,
                 "Cannot connect to TCP with TLS without the tls feature"
             ));
         }
@@ -504,7 +486,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
             return Err(RedisError::from((
-                ErrorKind::InvalidClientConfig,
+                crate::typesErrorKind::InvalidClientConfig,
                 "Cannot connect to unix sockets \
                  on this platform",
             )))
