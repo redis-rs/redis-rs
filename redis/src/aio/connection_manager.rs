@@ -486,11 +486,16 @@ impl ConnectionManager {
     /// The `current` guard points to the shared future that was active
     /// when the connection loss was detected.
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
+        let self_clone = self.clone();
+        #[cfg(not(feature = "cache-aio"))]
+        let connection_config = self_clone.0.connection_config.clone();
+        #[cfg(feature = "cache-aio")]
+        let mut connection_config = self_clone.0.connection_config.clone();
         #[cfg(feature = "cache-aio")]
         if let Some(manager) = self.0.cache_manager.as_ref() {
-            manager.invalidate_all();
+            let new_cache_manager = manager.clone_and_increase_epoch();
+            connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
-        let self_clone = self.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
             let additional_commands = match &self_clone.0.subscription_tracker {
                 Some(subscription_tracker) => Some(
@@ -501,10 +506,11 @@ impl ConnectionManager {
                 ),
                 None => None,
             };
+
             let con = Self::new_connection(
                 &self_clone.0.client,
                 self_clone.0.retry_strategy,
-                &self_clone.0.connection_config,
+                &connection_config,
                 additional_commands,
             )
             .await?;
