@@ -159,6 +159,12 @@ impl ClusterParams {
         if let Some(async_push_sender) = config.async_push_sender {
             self.async_push_sender = Some(async_push_sender);
         }
+
+        #[cfg(feature = "cluster-async")]
+        if let Some(async_dns_resolver) = config.async_dns_resolver {
+            self.async_dns_resolver = Some(async_dns_resolver);
+        }
+
         self
     }
 }
@@ -459,11 +465,11 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Set the DNS resolver for the underlying TCP connection.
+    /// Set asynchronous DNS resolver for the underlying TCP connection.
     ///
-    /// The parameter resolver must implement the [`crate::aio::DNSResolver`] trait.
+    /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
     #[cfg(feature = "cluster-async")]
-    pub fn dns_resolver(mut self, resolver: impl AsyncDNSResolver) -> ClusterClientBuilder {
+    pub fn async_dns_resolver(mut self, resolver: impl AsyncDNSResolver) -> ClusterClientBuilder {
         self.builder_params.async_dns_resolver = Some(Arc::new(resolver));
         self
     }
