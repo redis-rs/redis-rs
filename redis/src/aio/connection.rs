@@ -13,6 +13,7 @@ use crate::io::tcp::TcpSettings;
 #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{FromRedisValue, RedisFuture, RedisResult, Value};
+use crate::RedisError;
 use crate::{from_owned_redis_value, ProtocolVersion, ToRedisArgs};
 use ::tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use combine::{parser::combinator::AnySendSyncPartialState, stream::PointerOffset};
