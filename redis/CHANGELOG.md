@@ -1,3 +1,11 @@
+### 0.29.4 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Add async dns resolver for cluster config and fix doc ([#1595](https://github.com/redis-rs/redis-rs/pull/1595) by @wiserfz)
+* Fix error kind declaration on non-unix machines. ([#1598](https://github.com/redis-rs/redis-rs/pull/1598) by @nihohit)
+
+
 ### 0.29.3 (2025-04-04)
 
 #### Changes & Bug fixes
