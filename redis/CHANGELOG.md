@@ -1,3 +1,9 @@
+### 0.29.5 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Fix build on Windows. ([#1601](https://github.com/redis-rs/redis-rs/pull/1601) by @nihohit)
+
 ### 0.29.4 (2025-04-06)
 
 #### Changes & Bug fixes
