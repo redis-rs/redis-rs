@@ -266,4 +266,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --all-features
+        run: make build
