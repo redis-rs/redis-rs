@@ -485,11 +485,11 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
-            return Err(RedisError::from((
+            fail!((
                 crate::types::ErrorKind::InvalidClientConfig,
                 "Cannot connect to unix sockets \
                  on this platform",
-            )))
+            ))
         }
     })
 }
