@@ -2,7 +2,9 @@
 
 #[cfg(feature = "async-std-comp")]
 use super::async_std;
-use super::{setup_connection, AsyncStream, DefaultAsyncDNSResolver, RedisRuntime};
+#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+use super::DefaultAsyncDNSResolver;
+use super::{setup_connection, AsyncStream, RedisRuntime};
 use super::{AsyncDNSResolver, ConnectionLike};
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
@@ -10,7 +12,7 @@ use crate::connection::{
     Msg, RedisConnectionInfo,
 };
 use crate::io::tcp::TcpSettings;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+#[cfg(feature = "aio")]
 use crate::parser::ValueCodec;
 use crate::types::{FromRedisValue, RedisFuture, RedisResult, Value};
 use crate::{from_owned_redis_value, ProtocolVersion, ToRedisArgs};
@@ -22,7 +24,7 @@ use futures_util::{
     stream::{Stream, StreamExt},
 };
 use std::pin::Pin;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+#[cfg(feature = "aio")]
 use tokio_util::codec::Decoder;
 
 /// Represents a stateful redis TCP connection.
@@ -50,6 +52,7 @@ fn test() {
     assert_sync::<Connection>();
 }
 
+#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 impl<C> Connection<C> {
     pub(crate) fn map<D>(self, f: impl FnOnce(C) -> D) -> Connection<D> {
         let Self {
@@ -210,6 +213,7 @@ where
     }
 }
 
+#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 pub(crate) async fn connect<C>(connection_info: &ConnectionInfo) -> RedisResult<Connection<C>>
 where
     C: Unpin + RedisRuntime + AsyncRead + AsyncWrite + Send,

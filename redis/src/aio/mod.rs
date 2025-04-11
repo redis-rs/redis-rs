@@ -8,14 +8,11 @@ use crate::io::AsyncDNSResolver;
 use crate::types::{RedisFuture, RedisResult, Value};
 use crate::{ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use futures_util::Future;
+use futures_util::{Future, FutureExt};
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
-
-#[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-use ::async_std::net::ToSocketAddrs;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -25,6 +22,10 @@ pub mod async_std;
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
 
+/// Enables the smol compatibility
+#[cfg(feature = "smol-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "smol-comp")))]
+pub mod smol;
 /// Enables the tokio compatibility
 #[cfg(feature = "tokio-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
@@ -150,6 +151,21 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
+#[cfg(all(
+    feature = "async-std-comp",
+    any(feature = "smol-comp", feature = "tokio-comp")
+))]
+pub use runtime::prefer_async_std;
+#[cfg(all(
+    feature = "smol-comp",
+    any(feature = "async-std-comp", feature = "tokio-comp")
+))]
+pub use runtime::prefer_smol;
+#[cfg(all(
+    feature = "tokio-comp",
+    any(feature = "async-std-comp", feature = "smol-comp")
+))]
+pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
 macro_rules! check_resp3 {
@@ -242,25 +258,37 @@ impl AsyncDNSResolver for DefaultAsyncDNSResolver {
         host: &'b str,
         port: u16,
     ) -> RedisFuture<'a, Box<dyn Iterator<Item = SocketAddr> + Send + 'a>> {
-        Box::pin(get_socket_addrs(host, port))
+        Box::pin(get_socket_addrs(host, port).map(|vec| {
+            Ok(Box::new(vec?.into_iter()) as Box<dyn Iterator<Item = SocketAddr> + Send>)
+        }))
     }
 }
 
-async fn get_socket_addrs(
-    host: &str,
-    port: u16,
-) -> RedisResult<Box<dyn Iterator<Item = SocketAddr> + Send + '_>> {
-    #[cfg(feature = "tokio-comp")]
-    let socket_addrs = ::tokio::net::lookup_host((host, port)).await?;
-    #[cfg(all(not(feature = "tokio-comp"), feature = "async-std-comp"))]
-    let socket_addrs = (host, port).to_socket_addrs().await?;
+async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<Vec<SocketAddr>> {
+    let socket_addrs: Vec<_> = match Runtime::locate() {
+        #[cfg(feature = "tokio-comp")]
+        Runtime::Tokio => ::tokio::net::lookup_host((host, port))
+            .await
+            .map_err(RedisError::from)
+            .map(|iter| iter.collect()),
+        #[cfg(feature = "async-std-comp")]
+        Runtime::AsyncStd => Ok::<_, RedisError>(
+            ::async_std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
+                .await
+                .map(|iter| iter.collect())?,
+        ),
+        #[cfg(feature = "smol-comp")]
+        Runtime::Smol => ::smol::net::resolve((host, port))
+            .await
+            .map_err(RedisError::from),
+    }?;
 
-    let mut socket_addrs = socket_addrs.peekable();
-    match socket_addrs.peek() {
-        Some(_) => Ok(Box::new(socket_addrs)),
-        None => Err(RedisError::from((
+    if socket_addrs.is_empty() {
+        Err(RedisError::from((
             ErrorKind::InvalidClientConfig,
             "No address found for host",
-        ))),
+        )))
+    } else {
+        Ok(socket_addrs)
     }
 }
