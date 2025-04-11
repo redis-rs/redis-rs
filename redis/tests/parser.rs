@@ -12,7 +12,7 @@ use {
 };
 
 mod support;
-use crate::support::{block_on_all, encode_value};
+use crate::support::{current_thread_runtime, encode_value};
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);
@@ -188,7 +188,7 @@ quickcheck! {
         let mut partial_reader = PartialAsyncRead { inner: &mut reader, ops: Box::new(seq.into_iter()) };
         let mut decoder = combine::stream::Decoder::new();
 
-        let result = block_on_all(redis::parse_redis_value_async(&mut decoder, &mut partial_reader), support::RuntimeType::Tokio);
+        let result =  current_thread_runtime().block_on(redis::parse_redis_value_async(&mut decoder, &mut partial_reader));
         assert!(result.as_ref().is_ok(), "{}", result.unwrap_err());
         assert_eq!(
             result.unwrap(),

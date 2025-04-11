@@ -3,7 +3,6 @@ use crate::aio::{check_resp3, setup_connection};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::cmd::Cmd;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
@@ -27,7 +26,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
@@ -496,9 +494,6 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-        compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
         let codec = ValueCodec::default().framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
