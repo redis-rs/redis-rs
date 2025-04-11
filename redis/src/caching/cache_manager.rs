@@ -20,18 +20,34 @@ pub(crate) enum PrepareCacheResult<'a> {
 pub(crate) struct CacheManager {
     lru: Arc<ShardedLRU>,
     pub(crate) cache_config: CacheConfig,
+    epoch: usize,
 }
 
 impl CacheManager {
     pub(crate) fn new(cache_config: CacheConfig) -> Self {
+        let lru = Arc::new(ShardedLRU::new(cache_config.size));
+        let epoch = lru.increase_epoch();
         CacheManager {
-            lru: Arc::new(ShardedLRU::new(cache_config.size)),
+            lru,
             cache_config,
+            epoch,
+        }
+    }
+
+    // Clone the CacheManager and increase epoch from LRU,
+    // this will eventually remove all keys created with previous
+    // CacheManager's epoch.
+    #[cfg(feature = "connection-manager")]
+    pub(crate) fn clone_and_increase_epoch(&self) -> CacheManager {
+        CacheManager {
+            lru: self.lru.clone(),
+            cache_config: self.cache_config,
+            epoch: self.lru.increase_epoch(),
         }
     }
 
     pub(crate) fn get<'a>(&self, redis_key: &'a [u8], redis_cmd: &'a [u8]) -> Option<Value> {
-        self.lru.get(redis_key, redis_cmd)
+        self.lru.get(redis_key, redis_cmd, self.epoch)
     }
 
     pub(crate) fn insert(
@@ -51,7 +67,8 @@ impl CacheManager {
             }
             _ => client_side_expire_time,
         };
-        self.lru.insert(redis_key, cmd_key, value, expire_time);
+        self.lru
+            .insert(redis_key, cmd_key, value, expire_time, self.epoch);
     }
 
     pub(crate) fn statistics(&self) -> CacheStatistics {
@@ -304,11 +321,6 @@ impl CacheManager {
         };
         (cp, packed_pipeline, pipeline_response_counts)
     }
-
-    #[cfg(feature = "connection-manager")]
-    pub(crate) fn invalidate_all(&self) {
-        self.lru.invalidate_all();
-    }
 }
 
 /// Checks if the given command is cacheable and supports multiple keys.
@@ -361,6 +373,62 @@ mod tests {
             cache_manager.get(redis_key_3, cmd_key),
             Some(Value::Int(3)),
             "Key must be alive, client value must be picked"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "connection-manager")]
+    fn test_epoch_on_shared_cache_managers() {
+        let redis_key = b"test_redis_key".as_slice();
+        let redis_key_2 = b"test_redis_key_2".as_slice();
+        let redis_key_3 = b"test_redis_key_3".as_slice();
+        let cmd_key = b"test_cmd_key".as_slice();
+
+        let shared_cache_manager = CacheManager::new(CacheConfig::new());
+
+        let cache_manager_1 = shared_cache_manager.clone_and_increase_epoch();
+        let cache_manager_2 = shared_cache_manager.clone_and_increase_epoch();
+        let cache_manager_3 = shared_cache_manager.clone_and_increase_epoch();
+
+        let secs_10 = Instant::now().add(Duration::from_secs(10));
+
+        let do_inserts = |cm1: &CacheManager, cm2: &CacheManager, cm3: &CacheManager| {
+            cm1.insert(redis_key, cmd_key, Value::Int(1), secs_10, &Value::Int(5));
+            cm2.insert(redis_key_2, cmd_key, Value::Int(2), secs_10, &Value::Int(5));
+            cm3.insert(redis_key_3, cmd_key, Value::Int(3), secs_10, &Value::Int(5));
+        };
+
+        let do_hit_gets = |cm1: &CacheManager, cm2: &CacheManager, cm3: &CacheManager| {
+            assert_eq!(cm1.get(redis_key, cmd_key), Some(Value::Int(1)));
+            assert_eq!(cm2.get(redis_key_2, cmd_key), Some(Value::Int(2)));
+            assert_eq!(cm3.get(redis_key_3, cmd_key), Some(Value::Int(3)));
+        };
+
+        let do_miss_gets = |cm1: &CacheManager, cm2: &CacheManager, cm3: &CacheManager| {
+            assert_eq!(cm1.get(redis_key, cmd_key), None);
+            assert_eq!(cm2.get(redis_key_2, cmd_key), None);
+            assert_eq!(cm3.get(redis_key_3, cmd_key), None);
+        };
+
+        do_inserts(&cache_manager_1, &cache_manager_2, &cache_manager_3);
+        do_hit_gets(&cache_manager_1, &cache_manager_2, &cache_manager_3);
+        // Different CacheManagers has different epochs so all must return None
+        do_miss_gets(&cache_manager_2, &cache_manager_3, &cache_manager_1);
+
+        // Check when only one CacheManager has increased the epoch
+        do_inserts(&cache_manager_1, &cache_manager_2, &cache_manager_3);
+        do_hit_gets(&cache_manager_1, &cache_manager_2, &cache_manager_3);
+
+        let cache_manager_1 = cache_manager_1.clone_and_increase_epoch();
+        assert_eq!(cache_manager_1.get(redis_key, cmd_key), None);
+
+        assert_eq!(
+            cache_manager_2.get(redis_key_2, cmd_key),
+            Some(Value::Int(2))
+        );
+        assert_eq!(
+            cache_manager_3.get(redis_key_3, cmd_key),
+            Some(Value::Int(3))
         );
     }
 }
