@@ -52,7 +52,7 @@ jobs:
               rust: stable,
               db-org: redis,
               db-name: redis,
-              db-version: 8.0-m04
+              db-version: 8.0-rc1
             },
 
             # Different rust cases

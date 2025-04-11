@@ -58,9 +58,7 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"HEXISTS"
             | b"HEXPIRETIME"
             | b"HGET"
-            | b"HGETEX"
             | b"HGETALL"
-            | b"HGETDEL"
             | b"HKEYS"
             | b"HLEN"
             | b"HMGET"
@@ -68,7 +66,6 @@ pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
             | b"HPTTL"
             | b"HPEXPIRETIME"
             | b"HSCAN"
-            | b"HSETEX"
             | b"HSTRLEN"
             | b"HTTL"
             | b"HVALS"
@@ -2720,12 +2717,8 @@ impl ToRedisArgs for HashFieldExpirationOptions {
     {
         if let Some(ref existence_check) = self.existence_check {
             match existence_check {
-                FieldExistenceCheck::FNX => {
-                    out.write_arg(b"FNX");
-                }
-                FieldExistenceCheck::FXX => {
-                    out.write_arg(b"FXX");
-                }
+                FieldExistenceCheck::FNX => out.write_arg(b"FNX"),
+                FieldExistenceCheck::FXX => out.write_arg(b"FXX"),
             }
         }
 
