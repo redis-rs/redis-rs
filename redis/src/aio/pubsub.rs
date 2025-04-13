@@ -1,7 +1,4 @@
 use crate::aio::Runtime;
-use crate::connection::{
-    check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
-};
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisResult, Value};
 use crate::{cmd, from_owned_redis_value, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs};
@@ -12,7 +9,7 @@ use ::tokio::{
 use futures_util::{
     future::{Future, FutureExt},
     ready,
-    sink::{Sink, SinkExt},
+    sink::Sink,
     stream::{self, Stream, StreamExt},
 };
 use pin_project_lite::pin_project;
@@ -23,7 +20,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::Decoder;
 
-use super::SharedHandleContainer;
+use super::{setup_connection, SharedHandleContainer};
 
 // A signal that a un/subscribe request has completed.
 type RequestResultSender = oneshot::Sender<RedisResult<Value>>;
@@ -248,10 +245,9 @@ impl PubSubSink {
         messages_sender: UnboundedSender<Msg>,
     ) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + Send + 'static,
-        T::Item: Send,
-        T::Error: Send,
-        T::Error: ::std::fmt::Debug,
+        T: Sink<Vec<u8>, Error = RedisError>,
+        T: Stream<Item = RedisResult<Value>>,
+        T: Unpin + Send + 'static,
     {
         let (sender, mut receiver) = unbounded_channel();
         let sink = PipelineSink::new(sink_stream, messages_sender);
@@ -378,75 +374,6 @@ pub struct PubSub {
     stream: PubSubStream,
 }
 
-async fn execute_connection_pipeline<T>(
-    codec: &mut T,
-    (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
-) -> RedisResult<AuthResult>
-where
-    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
-    T: Send + 'static,
-    T::Item: Send,
-    T::Error: Send,
-    T::Error: ::std::fmt::Debug,
-    T: Unpin,
-{
-    let count = pipeline.len();
-    if count == 0 {
-        return Ok(AuthResult::Succeeded);
-    }
-    codec.send(pipeline.get_packed_pipeline()).await?;
-
-    let mut results = Vec::with_capacity(count);
-    for _ in 0..count {
-        let value = codec.next().await;
-        match value {
-            Some(Ok(val)) => results.push(val),
-            _ => return Err(closed_connection_error()),
-        }
-    }
-
-    check_connection_setup(results, instructions)
-}
-
-async fn setup_connection<T>(
-    codec: &mut T,
-    connection_info: &RedisConnectionInfo,
-) -> RedisResult<()>
-where
-    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
-    T: Send + 'static,
-    T::Item: Send,
-    T::Error: Send,
-    T::Error: ::std::fmt::Debug,
-    T: Unpin,
-{
-    if execute_connection_pipeline(
-        codec,
-        connection_setup_pipeline(
-            connection_info,
-            true,
-            #[cfg(feature = "cache-aio")]
-            None,
-        ),
-    )
-    .await?
-        == AuthResult::ShouldRetryWithoutUsername
-    {
-        execute_connection_pipeline(
-            codec,
-            connection_setup_pipeline(
-                connection_info,
-                false,
-                #[cfg(feature = "cache-aio")]
-                None,
-            ),
-        )
-        .await?;
-    }
-
-    Ok(())
-}
-
 impl PubSub {
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
     /// and a `ConnectionInfo`
@@ -455,7 +382,13 @@ impl PubSub {
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
         let mut codec = ValueCodec::default().framed(stream);
-        setup_connection(&mut codec, connection_info).await?;
+        setup_connection(
+            &mut codec,
+            connection_info,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .await?;
         let (sender, receiver) = unbounded_channel();
         let (sink, driver) = PubSubSink::new(codec, sender);
         let handle = Runtime::locate().spawn(driver);

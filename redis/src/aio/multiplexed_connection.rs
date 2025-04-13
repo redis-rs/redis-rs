@@ -355,11 +355,9 @@ impl Pipeline {
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
     ) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
-        T: Send + 'static,
-        T::Item: Send,
-        T::Error: Send,
-        T::Error: ::std::fmt::Debug,
+        T: Sink<Vec<u8>, Error = RedisError>,
+        T: Stream<Item = RedisResult<Value>>,
+        T: Unpin + Send + 'static,
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
@@ -494,7 +492,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec::default().framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,
@@ -526,13 +524,27 @@ impl MultiplexedConnection {
             })
             .transpose()?;
 
+        setup_connection(
+            &mut codec,
+            connection_info,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        )
+        .await?;
+        if config.push_sender.is_some() {
+            check_resp3!(
+                connection_info.protocol,
+                "Can only pass push sender to a connection using RESP3"
+            );
+        }
+
         let (pipeline, driver) = Pipeline::new(
             codec,
             config.push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
         );
-        let mut con = MultiplexedConnection {
+        let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
@@ -541,29 +553,7 @@ impl MultiplexedConnection {
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
         };
-        let driver = {
-            let auth = setup_connection(
-                connection_info,
-                &mut con,
-                #[cfg(feature = "cache-aio")]
-                cache_config,
-            );
 
-            futures_util::pin_mut!(auth);
-
-            match futures_util::future::select(auth, driver).await {
-                futures_util::future::Either::Left((result, driver)) => {
-                    result?;
-                    driver
-                }
-                futures_util::future::Either::Right(((), _)) => {
-                    return Err(RedisError::from((
-                        crate::ErrorKind::IoError,
-                        "Multiplexed connection driver unexpectedly terminated",
-                    )));
-                }
-            }
-        };
         Ok((con, driver))
     }
 
