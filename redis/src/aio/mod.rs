@@ -13,10 +13,13 @@ use futures_util::{
     sink::{Sink, SinkExt},
     stream::{Stream, StreamExt},
 };
+pub use monitor::Monitor;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
+
+mod monitor;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -161,7 +164,7 @@ where
 }
 
 mod connection;
-pub use connection::*;
+pub(crate) use connection::connect_simple;
 mod multiplexed_connection;
 pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
