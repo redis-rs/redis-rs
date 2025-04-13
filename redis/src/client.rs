@@ -912,12 +912,14 @@ impl Client {
 
     /// Returns an async receiver for monitor messages.
     #[cfg(feature = "aio")]
-    // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_monitor(&self) -> RedisResult<crate::aio::Monitor> {
-        #[allow(deprecated)]
-        self.get_async_connection()
-            .await
-            .map(|connection| connection.into_monitor())
+        let connection = self
+            .get_simple_async_connection_dynamically(
+                &DefaultAsyncDNSResolver,
+                &TcpSettings::default(),
+            )
+            .await?;
+        crate::aio::Monitor::new(&self.connection_info.redis, connection).await
     }
 }
 

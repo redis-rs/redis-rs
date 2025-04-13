@@ -1896,8 +1896,7 @@ mod basic_async {
         block_on_all(
             async move {
                 let mut conn = ctx.async_connection().await.unwrap();
-                let mut monitor_conn = ctx.client.get_async_monitor().await.unwrap();
-                monitor_conn.monitor().await.unwrap();
+                let monitor_conn = ctx.client.get_async_monitor().await.unwrap();
                 let mut stream = monitor_conn.into_on_message();
 
                 let _: () = conn.set("foo", "bar").await?;
