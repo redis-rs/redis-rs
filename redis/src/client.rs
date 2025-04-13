@@ -265,7 +265,7 @@ impl AsyncConnectionConfig {
 
     /// Set the DNS resolver for the underlying TCP connection.
     ///
-    /// The parameter resolver must implement the [`crate::aio::DNSResolver`] trait.
+    /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
     pub fn set_dns_resolver(self, dns_resolver: impl AsyncDNSResolver) -> Self {
         self.set_dns_resolver_internal(std::sync::Arc::new(dns_resolver))
     }

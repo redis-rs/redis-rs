@@ -666,7 +666,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Gets [`CacheStatistics`] for current connection if caching is enabled.
+    /// Gets [`crate::caching::CacheStatistics`] for current connection if caching is enabled.
     #[cfg(feature = "cache-aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
     pub fn get_cache_statistics(&self) -> Option<crate::caching::CacheStatistics> {
