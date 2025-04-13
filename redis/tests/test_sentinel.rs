@@ -465,7 +465,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_random_replica_async(#[case] runtime: RuntimeType) {
@@ -502,7 +502,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_multiple_replicas_async(#[case] runtime: RuntimeType) {
@@ -548,7 +548,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_server_down_async(#[case] runtime: RuntimeType) {
@@ -600,7 +600,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async(#[case] runtime: RuntimeType) {
@@ -653,7 +653,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_connection_timeout(#[case] runtime: RuntimeType) {
@@ -713,7 +713,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_response_timeout(#[case] runtime: RuntimeType) {
@@ -773,7 +773,7 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_timeouts(#[case] runtime: RuntimeType) {
