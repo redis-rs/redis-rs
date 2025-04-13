@@ -217,13 +217,13 @@ impl Runtime {
             } else {
                 Runtime::AsyncStd
             }
-        } else if         #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))] {
+        } else if #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))] {
             if ::tokio::runtime::Handle::try_current().is_ok() {
                 Runtime::Tokio
             } else {
                 Runtime::Smol
             }
-        } else if                 #[cfg(all(feature = "smol-comp", feature = "async-std-comp"))]
+        } else if #[cfg(all(feature = "smol-comp", feature = "async-std-comp"))]
             {
                 Runtime::AsyncStd
             }
