@@ -1887,6 +1887,35 @@ mod basic_async {
         .unwrap();
     }
 
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_monitor(#[case] runtime: RuntimeType) {
+        let ctx = TestContext::new();
+        block_on_all(
+            async move {
+                let mut conn = ctx.async_connection().await.unwrap();
+                let mut monitor_conn = ctx.client.get_async_monitor().await.unwrap();
+                monitor_conn.monitor().await.unwrap();
+                let mut stream = monitor_conn.into_on_message();
+
+                let _: () = conn.set("foo", "bar").await?;
+
+                let msg: String = stream.next().await.unwrap();
+                assert!(msg.ends_with("\"SET\" \"foo\" \"bar\""));
+
+                drop(ctx);
+
+                assert!(stream.next().await.is_none());
+
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
     #[cfg(feature = "tls-rustls")]
     mod mtls_test {
         use super::*;
