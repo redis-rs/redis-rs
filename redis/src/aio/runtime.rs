@@ -99,7 +99,7 @@ impl SharedHandleContainer {
         any(feature = "tokio-comp", feature = "smol-comp")
     )
 ))]
-static CHOSEN_RUNTIME: OnceLock<Runtime> = const { OnceLock::new() };
+static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 #[cfg(any(
     all(
