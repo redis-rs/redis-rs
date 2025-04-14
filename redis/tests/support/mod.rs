@@ -93,7 +93,7 @@ where
 
 #[cfg(feature = "aio")]
 #[rstest::rstest]
-#[cfg_attr(feature = "tokio-comp", case::smol(RuntimeType::Tokio))]
+#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
 #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[should_panic(expected = "Internal thread panicked")]
