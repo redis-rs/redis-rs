@@ -698,6 +698,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -705,7 +706,7 @@ impl MultiplexedConnection {
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -718,6 +719,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -726,7 +728,7 @@ impl MultiplexedConnection {
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -742,6 +744,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -750,7 +753,7 @@ impl MultiplexedConnection {
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
