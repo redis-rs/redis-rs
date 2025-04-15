@@ -1,6 +1,6 @@
 use std::{io, net::TcpStream};
 
-#[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+#[cfg(os_that_support_user_timeout)]
 use std::time::Duration;
 
 pub use socket2;
@@ -10,7 +10,7 @@ pub use socket2;
 pub struct TcpSettings {
     nodelay: bool,
     keepalive: Option<socket2::TcpKeepalive>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(os_that_support_user_timeout)]
     user_timeout: Option<Duration>,
 }
 
@@ -31,7 +31,7 @@ impl TcpSettings {
     }
 
     /// Set the value of the `TCP_USER_TIMEOUT` option on this socket.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(os_that_support_user_timeout)]
     pub fn set_user_timeout(self, user_timeout: Duration) -> Self {
         Self {
             user_timeout: Some(user_timeout),
@@ -49,7 +49,7 @@ impl Default for TcpSettings {
             #[cfg(not(feature = "tcp_nodelay"))]
             nodelay: false,
             keepalive: None,
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            #[cfg(os_that_support_user_timeout)]
             user_timeout: None,
         }
     }
@@ -64,7 +64,7 @@ pub(crate) fn stream_with_settings(
     if let Some(keepalive) = &settings.keepalive {
         socket2.set_tcp_keepalive(keepalive)?;
     }
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(os_that_support_user_timeout)]
     socket2.set_tcp_user_timeout(settings.user_timeout)?;
     Ok(socket2.into())
 }
