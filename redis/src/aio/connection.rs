@@ -30,7 +30,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
                 .0
         }
 
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(sync_tls)]
         ConnectionAddr::TcpTls {
             ref host,
             port,
@@ -51,7 +51,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             .0
         }
 
-        #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
+        #[cfg(not(sync_tls))]
         ConnectionAddr::TcpTls { .. } => {
             fail!((
                 crate::types::ErrorKind::InvalidClientConfig,

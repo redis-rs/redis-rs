@@ -26,7 +26,7 @@ mod monitor;
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
 
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+#[cfg(sync_tls)]
 use crate::connection::TlsConnParams;
 
 /// Enables the smol compatibility
@@ -50,7 +50,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     ) -> RedisResult<Self>;
 
     // Performs a TCP TLS connection
-    #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+    #[cfg(sync_tls)]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,

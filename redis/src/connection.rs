@@ -363,7 +363,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
     let addr = if url.scheme() == "rediss" || url.scheme() == "valkeys" {
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(sync_tls)]
         {
             match url.fragment() {
                 Some("insecure") => ConnectionAddr::TcpTls {
