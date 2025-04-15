@@ -50,7 +50,7 @@ pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     pub(crate) danger_accept_invalid_hostnames: bool,
 }
 
@@ -184,7 +184,7 @@ impl ConnectionAddr {
     /// verification is not used, any valid certificate for any site will be
     /// trusted for use from any other. This introduces a significant
     /// vulnerability to man-in-the-middle attacks.
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let ConnectionAddr::TcpTls { tls_params, .. } = self {
             if let Some(ref mut params) = tls_params {
@@ -1011,7 +1011,7 @@ pub(crate) fn create_rustls_config(
         // The strange cfg here is to handle a specific unusual combination of features: if
         // `tls-native-tls` and `tls-rustls` are enabled, but `tls-rustls-insecure` is not, and the
         // application tries to use the danger flag.
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        #[cfg(insecure_or_native_tls)]
         let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
             #[cfg(not(feature = "tls-rustls-insecure"))]
             {

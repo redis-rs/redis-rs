@@ -29,7 +29,7 @@ struct BuilderParams {
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
     connection_timeout: Option<Duration>,
@@ -115,7 +115,7 @@ impl ClusterParams {
             retrieved_tls_params.transpose()?
         };
 
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        #[cfg(insecure_or_native_tls)]
         let tls_params = if value.danger_accept_invalid_hostnames {
             let mut tls_params = tls_params.unwrap_or(TlsConnParams {
                 #[cfg(feature = "tls-rustls")]
@@ -347,7 +347,7 @@ impl ClusterClientBuilder {
     /// verification is not used, any valid certificate for any site will be
     /// trusted for use from any other. This introduces a significant
     /// vulnerability to man-in-the-middle attacks.
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     pub fn danger_accept_invalid_hostnames(mut self, insecure: bool) -> ClusterClientBuilder {
         self.builder_params.danger_accept_invalid_hostnames = insecure;
         self
