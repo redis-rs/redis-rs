@@ -8,8 +8,9 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.77"
 readme = "../README.md"
+build = "build.rs"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -271,3 +272,6 @@ required-features = ["streams"]
 [[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
+
+[build-dependencies]
+cfg_aliases = "0.1.0"
