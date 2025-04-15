@@ -173,22 +173,7 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
-#[cfg(all(
-    feature = "async-std-comp",
-    any(feature = "smol-comp", feature = "tokio-comp")
-))]
-pub use runtime::prefer_async_std;
-#[cfg(all(
-    feature = "smol-comp",
-    any(feature = "async-std-comp", feature = "tokio-comp")
-))]
-pub use runtime::prefer_smol;
-#[cfg(all(
-    feature = "tokio-comp",
-    any(feature = "async-std-comp", feature = "smol-comp")
-))]
-pub use runtime::prefer_tokio;
-pub(super) use runtime::*;
+pub(crate) use runtime::*;
 
 macro_rules! check_resp3 {
     ($protocol: expr) => {

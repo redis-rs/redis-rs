@@ -129,10 +129,7 @@ fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(
-    feature = "smol-comp",
-    any(feature = "async-std-comp", feature = "tokio-comp")
-))]
+#[cfg(enabled_smol_and_another_runtime)]
 pub fn prefer_smol() -> Result<(), RedisError> {
     set_runtime(Runtime::Smol)
 }
@@ -142,10 +139,7 @@ pub fn prefer_smol() -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(
-    feature = "async-std-comp",
-    any(feature = "tokio-comp", feature = "smol-comp")
-))]
+#[cfg(enabled_async_std_and_another_runtime)]
 pub fn prefer_async_std() -> Result<(), RedisError> {
     set_runtime(Runtime::AsyncStd)
 }
@@ -155,10 +149,7 @@ pub fn prefer_async_std() -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(
-    feature = "tokio-comp",
-    any(feature = "async-std-comp", feature = "smol-comp")
-))]
+#[cfg(enabled_tokio_and_another_runtime)]
 pub fn prefer_tokio() -> Result<(), RedisError> {
     set_runtime(Runtime::Tokio)
 }
@@ -166,18 +157,9 @@ pub fn prefer_tokio() -> Result<(), RedisError> {
 impl Runtime {
     pub(crate) fn locate() -> Self {
         #[cfg(any(
-            all(
-                feature = "tokio-comp",
-                any(feature = "async-std-comp", feature = "smol-comp")
-            ),
-            all(
-                feature = "smol-comp",
-                any(feature = "async-std-comp", feature = "tokio-comp")
-            ),
-            all(
-                feature = "async-std-comp",
-                any(feature = "tokio-comp", feature = "smol-comp")
-            )
+            enabled_tokio_and_another_runtime,
+            enabled_smol_and_another_runtime,
+            enabled_async_std_and_another_runtime,
         ))]
         if let Some(runtime) = CHOSEN_RUNTIME.get() {
             return *runtime;
