@@ -187,7 +187,7 @@ jobs:
       - run: cargo clippy --all-features --all-targets -- -D warnings
         name: clippy
       - name: doc
-        run: cargo doc --no-deps --document-private-items
+        run: cargo doc --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
 

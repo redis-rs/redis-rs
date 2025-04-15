@@ -70,7 +70,7 @@ bench:
 	cargo bench --all-features
 
 docs:
-	@RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
+	@RUSTDOCFLAGS="-D warnings --cfg docsrs" cargo +nightly doc --all-features --no-deps
 
 upload-docs: docs
 	@./upload-docs.sh
