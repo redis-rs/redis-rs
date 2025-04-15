@@ -1667,11 +1667,7 @@ non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::Num
 ryu_based_to_redis_impl!(f32, NumericBehavior::NumberIsFloat);
 ryu_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 
-#[cfg(any(
-    feature = "rust_decimal",
-    feature = "bigdecimal",
-    feature = "num-bigint"
-))]
+#[cfg(number_types)]
 macro_rules! bignum_to_redis_impl {
     ($t:ty) => {
         impl ToRedisArgs for $t {
@@ -2182,11 +2178,7 @@ from_redis_value_for_num!(f64);
 from_redis_value_for_num!(isize);
 from_redis_value_for_num!(usize);
 
-#[cfg(any(
-    feature = "rust_decimal",
-    feature = "bigdecimal",
-    feature = "num-bigint"
-))]
+#[cfg(number_types)]
 macro_rules! from_redis_value_for_bignum_internal {
     ($t:ty, $v:expr) => {{
         let v = $v;
@@ -2206,11 +2198,7 @@ macro_rules! from_redis_value_for_bignum_internal {
     }};
 }
 
-#[cfg(any(
-    feature = "rust_decimal",
-    feature = "bigdecimal",
-    feature = "num-bigint"
-))]
+#[cfg(number_types)]
 macro_rules! from_redis_value_for_bignum {
     ($t:ty) => {
         impl FromRedisValue for $t {

@@ -9,6 +9,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(smol_tls)");
     println!("cargo::rustc-check-cfg=cfg(async_std_tls)");
     println!("cargo::rustc-check-cfg=cfg(os_that_support_user_timeout)");
+    println!("cargo::rustc-check-cfg=cfg(number_types)");
     // Setup cfg aliases
     cfg_aliases! {
         // Backends
@@ -22,7 +23,7 @@ fn main() {
             feature = "async-std-native-tls-comp",
             feature = "async-std-rustls-comp"
         )},
-        os_that_support_user_timeout: { any(target_os = "android", target_os = "fuchsia", target_os = "linux") }
-
+        os_that_support_user_timeout: { any(target_os = "android", target_os = "fuchsia", target_os = "linux") },
+        number_types: { any(feature = "rust_decimal", feature = "bigdecimal", feature = "num-bigint") },
     }
 }
