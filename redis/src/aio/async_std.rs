@@ -43,10 +43,7 @@ async fn connect_tcp(
     Ok(std_socket.into())
 }
 
-#[cfg(any(
-    feature = "async-std-rustls-comp",
-    feature = "async-std-native-tls-comp"
-))]
+#[cfg(async_std_tls)]
 use crate::connection::TlsConnParams;
 
 pin_project_lite::pin_project! {
@@ -112,10 +109,7 @@ pub enum AsyncStd {
     /// Represents an Async_std TCP connection.
     Tcp(AsyncStdWrapped<TcpStream>),
     /// Represents an Async_std TLS encrypted TCP connection.
-    #[cfg(any(
-        feature = "async-std-native-tls-comp",
-        feature = "async-std-rustls-comp"
-    ))]
+    #[cfg(async_std_tls)]
     TcpTls(AsyncStdWrapped<Box<TlsStream<TcpStream>>>),
     /// Represents an Async_std Unix connection.
     #[cfg(unix)]
@@ -130,10 +124,7 @@ impl AsyncWrite for AsyncStd {
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(any(
-                feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
-            ))]
+            #[cfg(async_std_tls)]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_write(cx, buf),
@@ -143,10 +134,7 @@ impl AsyncWrite for AsyncStd {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(any(
-                feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
-            ))]
+            #[cfg(async_std_tls)]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_flush(cx),
@@ -156,10 +144,7 @@ impl AsyncWrite for AsyncStd {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(any(
-                feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
-            ))]
+            #[cfg(async_std_tls)]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_shutdown(cx),
@@ -175,10 +160,7 @@ impl AsyncRead for AsyncStd {
     ) -> Poll<io::Result<()>> {
         match &mut *self {
             AsyncStd::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(any(
-                feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
-            ))]
+            #[cfg(async_std_tls)]
             AsyncStd::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             AsyncStd::Unix(r) => Pin::new(r).poll_read(cx, buf),
@@ -261,10 +243,7 @@ impl RedisRuntime for AsyncStd {
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         match self {
             AsyncStd::Tcp(x) => Box::pin(x),
-            #[cfg(any(
-                feature = "async-std-native-tls-comp",
-                feature = "async-std-rustls-comp"
-            ))]
+            #[cfg(async_std_tls)]
             AsyncStd::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]
             AsyncStd::Unix(x) => Box::pin(x),

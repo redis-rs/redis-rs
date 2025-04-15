@@ -25,7 +25,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(tokio_native_tls_without_rustls)]
 use tokio_native_tls::TlsStream;
 
-#[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
+#[cfg(tokio_tls)]
 use crate::connection::TlsConnParams;
 
 #[cfg(unix)]
@@ -47,7 +47,7 @@ pub(crate) enum Tokio {
     /// Represents a Tokio TCP connection.
     Tcp(TcpStreamTokio),
     /// Represents a Tokio TLS encrypted TCP connection
-    #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+    #[cfg(tokio_tls)]
     TcpTls(Box<TlsStream<TcpStreamTokio>>),
     /// Represents a Tokio Unix connection.
     #[cfg(unix)]
@@ -62,7 +62,7 @@ impl AsyncWrite for Tokio {
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            #[cfg(tokio_tls)]
             Tokio::TcpTls(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             Tokio::Unix(r) => Pin::new(r).poll_write(cx, buf),
@@ -72,7 +72,7 @@ impl AsyncWrite for Tokio {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            #[cfg(tokio_tls)]
             Tokio::TcpTls(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             Tokio::Unix(r) => Pin::new(r).poll_flush(cx),
@@ -82,7 +82,7 @@ impl AsyncWrite for Tokio {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<io::Result<()>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            #[cfg(tokio_tls)]
             Tokio::TcpTls(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             Tokio::Unix(r) => Pin::new(r).poll_shutdown(cx),
@@ -98,7 +98,7 @@ impl AsyncRead for Tokio {
     ) -> Poll<io::Result<()>> {
         match &mut *self {
             Tokio::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            #[cfg(tokio_tls)]
             Tokio::TcpTls(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             Tokio::Unix(r) => Pin::new(r).poll_read(cx, buf),
@@ -176,7 +176,7 @@ impl RedisRuntime for Tokio {
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         match self {
             Tokio::Tcp(x) => Box::pin(x),
-            #[cfg(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))]
+            #[cfg(tokio_tls)]
             Tokio::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]
             Tokio::Unix(x) => Box::pin(x),
