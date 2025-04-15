@@ -12,7 +12,7 @@ use std::{
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
 
-#[cfg(all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp")))]
+#[cfg(smol_native_tls_without_rustls)]
 use async_native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "smol-rustls-comp")]
@@ -176,7 +176,7 @@ impl RedisRuntime for Smol {
             .map(|con| Self::Tcp(SmolWrapped::new(con)))?)
     }
 
-    #[cfg(all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp")))]
+    #[cfg(smol_native_tls_without_rustls)]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
