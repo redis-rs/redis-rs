@@ -12,7 +12,7 @@ use tokio::{
     net::TcpStream as TcpStreamTokio,
 };
 
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
+#[cfg(tokio_native_tls_without_rustls)]
 use native_tls::TlsConnector;
 
 #[cfg(feature = "tokio-rustls-comp")]
@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[cfg(feature = "tokio-rustls-comp")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
+#[cfg(tokio_native_tls_without_rustls)]
 use tokio_native_tls::TlsStream;
 
 #[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
@@ -116,7 +116,7 @@ impl RedisRuntime for Tokio {
             .map(Tokio::Tcp)?)
     }
 
-    #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
+    #[cfg(tokio_native_tls_without_rustls)]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
