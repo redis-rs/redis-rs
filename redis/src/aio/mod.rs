@@ -265,7 +265,7 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::new(true)),
+            Err(_) => Err(SendError::new(false)),
         }
     }
 }
