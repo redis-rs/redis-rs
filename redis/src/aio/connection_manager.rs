@@ -554,8 +554,10 @@ impl ConnectionManager {
                 this.reconnect(this.0.connection.load());
             }
             if let Some(sender) = external_sender.as_ref() {
-                if sender.send(push_info).is_err() {
-                    external_sender.take();
+                if let Err(err) = sender.send(push_info) {
+                    if err.is_permanent() {
+                        external_sender.take();
+                    }
                 }
             }
         }
