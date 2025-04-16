@@ -1849,7 +1849,7 @@ mod basic_async {
         impl AsyncPushSender for Sender {
             fn send(&self, push: PushInfo) -> Result<(), redis::aio::SendError> {
                 self.sender.send(push).unwrap();
-                Err(redis::aio::SendError)
+                Err(redis::aio::SendError::new(false))
             }
         }
 
@@ -1884,7 +1884,7 @@ mod basic_async {
 
                 // drop again, to verify that the mechanism works even after the sender returned an error.
                 drop(_ctx);
-                assert!(rx.try_recv().is_err());
+                assert_eq!(push.kind, PushKind::Disconnection);
                 let _ctx = TestContext::new_with_addr(addr);
 
                 assert!(rx.try_recv().is_err());
