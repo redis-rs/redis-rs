@@ -274,4 +274,4 @@ name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
 
 [build-dependencies]
-cfg_aliases = "0.1.0"
+cfg_aliases = "0.2"

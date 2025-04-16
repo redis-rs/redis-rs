@@ -1,19 +1,6 @@
 use cfg_aliases::cfg_aliases;
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(native_tls_without_rustls)");
-    println!("cargo::rustc-check-cfg=cfg(smol_native_tls_without_rustls)");
-    println!("cargo::rustc-check-cfg=cfg(tokio_native_tls_without_rustls)");
-    println!("cargo::rustc-check-cfg=cfg(insecure_or_native_tls)");
-    println!("cargo::rustc-check-cfg=cfg(tokio_tls)");
-    println!("cargo::rustc-check-cfg=cfg(smol_tls)");
-    println!("cargo::rustc-check-cfg=cfg(async_std_tls)");
-    println!("cargo::rustc-check-cfg=cfg(os_that_support_user_timeout)");
-    println!("cargo::rustc-check-cfg=cfg(number_types)");
-    println!("cargo::rustc-check-cfg=cfg(sync_tls)");
-    println!("cargo::rustc-check-cfg=cfg(enabled_tokio_and_another_runtime)");
-    println!("cargo::rustc-check-cfg=cfg(enabled_smol_and_another_runtime)");
-    println!("cargo::rustc-check-cfg=cfg(enabled_async_std_and_another_runtime)");
     // Setup cfg aliases
     cfg_aliases! {
         // Backends
