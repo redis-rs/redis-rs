@@ -6,7 +6,7 @@ use crate::{
     cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
+    AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
@@ -144,9 +144,6 @@ impl ConnectionManagerConfig {
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
     /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
-    /// Setting this will mean that the connection manager actively listens to updates from the
-    /// server, and so it will cause the manager to reconnect after a disconnection, even if the manager was unused at
-    /// the time of the disconnect.
     ///
     /// # Examples
     ///
@@ -256,6 +253,9 @@ struct Internals {
 ///   initiated, will have to await the connection future.
 /// - If reconnecting fails, all pending commands will be failed as well. A
 ///   new reconnection attempt will be triggered if the error is an I/O error.
+/// - If the connection manager uses RESP3 connection,it actively listens to updates from the
+///   server, and so it will cause the manager to reconnect after a disconnection, even if the manager was unused at
+///   the time of the disconnect.
 ///
 /// [multiplexed-connection]: struct.MultiplexedConnection.html
 #[derive(Clone)]
@@ -418,7 +418,13 @@ impl ConnectionManager {
             );
 
             let (internal_sender, internal_receiver) = unbounded_channel();
-            components_for_reconnection_on_push = Some((internal_receiver, push_sender));
+            components_for_reconnection_on_push = Some((internal_receiver, Some(push_sender)));
+
+            connection_config =
+                connection_config.set_push_sender_internal(Arc::new(internal_sender));
+        } else if client.connection_info.redis.protocol != ProtocolVersion::RESP2 {
+            let (internal_sender, internal_receiver) = unbounded_channel();
+            components_for_reconnection_on_push = Some((internal_receiver, None));
 
             connection_config =
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
@@ -453,7 +459,7 @@ impl ConnectionManager {
                         "Failed to set automatic resubscription",
                     ))
                 })?;
-        }
+        };
 
         Ok(new_self)
     }
@@ -537,18 +543,20 @@ impl ConnectionManager {
         receiver: oneshot::Receiver<(
             ConnectionManager,
             UnboundedReceiver<PushInfo>,
-            Arc<dyn AsyncPushSender>,
+            Option<Arc<dyn AsyncPushSender>>,
         )>,
     ) {
-        let Ok((this, mut internal_receiver, external_sender)) = receiver.await else {
+        let Ok((this, mut internal_receiver, mut external_sender)) = receiver.await else {
             return;
         };
         while let Some(push_info) = internal_receiver.recv().await {
             if push_info.kind == PushKind::Disconnection {
                 this.reconnect(this.0.connection.load());
             }
-            if external_sender.send(push_info).is_err() {
-                return;
+            if let Some(sender) = external_sender.as_ref() {
+                if sender.send(push_info).is_err() {
+                    external_sender.take();
+                }
             }
         }
     }
