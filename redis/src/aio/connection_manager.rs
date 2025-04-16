@@ -1,4 +1,4 @@
-use super::{AsyncPushSender, HandleContainer, RedisFuture};
+use super::{AsyncPushSender, HandleContainer, RedisFuture, SendError};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
@@ -230,6 +230,7 @@ struct Internals {
     #[cfg(feature = "cache-aio")]
     cache_manager: Option<CacheManager>,
     _task_handle: HandleContainer,
+    push_sender_error_recv: oneshot::Receiver<SendError>,
 }
 
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
@@ -407,10 +408,14 @@ impl ConnectionManager {
             connection_config = connection_config.set_cache_manager(cache_manager.clone());
         }
 
+        let (push_sender_error_sender, push_sender_error_sender_recv) = oneshot::channel();
+
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
-        let _task_handle = HandleContainer::new(
-            runtime.spawn(Self::check_for_disconnect_pushes(oneshot_receiver)),
-        );
+        let _task_handle = HandleContainer::new(runtime.spawn(async move {
+            let err = Self::check_for_disconnect_pushes(oneshot_receiver);
+            // This should never error
+            let _ = push_sender_error_sender.send(err);
+        }));
 
         let mut components_for_reconnection_on_push = None;
         if let Some(push_sender) = config.push_sender.clone() {
@@ -450,6 +455,7 @@ impl ConnectionManager {
             #[cfg(feature = "cache-aio")]
             cache_manager,
             _task_handle,
+            push_sender_error_recv,
         }));
 
         if let Some((internal_receiver, external_sender)) = components_for_reconnection_on_push {
@@ -547,9 +553,9 @@ impl ConnectionManager {
             UnboundedReceiver<PushInfo>,
             OptionalPushSender,
         )>,
-    ) {
+    ) -> Result<(), SendError> {
         let Ok((this, mut internal_receiver, mut external_sender)) = receiver.await else {
-            return;
+            return Ok(());
         };
         while let Some(push_info) = internal_receiver.recv().await {
             if push_info.kind == PushKind::Disconnection {
@@ -559,6 +565,8 @@ impl ConnectionManager {
                 if let Err(err) = sender.send(push_info) {
                     if err.is_permanent() {
                         external_sender.take();
+                    } else {
+                        return Err(err);
                     }
                 }
             }
@@ -613,6 +621,34 @@ impl ConnectionManager {
         };
         let mut guard = subscription_tracker.lock().await;
         guard.update_with_request(action, args.to_redis_args().into_iter());
+    }
+
+    /// Returns if the push_sender set by [ConnectionManagerConfig::set_push_sender] has had an
+    /// unrecoverable error. For example if all the receivers are dropped on a [tokio::sync::mpsc::UnboundedSender]
+    /// the push sender will also be dropped.  Disconnections, reconnections, and subscriptions
+    /// will continue to happen as normal but nothing will listen to the subscriptions.
+    ///
+    /// If you wish to terminate the ConnectionManager when the the push_sender is in a bad state:
+    ///
+    /// ```rust
+    /// let conn = client.get_connection_manager_with_config()
+    /// .set_automatic_resubscription()
+    /// .set_push_sender(move |msg|{
+    ///     // No-op push sender simulating a full buffer
+    ///     Err(redis::aio::SendError::new(true));
+    /// });
+    ///
+    /// conn.subscribe("my_key").await?;
+    ///
+    /// conn.has_push_sender_completed().await
+    /// ```
+    pub async fn push_sender_completed(&self) {
+        // Recv returns a Result<SendError, Cancelled>
+        // Cancel will happen if the sender was dropped. This
+        // can only happen if the check_for_disconnect_pushes terminated.
+
+        // No point adding the error right now
+        let _ = self.0.push_sender_error_recv.await;
     }
 
     /// Subscribes to a new channel(s).    
