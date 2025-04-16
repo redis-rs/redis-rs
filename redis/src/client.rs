@@ -285,7 +285,7 @@ impl AsyncConnectionConfig {
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl Client {
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg(feature = "aio")]
     #[deprecated(
         note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
     )]
@@ -334,11 +334,8 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
-    #[cfg_attr(
-        docsrs,
-        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
-    )]
+    #[cfg(feature = "aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
     pub async fn get_multiplexed_async_connection(
         &self,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
@@ -347,11 +344,8 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
-    #[cfg_attr(
-        docsrs,
-        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
-    )]
+    #[cfg(feature = "aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
     #[deprecated(note = "Use `get_multiplexed_async_connection_with_config` instead")]
     pub async fn get_multiplexed_async_connection_with_timeouts(
         &self,
@@ -367,56 +361,31 @@ impl Client {
     }
 
     /// Returns an async connection from the client.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
-    #[cfg_attr(
-        docsrs,
-        doc(cfg(any(feature = "tokio-comp", feature = "async-std-comp")))
-    )]
+    #[cfg(feature = "aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
     pub async fn get_multiplexed_async_connection_with_config(
         &self,
         config: &AsyncConnectionConfig,
     ) -> RedisResult<crate::aio::MultiplexedConnection> {
-        let result = match Runtime::locate() {
+        match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
-            rt @ Runtime::Tokio => {
-                if let Some(connection_timeout) = config.connection_timeout {
-                    rt.timeout(
-                        connection_timeout,
-                        self.get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(
-                            config,
-                        ),
-                    )
-                    .await
-                } else {
-                    Ok(self
-                        .get_multiplexed_async_connection_inner::<crate::aio::tokio::Tokio>(config)
-                        .await)
-                }
-            }
-            #[cfg(feature = "async-std-comp")]
-            rt @ Runtime::AsyncStd => {
-                if let Some(connection_timeout) = config.connection_timeout {
-                    rt.timeout(
-                        connection_timeout,
-                        self.get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                            config,
-                        ),
-                    )
-                    .await
-                } else {
-                    Ok(self
-                        .get_multiplexed_async_connection_inner::<crate::aio::async_std::AsyncStd>(
-                            config,
-                        )
-                        .await)
-                }
-            }
-        };
+            rt @ Runtime::Tokio => self
+                .get_multiplexed_async_connection_inner_with_timeout::<crate::aio::tokio::Tokio>(
+                    config, rt,
+                )
+                .await,
 
-        match result {
-            Ok(Ok(connection)) => Ok(connection),
-            Ok(Err(e)) => Err(e),
-            Err(elapsed) => Err(elapsed.into()),
+            #[cfg(feature = "async-std-comp")]
+            rt @ Runtime::AsyncStd => self.get_multiplexed_async_connection_inner_with_timeout::<
+                crate::aio::async_std::AsyncStd,
+            >(config, rt)
+            .await,
+
+            #[cfg(feature = "smol-comp")]
+            rt @ Runtime::Smol => self.get_multiplexed_async_connection_inner_with_timeout::<
+                crate::aio::smol::Smol,
+            >(config, rt)
+            .await,
         }
     }
 
@@ -805,6 +774,33 @@ impl Client {
         crate::aio::ConnectionManager::new_with_config(self.clone(), config).await
     }
 
+    async fn get_multiplexed_async_connection_inner_with_timeout<T>(
+        &self,
+        config: &AsyncConnectionConfig,
+        rt: Runtime,
+    ) -> RedisResult<crate::aio::MultiplexedConnection>
+    where
+        T: crate::aio::RedisRuntime,
+    {
+        let result = if let Some(connection_timeout) = config.connection_timeout {
+            rt.timeout(
+                connection_timeout,
+                self.get_multiplexed_async_connection_inner::<T>(config),
+            )
+            .await
+        } else {
+            Ok(self
+                .get_multiplexed_async_connection_inner::<T>(config)
+                .await)
+        };
+
+        match result {
+            Ok(Ok(connection)) => Ok(connection),
+            Ok(Err(e)) => Err(e),
+            Err(elapsed) => Err(elapsed.into()),
+        }
+    }
+
     async fn get_multiplexed_async_connection_inner<T>(
         &self,
         config: &AsyncConnectionConfig,
@@ -868,6 +864,15 @@ impl Client {
                 )
                 .await
             }
+
+            #[cfg(feature = "smol-comp")]
+            Runtime::Smol => {
+                self.get_simple_async_connection::<crate::aio::smol::Smol>(
+                    dns_resolver,
+                    tcp_settings,
+                )
+                .await
+            }
         }
     }
 
@@ -892,7 +897,7 @@ impl Client {
     }
 
     /// Returns an async receiver for pub-sub messages.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg(feature = "aio")]
     // TODO - do we want to type-erase pubsub using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_pubsub(&self) -> RedisResult<crate::aio::PubSub> {
         let connection = self
@@ -906,7 +911,7 @@ impl Client {
     }
 
     /// Returns an async receiver for monitor messages.
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg(feature = "aio")]
     // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_monitor(&self) -> RedisResult<crate::aio::Monitor> {
         #[allow(deprecated)]

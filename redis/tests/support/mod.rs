@@ -32,9 +32,12 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 
 #[cfg(feature = "aio")]
 pub enum RuntimeType {
+    #[cfg(feature = "tokio-comp")]
     Tokio,
     #[cfg(feature = "async-std-comp")]
     AsyncStd,
+    #[cfg(feature = "smol-comp")]
+    Smol,
 }
 
 #[cfg(feature = "aio")]
@@ -67,14 +70,17 @@ where
     let f = futures_util::FutureExt::fuse(f);
     futures::pin_mut!(f, check_future);
 
+    let f = async move {
+        futures::select! {res = f => res, err = check_future => err}
+    };
+
     let res = match runtime {
-        RuntimeType::Tokio => current_thread_runtime().block_on(async {
-            futures::select! {res = f => res, err = check_future => err}
-        }),
+        #[cfg(feature = "tokio-comp")]
+        RuntimeType::Tokio => block_on_all_using_tokio(f),
         #[cfg(feature = "async-std-comp")]
-        RuntimeType::AsyncStd => block_on_all_using_async_std(async move {
-            futures::select! {res = f => res, err = check_future => err}
-        }),
+        RuntimeType::AsyncStd => block_on_all_using_async_std(f),
+        #[cfg(feature = "smol-comp")]
+        RuntimeType::Smol => block_on_all_using_smol(f),
     };
 
     let _ = panic::take_hook();
@@ -87,8 +93,9 @@ where
 
 #[cfg(feature = "aio")]
 #[rstest::rstest]
-#[case::tokio(RuntimeType::Tokio)]
+#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
 #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[should_panic(expected = "Internal thread panicked")]
 fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
     let _ = block_on_all(
@@ -104,12 +111,34 @@ fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
     );
 }
 
+#[cfg(feature = "tokio-comp")]
+fn block_on_all_using_tokio<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    #[cfg(any(feature = "async-std-comp", feature = "smol-comp"))]
+    redis::aio::prefer_tokio().unwrap();
+    current_thread_runtime().block_on(f)
+}
+
 #[cfg(feature = "async-std-comp")]
 fn block_on_all_using_async_std<F>(f: F) -> F::Output
 where
     F: Future,
 {
+    #[cfg(any(feature = "tokio-comp", feature = "smol-comp"))]
+    redis::aio::prefer_async_std().unwrap();
     async_std::task::block_on(f)
+}
+
+#[cfg(feature = "smol-comp")]
+fn block_on_all_using_smol<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    redis::aio::prefer_smol().unwrap();
+    smol::block_on(f)
 }
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]

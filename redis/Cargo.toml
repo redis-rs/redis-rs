@@ -38,6 +38,7 @@ combine = { version = "4.6", default-features = false, features = ["std"] }
 
 # Only needed for AIO
 bytes = { version = "1", optional = true }
+cfg-if = { version = "1", optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
   "std",
   "sink",
@@ -72,6 +73,11 @@ futures-sink = { version = "0.3.31", optional = true }
 
 # Only needed for async_std support
 async-std = { version = "1.13.0", optional = true }
+
+#only needed for smol support
+smol = { version = "2", optional = true }
+async-io = { version = "2", optional = true }
+smol-timeout = { version = "0.6", optional = true }
 
 # Only needed for native tls
 native-tls = { version = "0.2", optional = true }
@@ -123,13 +129,13 @@ tls-rustls = [
 ]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
-async-std-comp = ["aio", "dep:async-std"]
-async-std-native-tls-comp = [
-  "async-std-comp",
+smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
+smol-native-tls-comp = [
+  "smol-comp",
   "dep:async-native-tls",
   "tls-native-tls",
 ]
-async-std-rustls-comp = ["async-std-comp", "dep:futures-rustls", "tls-rustls"]
+smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
@@ -150,6 +156,13 @@ tls = ["tls-native-tls"] # use "tls-native-tls" instead
 async-std-tls-comp = [
   "async-std-native-tls-comp",
 ] # use "async-std-native-tls-comp" instead
+async-std-comp = ["aio", "dep:async-std"]
+async-std-native-tls-comp = [
+  "async-std-comp",
+  "dep:async-native-tls",
+  "tls-native-tls",
+]
+async-std-rustls-comp = ["async-std-comp", "dep:futures-rustls", "tls-rustls"]
 # Instead of specifying "aio", use either "tokio-comp" or "async-std-comp".
 aio = [
   "bytes",
@@ -160,6 +173,7 @@ aio = [
   "dep:tokio-util",
   "tokio-util/codec",
   "combine/tokio",
+  "dep:cfg-if",
 ]
 
 [dev-dependencies]

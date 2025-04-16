@@ -169,14 +169,8 @@ impl RedisRuntime for Tokio {
         Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
     }
 
-    #[cfg(feature = "tokio-comp")]
     fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
         TaskHandle::Tokio(tokio::spawn(f))
-    }
-
-    #[cfg(not(feature = "tokio-comp"))]
-    fn spawn(_: impl Future<Output = ()> + Send + 'static) -> TokioTaskHandle {
-        unreachable!()
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {

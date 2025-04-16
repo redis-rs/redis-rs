@@ -92,7 +92,8 @@
 //!
 //! * `acl`: enables acl support (enabled by default)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
-//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant, such as Smol. (optional)
+//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant. (optional)
+//! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
@@ -437,7 +438,7 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][], or [`async-std`][].
+asynchronous interface based on [`futures`][] and [`tokio`][], [`smol`](https://docs.rs/smol/latest/smol/), or [`async-std`][].
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
@@ -463,6 +464,14 @@ let result = redis::cmd("MGET")
 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 # Ok(()) }
 ```
+
+## Runtime support
+The crate supports multiple runtimes, including `tokio`, `async-std`, and `smol`. For Tokio, the crate will
+spawn tasks on the current thread runtime. For async-std & smol, the crate will spawn tasks on the the global runtime.
+It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes, 
+the user should call [`crate::aio::prefer_tokio`], [`crate::aio::prefer_async_std`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
+These functions set global state which automatically chooses the correct runtime for the async connection.
+
 "##
 )]
 //!

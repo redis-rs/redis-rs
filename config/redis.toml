@@ -1,10 +1,10 @@
 [[rule]]
 when = "cluster-async"
-require = ["tokio-comp", "OR", "async-std-comp"]
+require = ["tokio-comp", "OR", "smol-comp"]
 
 [[rule]]
 when = "connection-manager"
-require = ["tokio-comp", "OR", "async-std-comp"]
+require = ["tokio-comp", "OR", "smol-comp"]
 
 [[rule]]
 when = ["tls-rustls", "tokio-comp"]
@@ -15,12 +15,12 @@ when = ["tls-native-tls", "tokio-comp"]
 require = ["tokio-native-tls-comp"]
 
 [[rule]]
-when = ["tls-rustls", "async-std-comp"]
-require = ["async-std-rustls-comp"]
+when = ["tls-rustls", "smol-comp"]
+require = ["smol-rustls-comp"]
 
 [[rule]]
-when = ["tls-native-tls", "async-std-comp"]
-require = ["async-std-native-tls-comp"]
+when = ["tls-native-tls", "smol-comp"]
+require = ["smol-native-tls-comp"]
 
 [[rule]]
 when = "tls-rustls-insecure"
@@ -31,7 +31,7 @@ require = ["tls-rustls"]
 when = [
   "tokio-native-tls-comp",
   "OR",
-  "async-std-native-tls-comp",
+  "smol-native-tls-comp",
   "OR",
   "tls-native-tls",
 ]
@@ -44,17 +44,17 @@ forbid = [
   "OR",
   "tls-rustls-insecure",
   "OR",
-  "async-std-rustls-comp",
+  "smol-rustls-comp",
 ]
 
-# we don't need to check whether the async-std features are working with the tokio features
+# we don't need to check whether the smol features are working with the tokio features
 [[rule]]
 when = [
-  "async-std-native-tls-comp",
+  "smol-native-tls-comp",
   "OR",
-  "async-std-comp",
+  "smol-comp",
   "OR",
-  "async-std-rustls-comp",
+  "smol-rustls-comp",
 ]
 forbid = [
   "tokio-rustls-comp",
@@ -65,12 +65,12 @@ forbid = [
 ]
 
 [[rule]]
-when = ["async-std-native-tls-comp"]
-forbid = ["async-std-rustls-comp"]
+when = ["smol-native-tls-comp"]
+forbid = ["smol-rustls-comp"]
 
 [[rule]]
-when = ["tls-rustls-webpki-roots", "async-std-comp"]
-require = ["async-std-rustls-comp"]
+when = ["tls-rustls-webpki-roots", "smol-comp"]
+require = ["smol-rustls-comp"]
 
 [[rule]]
 when = ["tls-rustls-webpki-roots", "tokio-comp"]
@@ -94,7 +94,15 @@ forbid = "tls"
 # deprecated
 [[rule]]
 when = true
-forbid = "async-std-tls-comp"
+forbid = [
+  "async-std-tls-comp",
+  "OR",
+  "async-std-comp",
+  "OR",
+  "async-std-native-tls-comp",
+  "OR",
+  "async-std-rustls-comp",
+]
 
 # these are all included in the `default` feature, so in order to reduce combinatoric explosion, we don't check them individually.
 [[rule]]
@@ -113,4 +121,4 @@ forbid = [
 
 [[rule]]
 when = "cache-aio"
-require = ["tokio-comp", "OR", "async-std-comp"]
+require = ["tokio-comp", "OR", "smol-comp"]
