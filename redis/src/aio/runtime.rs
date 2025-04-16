@@ -85,36 +85,10 @@ impl SharedHandleContainer {
     }
 }
 
-#[cfg(any(
-    all(
-        feature = "tokio-comp",
-        any(feature = "async-std-comp", feature = "smol-comp")
-    ),
-    all(
-        feature = "smol-comp",
-        any(feature = "async-std-comp", feature = "tokio-comp")
-    ),
-    all(
-        feature = "async-std-comp",
-        any(feature = "tokio-comp", feature = "smol-comp")
-    )
-))]
+#[cfg(multiple_runtimes)]
 static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-#[cfg(any(
-    all(
-        feature = "tokio-comp",
-        any(feature = "async-std-comp", feature = "smol-comp")
-    ),
-    all(
-        feature = "smol-comp",
-        any(feature = "async-std-comp", feature = "tokio-comp")
-    ),
-    all(
-        feature = "async-std-comp",
-        any(feature = "tokio-comp", feature = "smol-comp")
-    )
-))]
+#[cfg(multiple_runtimes)]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
     const PREFER_RUNTIME_ERROR: &str =
     "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
@@ -156,38 +130,22 @@ pub fn prefer_tokio() -> Result<(), RedisError> {
 
 impl Runtime {
     pub(crate) fn locate() -> Self {
-        #[cfg(any(
-            enabled_tokio_and_another_runtime,
-            enabled_smol_and_another_runtime,
-            enabled_async_std_and_another_runtime,
-        ))]
+        #[cfg(multiple_runtimes)]
         if let Some(runtime) = CHOSEN_RUNTIME.get() {
             return *runtime;
         }
 
-        #[cfg(all(
-            feature = "tokio-comp",
-            not(feature = "async-std-comp"),
-            not(feature = "smol-comp")
-        ))]
+        #[cfg(only_tokio)]
         {
             Runtime::Tokio
         }
 
-        #[cfg(all(
-            not(feature = "tokio-comp"),
-            not(feature = "smol-comp"),
-            feature = "async-std-comp"
-        ))]
+        #[cfg(only_async_std)]
         {
             Runtime::AsyncStd
         }
 
-        #[cfg(all(
-            not(feature = "tokio-comp"),
-            feature = "smol-comp",
-            not(feature = "async-std-comp")
-        ))]
+        #[cfg(only_smol)]
         {
             Runtime::Smol
         }
