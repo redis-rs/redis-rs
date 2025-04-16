@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
 
+type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
+
 /// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
 #[derive(Clone)]
 pub struct ConnectionManagerConfig {
@@ -543,7 +545,7 @@ impl ConnectionManager {
         receiver: oneshot::Receiver<(
             ConnectionManager,
             UnboundedReceiver<PushInfo>,
-            Option<Arc<dyn AsyncPushSender>>,
+            OptionalPushSender,
         )>,
     ) {
         let Ok((this, mut internal_receiver, mut external_sender)) = receiver.await else {
