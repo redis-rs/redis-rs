@@ -68,6 +68,15 @@ pub enum ExistenceCheck {
     XX,
 }
 
+/// Helper enum that is used to define field existence checks
+#[derive(Clone, Copy)]
+pub enum FieldExistenceCheck {
+    /// FNX -- Only set the fields if all do not already exist.
+    FNX,
+    /// FXX -- Only set the fields if all already exist.
+    FXX,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]

@@ -47,7 +47,13 @@ jobs:
               db-org: valkey-io,
               db-name: valkey,
               db-version: 8.0.1
-            },            
+            },
+            {
+              rust: stable,
+              db-org: redis,
+              db-name: redis,
+              db-version: 8.0-rc1
+            },
 
             # Different rust cases
             {
