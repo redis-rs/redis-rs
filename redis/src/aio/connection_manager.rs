@@ -564,9 +564,7 @@ impl ConnectionManager {
             if let Some(sender) = external_sender.as_ref() {
                 if let Err(err) = sender.send(push_info) {
                     if err.is_permanent() {
-                        external_sender.take();
-                    } else {
-                        return Err(err);
+                        return Err(external_sender.take());
                     }
                 }
             }
