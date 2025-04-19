@@ -82,11 +82,6 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
-    #[cfg(feature = "aio")]
-    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
-        write_pipeline(out, &self.commands, self.transaction_mode)
-    }
-
     /// Returns the number of commands currently queued by the usr in the pipeline.
     ///
     /// Depending on its configuration (e.g. `atomic`), the pipeline may send more commands to the server than the returned length

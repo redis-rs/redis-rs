@@ -1310,37 +1310,6 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_conn_reuse(#[case] runtime: RuntimeType) {
-            let ctx = TestContext::new();
-            block_on_all(
-                async move {
-                    #[allow(deprecated)]
-                    let mut pubsub_conn = ctx.deprecated_async_connection().await?.into_pubsub();
-                    pubsub_conn.subscribe("phonewave").await?;
-                    pubsub_conn.psubscribe("*").await?;
-
-                    #[allow(deprecated)]
-                    let mut conn = pubsub_conn.into_connection().await;
-                    redis::cmd("SET")
-                        .arg("foo")
-                        .arg("bar")
-                        .exec_async(&mut conn)
-                        .await?;
-
-                    let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;
-                    assert_eq!(&res, "bar");
-
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
-        }
-
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn pipe_errors_do_not_affect_subsequent_commands(#[case] runtime: RuntimeType) {
             test_with_all_connection_types(
                 |mut conn| async move {
@@ -1879,6 +1848,34 @@ mod basic_async {
                 sleep(Duration::from_millis(10).into()).await;
 
                 assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
+
+                Ok(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_monitor(#[case] runtime: RuntimeType) {
+        let ctx = TestContext::new();
+        block_on_all(
+            async move {
+                let mut conn = ctx.async_connection().await.unwrap();
+                let monitor_conn = ctx.client.get_async_monitor().await.unwrap();
+                let mut stream = monitor_conn.into_on_message();
+
+                let _: () = conn.set("foo", "bar").await?;
+
+                let msg: String = stream.next().await.unwrap();
+                assert!(msg.ends_with("\"SET\" \"foo\" \"bar\""));
+
+                drop(ctx);
+
+                assert!(stream.next().await.is_none());
 
                 Ok(())
             },

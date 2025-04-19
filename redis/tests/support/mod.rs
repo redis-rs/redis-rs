@@ -275,12 +275,6 @@ impl TestContext {
     }
 
     #[cfg(feature = "aio")]
-    #[allow(deprecated)]
-    pub async fn deprecated_async_connection(&self) -> RedisResult<redis::aio::Connection> {
-        self.client.get_async_connection().await
-    }
-
-    #[cfg(feature = "aio")]
     pub async fn async_connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_connection().await
     }

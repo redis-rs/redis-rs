@@ -5,14 +5,21 @@ use crate::connection::{
     RedisConnectionInfo,
 };
 use crate::io::AsyncDNSResolver;
-use crate::types::{RedisFuture, RedisResult, Value};
+use crate::types::{closed_connection_error, RedisFuture, RedisResult, Value};
 use crate::{ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use futures_util::{Future, FutureExt};
+use futures_util::{
+    future::{Future, FutureExt},
+    sink::{Sink, SinkExt},
+    stream::{Stream, StreamExt},
+};
+pub use monitor::Monitor;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
+
+mod monitor;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
@@ -95,27 +102,42 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 }
 
-async fn execute_connection_pipeline(
-    rv: &mut impl ConnectionLike,
+async fn execute_connection_pipeline<T>(
+    codec: &mut T,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
-) -> RedisResult<AuthResult> {
-    if pipeline.is_empty() {
+) -> RedisResult<AuthResult>
+where
+    T: Sink<Vec<u8>, Error = RedisError>,
+    T: Stream<Item = RedisResult<Value>>,
+    T: Unpin + Send + 'static,
+{
+    let count = pipeline.len();
+    if count == 0 {
         return Ok(AuthResult::Succeeded);
     }
+    codec.send(pipeline.get_packed_pipeline()).await?;
 
-    let results = rv.req_packed_commands(&pipeline, 0, pipeline.len()).await?;
+    let mut results = Vec::with_capacity(count);
+    for _ in 0..count {
+        let value = codec.next().await.ok_or_else(closed_connection_error)??;
+        results.push(value);
+    }
 
     check_connection_setup(results, instructions)
 }
 
-// Initial setup for every connection.
-async fn setup_connection(
+pub(super) async fn setup_connection<T>(
+    codec: &mut T,
     connection_info: &RedisConnectionInfo,
-    con: &mut impl ConnectionLike,
     #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
-) -> RedisResult<()> {
+) -> RedisResult<()>
+where
+    T: Sink<Vec<u8>, Error = RedisError>,
+    T: Stream<Item = RedisResult<Value>>,
+    T: Unpin + Send + 'static,
+{
     if execute_connection_pipeline(
-        con,
+        codec,
         connection_setup_pipeline(
             connection_info,
             true,
@@ -127,7 +149,7 @@ async fn setup_connection(
         == AuthResult::ShouldRetryWithoutUsername
     {
         execute_connection_pipeline(
-            con,
+            codec,
             connection_setup_pipeline(
                 connection_info,
                 false,
@@ -142,7 +164,7 @@ async fn setup_connection(
 }
 
 mod connection;
-pub use connection::*;
+pub(crate) use connection::connect_simple;
 mod multiplexed_connection;
 pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]

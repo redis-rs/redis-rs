@@ -286,55 +286,6 @@ impl AsyncConnectionConfig {
 impl Client {
     /// Returns an async connection from the client.
     #[cfg(feature = "aio")]
-    #[deprecated(
-        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
-    )]
-    #[allow(deprecated)]
-    pub async fn get_async_connection(&self) -> RedisResult<crate::aio::Connection> {
-        let con = self
-            .get_simple_async_connection_dynamically(
-                &DefaultAsyncDNSResolver,
-                &TcpSettings::default(),
-            )
-            .await?;
-
-        crate::aio::Connection::new(&self.connection_info.redis, con).await
-    }
-
-    /// Returns an async connection from the client.
-    #[cfg(feature = "tokio-comp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
-    #[deprecated(
-        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_connection instead."
-    )]
-    #[allow(deprecated)]
-    pub async fn get_tokio_connection(&self) -> RedisResult<crate::aio::Connection> {
-        use crate::aio::RedisRuntime;
-        Ok(
-            crate::aio::connect::<crate::aio::tokio::Tokio>(&self.connection_info)
-                .await?
-                .map(RedisRuntime::boxed),
-        )
-    }
-
-    /// Returns an async connection from the client.
-    #[cfg(feature = "async-std-comp")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
-    #[deprecated(
-        note = "aio::Connection is deprecated. Use client::get_multiplexed_async_std_connection instead."
-    )]
-    #[allow(deprecated)]
-    pub async fn get_async_std_connection(&self) -> RedisResult<crate::aio::Connection> {
-        use crate::aio::RedisRuntime;
-        Ok(
-            crate::aio::connect::<crate::aio::async_std::AsyncStd>(&self.connection_info)
-                .await?
-                .map(RedisRuntime::boxed),
-        )
-    }
-
-    /// Returns an async connection from the client.
-    #[cfg(feature = "aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
     pub async fn get_multiplexed_async_connection(
         &self,
@@ -912,12 +863,14 @@ impl Client {
 
     /// Returns an async receiver for monitor messages.
     #[cfg(feature = "aio")]
-    // TODO - do we want to type-erase monitor using a trait, to allow us to replace it with a different implementation later?
     pub async fn get_async_monitor(&self) -> RedisResult<crate::aio::Monitor> {
-        #[allow(deprecated)]
-        self.get_async_connection()
-            .await
-            .map(|connection| connection.into_monitor())
+        let connection = self
+            .get_simple_async_connection_dynamically(
+                &DefaultAsyncDNSResolver,
+                &TcpSettings::default(),
+            )
+            .await?;
+        crate::aio::Monitor::new(&self.connection_info.redis, connection).await
     }
 }
 
