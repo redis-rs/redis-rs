@@ -697,3 +697,16 @@ pub mod io;
 mod parser;
 mod script;
 mod types;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_is_send() {
+        const fn assert_send<T: Send>() {}
+
+        assert_send::<Connection>();
+        #[cfg(feature = "cluster")]
+        assert_send::<cluster::ClusterConnection>();
+    }
+}
