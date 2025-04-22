@@ -64,6 +64,23 @@ forbid = [
   "tokio-comp",
 ]
 
+# cluster-async is the feature for async work. We don't need to check cluster with async.
+[[rule]]
+when = ["cluster"]
+forbid = [
+  "tokio-rustls-comp",
+  "OR",
+  "tokio-native-tls-comp",
+  "OR",
+  "tokio-comp",
+  "OR",
+  "smol-native-tls-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "smol-rustls-comp",
+]
+
 [[rule]]
 when = ["smol-native-tls-comp"]
 forbid = ["smol-rustls-comp"]
