@@ -1,3 +1,18 @@
+### 0.30.0 (2025-04-22)
+
+#### Changes & Bug fixes
+
+* Add epoch for CacheManager ([#1583](https://github.com/redis-rs/redis-rs/pull/1583) by @altanozlu)
+* **Breaking change** Add support for the Smol runtime. ([#1606](https://github.com/redis-rs/redis-rs/pull/1606) by @nihohit)
+* Add support for hash field expiration commands ([#1611](https://github.com/redis-rs/redis-rs/pull/1611) by @StefanPalashev)
+* **Breaking change** Remove deprecated aio::Connection. ([#1613](https://github.com/redis-rs/redis-rs/pull/1613) by @nihohit)
+
+#### Documentation & CI improvements
+
+* Reduce number of flag-frenzy checks and format file. ([#1608](https://github.com/redis-rs/redis-rs/pull/1608) by @nihohit)
+* Fix `make docs` ([#1607](https://github.com/redis-rs/redis-rs/pull/1607) by @somechris)
+* Fail CI on warnings in docs. ([#1609](https://github.com/redis-rs/redis-rs/pull/1609) by @nihohit)
+
 ### 0.29.5 (2025-04-06)
 
 #### Changes & Bug fixes
