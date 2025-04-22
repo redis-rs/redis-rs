@@ -1,9 +1,5 @@
 [[rule]]
-when = "cluster-async"
-require = ["tokio-comp", "OR", "smol-comp"]
-
-[[rule]]
-when = "connection-manager"
+when = ["cache-aio", "OR", "connection-manager", "OR", "cluster-async"]
 require = ["tokio-comp", "OR", "smol-comp"]
 
 [[rule]]
@@ -135,7 +131,3 @@ forbid = [
   "OR",
   "keep-alive",
 ]
-
-[[rule]]
-when = "cache-aio"
-require = ["tokio-comp", "OR", "smol-comp"]
