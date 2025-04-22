@@ -1,6 +1,18 @@
 [[rule]]
 when = ["cache-aio", "OR", "connection-manager", "OR", "cluster-async"]
-require = ["tokio-comp", "OR", "smol-comp"]
+require = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "tokio-rustls-comp",
+  "OR",
+  "tokio-native-tls-comp",
+  "OR",
+  "smol-native-tls-comp",
+  "OR",
+  "smol-rustls-comp",
+]
 
 [[rule]]
 when = ["tls-rustls", "tokio-comp"]
