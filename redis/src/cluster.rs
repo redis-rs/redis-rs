@@ -85,15 +85,11 @@ use crate::{
     cluster_client::ClusterParams,
     cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
-use rand::{seq::IteratorRandom, thread_rng, Rng};
+use rand::{rng, seq::IteratorRandom, Rng};
 
 pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
 pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(not(feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 #[derive(Clone)]
@@ -228,6 +224,75 @@ impl Connect for Connection {
     }
 }
 
+/// Options for creation of connection
+#[derive(Clone, Default)]
+pub struct ClusterConfig {
+    pub(crate) connection_timeout: Option<Duration>,
+    pub(crate) response_timeout: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async_push_sender: Option<std::sync::Arc<dyn crate::aio::AsyncPushSender>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async_dns_resolver: Option<std::sync::Arc<dyn crate::io::AsyncDNSResolver>>,
+}
+
+impl ClusterConfig {
+    /// Creates a new instance of the options with nothing set
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the connection timeout
+    pub fn set_connection_timeout(mut self, connection_timeout: std::time::Duration) -> Self {
+        self.connection_timeout = Some(connection_timeout);
+        self
+    }
+
+    /// Sets the response timeout
+    pub fn set_response_timeout(mut self, response_timeout: std::time::Duration) -> Self {
+        self.response_timeout = Some(response_timeout);
+        self
+    }
+
+    #[cfg(feature = "cluster-async")]
+    /// Sets a sender to receive pushed values.
+    ///
+    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use redis::cluster::ClusterConfig;
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = ClusterConfig::new().set_push_sender(tx);
+    /// ```
+    ///
+    /// ```rust
+    /// # use std::sync::{Mutex, Arc};
+    /// # use redis::cluster::ClusterConfig;
+    /// let messages = Arc::new(Mutex::new(Vec::new()));
+    /// let config = ClusterConfig::new().set_push_sender(move |msg|{
+    ///     let Ok(mut messages) = messages.lock() else {
+    ///         return Err(redis::aio::SendError);
+    ///     };
+    ///     messages.push(msg);
+    ///     Ok(())
+    /// });
+    pub fn set_push_sender(mut self, sender: impl crate::aio::AsyncPushSender) -> Self {
+        self.async_push_sender = Some(std::sync::Arc::new(sender));
+        self
+    }
+
+    /// Set asynchronous DNS resolver for the underlying TCP connection.
+    ///
+    /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
+    #[cfg(feature = "cluster-async")]
+    pub fn set_dns_resolver(mut self, resolver: impl crate::io::AsyncDNSResolver) -> Self {
+        self.async_dns_resolver = Some(std::sync::Arc::new(resolver));
+        self
+    }
+}
+
 /// This represents a Redis Cluster connection.
 ///
 /// It stores the underlying connections maintained for each node in the cluster,
@@ -254,7 +319,7 @@ where
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
             auto_reconnect: RefCell::new(true),
-            read_timeout: RefCell::new(Some(cluster_params.response_timeout)),
+            read_timeout: RefCell::new(cluster_params.response_timeout),
             write_timeout: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
@@ -481,9 +546,9 @@ where
 
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                let mut rng = thread_rng();
+                let mut rng = rng();
                 Ok(addr_for_slot(Route::new(
-                    rng.gen_range(0..SLOT_SIZE),
+                    rng.random_range(0..SLOT_SIZE),
                     SlotAddr::Master,
                 ))?)
             }
@@ -995,7 +1060,7 @@ impl NodeCmd {
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     connections: &mut HashMap<String, C>,
 ) -> Option<(String, &mut C)> {
-    let addr = connections.keys().choose(&mut thread_rng())?.to_string();
+    let addr = connections.keys().choose(&mut rng())?.to_string();
     let conn = connections.get_mut(&addr)?;
     Some((addr, conn))
 }

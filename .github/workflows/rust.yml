@@ -16,7 +16,6 @@ concurrency:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     timeout-minutes: 60    
     strategy:
@@ -48,7 +47,13 @@ jobs:
               db-org: valkey-io,
               db-name: valkey,
               db-version: 8.0.1
-            },            
+            },
+            {
+              rust: stable,
+              db-org: redis,
+              db-name: redis,
+              db-version: 8.0-rc1
+            },
 
             # Different rust cases
             {
@@ -64,7 +69,7 @@ jobs:
               db-version: 7.2.4
             },
             {
-              rust: 1.70.0,
+              rust: 1.75.0,
               db-org: redis,
               db-name: redis,
               db-version: 7.2.4
@@ -188,7 +193,7 @@ jobs:
       - run: cargo clippy --all-features --all-targets -- -D warnings
         name: clippy
       - name: doc
-        run: cargo doc --no-deps --document-private-items
+        run: cargo doc --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
 
@@ -250,5 +255,21 @@ jobs:
         - uses: Swatinem/rust-cache@v2
 
         - run: |
-            cargo install --git https://github.com/TheBevyFlock/flag-frenzy.git
+            cargo install --git https://github.com/nihohit/flag-frenzy.git
             flag-frenzy --package redis
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain/@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: make build

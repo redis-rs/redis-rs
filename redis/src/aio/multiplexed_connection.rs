@@ -1,7 +1,8 @@
 use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 use crate::aio::{check_resp3, setup_connection};
+#[cfg(feature = "cache-aio")]
+use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::cmd::Cmd;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
@@ -25,7 +26,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
@@ -93,6 +93,19 @@ impl Debug for Pipeline {
     }
 }
 
+#[cfg(feature = "cache-aio")]
+pin_project! {
+    struct PipelineSink<T> {
+        #[pin]
+        sink_stream: T,
+        in_flight: VecDeque<InFlight>,
+        error: Option<RedisError>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
+        cache_manager: Option<CacheManager>,
+    }
+}
+
+#[cfg(not(feature = "cache-aio"))]
 pin_project! {
     struct PipelineSink<T> {
         #[pin]
@@ -109,7 +122,7 @@ fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     };
 }
 
-fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
     send_push(push_sender, PushInfo::disconnect());
 }
 
@@ -117,7 +130,11 @@ impl<T> PipelineSink<T>
 where
     T: Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn new(sink_stream: T, push_sender: Option<Arc<dyn AsyncPushSender>>) -> Self
+    fn new(
+        sink_stream: T,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
+        #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
+    ) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
@@ -126,6 +143,8 @@ where
             in_flight: VecDeque::new(),
             error: None,
             push_sender,
+            #[cfg(feature = "cache-aio")]
+            cache_manager,
         }
     }
 
@@ -154,6 +173,10 @@ where
         let result = match result {
             // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating
             Ok(Value::Push { kind, data }) if !kind.has_reply() => {
+                #[cfg(feature = "cache-aio")]
+                if let Some(cache_manager) = &self_.cache_manager {
+                    cache_manager.handle_push_value(&kind, &data);
+                }
                 send_push(self_.push_sender, PushInfo { kind, data });
 
                 return;
@@ -329,32 +352,27 @@ impl Pipeline {
     fn new<T>(
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
+        #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
     ) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
-        T: Send + 'static,
-        T::Item: Send,
-        T::Error: Send,
-        T::Error: ::std::fmt::Debug,
+        T: Sink<Vec<u8>, Error = RedisError>,
+        T: Stream<Item = RedisResult<Value>>,
+        T: Unpin + Send + 'static,
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
 
-        let sink = PipelineSink::new(sink_stream, push_sender);
+        let sink = PipelineSink::new(
+            sink_stream,
+            push_sender,
+            #[cfg(feature = "cache-aio")]
+            cache_manager,
+        );
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
             .map(|_| ());
         (Pipeline { sender }, f)
-    }
-
-    // `None` means that the stream was out of items causing that poll loop to shut down.
-    async fn send_single(
-        &mut self,
-        item: Vec<u8>,
-        timeout: Option<Duration>,
-    ) -> Result<Value, Option<RedisError>> {
-        self.send_recv(item, None, timeout).await
     }
 
     async fn send_recv(
@@ -364,29 +382,34 @@ impl Pipeline {
         // If `Some`, the value inside defines how the response should look like
         expectation: Option<PipelineResponseExpectation>,
         timeout: Option<Duration>,
-    ) -> Result<Value, Option<RedisError>> {
+    ) -> Result<Value, RedisError> {
         let (sender, receiver) = oneshot::channel();
 
-        self.sender
-            .send(PipelineMessage {
-                input,
-                expectation,
-                output: sender,
-            })
-            .await
-            .map_err(|_| None)?;
+        let request = async {
+            self.sender
+                .send(PipelineMessage {
+                    input,
+                    expectation,
+                    output: sender,
+                })
+                .await
+                .map_err(|_| None)?;
+
+            receiver.await
+            // The `sender` was dropped which likely means that the stream part
+            // failed for one reason or another
+            .map_err(|_| None)
+            .and_then(|res| res.map_err(Some))
+        };
 
         match timeout {
-            Some(timeout) => match Runtime::locate().timeout(timeout, receiver).await {
+            Some(timeout) => match Runtime::locate().timeout(timeout, request).await {
                 Ok(res) => res,
-                Err(elapsed) => Ok(Err(elapsed.into())),
+                Err(elapsed) => Err(Some(elapsed.into())),
             },
-            None => receiver.await,
+            None => request.await,
         }
-        // The `sender` was dropped which likely means that the stream part
-        // failed for one reason or another
-        .map_err(|_| None)
-        .and_then(|res| res.map_err(Some))
+        .map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 }
 
@@ -412,6 +435,8 @@ pub struct MultiplexedConnection {
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
     _task_handle: Option<SharedHandleContainer>,
+    #[cfg(feature = "cache-aio")]
+    pub(crate) cache_manager: Option<CacheManager>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -451,8 +476,7 @@ impl MultiplexedConnection {
             stream,
             AsyncConnectionConfig {
                 response_timeout,
-                connection_timeout: None,
-                push_sender: None,
+                ..Default::default()
             },
         )
         .await
@@ -468,42 +492,68 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-        compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
-        let codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec::default().framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,
                 "Can only pass push sender to a connection using RESP3"
             );
         }
-        let (pipeline, driver) = Pipeline::new(codec, config.push_sender);
-        let mut con = MultiplexedConnection {
+
+        #[cfg(feature = "cache-aio")]
+        let cache_config = config.cache.as_ref().map(|cache| match cache {
+            crate::client::Cache::Config(cache_config) => *cache_config,
+            #[cfg(feature = "connection-manager")]
+            crate::client::Cache::Manager(cache_manager) => cache_manager.cache_config,
+        });
+        #[cfg(feature = "cache-aio")]
+        let cache_manager_opt = config
+            .cache
+            .map(|cache| {
+                check_resp3!(
+                    connection_info.protocol,
+                    "Can only enable client side caching in a connection using RESP3"
+                );
+                match cache {
+                    crate::client::Cache::Config(cache_config) => {
+                        Ok(CacheManager::new(cache_config))
+                    }
+                    #[cfg(feature = "connection-manager")]
+                    crate::client::Cache::Manager(cache_manager) => Ok(cache_manager),
+                }
+            })
+            .transpose()?;
+
+        setup_connection(
+            &mut codec,
+            connection_info,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        )
+        .await?;
+        if config.push_sender.is_some() {
+            check_resp3!(
+                connection_info.protocol,
+                "Can only pass push sender to a connection using RESP3"
+            );
+        }
+
+        let (pipeline, driver) = Pipeline::new(
+            codec,
+            config.push_sender,
+            #[cfg(feature = "cache-aio")]
+            cache_manager_opt.clone(),
+        );
+        let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
             _task_handle: None,
+            #[cfg(feature = "cache-aio")]
+            cache_manager: cache_manager_opt,
         };
-        let driver = {
-            let auth = setup_connection(connection_info, &mut con);
 
-            futures_util::pin_mut!(auth);
-
-            match futures_util::future::select(auth, driver).await {
-                futures_util::future::Either::Left((result, driver)) => {
-                    result?;
-                    driver
-                }
-                futures_util::future::Either::Right(((), _)) => {
-                    return Err(RedisError::from((
-                        crate::ErrorKind::IoError,
-                        "Multiplexed connection driver unexpectedly terminated",
-                    )));
-                }
-            }
-        };
         Ok((con, driver))
     }
 
@@ -521,10 +571,35 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        #[cfg(feature = "cache-aio")]
+        if let Some(cache_manager) = &self.cache_manager {
+            match cache_manager.get_cached_cmd(cmd) {
+                PrepareCacheResult::Cached(value) => return Ok(value),
+                PrepareCacheResult::NotCached(cacheable_command) => {
+                    let mut pipeline = crate::Pipeline::new();
+                    cacheable_command.pack_command(cache_manager, &mut pipeline);
+
+                    let result = self
+                        .pipeline
+                        .send_recv(
+                            pipeline.get_packed_pipeline(),
+                            Some(PipelineResponseExpectation {
+                                skipped_response_count: 0,
+                                expected_response_count: pipeline.commands.len(),
+                                is_transaction: false,
+                            }),
+                            self.response_timeout,
+                        )
+                        .await?;
+                    let replies: Vec<Value> = crate::types::from_owned_redis_value(result)?;
+                    return cacheable_command.resolve(cache_manager, replies.into_iter());
+                }
+                _ => (),
+            }
+        }
         self.pipeline
-            .send_single(cmd.get_packed_command(), self.response_timeout)
+            .send_recv(cmd.get_packed_command(), None, self.response_timeout)
             .await
-            .map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -536,7 +611,26 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let result = self
+        #[cfg(feature = "cache-aio")]
+        if let Some(cache_manager) = &self.cache_manager {
+            let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
+                cache_manager.get_cached_pipeline(cmd);
+            let result = self
+                .pipeline
+                .send_recv(
+                    pipeline.get_packed_pipeline(),
+                    Some(PipelineResponseExpectation {
+                        skipped_response_count,
+                        expected_response_count,
+                        is_transaction: cacheable_pipeline.transaction_mode,
+                    }),
+                    self.response_timeout,
+                )
+                .await?;
+
+            return cacheable_pipeline.resolve(cache_manager, result);
+        }
+        let value = self
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
@@ -547,14 +641,18 @@ impl MultiplexedConnection {
                 }),
                 self.response_timeout,
             )
-            .await
-            .map_err(|err| err.unwrap_or_else(closed_connection_error));
-
-        let value = result?;
+            .await?;
         match value {
             Value::Array(values) => Ok(values),
             _ => Ok(vec![value]),
         }
+    }
+
+    /// Gets [`CacheStatistics`] for current connection if caching is enabled.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn get_cache_statistics(&self) -> Option<CacheStatistics> {
+        self.cache_manager.as_ref().map(|cm| cm.statistics())
     }
 }
 
@@ -578,12 +676,22 @@ impl ConnectionLike for MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
-    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -592,9 +700,20 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -603,12 +722,23 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
-    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -617,7 +747,7 @@ impl MultiplexedConnection {
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {

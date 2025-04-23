@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use std::path::Path;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use std::sync::Arc;
 use std::{
     future::Future,
@@ -13,47 +13,40 @@ use std::{
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(
+    feature = "async-std-native-tls-comp",
+    not(feature = "async-std-rustls-comp")
+))]
 use async_native_tls::{TlsConnector, TlsStream};
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use crate::connection::create_rustls_config;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "async-std-rustls-comp")]
 use futures_rustls::{client::TlsStream, TlsConnector};
 
 use super::TaskHandle;
 use async_std::net::TcpStream;
 #[cfg(unix)]
 use async_std::os::unix::net::UnixStream;
-use async_trait::async_trait;
 use futures_util::ready;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[inline(always)]
-async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStream> {
+async fn connect_tcp(
+    addr: &SocketAddr,
+    tcp_settings: &crate::io::tcp::TcpSettings,
+) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr).await?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let mut std_socket = std::net::TcpStream::try_from(socket)?;
-        let socket2: socket2::Socket = std_socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        std_socket = socket2.into();
-        Ok(std_socket.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
-}
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
+    let std_socket = std::net::TcpStream::try_from(socket)?;
+    let std_socket = crate::io::tcp::stream_with_settings(std_socket, tcp_settings)?;
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    Ok(std_socket.into())
+}
+
+#[cfg(any(
+    feature = "async-std-rustls-comp",
+    feature = "async-std-native-tls-comp"
+))]
 use crate::connection::TlsConnParams;
 
 pin_project_lite::pin_project! {
@@ -193,27 +186,36 @@ impl AsyncRead for AsyncStd {
     }
 }
 
-#[async_trait]
 impl RedisRuntime for AsyncStd {
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(connect_tcp(&socket_addr)
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        Ok(connect_tcp(&socket_addr, tcp_settings)
             .await
             .map(|con| Self::Tcp(AsyncStdWrapped::new(con)))?)
     }
 
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    #[cfg(all(
+        feature = "async-std-native-tls-comp",
+        not(feature = "async-std-rustls-comp")
+    ))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        _tls_params: &Option<TlsConnParams>,
+        tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
-        let tcp_stream = connect_tcp(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
         let tls_connector = if insecure {
             TlsConnector::new()
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
                 .use_sni(false)
+        } else if let Some(params) = tls_params {
+            TlsConnector::new()
+                .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
         } else {
             TlsConnector::new()
         };
@@ -223,21 +225,22 @@ impl RedisRuntime for AsyncStd {
             .map(|con| Self::TcpTls(AsyncStdWrapped::new(Box::new(con))))?)
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "async-std-rustls-comp")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
-        let tcp_stream = connect_tcp(&socket_addr).await?;
+        let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
 
         let config = create_rustls_config(insecure, tls_params.clone())?;
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector
             .connect(
-                rustls_pki_types::ServerName::try_from(hostname)?.to_owned(),
+                rustls::pki_types::ServerName::try_from(hostname)?.to_owned(),
                 tcp_stream,
             )
             .await

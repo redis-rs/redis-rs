@@ -1,6 +1,5 @@
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
-use itertools::Itertools;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
@@ -67,6 +66,15 @@ pub enum ExistenceCheck {
     NX,
     /// XX -- Only set the key if it already exists.
     XX,
+}
+
+/// Helper enum that is used to define field existence checks
+#[derive(Clone, Copy)]
+pub enum FieldExistenceCheck {
+    /// FNX -- Only set the fields if all do not already exist.
+    FNX,
+    /// FXX -- Only set the fields if all already exist.
+    FXX,
 }
 
 /// Helper enum that is used in some situations to describe
@@ -679,12 +687,25 @@ impl From<rustls::Error> for RedisError {
 }
 
 #[cfg(feature = "tls-rustls")]
-impl From<rustls_pki_types::InvalidDnsNameError> for RedisError {
-    fn from(err: rustls_pki_types::InvalidDnsNameError) -> RedisError {
+impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
+    fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS Error",
+                err.to_string(),
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+impl From<rustls_native_certs::Error> for RedisError {
+    fn from(err: rustls_native_certs::Error) -> RedisError {
+        RedisError {
+            repr: ErrorRepr::WithDescriptionAndDetail(
+                ErrorKind::IoError,
+                "Fetch certs Error",
                 err.to_string(),
             ),
         }
@@ -778,13 +799,22 @@ impl fmt::Debug for RedisError {
     }
 }
 
-pub(crate) enum RetryMethod {
+/// What method should be used if retrying this request.
+#[non_exhaustive]
+pub enum RetryMethod {
+    /// Create a fresh connection, since the current connection is no longer usable.
     Reconnect,
+    /// Don't retry, this is a permanent error.
     NoRetry,
+    /// Retry immediately, this doesn't require a wait.
     RetryImmediately,
+    /// Retry after sleeping to avoid overloading the external service.
     WaitAndRetry,
+    /// The key has moved to a different node but we have to ask which node, this is only relevant for clusters.
     AskRedirect,
+    /// The key has moved to a different node, this is only relevant for clusters.
     MovedRedirect,
+    /// Reconnect the initial connection to the master cluster, this is only relevant for clusters.
     ReconnectFromInitialConnections,
 }
 
@@ -998,7 +1028,13 @@ impl RedisError {
         Self { repr }
     }
 
-    pub(crate) fn retry_method(&self) -> RetryMethod {
+    /// Specifies what method (if any) should be used to retry this request.
+    ///
+    /// If you are using the cluster api retrying of requests is already handled by the library.
+    ///
+    /// This isn't precise, and internally the library uses multiple other considerations rather
+    /// than just the error kind on when to retry.
+    pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
             ErrorKind::Moved => RetryMethod::MovedRedirect,
             ErrorKind::Ask => RetryMethod::AskRedirect,
@@ -1207,13 +1243,10 @@ impl FromRedisValue for ReplicaInfo {
         if v.len() < 3 {
             invalid_type_error!(v, "Replica array is too short, expected 3 elements")
         }
-        let v = v
-            .into_iter()
-            .next_tuple::<(Value, Value, Value)>()
-            .expect("Replica response too short, expected 3 elements");
-        let ip = from_owned_redis_value(v.0)?;
-        let port = from_owned_redis_value(v.1)?;
-        let offset = from_owned_redis_value(v.2)?;
+        let mut v = v.into_iter();
+        let ip = from_owned_redis_value(v.next().expect("len was checked"))?;
+        let port = from_owned_redis_value(v.next().expect("len was checked"))?;
+        let offset = from_owned_redis_value(v.next().expect("len was checked"))?;
         Ok(ReplicaInfo {
             ip,
             port,
@@ -1255,13 +1288,12 @@ impl Role {
                 "Role primary response too short, expected 3 elements"
             )
         }
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value, Value)>()
-            .expect("Role primary response too short, expected 3 elements");
 
-        let replication_offset = from_owned_redis_value(values.1)?;
-        let replicas = from_owned_redis_value(values.2)?;
+        let mut values = values.into_iter();
+        _ = values.next();
+
+        let replication_offset = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let replicas = from_owned_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Primary {
             replication_offset,
@@ -1277,15 +1309,13 @@ impl Role {
             )
         }
 
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value, Value, Value, Value)>()
-            .expect("Role replica response too short, expected 5 elements");
+        let mut values = values.into_iter();
+        _ = values.next();
 
-        let primary_ip = from_owned_redis_value(values.1)?;
-        let primary_port = from_owned_redis_value(values.2)?;
-        let replication_state = from_owned_redis_value(values.3)?;
-        let data_received = from_owned_redis_value(values.4)?;
+        let primary_ip = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let primary_port = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let replication_state = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let data_received = from_owned_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Replica {
             primary_ip,
@@ -1302,11 +1332,8 @@ impl Role {
                 "Role sentinel response too short, expected at least 2 elements"
             )
         }
-        let values = values
-            .into_iter()
-            .next_tuple::<(Value, Value)>()
-            .expect("Role sentinel response too short, expected 2 elements");
-        let primary_names = from_owned_redis_value(values.1)?;
+        let second_val = values.into_iter().nth(1).expect("len was checked");
+        let primary_names = from_owned_redis_value(second_val)?;
         Ok(Role::Sentinel { primary_names })
     }
 }
@@ -1320,6 +1347,10 @@ pub trait RedisWrite {
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.write_arg(arg.to_string().as_bytes())
     }
+
+    /// Appends an empty argument to the command, and returns a
+    /// [`std::io::Write`] instance that can write to it.
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1329,6 +1360,11 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
         self.push(arg.to_string().into_bytes())
+    }
+
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
+        self.push(Vec::new());
+        self.last_mut().unwrap()
     }
 }
 
@@ -1872,7 +1908,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
 }
 
 /// This trait is used to convert a redis value into a more appropriate
-/// type.  
+/// type.
 ///
 /// While a redis `Value` can represent any response that comes
 /// back from the redis server, usually you want to map this into something
@@ -2485,9 +2521,7 @@ macro_rules! from_redis_value_for_tuple {
                         Value::Array(ch) => {
                            if  let [$($name),*] = &ch[..] {
                             rv.push(($(from_redis_value(&$name)?),*),)
-                           } else {
-                                unreachable!()
-                            };
+                           };
                         },
                         _ => {},
 
@@ -2521,15 +2555,12 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(rv)
                 }
                 //It's uglier then before!
-                for item in items.iter() {
+                for item in items.iter_mut() {
                     match item {
-                        Value::Array(ch) => {
-                            // TODO - this copies when we could've used the owned value. need to find out how to do this.
-                        if  let [$($name),*] = &ch[..] {
-                            rv.push(($(from_redis_value($name)?),*),)
-                           } else {
-                                unreachable!()
-                            };
+                        Value::Array(ref mut ch) => {
+                        if  let [$($name),*] = &mut ch[..] {
+                            rv.push(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))?),*),);
+                           };
                         },
                         _ => {},
                     }
@@ -2691,7 +2722,7 @@ impl ToRedisArgs for ExpireOption {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// A push message from the server.
 pub struct PushInfo {
     /// Push Kind

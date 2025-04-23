@@ -1,5 +1,4 @@
 use super::{AsyncStream, RedisResult, RedisRuntime, SocketAddr, TaskHandle};
-use async_trait::async_trait;
 use std::{
     future::Future,
     io,
@@ -13,48 +12,35 @@ use tokio::{
     net::TcpStream as TcpStreamTokio,
 };
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use native_tls::TlsConnector;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tokio-rustls-comp")]
 use crate::connection::create_rustls_config;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tokio-rustls-comp")]
 use std::sync::Arc;
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tokio-rustls-comp")]
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
-#[cfg(feature = "tokio-rustls-comp")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tls-rustls")))]
+#[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(unix)]
 use super::Path;
 
 #[inline(always)]
-async fn connect_tcp(addr: &SocketAddr) -> io::Result<TcpStreamTokio> {
+async fn connect_tcp(
+    addr: &SocketAddr,
+    tcp_settings: &crate::io::tcp::TcpSettings,
+) -> io::Result<TcpStreamTokio> {
     let socket = TcpStreamTokio::connect(addr).await?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let std_socket = socket.into_std()?;
-        let socket2: socket2::Socket = std_socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        TcpStreamTokio::from_std(socket2.into())
-    }
+    let std_socket = socket.into_std()?;
+    let std_socket = crate::io::tcp::stream_with_settings(std_socket, tcp_settings)?;
 
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    TcpStreamTokio::from_std(std_socket)
 }
 
 pub(crate) enum Tokio {
@@ -120,18 +106,23 @@ impl AsyncRead for Tokio {
     }
 }
 
-#[async_trait]
 impl RedisRuntime for Tokio {
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self> {
-        Ok(connect_tcp(&socket_addr).await.map(Tokio::Tcp)?)
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        Ok(connect_tcp(&socket_addr, tcp_settings)
+            .await
+            .map(Tokio::Tcp)?)
     }
 
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
-        _: &Option<TlsConnParams>,
+        params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector = if insecure {
             TlsConnector::builder()
@@ -139,30 +130,35 @@ impl RedisRuntime for Tokio {
                 .danger_accept_invalid_hostnames(true)
                 .use_sni(false)
                 .build()?
+        } else if let Some(params) = params {
+            TlsConnector::builder()
+                .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
+                .build()?
         } else {
             TlsConnector::new()?
         }
         .into();
         Ok(tls_connector
-            .connect(hostname, connect_tcp(&socket_addr).await?)
+            .connect(hostname, connect_tcp(&socket_addr, tcp_settings).await?)
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(feature = "tokio-rustls-comp")]
     async fn connect_tcp_tls(
         hostname: &str,
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let config = create_rustls_config(insecure, tls_params.clone())?;
         let tls_connector = TlsConnector::from(Arc::new(config));
 
         Ok(tls_connector
             .connect(
-                rustls_pki_types::ServerName::try_from(hostname)?.to_owned(),
-                connect_tcp(&socket_addr).await?,
+                rustls::pki_types::ServerName::try_from(hostname)?.to_owned(),
+                connect_tcp(&socket_addr, tcp_settings).await?,
             )
             .await
             .map(|con| Tokio::TcpTls(Box::new(con)))?)
@@ -173,14 +169,8 @@ impl RedisRuntime for Tokio {
         Ok(UnixStreamTokio::connect(path).await.map(Tokio::Unix)?)
     }
 
-    #[cfg(feature = "tokio-comp")]
     fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
         TaskHandle::Tokio(tokio::spawn(f))
-    }
-
-    #[cfg(not(feature = "tokio-comp"))]
-    fn spawn(_: impl Future<Output = ()> + Send + 'static) -> TokioTaskHandle {
-        unreachable!()
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {

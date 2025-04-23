@@ -1,5 +1,7 @@
 #![macro_use]
 
+#[cfg(feature = "cache-aio")]
+use crate::cmd::CommandCacheConfig;
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
@@ -9,9 +11,9 @@ use crate::types::{
 /// Represents a redis command pipeline.
 #[derive(Clone)]
 pub struct Pipeline {
-    commands: Vec<Cmd>,
-    transaction_mode: bool,
-    ignored_commands: HashSet<usize>,
+    pub(crate) commands: Vec<Cmd>,
+    pub(crate) transaction_mode: bool,
+    pub(crate) ignored_commands: HashSet<usize>,
 }
 
 /// A pipeline allows you to send multiple commands in one go to the
@@ -80,13 +82,16 @@ impl Pipeline {
         encode_pipeline(&self.commands, self.transaction_mode)
     }
 
-    #[cfg(feature = "aio")]
-    pub(crate) fn write_packed_pipeline(&self, out: &mut Vec<u8>) {
-        write_pipeline(out, &self.commands, self.transaction_mode)
+    /// Returns the number of commands currently queued by the usr in the pipeline.
+    ///
+    /// Depending on its configuration (e.g. `atomic`), the pipeline may send more commands to the server than the returned length
+    pub fn len(&self) -> usize {
+        self.commands.len()
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.commands.len()
+    /// Returns `true` is the pipeline contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
     }
 
     fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
@@ -355,3 +360,15 @@ macro_rules! implement_pipeline_commands {
 }
 
 implement_pipeline_commands!(Pipeline);
+
+// Defines caching related functions for Pipeline, ClusterPipeline isn't supported yet.
+impl Pipeline {
+    /// Changes caching behaviour for latest command in the pipeline.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Self {
+        let cmd = self.get_last_command();
+        cmd.set_cache_config(command_cache_config);
+        self
+    }
+}

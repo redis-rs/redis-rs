@@ -1,4 +1,6 @@
 use super::{AsyncPushSender, HandleContainer, RedisFuture};
+#[cfg(feature = "cache-aio")]
+use crate::caching::CacheManager;
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     cmd,
@@ -8,12 +10,8 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
-use futures::{
-    channel::oneshot,
-    future::{self, Shared},
-    FutureExt,
-};
-use futures_util::future::BoxFuture;
+use futures_channel::oneshot;
+use futures_util::future::{self, BoxFuture, FutureExt, Shared};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
@@ -40,6 +38,9 @@ pub struct ConnectionManagerConfig {
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
+    tcp_settings: crate::io::tcp::TcpSettings,
+    #[cfg(feature = "cache-aio")]
+    pub(crate) cache_config: Option<crate::caching::CacheConfig>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -53,9 +54,12 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             connection_timeout,
             push_sender,
             resubscribe_automatically,
+            tcp_settings,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
         } = &self;
-        f.debug_struct("ConnectionManagerConfig")
-            .field("exponent_base", &exponent_base)
+        let mut str = f.debug_struct("ConnectionManagerConfig");
+        str.field("exponent_base", &exponent_base)
             .field("factor", &factor)
             .field("number_of_retries", &number_of_retries)
             .field("max_delay", &max_delay)
@@ -70,7 +74,12 @@ impl std::fmt::Debug for ConnectionManagerConfig {
                     &"not set"
                 },
             )
-            .finish()
+            .field("tcp_settings", &tcp_settings);
+
+        #[cfg(feature = "cache-aio")]
+        str.field("cache_config", &cache_config);
+
+        str.finish()
     }
 }
 
@@ -169,6 +178,23 @@ impl ConnectionManagerConfig {
         self.resubscribe_automatically = true;
         self
     }
+
+    /// Set the behavior of the underlying TCP connection.
+    pub fn set_tcp_settings(self, tcp_settings: crate::io::tcp::TcpSettings) -> Self {
+        Self {
+            tcp_settings,
+            ..self
+        }
+    }
+
+    /// Set the cache behavior.
+    #[cfg(feature = "cache-aio")]
+    pub fn set_cache_config(self, cache_config: crate::caching::CacheConfig) -> Self {
+        Self {
+            cache_config: Some(cache_config),
+            ..self
+        }
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -177,11 +203,14 @@ impl Default for ConnectionManagerConfig {
             exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
             factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
             number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
-            max_delay: None,
             response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+            max_delay: None,
             push_sender: None,
             resubscribe_automatically: false,
+            tcp_settings: Default::default(),
+            #[cfg(feature = "cache-aio")]
+            cache_config: None,
         }
     }
 }
@@ -199,6 +228,8 @@ struct Internals {
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    #[cfg(feature = "cache-aio")]
+    cache_manager: Option<CacheManager>,
     _task_handle: HandleContainer,
 }
 
@@ -363,6 +394,16 @@ impl ConnectionManager {
         if let Some(response_timeout) = config.response_timeout {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
+        connection_config = connection_config.set_tcp_settings(config.tcp_settings);
+        #[cfg(feature = "cache-aio")]
+        let cache_manager = config
+            .cache_config
+            .as_ref()
+            .map(|cache_config| CacheManager::new(*cache_config));
+        #[cfg(feature = "cache-aio")]
+        if let Some(cache_manager) = cache_manager.as_ref() {
+            connection_config = connection_config.set_cache_manager(cache_manager.clone());
+        }
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
         let _task_handle = HandleContainer::new(
@@ -398,6 +439,8 @@ impl ConnectionManager {
             retry_strategy,
             connection_config,
             subscription_tracker,
+            #[cfg(feature = "cache-aio")]
+            cache_manager,
             _task_handle,
         }));
 
@@ -444,6 +487,15 @@ impl ConnectionManager {
     /// when the connection loss was detected.
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
         let self_clone = self.clone();
+        #[cfg(not(feature = "cache-aio"))]
+        let connection_config = self_clone.0.connection_config.clone();
+        #[cfg(feature = "cache-aio")]
+        let mut connection_config = self_clone.0.connection_config.clone();
+        #[cfg(feature = "cache-aio")]
+        if let Some(manager) = self.0.cache_manager.as_ref() {
+            let new_cache_manager = manager.clone_and_increase_epoch();
+            connection_config = connection_config.set_cache_manager(new_cache_manager);
+        }
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
             let additional_commands = match &self_clone.0.subscription_tracker {
                 Some(subscription_tracker) => Some(
@@ -454,10 +506,11 @@ impl ConnectionManager {
                 ),
                 None => None,
             };
+
             let con = Self::new_connection(
                 &self_clone.0.client,
                 self_clone.0.retry_strategy,
-                &self_clone.0.connection_config,
+                &connection_config,
                 additional_commands,
             )
             .await?;
@@ -550,10 +603,10 @@ impl ConnectionManager {
         guard.update_with_request(action, args.to_redis_args().into_iter());
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -569,7 +622,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel.
+    /// Unsubscribes from channel(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
@@ -582,10 +635,10 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Subscribes to a new channel with pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
-    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user..
+    /// If the manager was configured without a push sender, the manager won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
@@ -600,7 +653,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Unsubscribes from channel pattern.
+    /// Unsubscribes from channel pattern(s).
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
@@ -611,6 +664,13 @@ impl ConnectionManager {
         self.update_subscription_tracker(SubscriptionAction::PUnsubscribe, channel_pattern)
             .await;
         Ok(())
+    }
+
+    /// Gets [`crate::caching::CacheStatistics`] for current connection if caching is enabled.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn get_cache_statistics(&self) -> Option<crate::caching::CacheStatistics> {
+        self.0.cache_manager.as_ref().map(|cm| cm.statistics())
     }
 }
 

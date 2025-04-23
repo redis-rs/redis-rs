@@ -1,8 +1,10 @@
-use std::io::{BufRead, Error, ErrorKind as IOErrorKind};
+use std::io::{self, Error};
 
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::RootCertStore;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
+use crate::connection::TlsConnParams;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
@@ -29,7 +31,7 @@ pub struct TlsCertificates {
 
 pub(crate) fn inner_build_with_tls(
     mut connection_info: ConnectionInfo,
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<Client> {
     let tls_params = retrieve_tls_certificates(certificates)?;
 
@@ -57,7 +59,7 @@ pub(crate) fn inner_build_with_tls(
 }
 
 pub(crate) fn retrieve_tls_certificates(
-    certificates: TlsCertificates,
+    certificates: &TlsCertificates,
 ) -> RedisResult<TlsConnParams> {
     let TlsCertificates {
         client_tls,
@@ -69,18 +71,21 @@ pub(crate) fn retrieve_tls_certificates(
         client_key,
     }) = client_tls
     {
-        let buf = &mut client_cert.as_slice() as &mut dyn BufRead;
-        let certs = rustls_pemfile::certs(buf);
-        let client_cert_chain = certs.collect::<Result<Vec<_>, _>>()?;
+        let client_cert_chain = CertificateDer::pem_slice_iter(client_cert)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| {
+                Error::new(
+                    io::ErrorKind::Other,
+                    format!("Unable to parse client certificate chain PEM: {err}"),
+                )
+            })?;
 
-        let client_key =
-            rustls_pemfile::private_key(&mut client_key.as_slice() as &mut dyn BufRead)?
-                .ok_or_else(|| {
-                    Error::new(
-                        IOErrorKind::Other,
-                        "Unable to extract private key from PEM file",
-                    )
-                })?;
+        let client_key = PrivateKeyDer::from_pem_slice(client_key).map_err(|err| {
+            Error::new(
+                io::ErrorKind::Other,
+                format!("Unable to extract private key from PEM file: {err}"),
+            )
+        })?;
 
         Some(ClientTlsParams {
             client_cert_chain,
@@ -91,13 +96,18 @@ pub(crate) fn retrieve_tls_certificates(
     };
 
     let root_cert_store = if let Some(root_cert) = root_cert {
-        let buf = &mut root_cert.as_slice() as &mut dyn BufRead;
-        let certs = rustls_pemfile::certs(buf);
         let mut root_cert_store = RootCertStore::empty();
-        for result in certs {
-            if root_cert_store.add(result?.to_owned()).is_err() {
+        for result in CertificateDer::pem_slice_iter(root_cert) {
+            let cert = result.map_err(|err| {
+                Error::new(
+                    io::ErrorKind::Other,
+                    format!("Unable to parse root certificate PEM: {err}"),
+                )
+            })?;
+
+            if root_cert_store.add(cert).is_err() {
                 return Err(
-                    Error::new(IOErrorKind::Other, "Unable to parse TLS trust anchors").into(),
+                    Error::new(io::ErrorKind::Other, "Unable to parse TLS trust anchors").into(),
                 );
             }
         }
@@ -110,6 +120,8 @@ pub(crate) fn retrieve_tls_certificates(
     Ok(TlsConnParams {
         client_tls_params,
         root_cert_store,
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        danger_accept_invalid_hostnames: false,
     })
 }
 
@@ -133,10 +145,4 @@ impl Clone for ClientTlsParams {
             },
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct TlsConnParams {
-    pub(crate) client_tls_params: Option<ClientTlsParams>,
-    pub(crate) root_cert_store: Option<RootCertStore>,
 }

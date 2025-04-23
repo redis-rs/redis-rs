@@ -6,9 +6,10 @@ use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
+use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
@@ -39,54 +40,32 @@ use crate::PushInfo;
 use rustls_native_certs::load_native_certs;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
+use crate::tls::ClientTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
-#[cfg(not(feature = "tls-rustls"))]
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct TlsConnParams;
+pub struct TlsConnParams {
+    #[cfg(feature = "tls-rustls")]
+    pub(crate) client_tls_params: Option<ClientTlsParams>,
+    #[cfg(feature = "tls-rustls")]
+    pub(crate) root_cert_store: Option<RootCertStore>,
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    pub(crate) danger_accept_invalid_hostnames: bool,
+}
 
 static DEFAULT_PORT: u16 = 6379;
 
 #[inline(always)]
 fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let socket2: socket2::Socket = socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        Ok(socket2.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    stream_with_settings(socket, &TcpSettings::default())
 }
 
 #[inline(always)]
 fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
-    #[cfg(feature = "tcp_nodelay")]
-    socket.set_nodelay(true)?;
-    #[cfg(feature = "keep-alive")]
-    {
-        //For now rely on system defaults
-        const KEEP_ALIVE: socket2::TcpKeepalive = socket2::TcpKeepalive::new();
-        //these are useless error that not going to happen
-        let socket2: socket2::Socket = socket.into();
-        socket2.set_tcp_keepalive(&KEEP_ALIVE)?;
-        Ok(socket2.into())
-    }
-    #[cfg(not(feature = "keep-alive"))]
-    {
-        Ok(socket)
-    }
+    stream_with_settings(socket, &TcpSettings::default())
 }
 
 /// This function takes a redis URL string and parses it into a URL
@@ -96,7 +75,9 @@ fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpSt
 pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "redis+unix" | "unix" => Some(result),
+            "redis" | "rediss" | "valkey" | "valkeys" | "redis+unix" | "valkey+unix" | "unix" => {
+                Some(result)
+            }
             _ => None,
         },
         Err(_) => None,
@@ -178,10 +159,13 @@ impl ConnectionAddr {
     /// Checks if this address is supported.
     ///
     /// Because not all platforms support all connection addresses this is a
-    /// quick way to figure out if a connection method is supported.  Currently
-    /// this only affects unix connections which are only supported on unix
-    /// platforms and on older versions of rust also require an explicit feature
-    /// to be enabled.
+    /// quick way to figure out if a connection method is supported. Currently
+    /// this affects:
+    ///
+    /// - Unix socket addresses, which are supported only on Unix
+    ///
+    /// - TLS addresses, which are supported only if a TLS feature is enabled
+    ///   (either `tls-native-tls` or `tls-rustls`).
     pub fn is_supported(&self) -> bool {
         match *self {
             ConnectionAddr::Tcp(_, _) => true,
@@ -189,6 +173,31 @@ impl ConnectionAddr {
                 cfg!(any(feature = "tls-native-tls", feature = "tls-rustls"))
             }
             ConnectionAddr::Unix(_) => cfg!(unix),
+        }
+    }
+
+    /// Configure this address to connect without checking certificate hostnames.
+    ///
+    /// # Warning
+    ///
+    /// You should think very carefully before you use this method. If hostname
+    /// verification is not used, any valid certificate for any site will be
+    /// trusted for use from any other. This introduces a significant
+    /// vulnerability to man-in-the-middle attacks.
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
+        if let ConnectionAddr::TcpTls { tls_params, .. } = self {
+            if let Some(ref mut params) = tls_params {
+                params.danger_accept_invalid_hostnames = insecure;
+            } else if insecure {
+                *tls_params = Some(TlsConnParams {
+                    #[cfg(feature = "tls-rustls")]
+                    client_tls_params: None,
+                    #[cfg(feature = "tls-rustls")]
+                    root_cert_store: None,
+                    danger_accept_invalid_hostnames: insecure,
+                });
+            }
         }
     }
 
@@ -263,7 +272,7 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
-/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+/// URL format: `{redis|rediss|valkey|valkeys}://[<username>][:<password>@]<hostname>[:port][/<db>]`
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
@@ -293,7 +302,7 @@ where
     }
 }
 
-/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+/// URL format: `{redis|rediss|valkey|valkeys}://[<username>][:<password>@]<hostname>[:port][/<db>]`
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
@@ -353,7 +362,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
-    let addr = if url.scheme() == "rediss" {
+    let addr = if url.scheme() == "rediss" || url.scheme() == "valkeys" {
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
         {
             match url.fragment() {
@@ -453,8 +462,8 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match self.scheme() {
-            "redis" | "rediss" => url_to_tcp_connection_info(self),
-            "unix" | "redis+unix" => url_to_unix_connection_info(self),
+            "redis" | "rediss" | "valkey" | "valkeys" => url_to_tcp_connection_info(self),
+            "unix" | "redis+unix" | "valkey+unix" => url_to_unix_connection_info(self),
             _ => fail!((
                 ErrorKind::InvalidClientConfig,
                 "URL provided is not a redis URL"
@@ -505,11 +514,11 @@ struct NoCertificateVerification {
 impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: rustls_pki_types::UnixTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
@@ -517,7 +526,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -526,7 +535,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_tls13_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -541,6 +550,84 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 impl fmt::Debug for NoCertificateVerification {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NoCertificateVerification").finish()
+    }
+}
+
+/// Insecure `ServerCertVerifier` for rustls that implements `danger_accept_invalid_hostnames`.
+#[cfg(feature = "tls-rustls-insecure")]
+#[derive(Debug)]
+struct AcceptInvalidHostnamesCertVerifier {
+    inner: Arc<rustls::client::WebPkiServerVerifier>,
+}
+
+#[cfg(feature = "tls-rustls-insecure")]
+fn is_hostname_error(err: &rustls::Error) -> bool {
+    matches!(
+        err,
+        rustls::Error::InvalidCertificate(
+            rustls::CertificateError::NotValidForName
+                | rustls::CertificateError::NotValidForNameContext { .. }
+        )
+    )
+}
+
+#[cfg(feature = "tls-rustls-insecure")]
+impl rustls::client::danger::ServerCertVerifier for AcceptInvalidHostnamesCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        self.inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::ServerCertVerified::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner
+            .verify_tls12_signature(message, cert, dss)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner
+            .verify_tls13_signature(message, cert, dss)
+            .or_else(|err| {
+                if is_hostname_error(&err) {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                } else {
+                    Err(err)
+                }
+            })
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
     }
 }
 
@@ -626,13 +713,17 @@ impl ActualConnection {
                 ref host,
                 port,
                 insecure,
-                ..
+                ref tls_params,
             } => {
                 let tls_connector = if insecure {
                     TlsConnector::builder()
                         .danger_accept_invalid_certs(true)
                         .danger_accept_invalid_hostnames(true)
                         .use_sni(false)
+                        .build()?
+                } else if let Some(params) = tls_params {
+                    TlsConnector::builder()
+                        .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
                         .build()?
                 } else {
                     TlsConnector::new()?
@@ -692,7 +783,7 @@ impl ActualConnection {
                 let config = create_rustls_config(insecure, tls_params.clone())?;
                 let conn = rustls::ClientConnection::new(
                     Arc::new(config),
-                    rustls_pki_types::ServerName::try_from(host)?.to_owned(),
+                    rustls::pki_types::ServerName::try_from(host)?.to_owned(),
                 )?;
                 let reader = match timeout {
                     None => {
@@ -873,8 +964,6 @@ pub(crate) fn create_rustls_config(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
 ) -> RedisResult<rustls::ClientConfig> {
-    use crate::tls::ClientTlsParams;
-
     #[allow(unused_mut)]
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
@@ -884,16 +973,22 @@ pub(crate) fn create_rustls_config(
         not(feature = "tls-native-tls"),
         not(feature = "tls-rustls-webpki-roots")
     ))]
-    for cert in load_native_certs()? {
-        root_store.add(cert)?;
+    {
+        let mut certificate_result = load_native_certs();
+        if let Some(error) = certificate_result.errors.pop() {
+            return Err(error.into());
+        }
+        for cert in certificate_result.certs {
+            root_store.add(cert)?;
+        }
     }
 
     let config = rustls::ClientConfig::builder();
     let config = if let Some(tls_params) = tls_params {
-        let config_builder =
-            config.with_root_certificates(tls_params.root_cert_store.unwrap_or(root_store));
+        let root_cert_store = tls_params.root_cert_store.unwrap_or(root_store);
+        let config_builder = config.with_root_certificates(root_cert_store.clone());
 
-        if let Some(ClientTlsParams {
+        let config_builder = if let Some(ClientTlsParams {
             client_cert_chain: client_cert,
             client_key,
         }) = tls_params.client_tls_params
@@ -909,7 +1004,44 @@ pub(crate) fn create_rustls_config(
                 })?
         } else {
             config_builder.with_no_client_auth()
-        }
+        };
+
+        // Implement `danger_accept_invalid_hostnames`.
+        //
+        // The strange cfg here is to handle a specific unusual combination of features: if
+        // `tls-native-tls` and `tls-rustls` are enabled, but `tls-rustls-insecure` is not, and the
+        // application tries to use the danger flag.
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
+            #[cfg(not(feature = "tls-rustls-insecure"))]
+            {
+                // This code should not enable an insecure mode if the `insecure` feature is not
+                // set, but it shouldn't silently ignore the flag either. So return an error.
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot create insecure client via danger_accept_invalid_hostnames without tls-rustls-insecure feature"
+                ));
+            }
+
+            #[cfg(feature = "tls-rustls-insecure")]
+            {
+                let mut config = config_builder;
+                config.dangerous().set_certificate_verifier(Arc::new(
+                    AcceptInvalidHostnamesCertVerifier {
+                        inner: rustls::client::WebPkiServerVerifier::builder(Arc::new(
+                            root_cert_store,
+                        ))
+                        .build()
+                        .map_err(|err| rustls::Error::from(rustls::OtherError(Arc::new(err))))?,
+                    },
+                ));
+                config
+            }
+        } else {
+            config_builder
+        };
+
+        config_builder
     } else {
         config
             .with_root_certificates(root_store)
@@ -959,19 +1091,47 @@ pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
+    let start = Instant::now();
     let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
-    setup_connection(con, &connection_info.redis)
+
+    // we temporarily set the timeout, and will remove it after finishing setup.
+    let remaining_timeout = timeout.and_then(|timeout| timeout.checked_sub(start.elapsed()));
+    // TLS could run logic that doesn't contain a timeout, and should fail if it takes too long.
+    if timeout.is_some() && remaining_timeout.is_none() {
+        return Err(RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Connection timed out",
+        )));
+    }
+    con.set_read_timeout(remaining_timeout)?;
+    con.set_write_timeout(remaining_timeout)?;
+
+    let con = setup_connection(
+        con,
+        &connection_info.redis,
+        #[cfg(feature = "cache-aio")]
+        None,
+    )?;
+
+    // remove the temporary timeout.
+    con.set_read_timeout(None)?;
+    con.set_write_timeout(None)?;
+
+    Ok(con)
 }
 
 pub(crate) struct ConnectionSetupComponents {
     resp3_auth_cmd_idx: Option<usize>,
     resp2_auth_cmd_idx: Option<usize>,
     select_cmd_idx: Option<usize>,
+    #[cfg(feature = "cache-aio")]
+    cache_cmd_idx: Option<usize>,
 }
 
 pub(crate) fn connection_setup_pipeline(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
+    #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> (crate::Pipeline, ConnectionSetupComponents) {
     let mut last_cmd_index = 0;
 
@@ -990,6 +1150,10 @@ pub(crate) fn connection_setup_pipeline(
         authenticate_with_resp3_cmd_index.is_none() && connection_info.password.is_some(),
     );
     let select_db_cmd_index = get_next_command_index(connection_info.db != 0);
+    #[cfg(feature = "cache-aio")]
+    let cache_cmd_index = get_next_command_index(
+        connection_info.protocol != ProtocolVersion::RESP2 && cache_config.is_some(),
+    );
 
     let mut pipeline = pipe();
 
@@ -1024,12 +1188,28 @@ pub(crate) fn connection_setup_pipeline(
         .arg(env!("CARGO_PKG_VERSION"))
         .ignore();
 
+    #[cfg(feature = "cache-aio")]
+    if cache_cmd_index.is_some() {
+        let cache_config = cache_config.expect(
+            "It's expected to have cache_config if cache_cmd_index is Some, please create an issue about this.",
+        );
+        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
+        match cache_config.mode {
+            crate::caching::CacheMode::All => {}
+            crate::caching::CacheMode::OptIn => {
+                pipeline.arg("OPTIN");
+            }
+        }
+    }
+
     (
         pipeline,
         ConnectionSetupComponents {
             resp3_auth_cmd_idx: authenticate_with_resp3_cmd_index,
             resp2_auth_cmd_idx: authenticate_with_resp2_cmd_index,
             select_cmd_idx: select_db_cmd_index,
+            #[cfg(feature = "cache-aio")]
+            cache_cmd_idx: cache_cmd_index,
         },
     )
 }
@@ -1096,12 +1276,26 @@ fn check_db_select(value: &Value) -> RedisResult<()> {
     }
 }
 
+#[cfg(feature = "cache-aio")]
+fn check_caching(result: &Value) -> RedisResult<()> {
+    match result {
+        Value::Okay => Ok(()),
+        _ => Err((
+            ErrorKind::ResponseError,
+            "Client-side caching returned unknown response",
+        )
+            .into()),
+    }
+}
+
 pub(crate) fn check_connection_setup(
     results: Vec<Value>,
     ConnectionSetupComponents {
         resp3_auth_cmd_idx,
         resp2_auth_cmd_idx,
         select_cmd_idx,
+        #[cfg(feature = "cache-aio")]
+        cache_cmd_idx,
     }: ConnectionSetupComponents,
 ) -> RedisResult<AuthResult> {
     // can't have both values set
@@ -1128,6 +1322,14 @@ pub(crate) fn check_connection_setup(
         check_db_select(value)?;
     }
 
+    #[cfg(feature = "cache-aio")]
+    if let Some(index) = cache_cmd_idx {
+        let Some(value) = results.get(index) else {
+            return Err((ErrorKind::ClientError, "Missing Caching response").into());
+        };
+        check_caching(value)?;
+    }
+
     Ok(AuthResult::Succeeded)
 }
 
@@ -1135,7 +1337,7 @@ fn execute_connection_pipeline(
     rv: &mut Connection,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
 ) -> RedisResult<AuthResult> {
-    if pipeline.len() == 0 {
+    if pipeline.is_empty() {
         return Ok(AuthResult::Succeeded);
     }
     let results = rv.req_packed_commands(&pipeline.get_packed_pipeline(), 0, pipeline.len())?;
@@ -1146,6 +1348,7 @@ fn execute_connection_pipeline(
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
+    #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
@@ -1157,10 +1360,25 @@ fn setup_connection(
         messages_to_skip: 0,
     };
 
-    if execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, true))?
-        == AuthResult::ShouldRetryWithoutUsername
+    if execute_connection_pipeline(
+        &mut rv,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        ),
+    )? == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(&mut rv, connection_setup_pipeline(connection_info, false))?;
+        execute_connection_pipeline(
+            &mut rv,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache-aio")]
+                cache_config,
+            ),
+        )?;
     }
 
     Ok(rv)
@@ -1667,39 +1885,61 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    fn cache_messages_until_received_response(&mut self, cmd: &mut Cmd) -> RedisResult<()> {
-        if self.con.protocol != ProtocolVersion::RESP2 {
-            cmd.set_no_response(true);
-        }
-        let mut response = cmd.query(self.con)?;
+    fn cache_messages_until_received_response(
+        &mut self,
+        cmd: &mut Cmd,
+        is_sub_unsub: bool,
+    ) -> RedisResult<Value> {
+        let ignore_response = self.con.protocol != ProtocolVersion::RESP2 && is_sub_unsub;
+        cmd.set_no_response(ignore_response);
+
+        self.con.send_packed_command(&cmd.get_packed_command())?;
+
         loop {
-            if let Some(msg) = Msg::from_owned_value(response) {
+            let response = self.con.recv_response()?;
+            if let Some(msg) = Msg::from_value(&response) {
                 self.waiting_messages.push_back(msg);
             } else {
-                return Ok(());
+                return Ok(response);
             }
-            response = self.con.recv_response()?;
         }
     }
 
-    /// Subscribes to a new channel.
+    /// Subscribes to a new channel(s).    
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel))
+        self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
+        Ok(())
     }
 
-    /// Subscribes to a new channel with a pattern.
+    /// Subscribes to new channel(s) with pattern(s).
     pub fn psubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel))
+        self.cache_messages_until_received_response(cmd("PSUBSCRIBE").arg(pchannel), true)?;
+        Ok(())
     }
 
-    /// Unsubscribes from a channel.
+    /// Unsubscribes from a channel(s).
     pub fn unsubscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel))
+        self.cache_messages_until_received_response(cmd("UNSUBSCRIBE").arg(channel), true)?;
+        Ok(())
     }
 
-    /// Unsubscribes from a channel with a pattern.
+    /// Unsubscribes from channel pattern(s).
     pub fn punsubscribe<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
-        self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel))
+        self.cache_messages_until_received_response(cmd("PUNSUBSCRIBE").arg(pchannel), true)?;
+        Ok(())
+    }
+
+    /// Sends a ping with a message to the server
+    pub fn ping_message<T: FromRedisValue>(&mut self, message: impl ToRedisArgs) -> RedisResult<T> {
+        from_owned_redis_value(
+            self.cache_messages_until_received_response(cmd("PING").arg(message), false)?,
+        )
+    }
+    /// Sends a ping to the server
+    pub fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
+        from_owned_redis_value(
+            self.cache_messages_until_received_response(&mut cmd("PING"), false)?,
+        )
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -1982,7 +2222,14 @@ mod tests {
         let cases = vec![
             ("redis://127.0.0.1", true),
             ("redis://[::1]", true),
+            ("rediss://127.0.0.1", true),
+            ("rediss://[::1]", true),
+            ("valkey://127.0.0.1", true),
+            ("valkey://[::1]", true),
+            ("valkeys://127.0.0.1", true),
+            ("valkeys://[::1]", true),
             ("redis+unix:///run/redis.sock", true),
+            ("valkey+unix:///run/valkey.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
             ("tcp://127.0.0.1", false),

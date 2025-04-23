@@ -24,6 +24,20 @@
 //! part of the API allows you to express any request on the redis level.
 //! You can fluently switch between both API levels at any point.
 //!
+//! # TLS / SSL
+//!
+//! The user can enable TLS support using either RusTLS or native support (usually OpenSSL),
+//! using the `tls-rustls` or `tls-native-tls` features respectively. In order to enable TLS
+//! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp`,
+//! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
+//! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
+//!
+//! # TCP settings
+//!
+//! The user can set parameters of the underlying TCP connection by using the `tcp_nodelay` and `keep-alive` features.
+//! Alternatively, users of async connections can set [crate::io::tcp::TcpSettings] on the connection configuration objects,
+//! and set the TCP parameters in a more specific manner there.
+//!
 //! ## Connection Handling
 //!
 //! For connecting to redis you can use a client object which then can produce
@@ -77,7 +91,9 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
-//! * `aio`: enables async IO support (optional)
+//! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
+//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant. (optional)
+//! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
@@ -85,13 +101,15 @@
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `cluster-async`: enables async redis cluster support (optional)
-//! * `tokio-comp`: enables support for tokio (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
 //! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
 //! * `tcp_nodelay`: enables the no-delay flag on  communication sockets (optional)
 //! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
+//! * `json`: enables high-level interfaces for communication with the JSON module (optional)
+//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection (optional)
+//! * `disable-client-setinfo`: disables the `CLIENT SETINFO` handshake during connection initialization
 //!
 //! ## Connection Parameters
 //!
@@ -315,8 +333,7 @@
 //! let client = redis::Client::open("redis://127.0.0.1/")?;
 //! let mut con = client.get_connection()?;
 //! let mut pubsub = con.as_pubsub();
-//! pubsub.subscribe("channel_1")?;
-//! pubsub.subscribe("channel_2")?;
+//! pubsub.subscribe(&["channel_1", "channel_2"])?;
 //!
 //! loop {
 //!     let msg = pubsub.get_message()?;
@@ -359,8 +376,7 @@
 //! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 //! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
 //! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
-//! con.subscribe("channel_1").await?;
-//! con.subscribe("channel_2").await?;
+//! con.subscribe(&["channel_1", "channel_2"]).await?;
 //!
 //! loop {
 //!   println!("Received {:?}", rx.recv().await.unwrap());
@@ -422,7 +438,7 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][], or [`async-std`][].
+asynchronous interface based on [`futures`][] and [`tokio`][], [`smol`](https://docs.rs/smol/latest/smol/), or [`async-std`][].
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
@@ -448,6 +464,14 @@ let result = redis::cmd("MGET")
 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 # Ok(()) }
 ```
+
+## Runtime support
+The crate supports multiple runtimes, including `tokio`, `async-std`, and `smol`. For Tokio, the crate will
+spawn tasks on the current thread runtime. For async-std & smol, the crate will spawn tasks on the the global runtime.
+It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes, 
+the user should call [`crate::aio::prefer_tokio`], [`crate::aio::prefer_async_std`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
+These functions set global state which automatically chooses the correct runtime for the async connection.
+
 "##
 )]
 //!
@@ -515,9 +539,12 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
+#[cfg(feature = "cache-aio")]
+pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
-    Commands, ControlFlow, Direction, LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    Commands, ControlFlow, Direction, FlushAllOptions, FlushDbOptions, HashFieldExpirationOptions,
+    LposOptions, PubSubCommands, ScanOptions, SetOptions,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -539,6 +566,7 @@ pub use crate::types::{
 
     // error kinds
     ErrorKind,
+    RetryMethod,
 
     // conversion traits
     FromRedisValue,
@@ -549,6 +577,7 @@ pub use crate::types::{
     Expiry,
     SetExpiry,
     ExistenceCheck,
+    FieldExistenceCheck,
     ExpireOption,
     Role,
     ReplicaInfo,
@@ -596,7 +625,7 @@ pub use crate::commands::JsonAsyncCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;
 
-#[cfg(feature = "connection-manager")]
+#[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
 mod subscription_tracker;
 
 #[cfg(feature = "cluster")]
@@ -623,6 +652,10 @@ pub mod cluster_routing;
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;
 
+#[cfg(all(feature = "bb8", feature = "aio"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "bb8", feature = "aio"))))]
+mod bb8;
+
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 pub mod streams;
@@ -642,10 +675,16 @@ mod tls;
 #[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
+#[cfg(feature = "cache-aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+pub mod caching;
+
 mod client;
 mod cmd;
 mod commands;
 mod connection;
+/// Module for defining I/O behavior.
+pub mod io;
 mod parser;
 mod script;
 mod types;

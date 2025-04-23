@@ -1,8 +1,8 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::IndexedRandom;
+use rand::rng;
 
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
@@ -312,6 +312,59 @@ where
     })
 }
 
+/// Takes the given `routable` with possibly multiple keys and creates a single-slot routing info.
+/// This is used for commands like PFCOUNT or PFMERGE, where it is required that the command's keys
+/// are hashed to the same slots and there is no way how the command might be split on the client.
+/// Additionaly this function accepts optional count of provided keys. This is usefull for EVAL and
+/// EVALSHA commands which allow user to pass arbitrary number of keys and values as arguments.
+///
+/// If all keys are not routed to the same slot, `None` variant is returned and invoking of such
+/// command fails with UNROUTABLE_ERROR.
+fn multiple_keys_same_slot<R>(
+    routable: &R,
+    cmd: &[u8],
+    first_key_index: usize,
+    key_limit: Option<usize>,
+    allow_empty_keys: bool,
+) -> Option<RoutingInfo>
+where
+    R: Routable + ?Sized,
+{
+    let is_readonly = is_readonly_cmd(cmd);
+    let mut slots = HashSet::new();
+    let mut key_index = 0;
+    while let Some(key) = routable.arg_idx(first_key_index + key_index) {
+        if let Some(limit) = key_limit {
+            if key_index >= limit {
+                break;
+            }
+        }
+
+        slots.insert(get_slot(key));
+        key_index += 1;
+    }
+
+    if slots.is_empty() && allow_empty_keys {
+        return Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+    }
+
+    if slots.len() != 1 {
+        return None;
+    }
+
+    let slot = slots.into_iter().next().unwrap();
+    Some(RoutingInfo::SingleNode(
+        SingleNodeRoutingInfo::SpecificNode(Route::new(
+            slot,
+            if is_readonly {
+                SlotAddr::ReplicaOptional
+            } else {
+                SlotAddr::Master
+            },
+        )),
+    ))
+}
+
 impl ResponsePolicy {
     /// Parse the command for the matching response policy.
     pub fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
@@ -411,7 +464,6 @@ impl RoutingInfo {
             | b"TIME"
             | b"PUBSUB CHANNELS"
             | b"PUBSUB NUMPAT"
-            | b"PUBSUB NUMSUB"
             | b"PUBSUB SHARDCHANNELS"
             | b"BGSAVE"
             | b"WAITAOF"
@@ -474,18 +526,15 @@ impl RoutingInfo {
 
             b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
             b"MSET" => multi_shard(r, cmd, 1, true),
+            b"PFCOUNT" | b"PFMERGE" => multiple_keys_same_slot(r, cmd, 1, None, false),
             // TODO - special handling - b"SCAN"
             b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
             b"EVALSHA" | b"EVAL" => {
                 let key_count = r
                     .arg_idx(2)
                     .and_then(|x| std::str::from_utf8(x).ok())
-                    .and_then(|x| x.parse::<u64>().ok())?;
-                if key_count == 0 {
-                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                } else {
-                    r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
-                }
+                    .and_then(|x| x.parse::<usize>().ok())?;
+                multiple_keys_same_slot(r, cmd, 3, Some(key_count), true)
             }
             b"XGROUP CREATE"
             | b"XGROUP CREATECONSUMER"
@@ -494,7 +543,9 @@ impl RoutingInfo {
             | b"XGROUP SETID"
             | b"XINFO CONSUMERS"
             | b"XINFO GROUPS"
-            | b"XINFO STREAM" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            | b"XINFO STREAM"
+            | b"PUBSUB SHARDNUMSUB"
+            | b"PUBSUB NUMSUB" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
@@ -619,7 +670,7 @@ pub enum SlotAddr {
 }
 
 /// This is just a simplified version of [`Slot`],
-/// which stores only the master and [optional] replica
+/// which stores only the master and optional replica
 /// to avoid the need to choose a replica each time
 /// a command is executed
 #[derive(Debug)]
@@ -634,9 +685,7 @@ impl SlotAddrs {
     }
 
     fn get_replica_node(&self) -> &str {
-        self.replicas
-            .choose(&mut thread_rng())
-            .unwrap_or(&self.primary)
+        self.replicas.choose(&mut rng()).unwrap_or(&self.primary)
     }
 
     pub(crate) fn slot_addr(&self, slot_addr: &SlotAddr, read_from_replica: bool) -> &str {
@@ -803,24 +852,12 @@ impl Route {
 }
 
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
-    let open = key.iter().position(|v| *v == b'{');
-    let open = match open {
-        Some(open) => open,
-        None => return None,
-    };
+    let open = key.iter().position(|v| *v == b'{')?;
 
-    let close = key[open..].iter().position(|v| *v == b'}');
-    let close = match close {
-        Some(close) => close,
-        None => return None,
-    };
+    let close = key[open..].iter().position(|v| *v == b'}')?;
 
     let rv = &key[open + 1..open + close];
-    if rv.is_empty() {
-        None
-    } else {
-        Some(rv)
-    }
+    (!rv.is_empty()).then_some(rv)
 }
 
 #[cfg(test)]
@@ -833,7 +870,7 @@ mod tests {
         RoutingInfo, SingleNodeRoutingInfo, Slot, SlotAddr, SlotMap,
     };
     use crate::{
-        cluster_routing::{AggregateOp, ResponsePolicy},
+        cluster_routing::{get_slot, AggregateOp, ResponsePolicy},
         cmd,
         parser::parse_redis_value,
         Value,
@@ -890,16 +927,6 @@ mod tests {
         // Routing key is 3rd arg ("FOOBAR")
         test_cmd = cmd("XINFO");
         test_cmd.arg("GROUPS").arg("FOOBAR");
-        test_cmds.push(test_cmd);
-
-        // Routing key is 3rd or 4th arg (3rd = "0" == RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-        test_cmd = cmd("EVAL");
-        test_cmd.arg("FOO").arg("0").arg("BAR");
-        test_cmds.push(test_cmd);
-
-        // Routing key is 3rd or 4th arg (3rd != "0" == RoutingInfo::Slot)
-        test_cmd = cmd("EVAL");
-        test_cmd.arg("FOO").arg("4").arg("BAR");
         test_cmds.push(test_cmd);
 
         // Routing key position is variable, 3rd arg
@@ -980,26 +1007,7 @@ mod tests {
             );
         }
 
-        for cmd in [
-            cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
-            cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
-        ] {
-            assert_eq!(
-                RoutingInfo::for_routable(cmd),
-                Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-            );
-        }
-
         for (cmd, expected) in [
-            (
-                cmd("EVAL")
-                    .arg(r#"redis.call("GET, KEYS[1]");"#)
-                    .arg(1)
-                    .arg("foo"),
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"foo"), SlotAddr::Master)),
-                )),
-            ),
             (
                 cmd("XGROUP")
                     .arg("CREATE")
@@ -1118,6 +1126,136 @@ mod tests {
             }),
             "{routing:?}"
         );
+    }
+
+    #[test]
+    fn test_multiple_keys_same_slot() {
+        // single key
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("hll-1");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
+            ))
+        ));
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("hll-1");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
+            ))
+        ));
+
+        // multiple keys
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("{hll}-1").arg("{hll}-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
+            ))
+        ));
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("{hll}-1").arg("{hll}-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
+            ))
+        ));
+
+        // same-slot violation
+        let mut cmd = crate::cmd("PFCOUNT");
+        cmd.arg("hll-1").arg("hll-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        let mut cmd = crate::cmd("PFMERGE");
+        cmd.arg("hll-1").arg("hll-2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        // missing keys
+        let cmd = crate::cmd("PFCOUNT");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+
+        let cmd = crate::cmd("PFMERGE");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert!(routing.is_none());
+    }
+
+    #[test]
+    fn test_eval_and_evalsha() {
+        // no key
+        let mut cmd = crate::cmd("EVAL");
+        cmd.arg(r#""return 42""#).arg("0");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert_eq!(
+            routing,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+
+        // just keys
+        let mut cmd = crate::cmd("EVAL");
+        cmd.arg(r#""return {KEYS[1], KEYS[2]}""#)
+            .arg("2")
+            .arg("{k}1")
+            .arg("{k}2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert_eq!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(get_slot(b"{k}1"), SlotAddr::Master))
+            ))
+        );
+
+        // just values
+        let mut cmd = crate::cmd("EVALSHA");
+        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
+            .arg("0")
+            .arg("v1")
+            .arg("v2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert_eq!(
+            routing,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+
+        // keys and values
+        let mut cmd = crate::cmd("EVALSHA");
+        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
+            .arg("2")
+            .arg("{k}1")
+            .arg("{k}2")
+            .arg("v1")
+            .arg("v2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert_eq!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(get_slot(b"{k}1"), SlotAddr::Master))
+            ))
+        );
+
+        // same-slot violation
+        let mut cmd = crate::cmd("EVALSHA");
+        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
+            .arg("2")
+            .arg("k1")
+            .arg("k2")
+            .arg("v1")
+            .arg("v2");
+        let routing = RoutingInfo::for_routable(&cmd);
+        assert_eq!(routing, None);
     }
 
     #[test]

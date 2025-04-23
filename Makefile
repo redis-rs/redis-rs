@@ -1,5 +1,5 @@
 build:
-	@cargo build
+	@RUSTFLAGS="-D warnings" cargo build --locked -p redis
 
 test:
 	@echo "===================================================================="
@@ -30,7 +30,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with native-TLS support"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,async-std-native-tls-comp,connection-manager,cluster-async -E 'not test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,async-std-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async -E 'not test(test_module)'
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"
@@ -70,7 +70,7 @@ bench:
 	cargo bench --all-features
 
 docs:
-	@RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps
+	@RUSTDOCFLAGS="-D warnings --cfg docsrs" cargo +nightly doc --all-features --no-deps
 
 upload-docs: docs
 	@./upload-docs.sh

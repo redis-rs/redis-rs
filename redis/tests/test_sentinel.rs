@@ -3,12 +3,12 @@ mod support;
 
 use std::collections::HashMap;
 
+use crate::support::*;
+use redis::sentinel::SentinelClientBuilder;
 use redis::{
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
     Client, Connection, ConnectionAddr, ConnectionInfo, Role,
 };
-
-use crate::support::*;
 
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
     let info_map: std::collections::HashMap<&str, &str> = value
@@ -104,16 +104,66 @@ fn assert_connect_to_known_replicas(
 }
 
 #[test]
-fn test_sentinel_connect_to_random_replica() {
+fn test_sentinel_role_no_permission() {
+    let number_of_replicas = 3;
     let master_name = "master1";
-    let mut context = TestSentinelContext::new(2, 3, 3);
-    let node_conn_info: SentinelNodeConnectionInfo = context.sentinel_node_connection_info();
-    let sentinel = context.sentinel_mut();
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
 
     let master_client = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap();
     let mut master_con = master_client.get_connection().unwrap();
+
+    let user: String = redis::cmd("ACL")
+        .arg("whoami")
+        .query(&mut master_con)
+        .unwrap();
+    //Remove ROLE permission for the given user on master
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("-role")
+        .query(&mut master_con)
+        .unwrap();
+
+    //Remove ROLE permission for the given user on replicas
+    for _ in 0..number_of_replicas {
+        let replica_client = sentinel
+            .replica_rotate_for(master_name, Some(&node_conn_info))
+            .unwrap();
+        let mut replica_con = replica_client.get_connection().unwrap();
+        let _: () = redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg(&user)
+            .arg("-role")
+            .query(&mut replica_con)
+            .unwrap();
+    }
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    assert_is_connection_to_master(&mut master_con);
+}
+
+#[test]
+fn test_sentinel_connect_to_random_replica() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    assert_is_connection_to_master(&mut master_con);
 
     let mut replica_con = sentinel
         .replica_for(master_name, Some(&node_conn_info))
@@ -121,7 +171,6 @@ fn test_sentinel_connect_to_random_replica() {
         .get_connection()
         .unwrap();
 
-    assert_is_connection_to_master(&mut master_con);
     assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
 }
 
@@ -246,6 +295,81 @@ fn test_sentinel_client() {
     }
 }
 
+#[test]
+fn test_sentinel_client_builder() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 3, 3);
+    for sentinel in context.sentinels_connection_info() {
+        let mut conn = Client::open(sentinel.clone())
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
+        assert!(matches!(role, Role::Sentinel { .. }));
+    }
+
+    let mut master_client_builder = SentinelClientBuilder::new(
+        context
+            .sentinels_connection_info
+            .iter()
+            .map(|sentinel| sentinel.addr.clone()),
+        String::from(master_name),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap();
+
+    let mut replica_client_builder = SentinelClientBuilder::new(
+        context
+            .sentinels_connection_info
+            .iter()
+            .map(|sentinel| sentinel.addr.clone()),
+        String::from(master_name),
+        redis::sentinel::SentinelServerType::Replica,
+    )
+    .unwrap();
+
+    if let Some(username) = &context.sentinels_connection_info[0].redis.username.clone() {
+        master_client_builder =
+            master_client_builder.set_client_to_sentinel_username(username.clone());
+    }
+
+    if let Some(password) = &context.sentinels_connection_info[0].redis.password {
+        master_client_builder =
+            master_client_builder.set_client_to_sentinel_password(password.clone());
+    }
+
+    master_client_builder = master_client_builder
+        .set_client_to_sentinel_protocol(context.sentinels_connection_info[0].redis.protocol);
+
+    if let Some(tls_mode) = context.tls_mode() {
+        master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);
+        replica_client_builder = replica_client_builder.set_client_to_redis_tls_mode(tls_mode);
+    }
+
+    let mut master_client = master_client_builder.build().unwrap();
+    let mut replica_client = replica_client_builder.build().unwrap();
+
+    let mut master_con = master_client.get_connection().unwrap();
+    let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
+    assert!(matches!(role, Role::Primary { .. }));
+
+    assert_is_connection_to_master(&mut master_con);
+
+    let node_conn_info = context.sentinel_node_connection_info();
+    let sentinel = context.sentinel_mut();
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+
+    for _ in 0..20 {
+        let mut replica_con = replica_client.get_connection().unwrap();
+        let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
+        assert!(matches!(role, Role::Replica { .. }));
+
+        assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
+    }
+}
+
 #[cfg(feature = "aio")]
 pub mod async_tests {
     use redis::{
@@ -341,8 +465,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_random_replica_async(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -377,8 +502,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_multiple_replicas_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
         let master_name = "master1";
@@ -422,8 +548,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_server_down_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
         let master_name = "master1";
@@ -473,8 +600,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -525,8 +653,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_connection_timeout(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -584,8 +713,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_response_timeout(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -643,8 +773,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_timeouts(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);

@@ -6,6 +6,8 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
+#[cfg(feature = "cache-aio")]
+use std::time::Duration;
 use std::{fmt, io, marker::PhantomData};
 
 use crate::pipeline::Pipeline;
@@ -21,15 +23,67 @@ pub enum Arg<D> {
     Cursor,
 }
 
+/// CommandCacheConfig is used to define caching behaviour of individual commands.
+/// # Example
+/// ```rust
+/// use std::time::Duration;
+/// use redis::{CommandCacheConfig, Cmd};
+///
+/// let ttl = Duration::from_secs(120); // 2 minutes TTL
+/// let config = CommandCacheConfig::new()
+///     .set_enable_cache(true)
+///     .set_client_side_ttl(ttl);
+/// let command = Cmd::new().arg("GET").arg("key").set_cache_config(config);
+/// ```
+#[cfg(feature = "cache-aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+#[derive(Clone)]
+pub struct CommandCacheConfig {
+    pub(crate) enable_cache: bool,
+    pub(crate) client_side_ttl: Option<Duration>,
+}
+
+#[cfg(feature = "cache-aio")]
+impl CommandCacheConfig {
+    /// Creates new CommandCacheConfig with enable_cache as true and without client_side_ttl.
+    pub fn new() -> Self {
+        Self {
+            enable_cache: true,
+            client_side_ttl: None,
+        }
+    }
+
+    /// Sets whether the cache should be enabled or not.
+    /// Disabling cache for specific command when using [crate::caching::CacheMode::All] will not work.
+    pub fn set_enable_cache(mut self, enable_cache: bool) -> Self {
+        self.enable_cache = enable_cache;
+        self
+    }
+
+    /// Sets custom client side time to live (TTL).
+    pub fn set_client_side_ttl(mut self, client_side_ttl: Duration) -> Self {
+        self.client_side_ttl = Some(client_side_ttl);
+        self
+    }
+}
+#[cfg(feature = "cache-aio")]
+impl Default for CommandCacheConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Represents redis commands.
 #[derive(Clone)]
 pub struct Cmd {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    #[cfg(feature = "cache-aio")]
+    cache: Option<CommandCacheConfig>,
 }
 
 /// Represents a redis iterator.
@@ -286,6 +340,27 @@ impl RedisWrite for Cmd {
         write!(self.data, "{arg}").unwrap();
         self.args.push(Arg::Simple(self.data.len()));
     }
+
+    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
+        struct CmdBufferedArgGuard<'a>(&'a mut Cmd);
+        impl Drop for CmdBufferedArgGuard<'_> {
+            fn drop(&mut self) {
+                self.0.args.push(Arg::Simple(self.0.data.len()));
+            }
+        }
+        impl std::io::Write for CmdBufferedArgGuard<'_> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.data.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        CmdBufferedArgGuard(self)
+    }
 }
 
 impl Default for Cmd {
@@ -329,6 +404,8 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -339,6 +416,8 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
         }
     }
 
@@ -574,7 +653,7 @@ impl Cmd {
     }
 
     // Get a reference to the argument at `idx`
-    #[cfg(feature = "cluster")]
+    #[cfg(any(feature = "cluster", feature = "cache-aio"))]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         if idx >= self.args.len() {
             return None;
@@ -609,6 +688,20 @@ impl Cmd {
     #[inline]
     pub fn is_no_response(&self) -> bool {
         self.no_response
+    }
+
+    /// Changes caching behaviour for this specific command.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Cmd {
+        self.cache = Some(command_cache_config);
+        self
+    }
+
+    #[cfg(feature = "cache-aio")]
+    #[inline]
+    pub(crate) fn get_cache_config(&self) -> &Option<CommandCacheConfig> {
+        &self.cache
     }
 }
 
@@ -655,11 +748,78 @@ pub fn pipe() -> Pipeline {
 }
 
 #[cfg(test)]
-#[cfg(feature = "cluster")]
 mod tests {
     use super::Cmd;
 
+    use crate::RedisWrite;
+    use std::io::Write;
+
     #[test]
+    fn test_cmd_writer_for_next_arg() {
+        // Test that a write split across multiple calls to `write` produces the
+        // same result as a single call to `write_arg`
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"foo").unwrap();
+            c1_writer.write_all(b"bar").unwrap();
+            c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    // Test that multiple writers to the same command produce the same
+    // result as the same multiple calls to `write_arg`
+    #[test]
+    fn test_cmd_writer_for_next_arg_multiple() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"foo").unwrap();
+            c1_writer.write_all(b"bar").unwrap();
+            c1_writer.flush().unwrap();
+        }
+        {
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.write_all(b"baz").unwrap();
+            c1_writer.write_all(b"qux").unwrap();
+            c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        c2.write_arg(b"bazqux");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    // Test that an "empty" write produces the equivalent to `write_arg(b"")`
+    #[test]
+    fn test_cmd_writer_for_next_arg_empty() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.writer_for_next_arg();
+            c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[test]
+    #[cfg(feature = "cluster")]
     fn test_cmd_arg_idx() {
         let mut c = Cmd::new();
         assert_eq!(c.arg_idx(0), None);

@@ -35,10 +35,9 @@ pub struct MockConnection {
 
 #[cfg(feature = "cluster-async")]
 impl cluster_async::Connect for MockConnection {
-    fn connect<'a, T>(
+    fn connect_with_config<'a, T>(
         info: T,
-        _response_timeout: Duration,
-        _connection_timeout: Duration,
+        _config: redis::AsyncConnectionConfig,
     ) -> RedisFuture<'a, Self>
     where
         T: IntoConnectionInfo + Send + 'a,
@@ -221,11 +220,19 @@ impl aio::ConnectionLike for MockConnection {
 
     fn req_packed_commands<'a>(
         &'a mut self,
-        _pipeline: &'a redis::Pipeline,
+        pipeline: &'a redis::Pipeline,
         _offset: usize,
         _count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        Box::pin(future::ok(vec![]))
+        Box::pin(future::ready(
+            pipeline
+                .cmd_iter()
+                .map(|cmd| {
+                    (self.handler)(&cmd.get_packed_command(), self.port)
+                        .expect_err("Handler did not specify a response")
+                })
+                .collect(),
+        ))
     }
 
     fn get_db(&self) -> i64 {

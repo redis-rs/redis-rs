@@ -6,8 +6,6 @@ use crate::{
     Cmd, ErrorKind, RedisResult,
 };
 
-use super::ConnectionFuture;
-
 #[derive(Clone)]
 pub(super) enum InternalRoutingInfo<C> {
     SingleNode(InternalSingleNodeRouting<C>),
@@ -40,7 +38,7 @@ pub(super) enum InternalSingleNodeRouting<C> {
     ByAddress(String),
     Connection {
         identifier: String,
-        conn: ConnectionFuture<C>,
+        conn: C,
     },
     Redirect {
         redirect: Redirect,
@@ -116,7 +114,7 @@ mod pipeline_routing_tests {
         let mut pipeline = crate::Pipeline::new();
 
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .flushall() // route to all masters
             .get("foo") // route to slot 12182
             .add_command(cmd("EVAL")); // route randomly
 
@@ -131,7 +129,7 @@ mod pipeline_routing_tests {
         let mut pipeline = crate::Pipeline::new();
 
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .flushall() // route to all masters
             .add_command(cmd("EVAL")); // route randomly
 
         assert_eq!(route_for_pipeline(&pipeline), Ok(None));
@@ -143,7 +141,7 @@ mod pipeline_routing_tests {
 
         pipeline
             .get("foo") // route to replica of slot 12182
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .flushall() // route to all masters
             .add_command(cmd("EVAL"))// route randomly
             .cmd("CONFIG").arg("GET").arg("timeout") // unkeyed command
             .set("foo", "bar"); // route to primary of slot 12182
@@ -159,7 +157,7 @@ mod pipeline_routing_tests {
         let mut pipeline = crate::Pipeline::new();
 
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .flushall() // route to all masters
             .set("baz", "bar") // route to slot 4813
             .get("foo"); // route to slot 12182
 

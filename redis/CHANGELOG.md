@@ -1,3 +1,145 @@
+### 0.30.0 (2025-04-22)
+
+#### Changes & Bug fixes
+
+* Add epoch for CacheManager ([#1583](https://github.com/redis-rs/redis-rs/pull/1583) by @altanozlu)
+* **Breaking change** Add support for the Smol runtime. ([#1606](https://github.com/redis-rs/redis-rs/pull/1606) by @nihohit)
+* Add support for hash field expiration commands ([#1611](https://github.com/redis-rs/redis-rs/pull/1611) by @StefanPalashev)
+* **Breaking change** Remove deprecated aio::Connection. ([#1613](https://github.com/redis-rs/redis-rs/pull/1613) by @nihohit)
+
+#### Documentation & CI improvements
+
+* Reduce number of flag-frenzy checks and format file. ([#1608](https://github.com/redis-rs/redis-rs/pull/1608) by @nihohit)
+* Fix `make docs` ([#1607](https://github.com/redis-rs/redis-rs/pull/1607) by @somechris)
+* Fail CI on warnings in docs. ([#1609](https://github.com/redis-rs/redis-rs/pull/1609) by @nihohit)
+
+### 0.29.5 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Fix build on Windows. ([#1601](https://github.com/redis-rs/redis-rs/pull/1601) by @nihohit)
+
+### 0.29.4 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Add async dns resolver for cluster config and fix doc ([#1595](https://github.com/redis-rs/redis-rs/pull/1595) by @wiserfz)
+* Fix error kind declaration on non-unix machines. ([#1598](https://github.com/redis-rs/redis-rs/pull/1598) by @nihohit)
+
+
+### 0.29.3 (2025-04-04)
+
+#### Changes & Bug fixes
+
+* re-export socket2. ([#1573](https://github.com/redis-rs/redis-rs/pull/1573) by @nihohit)
+* Add commands to flush database(s) ([#1576](https://github.com/redis-rs/redis-rs/pull/1576) by @somechris)
+* Fix valkey(s) url schemes not able to be converted to connection infos; Add valkey+unix url scheme ([#1574](https://github.com/redis-rs/redis-rs/pull/1574) by @MarkusTieger)
+* A spec compliant version, with less changed code. ([#1572](https://github.com/redis-rs/redis-rs/pull/1572) by @65001)
+* Support bb8 for cluster client ([#1577](https://github.com/redis-rs/redis-rs/pull/1577) by @wiserfz)
+* Support custom DNS resolver for async client ([#1581](https://github.com/redis-rs/redis-rs/pull/1581) by @wiserfz)
+* Update danger_accept_invalid_hostnames for rustls 0.23.24 ([#1592](https://github.com/redis-rs/redis-rs/pull/1592) by @jorendorff)
+
+### 0.29.2 (2025-03-21)
+
+#### Changes & Bug fixes
+
+* Add Valkey URL scheme ([#1558](https://github.com/redis-rs/redis-rs/pull/1558) by @displexic)
+* Fix unreachable error when parsing a nested tuple.  ([#1562](https://github.com/redis-rs/redis-rs/pull/1562) by @nihohit)
+* Remove PFCOUNT and PFMERGE from the list of illegal cluster pipeline commands (#1565) ([#1566](https://github.com/redis-rs/redis-rs/pull/1566) by @stepanmracek)
+* Remove EVALSHA from the list of illegal cluster pipeline commands ([#1568](https://github.com/redis-rs/redis-rs/pull/1568) by @stepanmracek)
+* feat: Add bb8 support for async client ([#1564](https://github.com/redis-rs/redis-rs/pull/1564) by @Xuanwo)
+* Add cache support to ConnectionManager. ([#1567](https://github.com/redis-rs/redis-rs/pull/1567) by @nihohit)
+* perf: Run reconnection attempts concurrently ([#1557](https://github.com/redis-rs/redis-rs/pull/1557) by @Marwes)
+
+### 0.29.1 (2025-03-01)
+
+#### Changes & Bug fixes
+
+* Update rustls-native-certs. ([#1498](https://github.com/redis-rs/redis-rs/pull/1498))
+* Async cluster connection: Move response timeout out.  ([#1532](https://github.com/redis-rs/redis-rs/pull/1532))
+* Expose `Pipeline.len()` function as public ([#1539](https://github.com/redis-rs/redis-rs/pull/1539) by @Harry-Lees)
+* Implement `danger_accept_invalid_hostnames` option. ([#1529](https://github.com/redis-rs/redis-rs/pull/1529) by @jorendorff)
+* Timeout on queuing requests. ([#1552](https://github.com/redis-rs/redis-rs/pull/1552))
+
+#### Documentation improvements
+
+* docs: Fix double quotes ([#1537](https://github.com/redis-rs/redis-rs/pull/1537) by @somechris)
+* docs: added CLIENT SETINFO optional feature ([#1536](https://github.com/redis-rs/redis-rs/pull/1536) by @bourdeau)
+
+#### CI improvements
+
+* Run most cluster tests in secure mode when rustls is enabled ([#1534](https://github.com/redis-rs/redis-rs/pull/1534) by @jorendorff)
+
+### 0.29.0 (2025-02-16)
+
+#### Changes & Bug fixes
+
+* Tweaks to rustls usage ([#1499](https://github.com/redis-rs/redis-rs/pull/1499) by @djc)
+* Add client side caching support for MultiplexedConnection ([#1296](https://github.com/redis-rs/redis-rs/pull/1296) by @altanozlu)
+* Add buffered write methods to RedisWrite ([#905](https://github.com/redis-rs/redis-rs/pull/905) by @swwu)
+* Include the reason for one connection failure if cluster connect fails ([#1497](https://github.com/redis-rs/redis-rs/pull/1497) by @Marwes)
+* Upgrade to rand 0.9 ([#1525](https://github.com/redis-rs/redis-rs/pull/1525) by @gkorland)
+* Allow configuring Sentinel with custom TLS certificates ([#1335](https://github.com/redis-rs/redis-rs/pull/1335) by @ergonjomeier)
+* Fix caching with the JSON module ([#1520](https://github.com/redis-rs/redis-rs/pull/1520) by @kudlatyamroth)
+* Allow users of async connections to set TCP settings. ([#1523](https://github.com/redis-rs/redis-rs/pull/1523))
+
+#### Documentation improvements
+
+* Clarify build instructions in README. ([#1515](https://github.com/redis-rs/redis-rs/pull/1515))
+* Improve pubsub docs. ([#1519](https://github.com/redis-rs/redis-rs/pull/1519))
+* Improve docs around TTLs/ expiry times. ([#1522](https://github.com/redis-rs/redis-rs/pull/1522) by @clbarnes)
+
+### 0.28.2 (2025-01-24)
+
+#### Changes & Bug fixes
+
+* feat(cluster): add `get(_async)?_connection_with_config` ([#1487](https://github\.com/redis-rs/redis-rs/pull/1487) by @Totodore) 
+* Fix connection creation timeout. ([#1490](https://github\.com/redis-rs/redis-rs/pull/1490)) 
+* Fix RetryMethod Import ([#1494](https://github\.com/redis-rs/redis-rs/pull/1494) by @Braedon-Wooding-Displayr) 
+
+### 0.28.1 (2025-01-11)
+
+#### Changes & Bug fixes
+
+* fix changelogs. ([#1473](https://github.com/redis-rs/redis-rs/pull/1473))
+* Remove itertools dependency ([#1476](https://github.com/redis-rs/redis-rs/pull/1476) by @jplatte)
+* Clean up feature dependencies ([#1474](https://github.com/redis-rs/redis-rs/pull/1474) by @jplatte)
+* Fix new version lints ([#1479](https://github.com/redis-rs/redis-rs/pull/1479))
+* Fix routing for `PUBSUB SHARDNUMSUB` ([#1483](https://github.com/redis-rs/redis-rs/pull/1483))
+
+#### CI improvements
+
+### 0.28.0 (2025-01-7)
+* Double test_async_cluster_basic_failover timeout. ([#1478](https://github.com/redis-rs/redis-rs/pull/1478))
+* Upgrade rstest ([#1475](https://github.com/redis-rs/redis-rs/pull/1475) by @jplatte)
+
+#### Changes & Bug fixes
+
+* ConnectionManager: reconnect on disconnect pushes ([#1407](https://github.com/redis-rs/redis-rs/pull/1407))
+* ConnectionManager: Support automatic resubscription ([#1408](https://github.com/redis-rs/redis-rs/pull/1408))
+* Remove async_trait dependency ([#1451](https://github.com/redis-rs/redis-rs/pull/1451))
+* Expose RetryMethod to consumers ([#1454](https://github.com/redis-rs/redis-rs/pull/1454) @Braedon-Wooding-Displayr)
+* Add ping support to commands & pubsubs ([#1341](https://github.com/redis-rs/redis-rs/pull/1341))
+* Expose server creation logic through redis-test ([#1363](https://github.com/redis-rs/redis-rs/pull/1363))
+* Depend only on the required sub-crates of futures ([#1465](https://github.com/redis-rs/redis-rs/pull/1465) @jplatte)
+* **Breaking change**: Mark more `Connection` functions as deprecated ([#1468](https://github.com/redis-rs/redis-rs/pull/1468))
+* Move repeated logic to function ([#1469](https://github.com/redis-rs/redis-rs/pull/1469))
+
+#### Documentation improvements
+
+* Update README to use rustls ([#1397](https://github.com/redis-rs/redis-rs/pull/1397) @khacminh)
+* Update README.md regarding cargo-nextest ([#1445](https://github.com/redis-rs/redis-rs/pull/1445) @altanozlu)
+* Improve features and TLS docs ([#1464](https://github.com/redis-rs/redis-rs/pull/1464))
+* Mention Valkey in Readme ([#1467](https://github.com/redis-rs/redis-rs/pull/1467))
+* Fix automatic resubscription docs ([#1450](https://github.com/redis-rs/redis-rs/pull/1450))
+* Replace `get_multiplexed_tokio_connection` in examples & tests ([#1443](https://github.com/redis-rs/redis-rs/pull/1443))
+
+#### CI improvements
+
+* Run tests concurrently ([#1444](https://github.com/redis-rs/redis-rs/pull/1444))
+* Report slow tests more eagerly ([#1441](https://github.com/redis-rs/redis-rs/pull/1441))
+* Improve testing of optional features ([#1448](https://github.com/redis-rs/redis-rs/pull/1448))
+
 ### 0.27.6 (2024-12-3)
 
 #### Changes & Bug fixes

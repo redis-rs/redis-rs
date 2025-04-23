@@ -4,27 +4,35 @@ use crate::connection::{
     check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
     RedisConnectionInfo,
 };
-use crate::types::{RedisFuture, RedisResult, Value};
-use crate::PushInfo;
+use crate::io::AsyncDNSResolver;
+use crate::types::{closed_connection_error, RedisFuture, RedisResult, Value};
+use crate::{ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use async_trait::async_trait;
-use futures_util::Future;
+use futures_util::{
+    future::{Future, FutureExt},
+    sink::{Sink, SinkExt},
+    stream::{Stream, StreamExt},
+};
+pub use monitor::Monitor;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
 use std::pin::Pin;
+
+mod monitor;
 
 /// Enables the async_std compatibility
 #[cfg(feature = "async-std-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
 pub mod async_std;
 
-#[cfg(feature = "tls-rustls")]
-use crate::tls::TlsConnParams;
-
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
 
+/// Enables the smol compatibility
+#[cfg(feature = "smol-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "smol-comp")))]
+pub mod smol;
 /// Enables the tokio compatibility
 #[cfg(feature = "tokio-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
@@ -34,10 +42,12 @@ mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
 
 /// Represents the ability of connecting via TCP or via Unix socket
-#[async_trait]
 pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
     /// Performs a TCP connection
-    async fn connect_tcp(socket_addr: SocketAddr) -> RedisResult<Self>;
+    async fn connect_tcp(
+        socket_addr: SocketAddr,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self>;
 
     // Performs a TCP TLS connection
     #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -46,6 +56,7 @@ pub(crate) trait RedisRuntime: AsyncStream + Send + Sync + Sized + 'static {
         socket_addr: SocketAddr,
         insecure: bool,
         tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self>;
 
     /// Performs a UNIX connection
@@ -91,35 +102,69 @@ pub trait ConnectionLike {
     fn get_db(&self) -> i64;
 }
 
-async fn execute_connection_pipeline(
-    rv: &mut impl ConnectionLike,
+async fn execute_connection_pipeline<T>(
+    codec: &mut T,
     (pipeline, instructions): (crate::Pipeline, ConnectionSetupComponents),
-) -> RedisResult<AuthResult> {
-    if pipeline.len() == 0 {
+) -> RedisResult<AuthResult>
+where
+    T: Sink<Vec<u8>, Error = RedisError>,
+    T: Stream<Item = RedisResult<Value>>,
+    T: Unpin + Send + 'static,
+{
+    let count = pipeline.len();
+    if count == 0 {
         return Ok(AuthResult::Succeeded);
     }
+    codec.send(pipeline.get_packed_pipeline()).await?;
 
-    let results = rv.req_packed_commands(&pipeline, 0, pipeline.len()).await?;
+    let mut results = Vec::with_capacity(count);
+    for _ in 0..count {
+        let value = codec.next().await.ok_or_else(closed_connection_error)??;
+        results.push(value);
+    }
 
     check_connection_setup(results, instructions)
 }
 
-// Initial setup for every connection.
-async fn setup_connection(
+pub(super) async fn setup_connection<T>(
+    codec: &mut T,
     connection_info: &RedisConnectionInfo,
-    con: &mut impl ConnectionLike,
-) -> RedisResult<()> {
-    if execute_connection_pipeline(con, connection_setup_pipeline(connection_info, true)).await?
+    #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
+) -> RedisResult<()>
+where
+    T: Sink<Vec<u8>, Error = RedisError>,
+    T: Stream<Item = RedisResult<Value>>,
+    T: Unpin + Send + 'static,
+{
+    if execute_connection_pipeline(
+        codec,
+        connection_setup_pipeline(
+            connection_info,
+            true,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        ),
+    )
+    .await?
         == AuthResult::ShouldRetryWithoutUsername
     {
-        execute_connection_pipeline(con, connection_setup_pipeline(connection_info, false)).await?;
+        execute_connection_pipeline(
+            codec,
+            connection_setup_pipeline(
+                connection_info,
+                false,
+                #[cfg(feature = "cache-aio")]
+                cache_config,
+            ),
+        )
+        .await?;
     }
 
     Ok(())
 }
 
 mod connection;
-pub use connection::*;
+pub(crate) use connection::connect_simple;
 mod multiplexed_connection;
 pub use multiplexed_connection::*;
 #[cfg(feature = "connection-manager")]
@@ -128,6 +173,21 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
+#[cfg(all(
+    feature = "async-std-comp",
+    any(feature = "smol-comp", feature = "tokio-comp")
+))]
+pub use runtime::prefer_async_std;
+#[cfg(all(
+    feature = "smol-comp",
+    any(feature = "async-std-comp", feature = "tokio-comp")
+))]
+pub use runtime::prefer_smol;
+#[cfg(all(
+    feature = "tokio-comp",
+    any(feature = "async-std-comp", feature = "smol-comp")
+))]
+pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
 macro_rules! check_resp3 {
@@ -192,15 +252,14 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
     }
 }
 
-// TODO enable once our MSRV is 1.72 or above
-// impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
-//     fn send(&self, info: PushInfo) -> Result<(), SendError> {
-//         match self.send(info) {
-//             Ok(_) => Ok(()),
-//             Err(_) => Err(SendError),
-//         }
-//     }
-// }
+impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
 
 impl<T> AsyncPushSender for std::sync::Arc<T>
 where
@@ -208,5 +267,50 @@ where
 {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         self.as_ref().send(info)
+    }
+}
+
+/// Default DNS resolver which uses the system's DNS resolver.
+#[derive(Clone)]
+pub(crate) struct DefaultAsyncDNSResolver;
+
+impl AsyncDNSResolver for DefaultAsyncDNSResolver {
+    fn resolve<'a, 'b: 'a>(
+        &'a self,
+        host: &'b str,
+        port: u16,
+    ) -> RedisFuture<'a, Box<dyn Iterator<Item = SocketAddr> + Send + 'a>> {
+        Box::pin(get_socket_addrs(host, port).map(|vec| {
+            Ok(Box::new(vec?.into_iter()) as Box<dyn Iterator<Item = SocketAddr> + Send>)
+        }))
+    }
+}
+
+async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<Vec<SocketAddr>> {
+    let socket_addrs: Vec<_> = match Runtime::locate() {
+        #[cfg(feature = "tokio-comp")]
+        Runtime::Tokio => ::tokio::net::lookup_host((host, port))
+            .await
+            .map_err(RedisError::from)
+            .map(|iter| iter.collect()),
+        #[cfg(feature = "async-std-comp")]
+        Runtime::AsyncStd => Ok::<_, RedisError>(
+            ::async_std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
+                .await
+                .map(|iter| iter.collect())?,
+        ),
+        #[cfg(feature = "smol-comp")]
+        Runtime::Smol => ::smol::net::resolve((host, port))
+            .await
+            .map_err(RedisError::from),
+    }?;
+
+    if socket_addrs.is_empty() {
+        Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "No address found for host",
+        )))
+    } else {
+        Ok(socket_addrs)
     }
 }

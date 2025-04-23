@@ -4,7 +4,8 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level Rust library for Redis. It provides convenient access
+Redis-rs is a high level Rust library for Redis, Valkey and any other RESP 
+(Redis Serialization Protocol) compliant DB. It provides convenient access
 to all Redis functionality through a very flexible but low-level API. It
 uses a customizable type conversion trait so that any operation can return
 results in just the type you are expecting. This makes for a very pleasant
@@ -14,7 +15,7 @@ The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "0.27.6"
+redis = "0.30.0"
 ```
 
 Documentation on the library can be found at
@@ -52,14 +53,17 @@ you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it wi
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
-`tokio-comp` for tokio users or `async-std-comp` for async-std users.
+`tokio-comp` for tokio users, `smol-comp` for smol users, or `async-std-comp` for async-std users.
 
 ```
 # if you use tokio
-redis = { version = "0.27.6", features = ["tokio-comp"] }
+redis = { version = "0.30.0", features = ["tokio-comp"] }
+
+# if you use smol
+redis = { version = "0.30.0", features = ["smol-comp"] }
 
 # if you use async-std
-redis = { version = "0.27.6", features = ["async-std-comp"] }
+redis = { version = "0.30.0", features = ["async-std-comp"] }
 ```
 
 ## Connection Pooling
@@ -68,7 +72,7 @@ When using a sync connection, it is recommended to use a connection pool in orde
 disconnects or multi-threaded usage. This can be done using the `r2d2` feature.
 
 ```
-redis = { version = "0.27.6", features = ["r2d2"] }
+redis = { version = "0.30.0", features = ["r2d2"] }
 ```
 
 For async connections, connection pooling isn't necessary, unless blocking commands are used.
@@ -90,25 +94,31 @@ Currently, `native-tls` and `rustls` are supported.
 To use `native-tls`:
 
 ```
-redis = { version = "0.27.6", features = ["tls-native-tls"] }
+redis = { version = "0.30.0", features = ["tls-native-tls"] }
 
 # if you use tokio
-redis = { version = "0.27.6", features = ["tokio-native-tls-comp"] }
+redis = { version = "0.30.0", features = ["tokio-native-tls-comp"] }
+
+# if you use smol
+redis = { version = "0.30.0", features = ["smol-native-tls-comp"] }
 
 # if you use async-std
-redis = { version = "0.27.6", features = ["async-std-native-tls-comp"] }
+redis = { version = "0.30.0", features = ["async-std-native-tls-comp"] }
 ```
 
 To use `rustls`:
 
 ```
-redis = { version = "0.27.6", features = ["tls-rustls"] }
+redis = { version = "0.30.0", features = ["tls-rustls"] }
 
 # if you use tokio
-redis = { version = "0.27.6", features = ["tokio-rustls-comp"] }
+redis = { version = "0.30.0", features = ["tokio-rustls-comp"] }
+
+# if you use smol
+redis = { version = "0.30.0", features = ["smol-rustls-comp"] }
 
 # if you use async-std
-redis = { version = "0.27.6", features = ["async-std-rustls-comp"] }
+redis = { version = "0.30.0", features = ["async-std-rustls-comp"] }
 ```
 
 Add `rustls` to dependencies
@@ -149,7 +159,7 @@ let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
 
-`redis = { version = "0.27.6", features = [ "cluster"] }`
+`redis = { version = "0.30.0", features = [ "cluster"] }`
 
 Then you can simply use the `ClusterClient`, which accepts a list of available nodes. Note
 that only one node in the cluster needs to be specified when instantiating the client, though
@@ -172,7 +182,7 @@ fn fetch_an_integer() -> String {
 Async Redis Cluster support can be enabled by enabling the `cluster-async` feature, along
 with your preferred async runtime, e.g.:
 
-`redis = { version = "0.27.6", features = [ "cluster-async", "tokio-std-comp" ] }`
+`redis = { version = "0.30.0", features = [ "cluster-async", "tokio-std-comp" ] }`
 
 ```rust
 use redis::cluster::ClusterClient;
@@ -192,7 +202,7 @@ async fn fetch_an_integer() -> String {
 
 Support for the RedisJSON Module can be enabled by specifying "json" as a feature in your Cargo.toml.
 
-`redis = { version = "0.27.6", features = ["json"] }`
+`redis = { version = "0.30.0", features = ["json"] }`
 
 Then you can simply import the `JsonCommands` trait which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
 
@@ -234,9 +244,9 @@ you must set the following environment variable before running the test script
 If you want to develop on the library there are a few commands provided
 by the makefile:
 
-To build:
+To build the core crate:
 
-    $ make
+    $ cargo build --locked -p redis
 
 To test:
 

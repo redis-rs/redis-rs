@@ -18,13 +18,13 @@ fn is_illegal_cmd(cmd: &str) -> bool {
         // All commands that start with "CONFIG"
         "CONFIG" | "CONFIG GET" | "CONFIG RESETSTAT" | "CONFIG REWRITE" | "CONFIG SET" |
         "DBSIZE" |
-        "ECHO" | "EVALSHA" |
+        "ECHO" |
         "FLUSHALL" | "FLUSHDB" |
         "INFO" |
         "KEYS" |
         "LASTSAVE" |
         "MGET" | "MOVE" | "MSET" | "MSETNX" |
-        "PFMERGE" | "PFCOUNT" | "PING" | "PUBLISH" |
+        "PING" | "PUBLISH" |
         "RANDOMKEY" | "RENAME" | "RENAMENX" | "RPOPLPUSH" |
         "SAVE" | "SCAN" |
         // All commands that start with "SCRIPT"
@@ -62,7 +62,7 @@ pub struct ClusterPipeline {
 /// KEYS
 /// LASTSAVE
 /// MGET, MOVE, MSET, MSETNX
-/// PFMERGE, PFCOUNT, PING, PUBLISH
+/// PING, PUBLISH
 /// RANDOMKEY, RENAME, RENAMENX, RPOPLPUSH
 /// SAVE, SCAN, SCRIPT EXISTS, SCRIPT FLUSH, SCRIPT KILL, SCRIPT LOAD, SDIFF, SDIFFSTORE,
 /// SENTINEL GET MASTER ADDR BY NAME, SENTINEL MASTER, SENTINEL MASTERS, SENTINEL MONITOR,
