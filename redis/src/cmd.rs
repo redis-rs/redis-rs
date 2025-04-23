@@ -88,10 +88,7 @@ pub struct Cmd {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<T>,
-    cursor: u64,
-    con: &'a mut (dyn ConnectionLike + 'a),
-    cmd: Cmd,
+    checked_iter: CheckedIter<'a, T>
 }
 
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
@@ -104,19 +101,18 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.next() {
-                return Some(v);
-            };
-            if self.cursor == 0 {
+            // iterate over the CheckedIter, but keep existing behavior, i.e.
+            // if there is an error, just silently return `None`
+            if let Some(v) = self.checked_iter.next() {
+                if let Ok(v) = v {
+                    return Some(v)
+                }
+
                 return None;
-            }
+            };
 
-            let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-            let rv = self.con.req_packed_command(&pcmd).ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
-
-            self.cursor = cur;
-            self.batch = batch.into_iter();
+            // nothing left in the checked_iter
+            return None;
         }
     }
 }
@@ -577,26 +573,15 @@ impl Cmd {
     /// tuple of cursor and list).
     #[inline]
     pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
-        let rv = con.req_command(&self)?;
-
-        let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
-        } else {
-            (0, from_owned_redis_value(rv)?)
-        };
-
         Ok(Iter {
-            batch: batch.into_iter(),
-            cursor,
-            con,
-            cmd: self,
+            checked_iter: self.checked_iter(con)?,
         })
     }
 
     /// Similar to `iter()` but does not silently fail and return None if a value can't be parsed
     /// (i.e. allows iterating to next possible value)
     #[inline]
-    pub fn safe_iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<CheckedIter<'_, T>> {
+    pub fn checked_iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<CheckedIter<'_, T>> {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
