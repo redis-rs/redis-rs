@@ -10,9 +10,9 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io, marker::PhantomData};
 
-use crate::{connection::ConnectionLike, Value};
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, Value};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -88,7 +88,7 @@ pub struct Cmd {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    checked_iter: CheckedIter<'a, T>
+    checked_iter: CheckedIter<'a, T>,
 }
 
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
@@ -105,7 +105,7 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
             // if there is an error, just silently return `None`
             if let Some(v) = self.checked_iter.next() {
                 if let Ok(v) = v {
-                    return Some(v)
+                    return Some(v);
                 }
 
                 return None;
@@ -675,7 +675,10 @@ impl Cmd {
     /// Similar to `iter()` but does not silently fail and return None if a value can't be parsed
     /// (i.e. allows iterating to next possible value)
     #[inline]
-    pub fn checked_iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<CheckedIter<'_, T>> {
+    pub fn checked_iter<T: FromRedisValue>(
+        self,
+        con: &mut dyn ConnectionLike,
+    ) -> RedisResult<CheckedIter<'_, T>> {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {

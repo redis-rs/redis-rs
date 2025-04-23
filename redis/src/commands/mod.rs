@@ -1,4 +1,4 @@
-use crate::cmd::{cmd, Cmd, Iter, CheckedIter};
+use crate::cmd::{cmd, CheckedIter, Cmd, Iter};
 use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
