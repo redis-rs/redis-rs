@@ -36,7 +36,7 @@ mod basic {
     use std::io::Read;
     use std::thread::{self, sleep, spawn};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use std::{panic, vec};
+    use std::vec;
 
     use crate::{assert_args, support::*};
 
@@ -1133,17 +1133,15 @@ mod basic {
 
         for x in iter {
             // type inference limitations
-            match x {
-                Ok(x) => unseen.remove(&x),
-                Err(e) => panic!("err: {}", e), // TODO: Should handle error
-            };
+            let x: usize = x;
+            unseen.remove(&x);
         }
 
         assert_eq!(unseen.len(), 0);
     }
 
     #[test]
-    fn test_scanning_error() {
+    fn test_checked_scanning_error() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
@@ -1166,7 +1164,7 @@ mod basic {
         // get an iterator for SCAN over all redis keys
         // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
         let mut iter = con
-            .scan_options::<String>(ScanOptions::default().with_count(1))
+            .checked_scan_options::<String>(ScanOptions::default().with_count(1))
             .unwrap();
 
         let mut err_flag = false;
@@ -1209,13 +1207,8 @@ mod basic {
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
 
-        for element in iter {
-            match element {
-                Ok((_field, value)) => {
-                    unseen.remove(&value);
-                }
-                Err(e) => panic!("err: {}", e), // TODO: Should handle error
-            }
+        for (_field, value) in iter {
+            unseen.remove(&value);
         }
 
         assert_eq!(unseen.len(), 0);
@@ -2024,10 +2017,7 @@ mod basic {
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
         for item in iter {
-            match item {
-                Ok(item) => found.insert(item),
-                Err(e) => panic!("err: {}", e), // TODO: Should handle error
-            };
+            found.insert(item);
         }
 
         assert_eq!(found.len(), 2);
