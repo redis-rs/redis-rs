@@ -8,11 +8,11 @@ use futures_util::{
 use std::pin::Pin;
 #[cfg(feature = "cache-aio")]
 use std::time::Duration;
-use std::{fmt, io};
+use std::{fmt, io, marker::PhantomData};
 
-use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, Value};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -88,32 +88,40 @@ pub struct Cmd {
 
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<T>,
+    batch: std::vec::IntoIter<Value>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
+    _phantom: PhantomData<T>,
 }
 
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
-    type Item = T;
+    type Item = RedisResult<T>;
 
     #[inline]
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<RedisResult<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(v);
+                return Some(T::from_owned_redis_value(v));
             };
             if self.cursor == 0 {
                 return None;
             }
 
             let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-            let rv = self.con.req_packed_command(&pcmd).ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
+            let rv = match self.con.req_packed_command(&pcmd) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let (cur, batch): (u64, Vec<Value>) = match from_owned_redis_value(rv) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
 
             self.cursor = cur;
             self.batch = batch.into_iter();
@@ -537,7 +545,7 @@ impl Cmd {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
+            from_owned_redis_value::<(u64, Vec<Value>)>(rv)?
         } else {
             (0, from_owned_redis_value(rv)?)
         };
@@ -547,6 +555,7 @@ impl Cmd {
             cursor,
             con,
             cmd: self,
+            _phantom: PhantomData,
         })
     }
 
