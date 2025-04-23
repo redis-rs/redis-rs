@@ -63,6 +63,14 @@ macro_rules! implement_commands {
                 c.iter(self)
             }
 
+            /// Incrementally iterate the keys space safely, with options.
+            #[inline]
+            fn checked_scan_options<RV: FromRedisValue>(&mut self, opts: ScanOptions) -> RedisResult<CheckedIter<'_, RV>> {
+                let mut c = cmd("SCAN");
+                c.cursor_arg(0).arg(opts);
+                c.safe_iter(self)
+            }
+
             /// Incrementally iterate the keys space for keys matching a pattern.
             #[inline]
             fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> RedisResult<Iter<'_, RV>> {
