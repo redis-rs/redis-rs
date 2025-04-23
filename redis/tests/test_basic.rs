@@ -1140,7 +1140,6 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
-
     #[test]
     fn test_checked_scanning_error() {
         let ctx = TestContext::new();
