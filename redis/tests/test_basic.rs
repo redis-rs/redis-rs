@@ -1140,6 +1140,55 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
+
+    #[test]
+    fn test_checked_scanning_error() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Insert a bunch of keys with legit UTF-8 first
+        for x in 0..1000 {
+            redis::cmd("SET")
+                .arg(format!("foo{}", x))
+                .arg(x)
+                .exec(&mut con)
+                .unwrap();
+        }
+
+        // This key is raw bytes, invalid UTF-8
+        redis::cmd("SET")
+            .arg(b"\xc3\x28")
+            .arg("invalid")
+            .exec(&mut con)
+            .unwrap();
+
+        // get an iterator for SCAN over all redis keys
+        // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
+        let mut iter = con
+            .checked_scan_options::<String>(ScanOptions::default().with_count(1))
+            .unwrap();
+
+        let mut err_flag = false;
+        let mut count = 0;
+
+        // iterate over the entire keyspace till we reach the end
+        while let Some(x) = iter.next() {
+            if x.is_err() {
+                // we found the error case
+                err_flag = true;
+            } else {
+                count += 1;
+            }
+        }
+
+        // we should have been able to iterate over the entire keyspace EXCEPT the
+        // key which failed to parse, so count should be 1000 (1000 valid keys)
+        assert_eq!(count, 1000);
+
+        // make sure we encountered the error (i.e. instead of silent failure)
+        assert_eq!(err_flag, true);
+    }
+
     #[test]
     fn test_filtered_scanning() {
         let ctx = TestContext::new();
