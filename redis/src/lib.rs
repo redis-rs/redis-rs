@@ -533,7 +533,16 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, warn(rustdoc::broken_intra_doc_links))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+// When on docs.rs we want to show tuple variadics in the docs.
+// This currently requires internal/unstable features in Rustdoc.
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, rustdoc_internals),
+    expect(
+        internal_features,
+        reason = "rustdoc_internals is needed for fake_variadic"
+    )
+)]
 
 // public api
 #[cfg(feature = "aio")]
