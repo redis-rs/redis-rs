@@ -1351,6 +1351,68 @@ pub trait RedisWrite {
     /// Appends an empty argument to the command, and returns a
     /// [`std::io::Write`] instance that can write to it.
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
+
+    #[cfg(feature = "bytes")]
+    /// Appends an empty argument to the command, and returns a
+    /// [`bytes::BufMut`] instance that can write to it.
+    ///
+    /// `capacity` should be equal or greater to the amount of bytes
+    /// expected, as some implementations might not be able to resize
+    /// the returned buffer.
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        // This default implementation is not the most efficient, but does
+        // allow for implementers to skip this function. This means that
+        // upstream libraries that implement this trait don't suddenly
+        // stop working because someone enabled one of the async features.
+
+        /// Has a temporary buffer that is written to [`writer_for_next_arg`]
+        /// on drop.
+        struct Wrapper<'a> {
+            /// The buffer, implements [`bytes::BufMut`] allowing passthrough
+            buf: Vec<u8>,
+            /// The writer to the command, used on drop
+            writer: Box<dyn std::io::Write + 'a>,
+        }
+        unsafe impl bytes::BufMut for Wrapper<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.buf.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.buf.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.buf.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.buf.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.buf.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.buf.put_bytes(val, cnt);
+            }
+        }
+        impl Drop for Wrapper<'_> {
+            fn drop(&mut self) {
+                self.writer.write_all(&self.buf).unwrap()
+            }
+        }
+
+        Wrapper {
+            buf: Vec::with_capacity(capacity),
+            writer: Box::new(self.writer_for_next_arg()),
+        }
+    }
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1364,6 +1426,12 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
         self.push(Vec::new());
+        self.last_mut().unwrap()
+    }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.push(Vec::with_capacity(capacity));
         self.last_mut().unwrap()
     }
 }

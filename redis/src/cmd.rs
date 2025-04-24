@@ -353,6 +353,48 @@ impl RedisWrite for Cmd {
 
         CmdBufferedArgGuard(self)
     }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.data.reserve(capacity);
+        struct CmdBufferedArgGuard<'a>(&'a mut Cmd);
+        impl Drop for CmdBufferedArgGuard<'_> {
+            fn drop(&mut self) {
+                self.0.args.push(Arg::Simple(self.0.data.len()));
+            }
+        }
+        unsafe impl bytes::BufMut for CmdBufferedArgGuard<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.0.data.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.0.data.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.0.data.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.0.data.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.0.data.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.0.data.put_bytes(val, cnt);
+            }
+        }
+
+        CmdBufferedArgGuard(self)
+    }
 }
 
 impl Default for Cmd {
