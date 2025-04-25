@@ -354,6 +354,13 @@ impl RedisWrite for Cmd {
         CmdBufferedArgGuard(self)
     }
 
+    fn reserve_space_for_args(&mut self, additional: &[usize]) {
+        // Reserve space for the sum of the data size of all the arguments
+        self.data.reserve(additional.iter().sum());
+        // Reserve space for the argument markers
+        self.args.reserve(additional.len());
+    }
+
     #[cfg(feature = "bytes")]
     fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
         self.data.reserve(capacity);

@@ -1350,7 +1350,25 @@ pub trait RedisWrite {
 
     /// Appends an empty argument to the command, and returns a
     /// [`std::io::Write`] instance that can write to it.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
+
+    /// Reserve space for `additional` arguments in the command
+    ///
+    /// `additional` is a list of the byte sizes of the arguments.
+    ///
+    /// It's strongly recommended that implementors implement this function,
+    /// as the default implementation is a no-op.
+    fn reserve_space_for_args(&mut self, additional: &[usize]) {
+        // _additional would show up in the documentation, so we assign it
+        // to make it used.
+        let _do_nothing = additional;
+    }
 
     #[cfg(feature = "bytes")]
     /// Appends an empty argument to the command, and returns a
@@ -1359,6 +1377,12 @@ pub trait RedisWrite {
     /// `capacity` should be equal or greater to the amount of bytes
     /// expected, as some implementations might not be able to resize
     /// the returned buffer.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
     fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
         // This default implementation is not the most efficient, but does
         // allow for implementers to skip this function. This means that
@@ -1427,6 +1451,14 @@ impl RedisWrite for Vec<Vec<u8>> {
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
         self.push(Vec::new());
         self.last_mut().unwrap()
+    }
+
+    fn reserve_space_for_args(&mut self, additional: &[usize]) {
+        // It would be nice to do this, but there's no way to store where we currently are.
+        // Checking for the first empty Vec is not possible, as it's valid to write empty args.
+        // self.extend(additional.iter().copied().map(Vec::with_capacity));
+        // So we just reserve space for the extra args and have to forgo the extra optimisation
+        self.reserve(additional.len());
     }
 
     #[cfg(feature = "bytes")]
