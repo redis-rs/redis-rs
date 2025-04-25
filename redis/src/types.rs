@@ -1362,9 +1362,35 @@ pub trait RedisWrite {
     ///
     /// `additional` is a list of the byte sizes of the arguments.
     ///
-    /// It's strongly recommended that implementors implement this function,
-    /// as the default implementation is a no-op.
-    fn reserve_space_for_args(&mut self, additional: &[usize]) {
+    /// # Examples
+    /// Sending some Protobufs with `prost` to Redis.
+    /// ```rust,ignore
+    /// use prost::Message;
+    ///
+    /// let to_send: Vec<SomeType> = todo!();
+    /// let mut cmd = Cmd::new();
+    ///
+    /// // Calculate and reserve the space for the args
+    /// let needed_space: Vec<usize> = to_send.iter().map(Message::encoded_len).collect();
+    /// cmd.reserve_space_for_args(&needed_space);
+    ///
+    /// // Write the args to the buffer
+    /// for arg in to_send {
+    ///     // Encode the type directly into the Cmd buffer
+    ///     // Supplying the required capacity again is not needed for Cmd,
+    ///     // but can be useful for other implementers like Vec<Vec<u8>>.
+    ///     arg.encode(cmd.bufmut_for_next_arg(arg.encoded_len()));
+    /// }
+    ///
+    /// ```
+    ///
+    /// # Implementation note
+    /// The default implementation provided by this trait is a no-op. It's therefore strongly
+    /// recommend to implement this function. Depending on the internal buffer it might only
+    /// be possible to use the numbers of arguments (`additional.len()`) or the total expected
+    /// capacity (`additional.iter().sum()`). Implementors should assume that the caller will
+    /// be wrong and might over or under specify the amount of arguments and space required.
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
         // _additional would show up in the documentation, so we assign it
         // to make it used.
         let _do_nothing = additional;
@@ -1453,12 +1479,12 @@ impl RedisWrite for Vec<Vec<u8>> {
         self.last_mut().unwrap()
     }
 
-    fn reserve_space_for_args(&mut self, additional: &[usize]) {
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
         // It would be nice to do this, but there's no way to store where we currently are.
         // Checking for the first empty Vec is not possible, as it's valid to write empty args.
         // self.extend(additional.iter().copied().map(Vec::with_capacity));
         // So we just reserve space for the extra args and have to forgo the extra optimisation
-        self.reserve(additional.len());
+        self.reserve(additional.count());
     }
 
     #[cfg(feature = "bytes")]

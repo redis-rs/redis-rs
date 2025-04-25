@@ -354,11 +354,15 @@ impl RedisWrite for Cmd {
         CmdBufferedArgGuard(self)
     }
 
-    fn reserve_space_for_args(&mut self, additional: &[usize]) {
-        // Reserve space for the sum of the data size of all the arguments
-        self.data.reserve(additional.iter().sum());
-        // Reserve space for the argument markers
-        self.args.reserve(additional.len());
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
+        let mut capacity = 0;
+        let mut args = 0;
+        for add in additional {
+            capacity += add;
+            args += 1;
+        }
+        self.data.reserve(capacity);
+        self.args.reserve(args);
     }
 
     #[cfg(feature = "bytes")]
@@ -790,6 +794,8 @@ pub fn pipe() -> Pipeline {
 #[cfg(test)]
 mod tests {
     use super::Cmd;
+    #[cfg(feature = "bytes")]
+    use bytes::BufMut;
 
     use crate::RedisWrite;
     use std::io::Write;
@@ -848,6 +854,69 @@ mod tests {
         {
             let mut c1_writer = c1.writer_for_next_arg();
             c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that a write split across multiple calls to `write` produces the
+    /// same result as a single call to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that multiple writers to the same command produce the same
+    /// result as the same multiple calls to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_multiple() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"baz");
+            c1_writer.put_slice(b"qux");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        c2.write_arg(b"bazqux");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that an "empty" write produces the equivalent to `write_arg(b"")`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_empty() {
+        let mut c1 = Cmd::new();
+        {
+            let _c1_writer = c1.bufmut_for_next_arg(0);
         }
         let v1 = c1.get_packed_command();
 
