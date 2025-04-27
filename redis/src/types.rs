@@ -1820,8 +1820,8 @@ impl_to_redis_args_for_map!(
 
 macro_rules! to_redis_args_for_tuple {
     () => ();
-    ($($name:ident,)+) => (
-        #[doc(hidden)]
+    ($(#[$meta:meta],)*$($name:ident,)+) => (
+        $(#[$meta])*
         impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
@@ -1838,18 +1838,21 @@ macro_rules! to_redis_args_for_tuple {
                 n
             }
         }
-        to_redis_args_for_tuple_peel!($($name,)*);
     )
 }
 
-/// This chips of the leading one and recurses for the rest.  So if the first
-/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
-/// of size 1 (does not implement down to unit).
-macro_rules! to_redis_args_for_tuple_peel {
-    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*);)
-}
-
-to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+to_redis_args_for_tuple! { #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
     fn write_redis_args<W>(&self, out: &mut W)
@@ -2410,8 +2413,8 @@ impl FromRedisValue for () {
 
 macro_rules! from_redis_value_for_tuple {
     () => ();
-    ($($name:ident,)+) => (
-        #[doc(hidden)]
+    ($(#[$meta:meta],)*$($name:ident,)+) => (
+        $(#[$meta])*
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
@@ -2586,18 +2589,21 @@ macro_rules! from_redis_value_for_tuple {
                 Ok(rv)
             }
         }
-        from_redis_value_for_tuple_peel!($($name,)*);
     )
 }
 
-/// This chips of the leading one and recurses for the rest.  So if the first
-/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
-/// of size 1 (does not implement down to unit).
-macro_rules! from_redis_value_for_tuple_peel {
-    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*);)
-}
-
-from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+from_redis_value_for_tuple! { #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
