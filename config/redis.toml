@@ -110,12 +110,9 @@ forbid = "aio"
 # deprecated
 [[rule]]
 when = true
-forbid = "tls"
-
-# deprecated
-[[rule]]
-when = true
 forbid = [
+  "tls",
+  "OR",
   "async-std-tls-comp",
   "OR",
   "async-std-comp",
@@ -138,4 +135,6 @@ forbid = [
   "script",
   "OR",
   "keep-alive",
+  "OR",
+  "num-bigint",
 ]

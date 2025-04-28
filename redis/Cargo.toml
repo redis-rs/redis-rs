@@ -114,7 +114,7 @@ hashbrown = { version = "0.15", optional = true }
 lru = { version = "0.13", optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script", "keep-alive"]
+default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
 acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
