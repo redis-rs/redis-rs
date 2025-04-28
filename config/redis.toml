@@ -90,10 +90,6 @@ forbid = [
 ]
 
 [[rule]]
-when = ["smol-native-tls-comp"]
-forbid = ["smol-rustls-comp"]
-
-[[rule]]
 when = ["tls-rustls-webpki-roots", "smol-comp"]
 require = ["smol-rustls-comp"]
 
