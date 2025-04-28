@@ -1,6 +1,25 @@
 // Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
 #[cfg(feature = "aio")]
 macro_rules! implement_command_async {
+	// If the return type is `GENERIC`, then we require the user to specify the return type
+	(
+        $lifetime: lifetime
+		$(#[$attr:meta])+
+		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+			$($argname:ident: $argty:ty),*) $body:block GENERIC
+    ) => {
+		$(#[$attr])*
+		#[inline]
+		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+			& $lifetime mut self
+			$(, $argname: $argty)*
+		) -> crate::types::RedisFuture<'a, crate::Value>
+		{
+			Box::pin(async move { ($body).query_async(self).await })
+		}
+	};
+
 	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
 	(
         $lifetime: lifetime
@@ -20,27 +39,28 @@ macro_rules! implement_command_async {
 			Box::pin(async move { ($body).query_async(self).await })
 		}
 	};
-	// If no return type is specified in the input skeleton, we default to returning `redis::Value` in the generated function (note lack of match rule `$rettype:ty`)
+}
+
+macro_rules! implement_command_sync {
+	// If the return type is `GENERIC`, then we require the user to specify the return type
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
 		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block
+			$($argname:ident: $argty:ty),*) $body:block GENERIC
     ) => {
 		$(#[$attr])*
 		#[inline]
 		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*, RV: FromRedisValue>(
 			& $lifetime mut self
 			$(, $argname: $argty)*
-		) -> crate::types::RedisFuture<'a, crate::Value>
+		) -> RedisResult<RV>
 		{
-			Box::pin(async move { ($body).query_async(self).await })
+			Cmd::$name($($argname),*).query(self)
 		}
-	}
-}
+	};
 
-macro_rules! implement_command_sync {
 	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
 	(
         $lifetime: lifetime
@@ -60,24 +80,6 @@ macro_rules! implement_command_sync {
 			Cmd::$name($($argname),*).query(self)
 		}
 	};
-	// If no return type is specified in the input skeleton, we default to returning `redis::Value` in the generated function (note lack of match rule `$rettype:ty`)
-	(
-        $lifetime: lifetime
-		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block
-    ) => {
-		$(#[$attr])*
-		#[inline]
-		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-			& $lifetime mut self
-			$(, $argname: $argty)*
-		) -> RedisResult<crate::Value>
-		{
-			Cmd::$name($($argname),*).query(self)
-		}
-	}
 }
 
 macro_rules! implement_commands {
@@ -86,7 +88,7 @@ macro_rules! implement_commands {
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) $(-> $rettype:ty)? $body:block
+                $($argname:ident: $argty:ty),*) -> $rettype:ty $body:block
         )*
     ) =>
     (
@@ -352,7 +354,7 @@ macro_rules! implement_commands {
 
 					{
 						$body
-					} $($rettype)?
+					} $rettype
 				}
             )*
 
@@ -433,7 +435,6 @@ macro_rules! implement_commands {
             }
         }
 
-
 		/// Implements common redis commands over asynchronous connections.
         /// The return types are concrete and opinionated. If you want to choose the return type you should use the `AsyncCommands` trait.
 		#[cfg(feature = "aio")]
@@ -448,7 +449,7 @@ macro_rules! implement_commands {
 
 					{
 						$body
-					} $($rettype)?
+					} $rettype
 				}
             )*
 
