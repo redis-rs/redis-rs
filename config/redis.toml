@@ -1,10 +1,18 @@
 [[rule]]
-when = "cluster-async"
-require = ["tokio-comp", "OR", "smol-comp"]
-
-[[rule]]
-when = "connection-manager"
-require = ["tokio-comp", "OR", "smol-comp"]
+when = ["cache-aio", "OR", "connection-manager", "OR", "cluster-async"]
+require = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "tokio-rustls-comp",
+  "OR",
+  "tokio-native-tls-comp",
+  "OR",
+  "smol-native-tls-comp",
+  "OR",
+  "smol-rustls-comp",
+]
 
 [[rule]]
 when = ["tls-rustls", "tokio-comp"]
@@ -64,9 +72,22 @@ forbid = [
   "tokio-comp",
 ]
 
+# cluster-async is the feature for async work. We don't need to check cluster with async.
 [[rule]]
-when = ["smol-native-tls-comp"]
-forbid = ["smol-rustls-comp"]
+when = ["cluster"]
+forbid = [
+  "tokio-rustls-comp",
+  "OR",
+  "tokio-native-tls-comp",
+  "OR",
+  "tokio-comp",
+  "OR",
+  "smol-native-tls-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "smol-rustls-comp",
+]
 
 [[rule]]
 when = ["tls-rustls-webpki-roots", "smol-comp"]
@@ -89,12 +110,9 @@ forbid = "aio"
 # deprecated
 [[rule]]
 when = true
-forbid = "tls"
-
-# deprecated
-[[rule]]
-when = true
 forbid = [
+  "tls",
+  "OR",
   "async-std-tls-comp",
   "OR",
   "async-std-comp",
@@ -117,8 +135,6 @@ forbid = [
   "script",
   "OR",
   "keep-alive",
+  "OR",
+  "num-bigint",
 ]
-
-[[rule]]
-when = "cache-aio"
-require = ["tokio-comp", "OR", "smol-comp"]
