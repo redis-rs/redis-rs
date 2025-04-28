@@ -427,7 +427,7 @@ assert_eq!(b, 5);
 ```
 
 Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-it will not automatically be loaded and retried. The script can be loaded using the 
+it will not automatically be loaded and retried. The script can be loaded using the
 [`load`](ScriptInvocation::load) operation.
 "##
 )]
@@ -468,7 +468,7 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 ## Runtime support
 The crate supports multiple runtimes, including `tokio`, `async-std`, and `smol`. For Tokio, the crate will
 spawn tasks on the current thread runtime. For async-std & smol, the crate will spawn tasks on the the global runtime.
-It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes, 
+It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes,
 the user should call [`crate::aio::prefer_tokio`], [`crate::aio::prefer_async_std`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
 These functions set global state which automatically chooses the correct runtime for the async connection.
 
@@ -572,6 +572,7 @@ pub use crate::types::{
     // utility functions
     from_redis_value,
     from_owned_redis_value,
+    make_extension_error,
 
     // error kinds
     ErrorKind,

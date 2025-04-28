@@ -766,6 +766,13 @@ impl error::Error for RedisError {
             _ => None,
         }
     }
+
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self.repr {
+            ErrorRepr::IoError(ref err) => Some(err),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for RedisError {
@@ -1087,6 +1094,19 @@ impl RedisError {
     }
 }
 
+/// Creates a new Redis error with the `ExtensionError` kind.
+///
+/// This function is used to create Redis errors for extension error codes
+/// that are not directly understood by the library.
+///
+/// # Arguments
+///
+/// * `code` - The error code string returned by the Redis server
+/// * `detail` - Optional detailed error message. If None, a default message is used.
+///
+/// # Returns
+///
+/// A `RedisError` with the `ExtensionError` kind.
 pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
