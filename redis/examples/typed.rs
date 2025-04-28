@@ -27,7 +27,7 @@ fn main() -> redis::RedisResult<()> {
     assert_eq!(value_type, redis::ValueType::String);
 
     con.del("mylist")?;
-    
+
     con.lpush("mylist", "a")?;
     con.lpush("mylist", "b")?;
     con.lpush("mylist", "c")?;

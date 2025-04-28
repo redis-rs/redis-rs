@@ -3010,13 +3010,13 @@ impl FromRedisValue for ValueType {
     }
 }
 
-/// Returned by typed commands which either return a positive integer, or some negative integer indicating some kind of no-op.
+/// Returned by typed commands which either return a positive integer or some negative integer indicating some kind of no-op.
 pub enum IntegerReplyOrNoOp {
     /// A positive integer reply indicating success of some kind.
     IntegerReply(u64),
     /// The field/key you are trying to operate on does not exist.
     NotExists,
-    /// The field/key you are trying to operate on exists, but is not of the correct type, or does not have some property you are trying to affect.
+    /// The field/key you are trying to operate on exists but is not of the correct type or does not have some property you are trying to affect.
     ExistsButNotRelevant,
 }
 
