@@ -1350,7 +1350,119 @@ pub trait RedisWrite {
 
     /// Appends an empty argument to the command, and returns a
     /// [`std::io::Write`] instance that can write to it.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
+
+    /// Reserve space for `additional` arguments in the command
+    ///
+    /// `additional` is a list of the byte sizes of the arguments.
+    ///
+    /// # Examples
+    /// Sending some Protobufs with `prost` to Redis.
+    /// ```rust,ignore
+    /// use prost::Message;
+    ///
+    /// let to_send: Vec<SomeType> = todo!();
+    /// let mut cmd = Cmd::new();
+    ///
+    /// // Calculate and reserve the space for the args
+    /// let needed_space: Vec<usize> = to_send.iter().map(Message::encoded_len).collect();
+    /// cmd.reserve_space_for_args(&needed_space);
+    ///
+    /// // Write the args to the buffer
+    /// for arg in to_send {
+    ///     // Encode the type directly into the Cmd buffer
+    ///     // Supplying the required capacity again is not needed for Cmd,
+    ///     // but can be useful for other implementers like Vec<Vec<u8>>.
+    ///     arg.encode(cmd.bufmut_for_next_arg(arg.encoded_len()));
+    /// }
+    ///
+    /// ```
+    ///
+    /// # Implementation note
+    /// The default implementation provided by this trait is a no-op. It's therefore strongly
+    /// recommend to implement this function. Depending on the internal buffer it might only
+    /// be possible to use the numbers of arguments (`additional.len()`) or the total expected
+    /// capacity (`additional.iter().sum()`). Implementors should assume that the caller will
+    /// be wrong and might over or under specify the amount of arguments and space required.
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
+        // _additional would show up in the documentation, so we assign it
+        // to make it used.
+        let _do_nothing = additional;
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Appends an empty argument to the command, and returns a
+    /// [`bytes::BufMut`] instance that can write to it.
+    ///
+    /// `capacity` should be equal or greater to the amount of bytes
+    /// expected, as some implementations might not be able to resize
+    /// the returned buffer.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        // This default implementation is not the most efficient, but does
+        // allow for implementers to skip this function. This means that
+        // upstream libraries that implement this trait don't suddenly
+        // stop working because someone enabled one of the async features.
+
+        /// Has a temporary buffer that is written to [`writer_for_next_arg`]
+        /// on drop.
+        struct Wrapper<'a> {
+            /// The buffer, implements [`bytes::BufMut`] allowing passthrough
+            buf: Vec<u8>,
+            /// The writer to the command, used on drop
+            writer: Box<dyn std::io::Write + 'a>,
+        }
+        unsafe impl bytes::BufMut for Wrapper<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.buf.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.buf.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.buf.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.buf.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.buf.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.buf.put_bytes(val, cnt);
+            }
+        }
+        impl Drop for Wrapper<'_> {
+            fn drop(&mut self) {
+                self.writer.write_all(&self.buf).unwrap()
+            }
+        }
+
+        Wrapper {
+            buf: Vec::with_capacity(capacity),
+            writer: Box::new(self.writer_for_next_arg()),
+        }
+    }
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1364,6 +1476,20 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
         self.push(Vec::new());
+        self.last_mut().unwrap()
+    }
+
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
+        // It would be nice to do this, but there's no way to store where we currently are.
+        // Checking for the first empty Vec is not possible, as it's valid to write empty args.
+        // self.extend(additional.iter().copied().map(Vec::with_capacity));
+        // So we just reserve space for the extra args and have to forgo the extra optimisation
+        self.reserve(additional.count());
+    }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.push(Vec::with_capacity(capacity));
         self.last_mut().unwrap()
     }
 }

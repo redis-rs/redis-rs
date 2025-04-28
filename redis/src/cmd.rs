@@ -353,6 +353,59 @@ impl RedisWrite for Cmd {
 
         CmdBufferedArgGuard(self)
     }
+
+    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
+        let mut capacity = 0;
+        let mut args = 0;
+        for add in additional {
+            capacity += add;
+            args += 1;
+        }
+        self.data.reserve(capacity);
+        self.args.reserve(args);
+    }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.data.reserve(capacity);
+        struct CmdBufferedArgGuard<'a>(&'a mut Cmd);
+        impl Drop for CmdBufferedArgGuard<'_> {
+            fn drop(&mut self) {
+                self.0.args.push(Arg::Simple(self.0.data.len()));
+            }
+        }
+        unsafe impl bytes::BufMut for CmdBufferedArgGuard<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.0.data.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.0.data.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.0.data.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.0.data.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.0.data.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.0.data.put_bytes(val, cnt);
+            }
+        }
+
+        CmdBufferedArgGuard(self)
+    }
 }
 
 impl Default for Cmd {
@@ -741,6 +794,8 @@ pub fn pipe() -> Pipeline {
 #[cfg(test)]
 mod tests {
     use super::Cmd;
+    #[cfg(feature = "bytes")]
+    use bytes::BufMut;
 
     use crate::RedisWrite;
     use std::io::Write;
@@ -799,6 +854,69 @@ mod tests {
         {
             let mut c1_writer = c1.writer_for_next_arg();
             c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that a write split across multiple calls to `write` produces the
+    /// same result as a single call to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that multiple writers to the same command produce the same
+    /// result as the same multiple calls to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_multiple() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"baz");
+            c1_writer.put_slice(b"qux");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        c2.write_arg(b"bazqux");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that an "empty" write produces the equivalent to `write_arg(b"")`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_empty() {
+        let mut c1 = Cmd::new();
+        {
+            let _c1_writer = c1.bufmut_for_next_arg(0);
         }
         let v1 = c1.get_packed_command();
 
