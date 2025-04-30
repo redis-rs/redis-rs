@@ -354,7 +354,7 @@ impl RedisWrite for Cmd {
         CmdBufferedArgGuard(self)
     }
 
-    fn reserve_space_for_args(&mut self, additional: impl Iterator<Item = usize>) {
+    fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
         let mut capacity = 0;
         let mut args = 0;
         for add in additional {
