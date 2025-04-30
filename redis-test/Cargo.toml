@@ -27,6 +27,7 @@ aio = ["futures", "redis/aio"]
 redis = { version = "0.31", path = "../redis", features = [
     "aio",
     "tokio-comp",
+    "safe_iterators",
 ] }
 tokio = { version = "1", features = [
     "rt",

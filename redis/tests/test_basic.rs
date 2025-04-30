@@ -1131,8 +1131,10 @@ mod basic {
             .iter(&mut con)
             .unwrap();
 
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
+
         for x in iter {
-            // type inference limitations
             let x: usize = x;
             unseen.remove(&x);
         }
@@ -1140,6 +1142,7 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
+    #[cfg(feature = "safe_iterators")]
     #[test]
     fn test_checked_scanning_error() {
         let ctx = TestContext::new();
@@ -1163,15 +1166,15 @@ mod basic {
 
         // get an iterator for SCAN over all redis keys
         // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
-        let mut iter = con
-            .checked_scan_options::<String>(ScanOptions::default().with_count(1))
+        let iter = con
+            .scan_options::<String>(ScanOptions::default().with_count(1))
             .unwrap();
 
         let mut err_flag = false;
         let mut count = 0;
 
         // iterate over the entire keyspace till we reach the end
-        while let Some(x) = iter.next() {
+        for x in iter {
             if x.is_err() {
                 // we found the error case
                 err_flag = true;
@@ -1185,7 +1188,7 @@ mod basic {
         assert_eq!(count, 1000);
 
         // make sure we encountered the error (i.e. instead of silent failure)
-        assert_eq!(err_flag, true);
+        assert!(err_flag);
     }
 
     #[test]
@@ -1206,6 +1209,9 @@ mod basic {
         let iter = con
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
+
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
 
         for (_field, value) in iter {
             unseen.remove(&value);
@@ -2016,6 +2022,10 @@ mod basic {
 
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
+
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
+
         for item in iter {
             found.insert(item);
         }

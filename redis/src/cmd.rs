@@ -86,11 +86,22 @@ pub struct Cmd {
     cache: Option<CommandCacheConfig>,
 }
 
+#[cfg(not(feature = "safe_iterators"))]
+#[deprecated(
+    note = "Possibility of losing values. Enable the feature `safe_iterators` for a safe version."
+)]
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    checked_iter: CheckedIter<'a, T>,
+    iter: CheckedIter<'a, T>,
 }
 
+#[cfg(feature = "safe_iterators")]
+/// Represents a redis iterator.
+pub struct Iter<'a, T: FromRedisValue> {
+    iter: CheckedIter<'a, T>,
+}
+
+#[cfg(not(feature = "safe_iterators"))]
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     type Item = T;
 
@@ -103,7 +114,7 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
         loop {
             // iterate over the CheckedIter, but keep existing behavior, i.e.
             // if there is an error, just silently return `None`
-            if let Some(v) = self.checked_iter.next() {
+            if let Some(v) = self.iter.next() {
                 if let Ok(v) = v {
                     return Some(v);
                 }
@@ -117,8 +128,18 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     }
 }
 
+#[cfg(feature = "safe_iterators")]
+impl<T: FromRedisValue> Iterator for Iter<'_, T> {
+    type Item = RedisResult<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<RedisResult<T>> {
+        self.iter.next()
+    }
+}
+
 /// Represents a safe(r) redis iterator.
-pub struct CheckedIter<'a, T: FromRedisValue> {
+struct CheckedIter<'a, T: FromRedisValue> {
     batch: std::vec::IntoIter<Value>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
@@ -668,14 +689,13 @@ impl Cmd {
     #[inline]
     pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
         Ok(Iter {
-            checked_iter: self.checked_iter(con)?,
+            iter: self.checked_iter(con)?,
         })
     }
 
     /// Similar to `iter()` but does not silently fail and return None if a value can't be parsed
     /// (i.e. allows iterating to next possible value)
-    #[inline]
-    pub fn checked_iter<T: FromRedisValue>(
+    fn checked_iter<T: FromRedisValue>(
         self,
         con: &mut dyn ConnectionLike,
     ) -> RedisResult<CheckedIter<'_, T>> {
