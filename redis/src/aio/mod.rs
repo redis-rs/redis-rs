@@ -215,26 +215,7 @@ macro_rules! check_resp3 {
 pub(crate) use check_resp3;
 
 /// An error showing that the receiver
-pub struct SendError {
-    #[allow(dead_code)]
-    is_permanent: bool,
-}
-
-impl SendError {
-    /// Creates a new `SendError` with the given `sender_closed` flag, which should be `true`
-    /// if all future send attempts will fail.
-    pub fn new(sender_closed: bool) -> Self {
-        SendError {
-            is_permanent: sender_closed,
-        }
-    }
-
-    /// Returns true if the error is permanent.
-    #[cfg(feature = "connection-manager")]
-    fn is_permanent(&self) -> bool {
-        self.is_permanent
-    }
-}
+pub struct SendError;
 
 /// A trait for sender parts of a channel that can be used for sending push messages from async
 /// connection.
@@ -247,7 +228,7 @@ impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::new(true)),
+            Err(_) => Err(SendError),
         }
     }
 }
@@ -256,7 +237,7 @@ impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::new(false)),
+            Err(_) => Err(SendError),
         }
     }
 }
@@ -265,7 +246,7 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::new(false)),
+            Err(_) => Err(SendError),
         }
     }
 }
@@ -274,7 +255,7 @@ impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::new(true)),
+            Err(_) => Err(SendError),
         }
     }
 }

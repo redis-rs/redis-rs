@@ -548,7 +548,7 @@ impl ConnectionManager {
             OptionalPushSender,
         )>,
     ) {
-        let Ok((this, mut internal_receiver, mut external_sender)) = receiver.await else {
+        let Ok((this, mut internal_receiver, external_sender)) = receiver.await else {
             return;
         };
         while let Some(push_info) = internal_receiver.recv().await {
@@ -556,11 +556,7 @@ impl ConnectionManager {
                 this.reconnect(this.0.connection.load());
             }
             if let Some(sender) = external_sender.as_ref() {
-                if let Err(err) = sender.send(push_info) {
-                    if err.is_permanent() {
-                        external_sender.take();
-                    }
-                }
+                let _ = sender.send(push_info);
             }
         }
     }
