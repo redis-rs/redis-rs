@@ -1766,20 +1766,17 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[case::async_std(RuntimeType::AsyncStd)]
-    fn manager_should_reconnect_without_actions_if_push_sender_is_set(
-        #[case] runtime: RuntimeType,
-    ) {
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn manager_should_reconnect_without_actions_if_resp3_is_set(#[case] runtime: RuntimeType) {
         let ctx = TestContext::new();
         if ctx.protocol == ProtocolVersion::RESP2 {
             return;
         }
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let max_delay_between_attempts = 2;
         let config = redis::aio::ConnectionManagerConfig::new()
             .set_factor(10000)
-            .set_push_sender(tx)
             .set_max_delay(max_delay_between_attempts);
 
         block_on_all(
@@ -1791,11 +1788,76 @@ mod basic_async {
 
                 let addr = ctx.server.client_addr().clone();
                 drop(ctx);
+                let _ctx = TestContext::new_with_addr(addr);
+
+                sleep(Duration::from_secs_f32(0.01).into()).await;
+
+                assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+
+                Ok::<_, RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "connection-manager")]
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error(
+        #[case] runtime: RuntimeType,
+    ) {
+        use redis::{aio::AsyncPushSender, PushInfo};
+
+        struct Sender {
+            sender: tokio::sync::mpsc::UnboundedSender<PushInfo>,
+        }
+
+        impl AsyncPushSender for Sender {
+            fn send(&self, push: PushInfo) -> Result<(), redis::aio::SendError> {
+                self.sender.send(push).unwrap();
+                Err(redis::aio::SendError::new(false))
+            }
+        }
+
+        let ctx = TestContext::new();
+        if ctx.protocol == ProtocolVersion::RESP2 {
+            return;
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let max_delay_between_attempts = 2;
+        let config = redis::aio::ConnectionManagerConfig::new()
+            .set_factor(10000)
+            .set_push_sender(Sender { sender: tx })
+            .set_max_delay(max_delay_between_attempts);
+
+        block_on_all(
+            async move {
+                let mut conn = ctx
+                    .client
+                    .get_connection_manager_with_config(config)
+                    .await?;
+
+                let addr = ctx.server.client_addr().clone();
+                // drop once, to trigger reconnect and sending the push message
+                drop(ctx);
                 let push = rx.recv().await.unwrap();
+                assert_eq!(push.kind, PushKind::Disconnection);
+                let _ctx = TestContext::new_with_addr(addr.clone());
+
+                assert!(rx.try_recv().is_err());
+                assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+
+                // drop again, to verify that the mechanism works even after the sender returned an error.
+                drop(_ctx);
                 assert_eq!(push.kind, PushKind::Disconnection);
                 let _ctx = TestContext::new_with_addr(addr);
 
                 assert!(rx.try_recv().is_err());
+                sleep(Duration::from_secs_f32(0.01).into()).await;
                 assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
 
                 Ok::<_, RedisError>(())
