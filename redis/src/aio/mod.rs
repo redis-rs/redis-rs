@@ -173,7 +173,7 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
-pub(crate) use runtime::*;
+pub use runtime::*;
 
 macro_rules! check_resp3 {
     ($protocol: expr) => {
