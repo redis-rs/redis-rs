@@ -8,15 +8,6 @@ use crate::types::RedisResult;
 
 use futures_util::future::select_ok;
 
-const fn assert_sync<T: Sync>() {}
-
-#[allow(unused)]
-fn test_is_sync() {
-    assert_sync::<super::MultiplexedConnection>();
-    assert_sync::<super::PubSub>();
-    assert_sync::<super::Monitor>();
-}
-
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
     dns_resolver: &dyn AsyncDNSResolver,
@@ -71,4 +62,37 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cluster_async;
+
+    use super::super::*;
+
+    #[test]
+    fn test_is_sync() {
+        const fn assert_sync<T: Sync>() {}
+
+        assert_sync::<MultiplexedConnection>();
+        assert_sync::<PubSub>();
+        assert_sync::<Monitor>();
+        #[cfg(feature = "connection-manager")]
+        assert_sync::<ConnectionManager>();
+        #[cfg(feature = "cluster-async")]
+        assert_sync::<cluster_async::ClusterConnection>();
+    }
+
+    #[test]
+    fn test_is_send() {
+        const fn assert_send<T: Send>() {}
+
+        assert_send::<MultiplexedConnection>();
+        assert_send::<PubSub>();
+        assert_send::<Monitor>();
+        #[cfg(feature = "connection-manager")]
+        assert_send::<ConnectionManager>();
+        #[cfg(feature = "cluster-async")]
+        assert_send::<cluster_async::ClusterConnection>();
+    }
 }
