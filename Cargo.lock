@@ -1791,6 +1791,7 @@ dependencies = [
  "bigdecimal",
  "bytes",
  "cfg-if",
+ "cfg_aliases",
  "combine",
  "crc16",
  "criterion",

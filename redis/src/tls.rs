@@ -120,7 +120,7 @@ pub(crate) fn retrieve_tls_certificates(
     Ok(TlsConnParams {
         client_tls_params,
         root_cert_store,
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        #[cfg(insecure_or_native_tls)]
         danger_accept_invalid_hostnames: false,
     })
 }
