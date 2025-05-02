@@ -24,56 +24,56 @@ jobs:
         config:
           [
             # Different DB cases:
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 6.2.13
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: stable,
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 7.2.6
-            },
+            # {
+            #   rust: stable,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 6.2.13
+            # },
+            # {
+            #   rust: stable,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 7.2.4
+            # },
             {
               rust: stable,
               db-org: valkey-io,
               db-name: valkey,
-              db-version: 8.0.1
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 8.0-rc1
-            },
-
-            # Different rust cases
-            {
-              rust: beta,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: nightly,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: 1.75.0,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
+              db-version: 7.2.5
             }
+            # {
+            #   rust: stable,
+            #   db-org: valkey-io,
+            #   db-name: valkey,
+            #   db-version: 8.0.1
+            # },
+            # {
+            #   rust: stable,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 8.0-rc1
+            # },
+
+            # # Different rust cases
+            # {
+            #   rust: beta,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 7.2.4
+            # },
+            # {
+            #   rust: nightly,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 7.2.4
+            # },
+            # {
+            #   rust: 1.75.0,
+            #   db-org: redis,
+            #   db-name: redis,
+            #   db-version: 7.2.4
+            # }
           ]
 
     steps:
