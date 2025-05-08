@@ -221,7 +221,6 @@ pub struct SendError;
 /// connection.
 pub trait AsyncPushSender: Send + Sync + 'static {
     /// The sender must send without blocking, otherwise it will block the sending connection.
-    /// Should error when the receiver was closed, and pushing values on the sender is no longer viable.
     fn send(&self, info: PushInfo) -> Result<(), SendError>;
 }
 
