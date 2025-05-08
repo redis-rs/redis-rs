@@ -3,6 +3,7 @@ mod support;
 mod types {
     use std::{
         collections::{HashMap, HashSet},
+        error::Error,
         rc::Rc,
         sync::Arc,
     };
@@ -16,6 +17,46 @@ mod types {
             "Multiplexed connection driver unexpectedly terminated",
         ));
         assert!(err.is_io_error());
+    }
+
+    #[test]
+    fn test_redis_error_source_presence_for_io_wrapped_errors() {
+        let io_error = RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "I/O failure",
+        ));
+        let source = io_error.source();
+        assert_eq!(io_error.kind(), redis::ErrorKind::IoError);
+
+        assert!(source.is_some());
+        assert_eq!(source.unwrap().to_string(), "I/O failure");
+    }
+
+    #[test]
+    fn test_redis_error_source_absence_for_non_io_wrapped_errors() {
+        // Even though the ErrorKind is IoError, no actual I/O error is wrapped, so the source should be None.
+        let simulated_io_error = RedisError::from((ErrorKind::IoError, "Simulated I/O error"));
+        // Similarly this error is not an Extension error, even though it's ErrorKind is ExtensionError
+        let simulated_extension_error =
+            RedisError::from((ErrorKind::ExtensionError, "Simulated extension error"));
+        let simulated_type_error_with_details = RedisError::from((
+            ErrorKind::TypeError,
+            "Simulated type error",
+            "Type error details".to_string(),
+        ));
+
+        let an_extension_error =
+            redis::make_extension_error("A true extension error".to_string(), None);
+        assert_eq!(an_extension_error.kind(), redis::ErrorKind::ExtensionError);
+
+        for error in [
+            simulated_io_error,
+            simulated_extension_error,
+            simulated_type_error_with_details,
+            an_extension_error,
+        ] {
+            assert!(error.source().is_none());
+        }
     }
 
     #[test]
