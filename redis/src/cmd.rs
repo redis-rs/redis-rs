@@ -473,6 +473,34 @@ impl Cmd {
         (self.args.capacity(), self.data.capacity())
     }
 
+    /// Clears the command, removing all arguments.
+    ///
+    /// This does not reset any settings, such as set by [`set_cache_config`] and [`set_no_response`].
+    ///
+    /// Note that this method has no effect on the allocated capacity of the command internals.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use redis::{Client, Cmd};
+    /// let client = Client::open("redis://127.0.0.1/").unwrap();
+    /// let mut con = client.get_connection().expect("Failed to connect to Redis");
+    /// let mut cmd = Cmd::new();
+    /// cmd.arg("SET").arg("foo").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// cmd.clear();
+    /// // This reuses the allocations of the previous command
+    /// cmd.arg("SET").arg("bar").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// ```
+    ///
+    /// [`set_cache_config`]: Self::set_cache_config
+    /// [`set_no_response`]: Self::set_no_response
+    pub fn clear(&mut self) {
+        self.data.clear();
+        self.args.clear();
+    }
+
     /// Appends an argument to the command.  The argument passed must
     /// be a type that implements `ToRedisArgs`.  Most primitive types as
     /// well as vectors of primitive types implement it.
@@ -516,6 +544,10 @@ impl Cmd {
     }
 
     /// Returns the packed command as a byte vector.
+    ///
+    /// This is a wrapper around [`write_packed_command`] that creates a [`Vec`] to write to.
+    ///
+    /// [`write_packed_command`]: Self::write_packed_command
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
@@ -523,7 +555,11 @@ impl Cmd {
         cmd
     }
 
-    pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
+    /// Writes the packed command to the vector.
+    ///
+    /// This will *append* the packed command.
+    #[inline]
+    pub fn write_packed_command(&self, cmd: &mut Vec<u8>) {
         write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
