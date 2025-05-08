@@ -1,3 +1,16 @@
+### 0.31.0 (2025-05-08)
+
+#### Changes & Bug fixes
+
+* Document variadic tuple implementations for FromRedisValue and ToRedisValue ([#1617](https://github.com/redis-rs/redis-rs/pull/1617) by @Kriskras99)
+* Add an optional bytes::BufMut function to RedisWrite ([#1618](https://github.com/redis-rs/redis-rs/pull/1618) by @Kriskras99)
+* Reorganize flag-frenzy comnfiguration ([#1620](https://github.com/redis-rs/redis-rs/pull/1620) by @nihohit)
+* Make `reserve_space_for_args` take a `IntoIterator` ([#1622](https://github.com/redis-rs/redis-rs/pull/1622) by @Kriskras99)
+* Improve Send/Sync checks. ([#1623](https://github.com/redis-rs/redis-rs/pull/1623) by @nihohit)
+* **BREAKING CHANGE** Remove the `ring` dependency from `rustls`. ([#1632](https://github.com/redis-rs/redis-rs/pull/1632) by @nihohit)
+* Implement Error::source for the RedisError struct ([#1634](https://github.com/redis-rs/redis-rs/pull/1634) by @StefanPalashev)
+* ConnectionManager: Reconnect when RESP3 is set. ([#1612](https://github.com/redis-rs/redis-rs/pull/1612) by @nihohit)
+
 ### 0.30.0 (2025-04-22)
 
 #### Changes & Bug fixes
