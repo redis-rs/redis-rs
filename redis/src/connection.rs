@@ -1053,11 +1053,16 @@ pub(crate) fn create_rustls_config(
         (true, true) => {
             let mut config = config;
             config.enable_sni = false;
+            let Some(crypto_provider) = rustls::crypto::CryptoProvider::get_default() else {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "No crypto provider available for rustls",
+                )));
+            };
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification {
-                    supported: rustls::crypto::ring::default_provider()
-                        .signature_verification_algorithms,
+                    supported: crypto_provider.signature_verification_algorithms,
                 }));
 
             Ok(config)

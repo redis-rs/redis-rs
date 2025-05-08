@@ -124,7 +124,7 @@ redis = { version = "0.30.0", features = ["async-std-rustls-comp"] }
 Add `rustls` to dependencies
 
 ```
-rustls = { version = "0.23", features = ["ring"] }
+rustls = { version = "0.23" }
 ```
 
 And then, before creating a connection, ensure that you install a crypto provider. For example:

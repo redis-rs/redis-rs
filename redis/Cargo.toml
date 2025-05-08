@@ -124,7 +124,6 @@ tls-native-tls = ["dep:native-tls"]
 tls-rustls = [
   "dep:rustls",
   "rustls/std",
-  "rustls/ring",
   "dep:rustls-native-certs",
 ]
 tls-rustls-insecure = ["tls-rustls"]
@@ -139,7 +138,12 @@ smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
-connection-manager = ["dep:arc-swap", "dep:futures-channel", "aio", "dep:backon"]
+connection-manager = [
+  "dep:arc-swap",
+  "dep:futures-channel",
+  "aio",
+  "dep:backon",
+]
 streams = []
 cluster-async = ["aio", "cluster", "dep:futures-sink", "dep:log"]
 keep-alive = []
@@ -197,6 +201,7 @@ anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.25"
 rand = "0.9"
+rustls = { version = "0.23", features = ["ring"] }
 
 [[test]]
 name = "test_async"
