@@ -473,6 +473,35 @@ impl Cmd {
         (self.args.capacity(), self.data.capacity())
     }
 
+    /// Clears the command, resetting it completely.
+    ///
+    /// This is equivalent to [`Cmd::new`], except the buffer capacity is kept.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use redis::{Client, Cmd};
+    /// # let client = Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().expect("Failed to connect to Redis");
+    /// let mut cmd = Cmd::new();
+    /// cmd.arg("SET").arg("foo").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// cmd.clear();
+    /// // This reuses the allocations of the previous command
+    /// cmd.arg("SET").arg("bar").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// ```
+    pub fn clear(&mut self) {
+        self.data.clear();
+        self.args.clear();
+        self.cursor = None;
+        self.no_response = false;
+        #[cfg(feature = "cache-aio")]
+        {
+            self.cache = None;
+        }
+    }
+
     /// Appends an argument to the command.  The argument passed must
     /// be a type that implements `ToRedisArgs`.  Most primitive types as
     /// well as vectors of primitive types implement it.
@@ -516,6 +545,10 @@ impl Cmd {
     }
 
     /// Returns the packed command as a byte vector.
+    ///
+    /// This is a wrapper around [`write_packed_command`] that creates a [`Vec`] to write to.
+    ///
+    /// [`write_packed_command`]: Self::write_packed_command
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
@@ -523,8 +556,16 @@ impl Cmd {
         cmd
     }
 
-    pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
-        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+    /// Writes the packed command to `dst`.
+    ///
+    /// This will *append* the packed command.
+    ///
+    /// See also [`get_packed_command`].
+    ///
+    /// [`get_packed_command`]: Self::get_packed_command.
+    #[inline]
+    pub fn write_packed_command(&self, dst: &mut Vec<u8>) {
+        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
@@ -799,6 +840,43 @@ mod tests {
 
     use crate::RedisWrite;
     use std::io::Write;
+
+    #[test]
+    fn test_cmd_clean() {
+        let mut cmd = Cmd::new();
+        cmd.arg("key").arg("value");
+        cmd.set_no_response(true);
+        cmd.cursor_arg(24);
+        cmd.clear();
+
+        // Everything should be reset, but the capacity should still be there
+        assert!(cmd.data.is_empty());
+        assert!(cmd.data.capacity() > 0);
+        assert!(cmd.args.is_empty());
+        assert!(cmd.args.capacity() > 0);
+        assert_eq!(cmd.cursor, None);
+        assert!(!cmd.no_response);
+    }
+
+    #[test]
+    #[cfg(feature = "cache-aio")]
+    fn test_cmd_clean_cache_aio() {
+        let mut cmd = Cmd::new();
+        cmd.arg("key").arg("value");
+        cmd.set_no_response(true);
+        cmd.cursor_arg(24);
+        cmd.set_cache_config(crate::CommandCacheConfig::default());
+        cmd.clear();
+
+        // Everything should be reset, but the capacity should still be there
+        assert!(cmd.data.is_empty());
+        assert!(cmd.data.capacity() > 0);
+        assert!(cmd.args.is_empty());
+        assert!(cmd.args.capacity() > 0);
+        assert_eq!(cmd.cursor, None);
+        assert!(!cmd.no_response);
+        assert!(cmd.cache.is_none());
+    }
 
     #[test]
     fn test_cmd_writer_for_next_arg() {
