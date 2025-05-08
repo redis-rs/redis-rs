@@ -141,26 +141,31 @@ implement_commands! {
     // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET`.
+    /// [Redis Docs](https://redis.io/commands/get/)
     fn get<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd(if key.num_of_args() <= 1 { "GET" } else { "MGET" }).arg(key)
     }
 
     /// Get values of keys
+    /// [Redis Docs](https://redis.io/commands/MGET)
     fn mget<K: ToRedisArgs>(key: K) -> Vec<Option<String>> {
         cmd("MGET").arg(key)
     }
 
     /// Gets all keys matching pattern
+    /// [Redis Docs](https://redis.io/commands/KEYS)
     fn keys<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("KEYS").arg(key)
     }
 
     /// Set the string value of a key.
+    /// [Redis Docs](https://redis.io/commands/SET)
     fn set<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> () {
         cmd("SET").arg(key).arg(value)
     }
 
     /// Set the string value of a key with options.
+    /// [Redis Docs](https://redis.io/commands/SET)
     fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) -> GENERIC {
         cmd("SET").arg(key).arg(value).arg(options)
     }
@@ -168,133 +173,157 @@ implement_commands! {
     /// Sets multiple keys to their values.
     #[allow(deprecated)]
     #[deprecated(since = "0.22.4", note = "Renamed to mset() to reflect Redis name")]
+    /// [Redis Docs](https://redis.io/commands/MSET)
     fn set_multiple<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> () {
         cmd("MSET").arg(items)
     }
 
     /// Sets multiple keys to their values.
+    /// [Redis Docs](https://redis.io/commands/MSET)
     fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> () {
         cmd("MSET").arg(items)
     }
 
     /// Set the value and expiration of a key.
+    /// [Redis Docs](https://redis.io/commands/SETEX)
     fn set_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, seconds: u64) -> () {
         cmd("SETEX").arg(key).arg(seconds).arg(value)
     }
 
     /// Set the value and expiration in milliseconds of a key.
+    /// [Redis Docs](https://redis.io/commands/PSETEX)
     fn pset_ex<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, milliseconds: u64) -> () {
         cmd("PSETEX").arg(key).arg(milliseconds).arg(value)
     }
 
     /// Set the value of a key, only if the key does not exist
+    /// [Redis Docs](https://redis.io/commands/SETNX)
     fn set_nx<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> bool {
         cmd("SETNX").arg(key).arg(value)
     }
 
     /// Sets multiple keys to their values failing if at least one already exists.
+    /// [Redis Docs](https://redis.io/commands/MSETNX)
     fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> bool {
         cmd("MSETNX").arg(items)
     }
 
     /// Set the string value of a key and return its old value.
+    /// [Redis Docs](https://redis.io/commands/GETSET)
     fn getset<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> Option<String> {
         cmd("GETSET").arg(key).arg(value)
     }
 
     /// Get a range of bytes/substring from the value of a key. Negative values provide an offset from the end of the value.
     /// Redis returns an empty string if the key doesn't exist, not Nil
+    /// [Redis Docs](https://redis.io/commands/GETRANGE)
     fn getrange<K: ToRedisArgs>(key: K, from: isize, to: isize) -> String {
         cmd("GETRANGE").arg(key).arg(from).arg(to)
     }
 
     /// Overwrite the part of the value stored in key at the specified offset.
+    /// [Redis Docs](https://redis.io/commands/SETRANGE)
     fn setrange<K: ToRedisArgs, V: ToRedisArgs>(key: K, offset: isize, value: V) -> usize {
         cmd("SETRANGE").arg(key).arg(offset).arg(value)
     }
 
     /// Delete one or more keys.
     /// Returns the number of keys deleted.
+    /// [Redis Docs](https://redis.io/commands/DEL)
     fn del<K: ToRedisArgs>(key: K) -> usize {
         cmd("DEL").arg(key)
     }
 
     /// Determine if a key exists.
+    /// [Redis Docs](https://redis.io/commands/EXISTS)
     fn exists<K: ToRedisArgs>(key: K) -> bool {
         cmd("EXISTS").arg(key)
     }
 
     /// Determine the type of key.
+    /// [Redis Docs](https://redis.io/commands/TYPE)
     fn key_type<K: ToRedisArgs>(key: K) -> crate::types::ValueType {
         cmd("TYPE").arg(key)
     }
 
     /// Set a key's time to live in seconds.
     /// Returns whether expiration was set.
+    /// [Redis Docs](https://redis.io/commands/EXPIRE)
     fn expire<K: ToRedisArgs>(key: K, seconds: i64) -> bool {
         cmd("EXPIRE").arg(key).arg(seconds)
     }
 
     /// Set the expiration for a key as a UNIX timestamp.
     /// Returns whether expiration was set.
+    /// [Redis Docs](https://redis.io/commands/EXPIREAT)
     fn expire_at<K: ToRedisArgs>(key: K, ts: i64) -> bool {
         cmd("EXPIREAT").arg(key).arg(ts)
     }
 
     /// Set a key's time to live in milliseconds.
     /// Returns whether expiration was set.
+    /// [Redis Docs](https://redis.io/commands/PEXPIRE)
     fn pexpire<K: ToRedisArgs>(key: K, ms: i64) -> bool {
         cmd("PEXPIRE").arg(key).arg(ms)
     }
 
     /// Set the expiration for a key as a UNIX timestamp in milliseconds.
     /// Returns whether expiration was set.
+    /// [Redis Docs](https://redis.io/commands/PEXPIREAT)
     fn pexpire_at<K: ToRedisArgs>(key: K, ts: i64) -> bool {
         cmd("PEXPIREAT").arg(key).arg(ts)
     }
 
     /// Get the absolute Unix expiration timestamp in seconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// [Redis Docs](https://redis.io/commands/EXPIRETIME)
     fn expire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("EXPIRETIME").arg(key)
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// [Redis Docs](https://redis.io/commands/PEXPIRETIME)
     fn pexpire_time<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("PEXPIRETIME").arg(key)
     }
 
     /// Remove the expiration from a key.
     /// Returns whether a timeout was removed.
+    /// [Redis Docs](https://redis.io/commands/PERSIST)
     fn persist<K: ToRedisArgs>(key: K) -> bool {
         cmd("PERSIST").arg(key)
     }
 
     /// Get the time to live for a key in seconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
+    /// [Redis Docs](https://redis.io/commands/TTL)
     fn ttl<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("TTL").arg(key)
     }
 
     /// Get the time to live for a key in milliseconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
-    fn pttl<K: ToRedisArgs>(key: K) -> isize {
+    /// [Redis Docs](https://redis.io/commands/PTTL)
+    fn pttl<K: ToRedisArgs>(key: K) -> IntegerReplyOrNoOp {
         cmd("PTTL").arg(key)
     }
 
     /// Get the value of a key and set expiration
+    /// [Redis Docs](https://redis.io/commands/GETEX)
     fn get_ex<K: ToRedisArgs>(key: K, expire_at: Expiry) -> Option<String> {
         cmd("GETEX").arg(key).arg(expire_at)
     }
 
     /// Get the value of a key and delete it
+    /// [Redis Docs](https://redis.io/commands/GETDEL)
     fn get_del<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd("GETDEL").arg(key)
     }
 
     /// Rename a key.
     /// Errors if key does not exist.
+    /// [Redis Docs](https://redis.io/commands/RENAME)
     fn rename<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) -> () {
         cmd("RENAME").arg(key).arg(new_key)
     }
@@ -302,12 +331,14 @@ implement_commands! {
     /// Rename a key, only if the new key does not exist.
     /// Errors if key does not exist.
     /// Returns whether the key was renamed, or false if the new key already exists.
+    /// [Redis Docs](https://redis.io/commands/RENAMENX)
     fn rename_nx<K: ToRedisArgs, N: ToRedisArgs>(key: K, new_key: N) -> bool {
         cmd("RENAMENX").arg(key).arg(new_key)
     }
 
     /// Unlink one or more keys. This is a non-blocking version of `DEL`.
     /// Returns number of keys unlinked.
+    /// [Redis Docs](https://redis.io/commands/UNLINK)
     fn unlink<K: ToRedisArgs>(key: K) -> usize {
         cmd("UNLINK").arg(key)
     }
@@ -316,6 +347,7 @@ implement_commands! {
 
     /// Append a value to a key.
     /// Returns length of string after operation.
+    /// [Redis Docs](https://redis.io/commands/APPEND)
     fn append<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("APPEND").arg(key).arg(value)
     }
@@ -333,29 +365,34 @@ implement_commands! {
 
     /// Decrement the numeric value of a key by the given amount.
     /// If the key does not exist, it is set to 0 before performing the operation.
+    /// [Redis Docs](https://redis.io/commands/DECRBY)
     fn decr<K: ToRedisArgs, V: ToRedisArgs>(key: K, delta: V) -> isize {
         cmd("DECRBY").arg(key).arg(delta)
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
     /// Returns the original bit value stored at offset.
+    /// [Redis Docs](https://redis.io/commands/SETBIT)
     fn setbit<K: ToRedisArgs>(key: K, offset: usize, value: bool) -> u8 {
         cmd("SETBIT").arg(key).arg(offset).arg(i32::from(value))
     }
 
     /// Returns the bit value at offset in the string value stored at key.
+    /// [Redis Docs](https://redis.io/commands/GETBIT)
     fn getbit<K: ToRedisArgs>(key: K, offset: usize) -> u8 {
         cmd("GETBIT").arg(key).arg(offset)
     }
 
     /// Count set bits in a string.
     /// Returns 0 if key does not exist.
+    /// [Redis Docs](https://redis.io/commands/BITCOUNT)
     fn bitcount<K: ToRedisArgs>(key: K) -> usize {
         cmd("BITCOUNT").arg(key)
     }
 
     /// Count set bits in a string in a range.
     /// Returns 0 if key does not exist.
+    /// [Redis Docs](https://redis.io/commands/BITCOUNT)
     fn bitcount_range<K: ToRedisArgs>(key: K, start: usize, end: usize) -> usize {
         cmd("BITCOUNT").arg(key).arg(start).arg(end)
     }
@@ -363,6 +400,7 @@ implement_commands! {
     /// Perform a bitwise AND between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
+    /// [Redis Docs](https://redis.io/commands/BITOP").arg("AND)
     fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
     }
@@ -370,6 +408,7 @@ implement_commands! {
     /// Perform a bitwise OR between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
+    /// [Redis Docs](https://redis.io/commands/BITOP").arg("OR)
     fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
     }
@@ -377,6 +416,7 @@ implement_commands! {
     /// Perform a bitwise XOR between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
+    /// [Redis Docs](https://redis.io/commands/BITOP").arg("XOR)
     fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> usize {
         cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
     }
@@ -384,12 +424,14 @@ implement_commands! {
     /// Perform a bitwise NOT of the key (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
+    /// [Redis Docs](https://redis.io/commands/BITOP").arg("NOT)
     fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) -> usize {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
     /// Get the length of the value stored in a key.
     /// 0 if key does not exist.
+    /// [Redis Docs](https://redis.io/commands/STRLEN)
     fn strlen<K: ToRedisArgs>(key: K) -> usize {
         cmd("STRLEN").arg(key)
     }
@@ -402,39 +444,46 @@ implement_commands! {
     }
 
     /// Get the value of one or more fields of a given hash key, and optionally set their expiration
+    /// [Redis Docs](https://redis.io/commands/HGETEX").arg(key).arg(expire_at).arg("FIELDS)
     fn hget_ex<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> Vec<String> {
         cmd("HGETEX").arg(key).arg(expire_at).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Deletes a single (or multiple) fields from a hash.
     /// Returns number of fields deleted.
+    /// [Redis Docs](https://redis.io/commands/HDEL)
     fn hdel<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) -> usize {
         cmd("HDEL").arg(key).arg(field)
     }
 
     /// Get and delete the value of one or more fields of a given hash key
+    /// [Redis Docs](https://redis.io/commands/HGETDEL").arg(key).arg("FIELDS)
     fn hget_del<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> Vec<Option<String>> {
         cmd("HGETDEL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Sets a single field in a hash.
     /// Returns number of fields added.
+    /// [Redis Docs](https://redis.io/commands/HSET)
     fn hset<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) -> usize {
         cmd("HSET").arg(key).arg(field).arg(value)
     }
 
     /// Set the value of one or more fields of a given hash key, and optionally set their expiration
+    /// [Redis Docs](https://redis.io/commands/HSETEX").arg(key).arg(hash_field_expiration_options).arg("FIELDS)
     fn hset_ex<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &'a HashFieldExpirationOptions, fields_values: &'a [(F, V)]) -> bool {
         cmd("HSETEX").arg(key).arg(hash_field_expiration_options).arg("FIELDS").arg(fields_values.len()).arg(fields_values)
     }
 
     /// Sets a single field in a hash if it does not exist.
     /// Returns whether the field was added.
+    /// [Redis Docs](https://redis.io/commands/HSETNX)
     fn hset_nx<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, field: F, value: V) -> bool {
         cmd("HSETNX").arg(key).arg(field).arg(value)
     }
 
     /// Sets multiple fields in a hash.
+    /// [Redis Docs](https://redis.io/commands/HMSET)
     fn hset_multiple<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &'a [(F, V)]) -> () {
         cmd("HMSET").arg(key).arg(items)
     }
@@ -450,16 +499,19 @@ implement_commands! {
     }
 
     /// Checks if a field in a hash exists.
+    /// [Redis Docs](https://redis.io/commands/HEXISTS)
     fn hexists<K: ToRedisArgs, F: ToRedisArgs>(key: K, field: F) -> bool {
         cmd("HEXISTS").arg(key).arg(field)
     }
 
     /// Get one or more fields' TTL in seconds.
+    /// [Redis Docs](https://redis.io/commands/HTTL").arg(key).arg("FIELDS)
     fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Get one or more fields' TTL in milliseconds.
+    /// [Redis Docs](https://redis.io/commands/HPTTL").arg(key).arg("FIELDS)
     fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HPTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -471,6 +523,7 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with 0 seconds.
     /// Errors if provided key exists but is not a hash.
+    /// [Redis Docs](https://redis.io/commands/HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS)
     fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp> {
        cmd("HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -483,17 +536,20 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with a time in the past.
     /// Errors if provided key exists but is not a hash.
+    /// [Redis Docs](https://redis.io/commands/HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS)
     fn hexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
+    /// [Redis Docs](https://redis.io/commands/HEXPIRETIME").arg(key).arg("FIELDS)
     fn hexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Remove the expiration from a key.
     /// Returns 1 if the expiration was removed.
+    /// [Redis Docs](https://redis.io/commands/HPERSIST").arg(key).arg("FIELDS)
     fn hpersist<K: ToRedisArgs, F :ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp{
         cmd("HPERSIST").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -505,6 +561,7 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with 0 seconds.
     /// Errors if provided key exists but is not a hash.
+    /// [Redis Docs](https://redis.io/commands/HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS)
     fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -516,32 +573,38 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with a time in the past.
     /// Errors if provided key exists but is not a hash.
+    /// [Redis Docs](https://redis.io/commands/HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS)
     fn hpexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) -> Vec<IntegerReplyOrNoOp>{
         cmd("HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
+    /// [Redis Docs](https://redis.io/commands/HPEXPIRETIME").arg(key).arg("FIELDS)
     fn hpexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> IntegerReplyOrNoOp {
         cmd("HPEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Gets all the keys in a hash.
+    /// [Redis Docs](https://redis.io/commands/HKEYS)
     fn hkeys<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("HKEYS").arg(key)
     }
 
     /// Gets all the values in a hash.
+    /// [Redis Docs](https://redis.io/commands/HVALS)
     fn hvals<K: ToRedisArgs>(key: K) -> Vec<String> {
         cmd("HVALS").arg(key)
     }
 
     /// Gets all the fields and values in a hash.
+    /// [Redis Docs](https://redis.io/commands/HGETALL)
     fn hgetall<K: ToRedisArgs>(key: K) -> std::collections::HashMap<String, String> {
         cmd("HGETALL").arg(key)
     }
 
     /// Gets the length of a hash.
     /// Returns 0 if key does not exist.
+    /// [Redis Docs](https://redis.io/commands/HLEN)
     fn hlen<K: ToRedisArgs>(key: K) -> usize {
         cmd("HLEN").arg(key)
     }
@@ -550,61 +613,72 @@ implement_commands! {
 
     /// Pop an element from a list, push it to another list
     /// and return it; or block until one is available
+    /// [Redis Docs](https://redis.io/commands/BLMOVE)
     fn blmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: f64) -> Option<String> {
         cmd("BLMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir).arg(timeout)
     }
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
+    /// [Redis Docs](https://redis.io/commands/BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT)
     fn blmpop<K: ToRedisArgs>(timeout: f64, numkeys: usize, key: K, dir: Direction, count: usize) -> Option<[String; 2]> {
         cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
 
     /// Remove and get the first element in a list, or block until one is available.
+    /// [Redis Docs](https://redis.io/commands/BLPOP)
     fn blpop<K: ToRedisArgs>(key: K, timeout: f64) -> Option<[String; 2]> {
         cmd("BLPOP").arg(key).arg(timeout)
     }
 
     /// Remove and get the last element in a list, or block until one is available.
+    /// [Redis Docs](https://redis.io/commands/BRPOP)
     fn brpop<K: ToRedisArgs>(key: K, timeout: f64) -> Option<[String; 2]> {
         cmd("BRPOP").arg(key).arg(timeout)
     }
 
     /// Pop a value from a list, push it to another list and return it;
     /// or block until one is available.
+    /// [Redis Docs](https://redis.io/commands/BRPOPLPUSH)
     fn brpoplpush<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, timeout: f64) -> Option<String> {
         cmd("BRPOPLPUSH").arg(srckey).arg(dstkey).arg(timeout)
     }
 
     /// Get an element from a list by its index.
+    /// [Redis Docs](https://redis.io/commands/LINDEX)
     fn lindex<K: ToRedisArgs>(key: K, index: isize) -> Option<String> {
         cmd("LINDEX").arg(key).arg(index)
     }
 
     /// Insert an element before another element in a list.
+    /// [Redis Docs](https://redis.io/commands/LINSERT)
     fn linsert_before<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(
             key: K, pivot: P, value: V) -> isize {
         cmd("LINSERT").arg(key).arg("BEFORE").arg(pivot).arg(value)
     }
 
     /// Insert an element after another element in a list.
+    /// [Redis Docs](https://redis.io/commands/LINSERT)
     fn linsert_after<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(
             key: K, pivot: P, value: V) -> isize {
         cmd("LINSERT").arg(key).arg("AFTER").arg(pivot).arg(value)
     }
 
     /// Returns the length of the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/LLEN)
     fn llen<K: ToRedisArgs>(key: K) -> usize {
         cmd("LLEN").arg(key)
     }
 
     /// Pop an element a list, push it to another list and return it
+    /// [Redis Docs](https://redis.io/commands/LMOVE)
     fn lmove<S: ToRedisArgs, D: ToRedisArgs>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction) -> String {
         cmd("LMOVE").arg(srckey).arg(dstkey).arg(src_dir).arg(dst_dir)
     }
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names.
+    /// [Redis Docs](https://redis.io/commands/LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT)
     fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) -> Option<(String, Vec<String>)> {
         cmd("LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
@@ -612,54 +686,64 @@ implement_commands! {
     /// Removes and returns the up to `count` first elements of the list stored at key.
     ///
     /// If `count` is not specified, then defaults to first element.
+    /// [Redis Docs](https://redis.io/commands/LPOP)
     fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> GENERIC {
         cmd("LPOP").arg(key).arg(count)
     }
 
     /// Returns the index of the first matching value of the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/LPOS)
     fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: LposOptions) -> GENERIC {
         cmd("LPOS").arg(key).arg(value).arg(options)
     }
 
     /// Insert all the specified values at the head of the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/LPUSH)
     fn lpush<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("LPUSH").arg(key).arg(value)
     }
 
     /// Inserts a value at the head of the list stored at key, only if key
     /// already exists and holds a list.
+    /// [Redis Docs](https://redis.io/commands/LPUSHX)
     fn lpush_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("LPUSHX").arg(key).arg(value)
     }
 
     /// Returns the specified elements of the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/LRANGE)
     fn lrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("LRANGE").arg(key).arg(start).arg(stop)
     }
 
     /// Removes the first count occurrences of elements equal to value
     /// from the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/LREM)
     fn lrem<K: ToRedisArgs, V: ToRedisArgs>(key: K, count: isize, value: V) -> usize {
         cmd("LREM").arg(key).arg(count).arg(value)
     }
 
     /// Trim an existing list so that it will contain only the specified
     /// range of elements specified.
+    /// [Redis Docs](https://redis.io/commands/LTRIM)
     fn ltrim<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> () {
         cmd("LTRIM").arg(key).arg(start).arg(stop)
     }
 
     /// Sets the list element at index to value
+    /// [Redis Docs](https://redis.io/commands/LSET)
     fn lset<K: ToRedisArgs, V: ToRedisArgs>(key: K, index: isize, value: V) -> () {
         cmd("LSET").arg(key).arg(index).arg(value)
     }
 
     /// Sends a ping to the server
+    /// [Redis Docs](https://redis.io/commands/PING)
     fn ping<>() -> String {
          &mut cmd("PING")
     }
 
     /// Sends a ping with a message to the server
+    /// [Redis Docs](https://redis.io/commands/PING)
     fn ping_message<K: ToRedisArgs>(message: K) -> String {
          cmd("PING").arg(message)
     }
@@ -667,22 +751,26 @@ implement_commands! {
     /// Removes and returns the up to `count` last elements of the list stored at key
     ///
     /// If `count` is not specified, then defaults to last element.
+    /// [Redis Docs](https://redis.io/commands/RPOP)
     fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> GENERIC {
         cmd("RPOP").arg(key).arg(count)
     }
 
     /// Pop a value from a list, push it to another list and return it.
+    /// [Redis Docs](https://redis.io/commands/RPOPLPUSH)
     fn rpoplpush<K: ToRedisArgs, D: ToRedisArgs>(key: K, dstkey: D) -> Option<String> {
         cmd("RPOPLPUSH").arg(key).arg(dstkey)
     }
 
     /// Insert all the specified values at the tail of the list stored at key.
+    /// [Redis Docs](https://redis.io/commands/RPUSH)
     fn rpush<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("RPUSH").arg(key).arg(value)
     }
 
     /// Inserts value at the tail of the list stored at key, only if key
     /// already exists and holds a list.
+    /// [Redis Docs](https://redis.io/commands/RPUSHX)
     fn rpush_exists<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V) -> usize {
         cmd("RPUSHX").arg(key).arg(value)
     }
@@ -690,81 +778,97 @@ implement_commands! {
     // set commands
 
     /// Add one or more members to a set.
+    /// [Redis Docs](https://redis.io/commands/SADD)
     fn sadd<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> usize {
         cmd("SADD").arg(key).arg(member)
     }
 
     /// Get the number of members in a set.
+    /// [Redis Docs](https://redis.io/commands/SCARD)
     fn scard<K: ToRedisArgs>(key: K) -> usize {
         cmd("SCARD").arg(key)
     }
 
     /// Subtract multiple sets.
+    /// [Redis Docs](https://redis.io/commands/SDIFF)
     fn sdiff<K: ToRedisArgs>(keys: K) -> HashSet<String> {
         cmd("SDIFF").arg(keys)
     }
 
     /// Subtract multiple sets and store the resulting set in a key.
+    /// [Redis Docs](https://redis.io/commands/SDIFFSTORE)
     fn sdiffstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("SDIFFSTORE").arg(dstkey).arg(keys)
     }
 
     /// Intersect multiple sets.
+    /// [Redis Docs](https://redis.io/commands/SINTER)
     fn sinter<K: ToRedisArgs>(keys: K) -> HashSet<String> {
         cmd("SINTER").arg(keys)
     }
 
     /// Intersect multiple sets and store the resulting set in a key.
+    /// [Redis Docs](https://redis.io/commands/SINTERSTORE)
     fn sinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("SINTERSTORE").arg(dstkey).arg(keys)
     }
 
     /// Determine if a given value is a member of a set.
+    /// [Redis Docs](https://redis.io/commands/SISMEMBER)
     fn sismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> bool {
         cmd("SISMEMBER").arg(key).arg(member)
     }
 
     /// Determine if given values are members of a set.
+    /// [Redis Docs](https://redis.io/commands/SMISMEMBER)
     fn smismember<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> Vec<bool> {
         cmd("SMISMEMBER").arg(key).arg(members)
     }
 
     /// Get all the members in a set.
+    /// [Redis Docs](https://redis.io/commands/SMEMBERS)
     fn smembers<K: ToRedisArgs>(key: K) -> HashSet<String> {
         cmd("SMEMBERS").arg(key)
     }
 
     /// Move a member from one set to another.
+    /// [Redis Docs](https://redis.io/commands/SMOVE)
     fn smove<S: ToRedisArgs, D: ToRedisArgs, M: ToRedisArgs>(srckey: S, dstkey: D, member: M) -> bool {
         cmd("SMOVE").arg(srckey).arg(dstkey).arg(member)
     }
 
     /// Remove and return a random member from a set.
+    /// [Redis Docs](https://redis.io/commands/SPOP)
     fn spop<K: ToRedisArgs>(key: K) -> GENERIC {
         cmd("SPOP").arg(key)
     }
 
     /// Get one random member from a set.
+    /// [Redis Docs](https://redis.io/commands/SRANDMEMBER)
     fn srandmember<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd("SRANDMEMBER").arg(key)
     }
 
     /// Get multiple random members from a set.
+    /// [Redis Docs](https://redis.io/commands/SRANDMEMBER)
     fn srandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> Vec<String> {
         cmd("SRANDMEMBER").arg(key).arg(count)
     }
 
     /// Remove one or more members from a set.
+    /// [Redis Docs](https://redis.io/commands/SREM)
     fn srem<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> usize {
         cmd("SREM").arg(key).arg(member)
     }
 
     /// Add multiple sets.
+    /// [Redis Docs](https://redis.io/commands/SUNION)
     fn sunion<K: ToRedisArgs>(keys: K) -> HashSet<String> {
         cmd("SUNION").arg(keys)
     }
 
     /// Add multiple sets and store the resulting set in a key.
+    /// [Redis Docs](https://redis.io/commands/SUNIONSTORE)
     fn sunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("SUNIONSTORE").arg(dstkey).arg(keys)
     }
@@ -772,45 +876,53 @@ implement_commands! {
     // sorted set commands
 
     /// Add one member to a sorted set, or update its score if it already exists.
+    /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, member: M, score: S) -> usize{
         cmd("ZADD").arg(key).arg(score).arg(member)
     }
 
     /// Add multiple members to a sorted set, or update its score if it already exists.
+    /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd_multiple<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &'a [(S, M)]) -> usize {
         cmd("ZADD").arg(key).arg(items)
     }
 
     /// Get the number of members in a sorted set.
+    /// [Redis Docs](https://redis.io/commands/ZCARD)
     fn zcard<K: ToRedisArgs>(key: K) -> usize {
         cmd("ZCARD").arg(key)
     }
 
     /// Count the members in a sorted set with scores within the given values.
+    /// [Redis Docs](https://redis.io/commands/ZCOUNT)
     fn zcount<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> usize {
         cmd("ZCOUNT").arg(key).arg(min).arg(max)
     }
 
     /// Increments the member in a sorted set at key by delta.
     /// If the member does not exist, it is added with delta as its score.
+    /// [Redis Docs](https://redis.io/commands/ZINCRBY)
     fn zincr<K: ToRedisArgs, M: ToRedisArgs, D: ToRedisArgs>(key: K, member: M, delta: D) -> f64 {
         cmd("ZINCRBY").arg(key).arg(delta).arg(member)
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys)
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
@@ -818,6 +930,7 @@ implement_commands! {
     /// [`Commands::zinterstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights)
@@ -826,6 +939,7 @@ implement_commands! {
     /// [`Commands::zinterstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
@@ -834,34 +948,40 @@ implement_commands! {
     /// [`Commands::zinterstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
+    /// [Redis Docs](https://redis.io/commands/ZLEXCOUNT)
     fn zlexcount<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> usize {
         cmd("ZLEXCOUNT").arg(key).arg(min).arg(max)
     }
 
     /// Removes and returns the member with the highest score in a sorted set.
     /// Blocks until a member is available otherwise.
+    /// [Redis Docs](https://redis.io/commands/BZPOPMAX)
     fn bzpopmax<K: ToRedisArgs>(key: K, timeout: f64) -> Option<(String, String, f64)> {
         cmd("BZPOPMAX").arg(key).arg(timeout)
     }
 
     /// Removes and returns up to count members with the highest scores in a sorted set
+    /// [Redis Docs](https://redis.io/commands/ZPOPMAX)
     fn zpopmax<K: ToRedisArgs>(key: K, count: isize) -> Vec<String> {
         cmd("ZPOPMAX").arg(key).arg(count)
     }
 
     /// Removes and returns the member with the lowest score in a sorted set.
     /// Blocks until a member is available otherwise.
+    /// [Redis Docs](https://redis.io/commands/BZPOPMIN)
     fn bzpopmin<K: ToRedisArgs>(key: K, timeout: f64) -> Option<(String, String, f64)> {
         cmd("BZPOPMIN").arg(key).arg(timeout)
     }
 
     /// Removes and returns up to count members with the lowest scores in a sorted set
+    /// [Redis Docs](https://redis.io/commands/ZPOPMIN)
     fn zpopmin<K: ToRedisArgs>(key: K, count: isize) -> Vec<String> {
         cmd("ZPOPMIN").arg(key).arg(count)
     }
@@ -869,12 +989,14 @@ implement_commands! {
     /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// Blocks until a member is available otherwise.
+    /// [Redis Docs](https://redis.io/commands/BZMPOP)
     fn bzmpop_max<K: ToRedisArgs>(timeout: f64, keys: K, count: isize) -> Option<(String, Vec<(String, f64)>)> {
         cmd("BZMPOP").arg(timeout).arg(keys.num_of_args()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
 
     /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
+    /// [Redis Docs](https://redis.io/commands/ZMPOP)
     fn zmpop_max<K: ToRedisArgs>(keys: K, count: isize) -> Option<(String, Vec<(String, f64)>)> {
         cmd("ZMPOP").arg(keys.num_of_args()).arg(keys).arg("MAX").arg("COUNT").arg(count)
     }
@@ -882,77 +1004,91 @@ implement_commands! {
     /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// Blocks until a member is available otherwise.
+    /// [Redis Docs](https://redis.io/commands/BZMPOP)
     fn bzmpop_min<K: ToRedisArgs>(timeout: f64, keys: K, count: isize) -> Option<(String, Vec<(String, f64)>)> {
         cmd("BZMPOP").arg(timeout).arg(keys.num_of_args()).arg(keys).arg("MIN").arg("COUNT").arg(count)
     }
 
     /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
+    /// [Redis Docs](https://redis.io/commands/ZMPOP)
     fn zmpop_min<K: ToRedisArgs>(keys: K, count: isize) -> Option<(String, Vec<(String, f64)>)> {
         cmd("ZMPOP").arg(keys.num_of_args()).arg(keys).arg("MIN").arg("COUNT").arg(count)
     }
 
     /// Return up to count random members in a sorted set (or 1 if `count == None`)
+    /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
     fn zrandmember<K: ToRedisArgs>(key: K, count: Option<isize>) -> GENERIC {
         cmd("ZRANDMEMBER").arg(key).arg(count)
     }
 
     /// Return up to count random members in a sorted set with scores
+    /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
     fn zrandmember_withscores<K: ToRedisArgs>(key: K, count: isize) -> GENERIC {
         cmd("ZRANDMEMBER").arg(key).arg(count).arg("WITHSCORES")
     }
 
     /// Return a range of members in a sorted set, by index
+    /// [Redis Docs](https://redis.io/commands/ZRANGE)
     fn zrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("ZRANGE").arg(key).arg(start).arg(stop)
     }
 
     /// Return a range of members in a sorted set, by index with scores.
+    /// [Redis Docs](https://redis.io/commands/ZRANGE)
     fn zrange_withscores<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("ZRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
     }
 
     /// Return a range of members in a sorted set, by lexicographical range.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYLEX)
     fn zrangebylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> Vec<String> {
         cmd("ZRANGEBYLEX").arg(key).arg(min).arg(max)
     }
 
     /// Return a range of members in a sorted set, by lexicographical
     /// range with offset and limit.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYLEX)
     fn zrangebylex_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(
             key: K, min: M, max: MM, offset: isize, count: isize) -> Vec<String> {
         cmd("ZRANGEBYLEX").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
     }
 
     /// Return a range of members in a sorted set, by lexicographical range.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYLEX)
     fn zrevrangebylex<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) -> Vec<String> {
         cmd("ZREVRANGEBYLEX").arg(key).arg(max).arg(min)
     }
 
     /// Return a range of members in a sorted set, by lexicographical
     /// range with offset and limit.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYLEX)
     fn zrevrangebylex_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(
             key: K, max: MM, min: M, offset: isize, count: isize) -> Vec<String> {
         cmd("ZREVRANGEBYLEX").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
     }
 
     /// Return a range of members in a sorted set, by score.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> Vec<String> {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max)
     }
 
     /// Return a range of members in a sorted set, by score with scores.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> Vec<String> {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
     }
 
     /// Return a range of members in a sorted set, by score with limit.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_limit<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
             (key: K, min: M, max: MM, offset: isize, count: isize) -> Vec<String> {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("LIMIT").arg(offset).arg(count)
     }
 
     /// Return a range of members in a sorted set, by score with limit with scores.
+    /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_limit_withscores<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>
             (key: K, min: M, max: MM, offset: isize, count: isize) -> Vec<String> {
         cmd("ZRANGEBYSCORE").arg(key).arg(min).arg(max).arg("WITHSCORES")
@@ -960,59 +1096,70 @@ implement_commands! {
     }
 
     /// Determine the index of a member in a sorted set.
+    /// [Redis Docs](https://redis.io/commands/ZRANK)
     fn zrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> Option<usize> {
         cmd("ZRANK").arg(key).arg(member)
     }
 
     /// Remove one or more members from a sorted set.
+    /// [Redis Docs](https://redis.io/commands/ZREM)
     fn zrem<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> usize {
         cmd("ZREM").arg(key).arg(members)
     }
 
     /// Remove all members in a sorted set between the given lexicographical range.
+    /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYLEX)
     fn zrembylex<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> usize {
         cmd("ZREMRANGEBYLEX").arg(key).arg(min).arg(max)
     }
 
     /// Remove all members in a sorted set within the given indexes.
+    /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYRANK)
     fn zremrangebyrank<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> usize {
         cmd("ZREMRANGEBYRANK").arg(key).arg(start).arg(stop)
     }
 
     /// Remove all members in a sorted set within the given scores.
+    /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYSCORE)
     fn zrembyscore<K: ToRedisArgs, M: ToRedisArgs, MM: ToRedisArgs>(key: K, min: M, max: MM) -> usize {
         cmd("ZREMRANGEBYSCORE").arg(key).arg(min).arg(max)
     }
 
     /// Return a range of members in a sorted set, by index,
     /// ordered from high to low.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGE)
     fn zrevrange<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("ZREVRANGE").arg(key).arg(start).arg(stop)
     }
 
     /// Return a range of members in a sorted set, by index, with scores
     /// ordered from high to low.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGE)
     fn zrevrange_withscores<K: ToRedisArgs>(key: K, start: isize, stop: isize) -> Vec<String> {
         cmd("ZREVRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES")
     }
 
     /// Return a range of members in a sorted set, by score.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) -> Vec<String> {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min)
     }
 
     /// Return a range of members in a sorted set, by score with scores.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>(key: K, max: MM, min: M) -> Vec<String> {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
     }
 
     /// Return a range of members in a sorted set, by score with limit.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_limit<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
             (key: K, max: MM, min: M, offset: isize, count: isize) -> Vec<String> {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("LIMIT").arg(offset).arg(count)
     }
 
     /// Return a range of members in a sorted set, by score with limit with scores.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_limit_withscores<K: ToRedisArgs, MM: ToRedisArgs, M: ToRedisArgs>
             (key: K, max: MM, min: M, offset: isize, count: isize) -> Vec<String> {
         cmd("ZREVRANGEBYSCORE").arg(key).arg(max).arg(min).arg("WITHSCORES")
@@ -1020,34 +1167,40 @@ implement_commands! {
     }
 
     /// Determine the index of a member in a sorted set, with scores ordered from high to low.
+    /// [Redis Docs](https://redis.io/commands/ZREVRANK)
     fn zrevrank<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> Option<usize> {
         cmd("ZREVRANK").arg(key).arg(member)
     }
 
     /// Get the score associated with the given member in a sorted set.
+    /// [Redis Docs](https://redis.io/commands/ZSCORE)
     fn zscore<K: ToRedisArgs, M: ToRedisArgs>(key: K, member: M) -> Option<f64> {
         cmd("ZSCORE").arg(key).arg(member)
     }
 
     /// Get the scores associated with multiple members in a sorted set.
+    /// [Redis Docs](https://redis.io/commands/ZMSCORE)
     fn zscore_multiple<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: &'a [M]) -> Option<Vec<f64>> {
         cmd("ZMSCORE").arg(key).arg(members)
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys)
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MIN as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_min<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN")
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using MAX as aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_max<D: ToRedisArgs, K: ToRedisArgs>(dstkey: D, keys: K) -> usize {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX")
     }
@@ -1055,6 +1208,7 @@ implement_commands! {
     /// [`Commands::zunionstore`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights)
@@ -1063,6 +1217,7 @@ implement_commands! {
     /// [`Commands::zunionstore_min`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_min_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights)
@@ -1071,6 +1226,7 @@ implement_commands! {
     /// [`Commands::zunionstore_max`], but with the ability to specify a
     /// multiplication factor for each sorted set by pairing one with each key
     /// in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> usize {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> (&K, &W) {(key, weight)}).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
@@ -1079,27 +1235,32 @@ implement_commands! {
     // hyperloglog commands
 
     /// Adds the specified elements to the specified HyperLogLog.
+    /// [Redis Docs](https://redis.io/commands/PFADD)
     fn pfadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> bool {
         cmd("PFADD").arg(key).arg(element)
     }
 
     /// Return the approximated cardinality of the set(s) observed by the
     /// HyperLogLog at key(s).
+    /// [Redis Docs](https://redis.io/commands/PFCOUNT)
     fn pfcount<K: ToRedisArgs>(key: K) -> usize {
         cmd("PFCOUNT").arg(key)
     }
 
     /// Merge N different HyperLogLogs into a single one.
+    /// [Redis Docs](https://redis.io/commands/PFMERGE)
     fn pfmerge<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> () {
         cmd("PFMERGE").arg(dstkey).arg(srckeys)
     }
 
     /// Posts a message to the given channel.
+    /// [Redis Docs](https://redis.io/commands/PUBLISH)
     fn publish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) -> usize {
         cmd("PUBLISH").arg(channel).arg(message)
     }
 
     /// Posts a message to the given sharded channel.
+    /// [Redis Docs](https://redis.io/commands/SPUBLISH)
     fn spublish<K: ToRedisArgs, E: ToRedisArgs>(channel: K, message: E) -> usize {
         cmd("SPUBLISH").arg(channel).arg(message)
     }
@@ -1107,36 +1268,43 @@ implement_commands! {
     // Object commands
 
     /// Returns the encoding of a key.
+    /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_encoding<K: ToRedisArgs>(key: K) -> Option<String> {
         cmd("OBJECT").arg("ENCODING").arg(key)
     }
 
     /// Returns the time in seconds since the last access of a key.
+    /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_idletime<K: ToRedisArgs>(key: K) -> Option<usize> {
         cmd("OBJECT").arg("IDLETIME").arg(key)
     }
 
     /// Returns the logarithmic access frequency counter of a key.
+    /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_freq<K: ToRedisArgs>(key: K) -> Option<usize> {
         cmd("OBJECT").arg("FREQ").arg(key)
     }
 
     /// Returns the reference count of a key.
+    /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_refcount<K: ToRedisArgs>(key: K) -> Option<usize> {
         cmd("OBJECT").arg("REFCOUNT").arg(key)
     }
 
     /// Returns the name of the current connection as set by CLIENT SETNAME.
+    /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_getname<>() -> Option<String> {
         cmd("CLIENT").arg("GETNAME")
     }
 
     /// Returns the ID of the current connection.
+    /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_id<>() -> usize {
         cmd("CLIENT").arg("ID")
     }
 
     /// Command assigns a name to the current connection.
+    /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_setname<K: ToRedisArgs>(connection_name: K) -> () {
         cmd("CLIENT").arg("SETNAME").arg(connection_name)
     }
@@ -1148,6 +1316,7 @@ implement_commands! {
     /// replacing all the current ACL rules with the ones defined in the file.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_load<>() -> () {
         cmd("ACL").arg("LOAD")
     }
@@ -1157,6 +1326,7 @@ implement_commands! {
     /// ACLs from the server memory to the ACL file.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_save<>() -> () {
         cmd("ACL").arg("SAVE")
     }
@@ -1164,6 +1334,7 @@ implement_commands! {
     /// Shows the currently active ACL rules in the Redis server.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_list<>() -> Vec<String> {
         cmd("ACL").arg("LIST")
     }
@@ -1172,6 +1343,7 @@ implement_commands! {
     /// the Redis ACL system.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_users<>() -> Vec<String> {
         cmd("ACL").arg("USERS")
     }
@@ -1179,6 +1351,7 @@ implement_commands! {
     /// Returns all the rules defined for an existing ACL user.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_getuser<K: ToRedisArgs>(username: K) -> Option<HashMap<String, Value>> {
         cmd("ACL").arg("GETUSER").arg(username)
     }
@@ -1186,6 +1359,7 @@ implement_commands! {
     /// Creates an ACL user without any privilege.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_setuser<K: ToRedisArgs>(username: K) -> () {
         cmd("ACL").arg("SETUSER").arg(username)
     }
@@ -1194,6 +1368,7 @@ implement_commands! {
     /// an existing user.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_setuser_rules<K: ToRedisArgs>(username: K, rules: &'a [acl::Rule]) -> () {
         cmd("ACL").arg("SETUSER").arg(username).arg(rules)
     }
@@ -1202,6 +1377,7 @@ implement_commands! {
     /// that are authenticated with such users.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_deluser<K: ToRedisArgs>(usernames: &'a [K]) -> usize {
         cmd("ACL").arg("DELUSER").arg(usernames)
     }
@@ -1209,11 +1385,13 @@ implement_commands! {
     /// Simulate the execution of a given command by a given user.
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
+    /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_dryrun<K: ToRedisArgs, C: ToRedisArgs, A: ToRedisArgs>(username: K, command: C, args: A) -> String {
         cmd("ACL").arg("DRYRUN").arg(username).arg(command).arg(args)
     }
 
     /// Shows the available ACL categories.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_cat<>() -> Vec<String> {
@@ -1221,6 +1399,7 @@ implement_commands! {
     }
 
     /// Shows all the Redis commands in the specified category.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_cat_categoryname<K: ToRedisArgs>(categoryname: K) -> Vec<String> {
@@ -1228,6 +1407,7 @@ implement_commands! {
     }
 
     /// Generates a 256-bits password starting from /dev/urandom if available.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_genpass<>() -> String {
@@ -1235,6 +1415,7 @@ implement_commands! {
     }
 
     /// Generates a 1-to-1024-bits password starting from /dev/urandom if available.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_genpass_bits<>(bits: isize) -> String {
@@ -1242,6 +1423,7 @@ implement_commands! {
     }
 
     /// Returns the username the current connection is authenticated with.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_whoami<>() -> String {
@@ -1249,6 +1431,7 @@ implement_commands! {
     }
 
     /// Shows a list of recent ACL security events
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_log<>(count: isize) -> Vec<String> {
@@ -1257,6 +1440,7 @@ implement_commands! {
     }
 
     /// Clears the ACL log.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_log_reset<>() -> () {
@@ -1264,6 +1448,7 @@ implement_commands! {
     }
 
     /// Returns a helpful text describing the different subcommands.
+    /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_help<>() -> String {
@@ -1307,6 +1492,7 @@ implement_commands! {
     ///     ])
     /// }
     /// ```
+    /// [Redis Docs](https://redis.io/commands/GEOADD)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_add<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> usize {
@@ -1344,6 +1530,7 @@ implement_commands! {
     ///     // x is Ok(None)
     /// }
     /// ```
+    /// [Redis Docs](https://redis.io/commands/GEODIST)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_dist<K: ToRedisArgs, M1: ToRedisArgs, M2: ToRedisArgs>(
@@ -1378,6 +1565,7 @@ implement_commands! {
     ///     // x is vec!["sqc8b49rny0", "sqdtr74hyu0"]
     /// }
     /// ```
+    /// [Redis Docs](https://redis.io/commands/GEOHASH)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_hash<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> Vec<String> {
@@ -1407,6 +1595,7 @@ implement_commands! {
     ///     // x[0].latitude is 38.115556
     /// }
     /// ```
+    /// [Redis Docs](https://redis.io/commands/GEOPOS)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> Vec<Option<(f64, f64)>> {
@@ -1432,6 +1621,7 @@ implement_commands! {
     ///     con.geo_radius("my_gis", 15.90, 37.21, 51.39, Unit::Kilometers, opts).unwrap()
     /// }
     /// ```
+    /// [Redis Docs](https://redis.io/commands/GEORADIUS)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_radius<K: ToRedisArgs>(
@@ -1453,6 +1643,7 @@ implement_commands! {
 
     /// Retrieve members selected by distance with the center of `member`. The
     /// member itself is always contained in the results.
+    /// [Redis Docs](https://redis.io/commands/GEORADIUSBYMEMBER)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_radius_by_member<K: ToRedisArgs, M: ToRedisArgs>(
@@ -1479,6 +1670,7 @@ implement_commands! {
     /// ```text
     /// XACK <key> <group> <id> <id> ... <id>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XACK)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xack<K: ToRedisArgs, G: ToRedisArgs, I: ToRedisArgs>(
@@ -1497,6 +1689,7 @@ implement_commands! {
     /// ```text
     /// XADD key <ID or *> [field value] [field value] ...
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd<K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(
@@ -1514,6 +1707,7 @@ implement_commands! {
     /// ```text
     /// XADD key <ID or *> [rust BTreeMap] ...
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
@@ -1542,6 +1736,7 @@ implement_commands! {
     /// ```text
     /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd_options<
@@ -1565,6 +1760,7 @@ implement_commands! {
     /// ```text
     /// XADD key [MAXLEN [~|=] <count>] <ID or *> [field value] [field value] ...
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd_maxlen<
@@ -1591,6 +1787,7 @@ implement_commands! {
     /// ```text
     /// XADD key [MAXLEN [~|=] <count>] <ID or *> [rust BTreeMap] ...
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xadd_maxlen_map<K: ToRedisArgs, ID: ToRedisArgs, BTM: ToRedisArgs>(
@@ -1621,6 +1818,7 @@ implement_commands! {
     /// ```text
     /// XAUTOCLAIM <key> <group> <consumer> <min-idle-time> <start> [COUNT <count>] [JUSTID]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XAUTOCLAIM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xautoclaim_options<
@@ -1655,6 +1853,7 @@ implement_commands! {
     /// ```text
     /// XCLAIM <key> <group> <consumer> <min-idle-time> [<ID-1> <ID-2>]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XCLAIM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xclaim<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs, MIT: ToRedisArgs, ID: ToRedisArgs>(
@@ -1705,6 +1904,7 @@ implement_commands! {
     ///     [IDLE <milliseconds>] [TIME <mstime>] [RETRYCOUNT <count>]
     ///     [FORCE] [JUSTID] [LASTID <lastid>]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XCLAIM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xclaim_options<
@@ -1736,6 +1936,7 @@ implement_commands! {
     /// ```text
     /// XDEL <key> [<ID1> <ID2> ... <IDN>]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XDEL)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xdel<K: ToRedisArgs, ID: ToRedisArgs>(
@@ -1754,6 +1955,7 @@ implement_commands! {
     /// ```text
     /// XGROUP CREATE <key> <groupname> <id or $>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_create<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(
@@ -1777,6 +1979,7 @@ implement_commands! {
     /// ```text
     /// XGROUP CREATECONSUMER <key> <groupname> <consumername>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_createconsumer<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs>(
@@ -1797,6 +2000,7 @@ implement_commands! {
     /// ```text
     /// XGROUP CREATE <key> <groupname> <id or $> [MKSTREAM]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_create_mkstream<
@@ -1823,6 +2027,7 @@ implement_commands! {
     /// ```text
     /// XGROUP SETID <key> <groupname> <id or $>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_setid<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(
@@ -1843,6 +2048,7 @@ implement_commands! {
     /// ```text
     /// XGROUP SETID <key> <groupname> <id or $>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_destroy<K: ToRedisArgs, G: ToRedisArgs>(
@@ -1858,6 +2064,7 @@ implement_commands! {
     /// ```text
     /// XGROUP DELCONSUMER <key> <groupname> <consumername>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XGROUP)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xgroup_delconsumer<K: ToRedisArgs, G: ToRedisArgs, C: ToRedisArgs>(
@@ -1883,6 +2090,7 @@ implement_commands! {
     /// ```text
     /// XINFO CONSUMERS <key> <group>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XINFO")
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xinfo_consumers<K: ToRedisArgs, G: ToRedisArgs>(
@@ -1905,8 +2113,10 @@ implement_commands! {
     /// ```text
     /// XINFO GROUPS <key>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XINFO")
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    /// [Redis Docs](https://redis.io/commands/XINFO").arg("GROUPS)
     fn xinfo_groups<K: ToRedisArgs>(key: K) -> Vec<HashMap<String, Value>> {
         cmd("XINFO").arg("GROUPS").arg(key)
     }
@@ -1924,6 +2134,7 @@ implement_commands! {
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    /// [Redis Docs](https://redis.io/commands/XINFO").arg("STREAM)
     fn xinfo_stream<K: ToRedisArgs>(key: K) -> GENERIC {
         cmd("XINFO").arg("STREAM").arg(key)
     }
@@ -1935,6 +2146,7 @@ implement_commands! {
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    /// [Redis Docs](https://redis.io/commands/XLEN)
     fn xlen<K: ToRedisArgs>(key: K) -> usize {
         cmd("XLEN").arg(key)
     }
@@ -1954,6 +2166,7 @@ implement_commands! {
     /// ```text
     /// XPENDING <key> <group> [<start> <stop> <count> [<consumer>]]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XPENDING)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xpending<K: ToRedisArgs, G: ToRedisArgs>(
@@ -1975,6 +2188,7 @@ implement_commands! {
     /// ```text
     /// XPENDING <key> <group> <start> <stop> <count>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XPENDING)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xpending_count<
@@ -2009,6 +2223,7 @@ implement_commands! {
     /// ```text
     /// XPENDING <key> <group> <start> <stop> <count> <consumer>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XPENDING)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xpending_consumer_count<
@@ -2046,6 +2261,7 @@ implement_commands! {
     /// ```text
     /// XRANGE key start end
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrange<K: ToRedisArgs, S: ToRedisArgs, E: ToRedisArgs>(
@@ -2065,6 +2281,7 @@ implement_commands! {
     /// ```
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    /// [Redis Docs](https://redis.io/commands/XRANGE").arg(key).arg("-").arg("+)
     fn xrange_all<K: ToRedisArgs>(key: K) -> GENERIC {
         cmd("XRANGE").arg(key).arg("-").arg("+")
     }
@@ -2075,6 +2292,7 @@ implement_commands! {
     /// ```text
     /// XRANGE key start end [COUNT <n>]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrange_count<K: ToRedisArgs, S: ToRedisArgs, E: ToRedisArgs, C: ToRedisArgs>(
@@ -2100,6 +2318,7 @@ implement_commands! {
     /// ```text
     /// XREAD STREAMS key_1 key_2 ... key_N ID_1 ID_2 ... ID_N
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XREAD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xread<K: ToRedisArgs, ID: ToRedisArgs>(
@@ -2145,6 +2364,7 @@ implement_commands! {
     ///     STREAMS key_1 key_2 ... key_N
     ///     ID_1 ID_2 ... ID_N
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XREAD)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
@@ -2169,6 +2389,7 @@ implement_commands! {
     /// ```text
     /// XREVRANGE key end start
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XREVRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrevrange<K: ToRedisArgs, E: ToRedisArgs, S: ToRedisArgs>(
@@ -2185,6 +2406,7 @@ implement_commands! {
     /// ```text
     /// XREVRANGE key + -
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XREVRANGE").arg(key).arg("+").arg("-)
     fn xrevrange_all<K: ToRedisArgs>(key: K) -> Vec<Value> {
         cmd("XREVRANGE").arg(key).arg("+").arg("-")
     }
@@ -2195,6 +2417,7 @@ implement_commands! {
     /// ```text
     /// XREVRANGE key end start [COUNT <n>]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XREVRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrevrange_count<K: ToRedisArgs, E: ToRedisArgs, S: ToRedisArgs, C: ToRedisArgs>(
@@ -2216,6 +2439,7 @@ implement_commands! {
     /// ```text
     /// XTRIM <key> MAXLEN [~|=] <count>  (Same as XADD MAXLEN option)
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XTRIM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xtrim<K: ToRedisArgs>(
@@ -2230,6 +2454,7 @@ implement_commands! {
      /// ```text
      /// XTRIM <key> <MAXLEN|MINID> [~|=] <threshold> [LIMIT <count>]  (Same as XADD MAXID|MINID options)
      /// ```
+     /// [Redis Docs](https://redis.io/commands/XTRIM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xtrim_options<K: ToRedisArgs>(
@@ -2286,6 +2511,7 @@ assert_eq!(b, 5);
     /// ```text
     /// FLUSHALL
     /// ```
+    /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall<>() -> () {
         &mut cmd("FLUSHALL")
     }
@@ -2295,6 +2521,7 @@ assert_eq!(b, 5);
     /// ```text
     /// FLUSHALL [ASYNC|SYNC]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall_options<>(options: &'a FlushAllOptions) -> () {
         cmd("FLUSHALL").arg(options)
     }
@@ -2309,6 +2536,7 @@ assert_eq!(b, 5);
     /// ```text
     /// FLUSHDB
     /// ```
+    /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb<>() -> () {
         &mut cmd("FLUSHDB")
     }
@@ -2318,6 +2546,7 @@ assert_eq!(b, 5);
     /// ```text
     /// FLUSHDB [ASYNC|SYNC]
     /// ```
+    /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb_options<>(options: &'a FlushDbOptions) -> () {
         cmd("FLUSHDB").arg(options)
     }
@@ -2841,6 +3070,7 @@ impl ToRedisArgs for Expiry {
 }
 
 /// Creates HELLO command for RESP3 with RedisConnectionInfo
+/// [Redis Docs](https://redis.io/commands/HELLO)
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");
