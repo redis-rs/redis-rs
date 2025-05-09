@@ -5,7 +5,7 @@ use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[macro_use]
 mod macros;
@@ -1352,7 +1352,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
-    fn acl_getuser<K: ToRedisArgs>(username: K) -> Option<HashMap<String, Value>> {
+    fn acl_getuser<K: ToRedisArgs>(username: K) -> Option<std::collections::HashMap<String, Value>> {
         cmd("ACL").arg("GETUSER").arg(username)
     }
 
@@ -2096,7 +2096,7 @@ implement_commands! {
     fn xinfo_consumers<K: ToRedisArgs, G: ToRedisArgs>(
         key: K,
         group: G
-    ) -> Vec<HashMap<String, Value>> {
+    ) -> Vec<std::collections::HashMap<String, Value>> {
         cmd("XINFO")
             .arg("CONSUMERS")
             .arg(key)
@@ -2117,7 +2117,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XINFO").arg("GROUPS)
-    fn xinfo_groups<K: ToRedisArgs>(key: K) -> Vec<HashMap<String, Value>> {
+    fn xinfo_groups<K: ToRedisArgs>(key: K) -> Vec<std::collections::HashMap<String, Value>> {
         cmd("XINFO").arg("GROUPS").arg(key)
     }
 
@@ -2324,7 +2324,7 @@ implement_commands! {
     fn xread<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID]
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Option<std::collections::HashMap<String, Value>> {
         cmd("XREAD").arg("STREAMS").arg(keys).arg(ids)
     }
 
@@ -2371,7 +2371,7 @@ implement_commands! {
         keys: &'a [K],
         ids: &'a [ID],
         options: &'a streams::StreamReadOptions
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Option<std::collections::HashMap<String, Value>> {
         cmd(if options.read_only() {
             "XREAD"
         } else {
