@@ -1,12 +1,12 @@
 // Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
 #[cfg(feature = "aio")]
 macro_rules! implement_command_async {
-	// If the return type is `GENERIC`, then we require the user to specify the return type
+	// If the return type is `Generic`, then we require the user to specify the return type
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
 		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block GENERIC
+			$($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
 		$(#[$attr])*
 		#[inline]
@@ -42,12 +42,12 @@ macro_rules! implement_command_async {
 }
 
 macro_rules! implement_command_sync {
-	// If the return type is `GENERIC`, then we require the user to specify the return type
+	// If the return type is `Generic`, then we require the user to specify the return type
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
 		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block GENERIC
+			$($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
 		$(#[$attr])*
 		#[inline]

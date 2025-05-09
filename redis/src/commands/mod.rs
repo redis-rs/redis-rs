@@ -166,7 +166,7 @@ implement_commands! {
 
     /// Set the string value of a key with options.
     /// [Redis Docs](https://redis.io/commands/SET)
-    fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) -> GENERIC {
+    fn set_options<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: SetOptions) -> Generic {
         cmd("SET").arg(key).arg(value).arg(options)
     }
 
@@ -687,13 +687,13 @@ implement_commands! {
     ///
     /// If `count` is not specified, then defaults to first element.
     /// [Redis Docs](https://redis.io/commands/LPOP)
-    fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> GENERIC {
+    fn lpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> Generic {
         cmd("LPOP").arg(key).arg(count)
     }
 
     /// Returns the index of the first matching value of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LPOS)
-    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: LposOptions) -> GENERIC {
+    fn lpos<K: ToRedisArgs, V: ToRedisArgs>(key: K, value: V, options: LposOptions) -> Generic {
         cmd("LPOS").arg(key).arg(value).arg(options)
     }
 
@@ -752,7 +752,7 @@ implement_commands! {
     ///
     /// If `count` is not specified, then defaults to last element.
     /// [Redis Docs](https://redis.io/commands/RPOP)
-    fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> GENERIC {
+    fn rpop<K: ToRedisArgs>(key: K, count: Option<core::num::NonZeroUsize>) -> Generic {
         cmd("RPOP").arg(key).arg(count)
     }
 
@@ -839,7 +839,7 @@ implement_commands! {
 
     /// Remove and return a random member from a set.
     /// [Redis Docs](https://redis.io/commands/SPOP)
-    fn spop<K: ToRedisArgs>(key: K) -> GENERIC {
+    fn spop<K: ToRedisArgs>(key: K) -> Generic {
         cmd("SPOP").arg(key)
     }
 
@@ -1018,13 +1018,13 @@ implement_commands! {
 
     /// Return up to count random members in a sorted set (or 1 if `count == None`)
     /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
-    fn zrandmember<K: ToRedisArgs>(key: K, count: Option<isize>) -> GENERIC {
+    fn zrandmember<K: ToRedisArgs>(key: K, count: Option<isize>) -> Generic {
         cmd("ZRANDMEMBER").arg(key).arg(count)
     }
 
     /// Return up to count random members in a sorted set with scores
     /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
-    fn zrandmember_withscores<K: ToRedisArgs>(key: K, count: isize) -> GENERIC {
+    fn zrandmember_withscores<K: ToRedisArgs>(key: K, count: isize) -> Generic {
         cmd("ZRANDMEMBER").arg(key).arg(count).arg("WITHSCORES")
     }
 
@@ -1631,7 +1631,7 @@ implement_commands! {
         radius: f64,
         unit: geo::Unit,
         options: geo::RadiusOptions
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("GEORADIUS")
             .arg(key)
             .arg(longitude)
@@ -1652,7 +1652,7 @@ implement_commands! {
         radius: f64,
         unit: geo::Unit,
         options: geo::RadiusOptions
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("GEORADIUSBYMEMBER")
             .arg(key)
             .arg(member)
@@ -1920,7 +1920,7 @@ implement_commands! {
         min_idle_time: MIT,
         ids: &'a [ID],
         options: streams::StreamClaimOptions
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XCLAIM")
             .arg(key)
             .arg(group)
@@ -2135,7 +2135,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XINFO").arg("STREAM)
-    fn xinfo_stream<K: ToRedisArgs>(key: K) -> GENERIC {
+    fn xinfo_stream<K: ToRedisArgs>(key: K) -> Generic {
         cmd("XINFO").arg("STREAM").arg(key)
     }
 
@@ -2172,7 +2172,7 @@ implement_commands! {
     fn xpending<K: ToRedisArgs, G: ToRedisArgs>(
         key: K,
         group: G
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XPENDING").arg(key).arg(group)
     }
 
@@ -2203,7 +2203,7 @@ implement_commands! {
         start: S,
         end: E,
         count: C
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XPENDING")
             .arg(key)
             .arg(group)
@@ -2240,7 +2240,7 @@ implement_commands! {
         end: E,
         count: C,
         consumer: CN
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XPENDING")
             .arg(key)
             .arg(group)
@@ -2268,7 +2268,7 @@ implement_commands! {
         key: K,
         start: S,
         end: E
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XRANGE").arg(key).arg(start).arg(end)
     }
 
@@ -2282,7 +2282,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XRANGE").arg(key).arg("-").arg("+)
-    fn xrange_all<K: ToRedisArgs>(key: K) -> GENERIC {
+    fn xrange_all<K: ToRedisArgs>(key: K) -> Generic {
         cmd("XRANGE").arg(key).arg("-").arg("+")
     }
 
@@ -2300,7 +2300,7 @@ implement_commands! {
         start: S,
         end: E,
         count: C
-    ) -> GENERIC {
+    ) -> Generic {
         cmd("XRANGE")
             .arg(key)
             .arg(start)
@@ -2495,7 +2495,7 @@ assert_eq!(b, 5);
 "##)]
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
-    fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) -> GENERIC {
+    fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) -> Generic {
         &mut invocation.eval_cmd()
     }
 
@@ -3086,4 +3086,4 @@ pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
 }
 
 /// Dummy type used to indicate to the implement_commands macro that a command has a generic return type
-type GENERIC = ();
+type Generic = ();
