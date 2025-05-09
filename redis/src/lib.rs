@@ -553,7 +553,7 @@ pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, Direction, FlushAllOptions, FlushDbOptions, HashFieldExpirationOptions,
-    LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    LposOptions, PubSubCommands, ScanOptions, SetOptions, TypedCommands,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -603,13 +603,15 @@ pub use crate::types::{
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
-    PushInfo
+    PushInfo,
+	ValueType
 };
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::{
-    cmd::AsyncIter, commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture,
+    cmd::AsyncIter, commands::AsyncCommands, commands::AsyncTypedCommands,
+    parser::parse_redis_value_async, types::RedisFuture,
 };
 
 mod macros;
