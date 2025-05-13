@@ -11,10 +11,10 @@ macro_rules! implement_command_async {
 		$(#[$attr])*
 		#[inline]
 		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
 			& $lifetime mut self
 			$(, $argname: $argty)*
-		) -> crate::types::RedisFuture<'a, crate::Value>
+		) -> crate::types::RedisFuture<'a, RV>
 		{
 			Box::pin(async move { ($body).query_async(self).await })
 		}
@@ -52,7 +52,7 @@ macro_rules! implement_command_sync {
 		$(#[$attr])*
 		#[inline]
 		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*, RV: FromRedisValue>(
+		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
 			& $lifetime mut self
 			$(, $argname: $argty)*
 		) -> RedisResult<RV>
@@ -177,7 +177,7 @@ macro_rules! implement_commands {
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) -> $rettype:ty $body:block
+                $($argname:ident: $argty:ty),*) -> $rettype:tt $body:block
         )*
     ) =>
     (
@@ -309,6 +309,16 @@ macro_rules! implement_commands {
                 |c: Cmd, this| c.iter(this),
 				RedisResult<Iter<'_, RV>>
             }
+
+			/// Get a value from Redis and convert it to an `Option<isize>`.
+			fn get_int<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Option<isize>> {
+        		cmd("GET").arg(key).query(self)
+    		}
+
+			/// Get values from Redis and convert them to `Option<isize>`s.
+			fn mget_ints<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
+        		cmd("MGET").arg(key).query(self)
+    		}
         }
 
 		/// Implements common redis commands over asynchronous connections.
@@ -333,6 +343,16 @@ macro_rules! implement_commands {
 				|c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
 				crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>>
 			}
+
+			/// Get a value from Redis and convert it to an `Option<isize>`.
+			fn get_int<'a, K: ToRedisArgs + Send + Sync + 'a>(&'a mut self, key: K) -> crate::types::RedisFuture<'a, Option<isize>> {
+				Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
+    		}
+
+			/// Get values from Redis and convert them to `Option<isize>`s.
+			fn mget_ints<'a, K: ToRedisArgs + Send + Sync + 'a>(&'a mut self, key: K) -> crate::types::RedisFuture<'a, Vec<Option<isize>>> {
+				Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
+    		}
         }
 
         /// Implements common redis commands for pipelines.  Unlike the regular

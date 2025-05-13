@@ -591,6 +591,8 @@ pub use crate::types::{
     ExpireOption,
     Role,
     ReplicaInfo,
+    IntegerReplyOrNoOp,
+	ValueType,
 
     // error and result types
     RedisError,
@@ -604,7 +606,6 @@ pub use crate::types::{
     VerbatimFormat,
     ProtocolVersion,
     PushInfo,
-	ValueType
 };
 
 #[cfg(feature = "aio")]
