@@ -19,16 +19,19 @@ macro_rules! run_test_if_version_supported {
 
 #[cfg(test)]
 mod basic {
+    use crate::{assert_args, support::*};
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::{rng, Rng};
+    use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Client, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
+        cmd, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
+        ValueType,
     };
     use redis::{
-        Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
-        ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands,
-        PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
+        ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
+        Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
+        RedisResult, SetExpiry, SetOptions, ToRedisArgs, TypedCommands, Value,
     };
     use redis_test::utils::get_listener_on_free_port;
     use std::collections::{BTreeMap, BTreeSet};
@@ -38,13 +41,10 @@ mod basic {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
 
-    use crate::{assert_args, support::*};
-
     const REDIS_VERSION_CE_8_0_RC1: (u16, u16, u16) = (7, 9, 240);
     const HASH_KEY: &str = "testing_hash";
     const HASH_FIELDS_AND_VALUES: [(&str, u8); 5] =
         [("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8), ("f5", 16)];
-    const FIELD_EXISTS_WITHOUT_TTL: i8 = -1;
 
     /// Generates a unique hash key that does not already exist.
     fn generate_random_testing_hash_key(con: &mut Connection) -> String {
@@ -167,8 +167,8 @@ mod basic {
 
         //The key is a simple value
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
-        let string_key_type: String = con.key_type("foo").unwrap();
-        assert_eq!(string_key_type, "string");
+        let string_key_type = con.key_type("foo").unwrap();
+        assert_eq!(string_key_type, ValueType::String);
 
         //The key is a list
         redis::cmd("LPUSH")
@@ -176,8 +176,8 @@ mod basic {
             .arg("foo")
             .exec(&mut con)
             .unwrap();
-        let list_key_type: String = con.key_type("list_bar").unwrap();
-        assert_eq!(list_key_type, "list");
+        let list_key_type = con.key_type("list_bar").unwrap();
+        assert_eq!(list_key_type, ValueType::List);
 
         //The key is a set
         redis::cmd("SADD")
@@ -185,8 +185,8 @@ mod basic {
             .arg("foo")
             .exec(&mut con)
             .unwrap();
-        let set_key_type: String = con.key_type("set_bar").unwrap();
-        assert_eq!(set_key_type, "set");
+        let set_key_type = con.key_type("set_bar").unwrap();
+        assert_eq!(set_key_type, ValueType::Set);
 
         //The key is a sorted set
         redis::cmd("ZADD")
@@ -195,8 +195,8 @@ mod basic {
             .arg("foo")
             .exec(&mut con)
             .unwrap();
-        let zset_key_type: String = con.key_type("sorted_set_bar").unwrap();
-        assert_eq!(zset_key_type, "zset");
+        let zset_key_type = con.key_type("sorted_set_bar").unwrap();
+        assert_eq!(zset_key_type, ValueType::ZSet);
 
         //The key is a hash
         redis::cmd("HSET")
@@ -205,8 +205,8 @@ mod basic {
             .arg("foo")
             .exec(&mut con)
             .unwrap();
-        let hash_key_type: String = con.key_type("hset_bar").unwrap();
-        assert_eq!(hash_key_type, "hash");
+        let hash_key_type = con.key_type("hset_bar").unwrap();
+        assert_eq!(hash_key_type, ValueType::Hash);
     }
 
     #[test]
@@ -242,7 +242,7 @@ mod basic {
             .unwrap();
         assert_eq!(k1, 42);
         assert_eq!(k2, 43);
-        let num: i32 = con.get("key_1").unwrap();
+        let num: i32 = con.get("key_1").unwrap().unwrap().parse().unwrap();
         assert_eq!(num, 45);
     }
 
@@ -273,7 +273,7 @@ mod basic {
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
 
-        assert_eq!(con.get_del("foo"), Ok(42usize));
+        assert_eq!(con.get_del("foo"), Ok(Some(String::from("42"))));
 
         assert_eq!(
             redis::cmd("GET").arg("foo").query(&mut con),
@@ -293,17 +293,18 @@ mod basic {
             .unwrap();
 
         // Return of get_ex must match set value
-        let ret_value = con.get_ex::<_, usize>("foo", Expiry::EX(1)).unwrap();
+        let ret_value =
+            redis::Commands::get_ex::<_, usize>(&mut con, "foo", Expiry::EX(1)).unwrap();
         assert_eq!(ret_value, 42usize);
 
         // Get before expiry time must also return value
         sleep(Duration::from_millis(100));
-        let delayed_get = con.get::<_, usize>("foo").unwrap();
-        assert_eq!(delayed_get, 42usize);
+        let delayed_get = con.get_int("foo").unwrap().unwrap();
+        assert_eq!(delayed_get, 42);
 
         // Get after expiry time mustn't return value
         sleep(Duration::from_secs(1));
-        let after_expire_get = con.get::<_, Option<usize>>("foo").unwrap();
+        let after_expire_get = con.get("foo").unwrap();
         assert_eq!(after_expire_get, None);
 
         // Persist option test prep
@@ -314,13 +315,13 @@ mod basic {
             .unwrap();
 
         // Return of get_ex with persist option must match set value
-        let ret_value = con.get_ex::<_, usize>("foo", Expiry::PERSIST).unwrap();
-        assert_eq!(ret_value, 420usize);
+        let ret_value = con.get_ex("foo", Expiry::PERSIST).unwrap().unwrap();
+        assert_eq!(ret_value, String::from("420"));
 
         // Get after persist get_ex must return value
         sleep(Duration::from_millis(200));
-        let delayed_get = con.get::<_, usize>("foo").unwrap();
-        assert_eq!(delayed_get, 420usize);
+        let delayed_get = con.get_int("foo").unwrap();
+        assert_eq!(delayed_get, Some(420));
     }
 
     #[test]
@@ -385,40 +386,40 @@ mod basic {
             .exec(&mut con)
             .unwrap();
 
-        let result: Vec<i32> = con
+        let result = con
             .hexpire("foo", 10, ExpireOption::NONE, &["f0", "f1"])
             .unwrap();
         assert_eq!(result, vec![1, 1]);
 
-        let ttls: Vec<i64> = con.httl("foo", &["f0", "f1"]).unwrap();
+        let ttls = con.httl("foo", &["f0", "f1"]).unwrap();
         assert_eq!(ttls.len(), 2);
-        assert_approx_eq!(ttls[0], 10, 3);
-        assert_approx_eq!(ttls[1], 10, 3);
+        assert_approx_eq!(ttls[0].raw(), 10, 3);
+        assert_approx_eq!(ttls[1].raw(), 10, 3);
 
-        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        let ttls = con.hpttl("foo", &["f0", "f1"]).unwrap();
         assert_eq!(ttls.len(), 2);
-        assert_approx_eq!(ttls[0], 10000, 3000);
-        assert_approx_eq!(ttls[1], 10000, 3000);
+        assert_approx_eq!(ttls[0].raw(), 10000, 3000);
+        assert_approx_eq!(ttls[1].raw(), 10000, 3000);
 
-        let result: Vec<i32> = con
+        let result = con
             .hexpire("foo", 10, ExpireOption::NX, &["f0", "f1"])
             .unwrap();
         // should return 0 because the keys already have an expiration time
         assert_eq!(result, vec![0, 0]);
 
-        let result: Vec<i32> = con
+        let result = con
             .hexpire("foo", 10, ExpireOption::XX, &["f0", "f1"])
             .unwrap();
         // should return 1 because the keys already have an expiration time
         assert_eq!(result, vec![1, 1]);
 
-        let result: Vec<i32> = con
+        let result = con
             .hpexpire("foo", 1000, ExpireOption::GT, &["f0", "f1"])
             .unwrap();
         // should return 0 because the keys already have an expiration time greater than 1000
         assert_eq!(result, vec![0, 0]);
 
-        let result: Vec<i32> = con
+        let result = con
             .hpexpire("foo", 1000, ExpireOption::LT, &["f0", "f1"])
             .unwrap();
         // should return 1 because the keys already have an expiration time less than 1000
@@ -427,8 +428,8 @@ mod basic {
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        let result: Vec<i32> = con
+            .as_secs() as usize;
+        let result = con
             .hexpire_at(
                 "foo",
                 (now_secs + 10) as i64,
@@ -438,18 +439,18 @@ mod basic {
             .unwrap();
         assert_eq!(result, vec![1, 1]);
 
-        let result: Vec<u64> = con.hexpire_time("foo", &["f0", "f1"]).unwrap();
+        let result = con.hexpire_time("foo", &["f0", "f1"]).unwrap();
         assert_eq!(result, vec![now_secs + 10, now_secs + 10]);
-        let result: Vec<u64> = con.hpexpire_time("foo", &["f0", "f1"]).unwrap();
+        let result = con.hpexpire_time("foo", &["f0", "f1"]).unwrap();
         assert_eq!(
             result,
             vec![now_secs * 1000 + 10_000, now_secs * 1000 + 10_000]
         );
 
-        let result: Vec<bool> = con.hpersist("foo", &["f0", "f1"]).unwrap();
-        assert_eq!(result, vec![true, true]);
-        let ttls: Vec<i64> = con.hpttl("foo", &["f0", "f1"]).unwrap();
-        assert_eq!(ttls, vec![-1, -1]);
+        let result = con.hpersist("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(result, vec![1, 1]);
+        let ttls = con.hpttl("foo", &["f0", "f1"]).unwrap();
+        assert_eq!(ttls, vec![ExistsButNotRelevant, ExistsButNotRelevant]);
 
         assert_eq!(con.unlink(&["foo"]), Ok(1));
     }
@@ -460,7 +461,7 @@ mod basic {
         hash_key: &str,
         hash_fields_and_values: &[(&str, u8)],
     ) {
-        let hash_fields: HashMap<String, u8> = con.hgetall(hash_key).unwrap();
+        let hash_fields: HashMap<String, u8> = redis::Commands::hgetall(con, hash_key).unwrap();
         assert_eq!(hash_fields.len(), hash_fields_and_values.len());
 
         for (field, value) in hash_fields_and_values {
@@ -494,7 +495,7 @@ mod basic {
 
         // Delete the first field
         assert_eq!(
-            con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0),
+            redis::Commands::hget_del(&mut con, HASH_KEY, HASH_FIELDS_AND_VALUES[0].0),
             Ok([HASH_FIELDS_AND_VALUES[0].1])
         );
 
@@ -509,7 +510,7 @@ mod basic {
         verify_fields_absence_from_hash(&remaining_hash_fields, &removed_fields);
 
         // Verify that a non-existing field returns NIL by attempting to delete the same field again
-        assert_eq!(con.hget_del(HASH_KEY, &removed_fields), Ok([Value::Nil]));
+        assert_eq!(con.hget_del(HASH_KEY, &removed_fields), Ok(vec![None]));
 
         // Prepare additional fields for deletion
         let fields_to_delete = [
@@ -520,7 +521,7 @@ mod basic {
 
         // Delete the additional fields
         assert_eq!(
-            con.hget_del(HASH_KEY, &fields_to_delete),
+            redis::Commands::hget_del(&mut con, HASH_KEY, &fields_to_delete),
             Ok([
                 HASH_FIELDS_AND_VALUES[1].1,
                 HASH_FIELDS_AND_VALUES[2].1,
@@ -540,7 +541,7 @@ mod basic {
 
         // Verify that removing the last field deletes the hash
         assert_eq!(
-            con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0),
+            redis::Commands::hget_del(&mut con, HASH_KEY, HASH_FIELDS_AND_VALUES[4].0),
             Ok([HASH_FIELDS_AND_VALUES[4].1])
         );
         assert_eq!(con.exists(HASH_KEY), Ok(false));
@@ -548,7 +549,7 @@ mod basic {
         // Verify that HGETDEL on a non-existing hash returns NIL
         assert_eq!(
             con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0),
-            Ok([Value::Nil])
+            Ok(vec![None])
         );
     }
 
@@ -572,36 +573,49 @@ mod basic {
         // Scenario 1
         // Retrieve a single field without setting its expiration
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::PERSIST),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[0].0,
+                Expiry::PERSIST
+            ),
             Ok([HASH_FIELDS_AND_VALUES[0].1])
         );
         assert_eq!(
             con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0),
-            Ok([FIELD_EXISTS_WITHOUT_TTL])
+            Ok(vec![ExistsButNotRelevant])
         );
 
         // Scenario 2
         // Retrieve multiple fields at once without setting their expiration
         let fields_to_retrieve = [HASH_FIELDS_AND_VALUES[1].0, HASH_FIELDS_AND_VALUES[2].0];
         assert_eq!(
-            con.hget_ex(HASH_KEY, &fields_to_retrieve, Expiry::PERSIST),
+            redis::Commands::hget_ex(&mut con, HASH_KEY, &fields_to_retrieve, Expiry::PERSIST),
             Ok([HASH_FIELDS_AND_VALUES[1].1, HASH_FIELDS_AND_VALUES[2].1])
         );
         assert_eq!(
             con.httl(HASH_KEY, &fields_to_retrieve),
-            Ok([FIELD_EXISTS_WITHOUT_TTL, FIELD_EXISTS_WITHOUT_TTL])
+            Ok(vec![ExistsButNotRelevant, ExistsButNotRelevant])
         );
 
         // Scenario 3
         // Retrieve a single field and set its expiration to 1 second
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::EX(1)),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[0].0,
+                Expiry::EX(1)
+            ),
             Ok([HASH_FIELDS_AND_VALUES[0].1])
         );
         // Verify that the all fields are still present in the hash
         verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
         // Verify that the field has been set to expire
-        assert_eq!(con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0), Ok([1]));
+        assert_eq!(
+            con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0),
+            Ok(vec![IntegerReply(1)])
+        );
         // Wait for the field to expire and verify it
         sleep(Duration::from_millis(1100));
 
@@ -617,7 +631,7 @@ mod basic {
         // Scenario 4
         // Verify that a non-existing field returns NIL by attempting to retrieve it with HGETEX
         assert_eq!(
-            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok([Value::Nil])
         );
 
@@ -629,9 +643,8 @@ mod basic {
             HASH_FIELDS_AND_VALUES[3].0,
             HASH_FIELDS_AND_VALUES[4].0,
         ];
-        let hash_field_values: Vec<u8> = con
-            .hget_ex(HASH_KEY, &fields_to_expire, Expiry::EX(1))
-            .unwrap();
+        let hash_field_values: Vec<u8> =
+            redis::Commands::hget_ex(&mut con, HASH_KEY, &fields_to_expire, Expiry::EX(1)).unwrap();
         assert_eq!(hash_field_values.len(), fields_to_expire.len());
 
         for i in 0..fields_to_expire.len() {
@@ -642,7 +655,7 @@ mod basic {
         // Verify that the fields have been set to expire
         assert_eq!(
             con.httl(HASH_KEY, &fields_to_expire),
-            Ok(vec![1; fields_to_expire.len()])
+            Ok(vec![IntegerReply(1); fields_to_expire.len()])
         );
         // Wait for the fields to expire and verify it
         sleep(Duration::from_millis(1100));
@@ -660,7 +673,7 @@ mod basic {
         // Verify that HGETEX on a non-existing hash returns NIL
         assert_eq!(con.exists(HASH_KEY), Ok(false));
         assert_eq!(
-            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok(vec![Value::Nil; expired_fields.len()])
         );
     }
@@ -681,16 +694,27 @@ mod basic {
 
         // Set the fields to expire in 1 second using different expiration options
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::EX(1)),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[0].0,
+                Expiry::EX(1)
+            ),
             Ok([HASH_FIELDS_AND_VALUES[0].1])
         );
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[1].0, Expiry::PX(1000)),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[1].0,
+                Expiry::PX(1000)
+            ),
             Ok([HASH_FIELDS_AND_VALUES[1].1])
         );
         let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         assert_eq!(
-            con.hget_ex(
+            redis::Commands::hget_ex(
+                &mut con,
                 HASH_KEY,
                 HASH_FIELDS_AND_VALUES[2].0,
                 Expiry::EXAT(current_timestamp.as_secs() + 1)
@@ -698,7 +722,8 @@ mod basic {
             Ok([HASH_FIELDS_AND_VALUES[2].1])
         );
         assert_eq!(
-            con.hget_ex(
+            redis::Commands::hget_ex(
+                &mut con,
                 HASH_KEY,
                 HASH_FIELDS_AND_VALUES[3].0,
                 Expiry::PXAT(current_timestamp.as_millis() as u64 + 1000)
@@ -706,12 +731,22 @@ mod basic {
             Ok([HASH_FIELDS_AND_VALUES[3].1])
         );
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0, Expiry::EX(1)),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[4].0,
+                Expiry::EX(1)
+            ),
             Ok([HASH_FIELDS_AND_VALUES[4].1])
         );
         // Remove the expiration from the last field
         assert_eq!(
-            con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0, Expiry::PERSIST),
+            redis::Commands::hget_ex(
+                &mut con,
+                HASH_KEY,
+                HASH_FIELDS_AND_VALUES[4].0,
+                Expiry::PERSIST
+            ),
             Ok([HASH_FIELDS_AND_VALUES[4].1])
         );
 
@@ -810,7 +845,8 @@ mod basic {
         assert!(field_set_successfully);
 
         // Verify that the field's value has been set to the new value
-        let hash_fields: HashMap<String, u8> = con.hgetall(&generated_hash_key).unwrap();
+        let hash_fields: HashMap<String, u8> =
+            redis::Commands::hgetall(&mut con, &generated_hash_key).unwrap();
         assert_eq!(hash_fields.len(), initial_fields.len());
         assert_eq!(
             hash_fields[first_field_with_doubled_value[0].0],
@@ -820,7 +856,7 @@ mod basic {
         // Verify that the field is not set to expire
         assert_eq!(
             con.httl(&generated_hash_key, first_field_with_doubled_value[0].0),
-            Ok([FIELD_EXISTS_WITHOUT_TTL])
+            Ok(vec![ExistsButNotRelevant])
         );
 
         // Scenario 5
@@ -848,7 +884,7 @@ mod basic {
         // Verify that the fields are not set to expire
         assert_eq!(
             con.httl(&generated_hash_key, &initial_fields),
-            Ok(vec![FIELD_EXISTS_WITHOUT_TTL; initial_fields.len()])
+            Ok(vec![ExistsButNotRelevant; initial_fields.len()])
         );
 
         // Scenario 6
@@ -866,7 +902,8 @@ mod basic {
         assert!(field_set_successfully);
 
         // Verify that the field's value has been set to the new value
-        let hash_fields: HashMap<String, u8> = con.hgetall(&generated_hash_key).unwrap();
+        let hash_fields: HashMap<String, u8> =
+            redis::Commands::hgetall(&mut con, &generated_hash_key).unwrap();
         assert_eq!(hash_fields.len(), initial_fields.len());
         assert_eq!(
             hash_fields[first_field_with_tripled_value[0].0],
@@ -875,8 +912,9 @@ mod basic {
 
         // Verify that the field was set to expire
         assert_eq!(
-            con.httl(&generated_hash_key, first_field_with_tripled_value[0].0),
-            Ok([10])
+            con.httl(&generated_hash_key, first_field_with_tripled_value[0].0)
+                .unwrap()[0],
+            10isize
         );
 
         // Scenario 7
@@ -904,8 +942,8 @@ mod basic {
 
         // Verify that the fields were set to expire
         assert_eq!(
-            con.httl(&generated_hash_key, &initial_fields),
-            Ok(vec![1; initial_fields.len()])
+            con.httl(&generated_hash_key, &initial_fields).unwrap(),
+            vec![IntegerReply(1); initial_fields.len()]
         );
 
         // Wait for the fields to expire
@@ -1014,7 +1052,10 @@ mod basic {
         verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
 
         // Verify that the field was set to expire
-        assert_eq!(con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0), Ok([2]));
+        assert_eq!(
+            con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap()[0],
+            2isize
+        );
 
         // Wait for the field to expire
         sleep(Duration::from_millis(2100));
@@ -1055,18 +1096,18 @@ mod basic {
 
         assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
 
-        let mut s: Vec<i32> = con.smembers("foo").unwrap();
+        let mut s: Vec<i32> = redis::Commands::smembers(&mut con, "foo").unwrap();
         s.sort_unstable();
         assert_eq!(s.len(), 3);
         assert_eq!(&s, &[1, 2, 3]);
 
-        let set: HashSet<i32> = con.smembers("foo").unwrap();
+        let set: HashSet<i32> = redis::Commands::smembers(&mut con, "foo").unwrap();
         assert_eq!(set.len(), 3);
         assert!(set.contains(&1i32));
         assert!(set.contains(&2i32));
         assert!(set.contains(&3i32));
 
-        let set: BTreeSet<i32> = con.smembers("foo").unwrap();
+        let set: BTreeSet<i32> = redis::Commands::smembers(&mut con, "foo").unwrap();
         assert_eq!(set.len(), 3);
         assert!(set.contains(&1i32));
         assert!(set.contains(&2i32));
@@ -1203,8 +1244,7 @@ mod basic {
         let mut unseen = HashSet::new();
 
         for x in 0..3000 {
-            let _: () = con
-                .hset("foo", format!("key_{}_{}", x % 100, x), x)
+            con.hset("foo", format!("key_{}_{}", x % 100, x), x)
                 .unwrap();
             if x % 100 == 0 {
                 unseen.insert(x);
@@ -1230,10 +1270,10 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
         for i in 0..20usize {
-            let _: () = con.append(format!("test/{i}"), i).unwrap();
-            let _: () = con.append(format!("other/{i}"), i).unwrap();
+            con.append(format!("test/{i}"), i).unwrap();
+            con.append(format!("other/{i}"), i).unwrap();
         }
-        let _: () = con.hset("test-hset", "test-field", "test-value").unwrap();
+        con.hset("test-hset", "test-field", "test-value").unwrap();
 
         // scan with pattern
         let opts = ScanOptions::default().with_count(20).with_pattern("test/*");
@@ -1375,7 +1415,7 @@ mod basic {
 
         assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
 
-        let x: i32 = con.get("x").unwrap();
+        let x: i32 = redis::Commands::get(&mut con, "x").unwrap();
         assert_eq!(x, 42);
     }
 
@@ -1623,7 +1663,7 @@ mod basic {
         let err = pubsub_con.get_message().unwrap_err();
         assert!(err.is_timeout());
 
-        let _: () = con.publish("foo", "bar").unwrap();
+        con.publish("foo", "bar").unwrap();
 
         let msg = pubsub_con.get_message().unwrap();
         assert_eq!(msg.get_channel(), Ok("foo".to_string()));
@@ -1704,11 +1744,11 @@ mod basic {
         pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).unwrap();
         let mut publish_conn = ctx.connection();
 
-        let _: () = publish_conn.publish("phonewave", "banana").unwrap();
+        publish_conn.publish("phonewave", "banana").unwrap();
         let msg_payload: String = pubsub_conn.get_message().unwrap().get_payload().unwrap();
         assert_eq!("banana".to_string(), msg_payload);
 
-        let _: () = publish_conn.publish("foo", "foobar").unwrap();
+        publish_conn.publish("foo", "foobar").unwrap();
         let msg_payload: String = pubsub_conn.get_message().unwrap().get_payload().unwrap();
         assert_eq!("foobar".to_string(), msg_payload);
     }
@@ -1732,8 +1772,8 @@ mod basic {
         }
 
         // Connection should be usable again for non-pubsub commands
-        let _: redis::Value = con.set("foo", "bar").unwrap();
-        let value: String = con.get("foo").unwrap();
+        con.set("foo", "bar").unwrap();
+        let value = con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
 
         if ctx.protocol == ProtocolVersion::RESP3 {
@@ -1832,8 +1872,8 @@ mod basic {
         }
 
         // Connection should be usable again for non-pubsub commands
-        let _: redis::Value = con.set("foo", "bar").unwrap();
-        let value: String = con.get("foo").unwrap();
+        con.set("foo", "bar").unwrap();
+        let value = con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
     }
 
@@ -1848,8 +1888,8 @@ mod basic {
         }
 
         // Connection should be usable again for non-pubsub commands
-        let _: redis::Value = con.set("foo", "bar").unwrap();
-        let value: String = con.get("foo").unwrap();
+        con.set("foo", "bar").unwrap();
+        let value = con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
     }
 
@@ -1865,8 +1905,8 @@ mod basic {
         }
 
         // Connection should be usable again for non-pubsub commands
-        let _: redis::Value = con.set("foo", "bar").unwrap();
-        let value: String = con.get("foo").unwrap();
+        con.set("foo", "bar").unwrap();
+        let value = con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
     }
 
@@ -1917,8 +1957,8 @@ mod basic {
         let mut pubsub_con = thread.join().expect("pubsub thread terminates ok");
 
         // Connection should be usable again for non-pubsub commands
-        let _: redis::Value = pubsub_con.set("foo", "bar").unwrap();
-        let value: String = pubsub_con.get("foo").unwrap();
+        pubsub_con.set("foo", "bar").unwrap();
+        let value = pubsub_con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
     }
 
@@ -1954,8 +1994,8 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert_eq!(con.set("my_key", 42), Ok(()));
-        assert_eq!(con.get("my_key"), Ok(42));
+        assert!(con.set("my_key", 42).is_ok());
+        assert_eq!(con.get_int("my_key"), Ok(Some(42)));
 
         let (k1, k2): (i32, i32) = redis::pipe()
             .atomic()
@@ -1977,10 +2017,16 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert_eq!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(()));
-        assert_eq!(con.get(&["key1", "key2"]), Ok((1, 2)));
-        assert_eq!(con.get(vec!["key1", "key2"]), Ok((1, 2)));
-        assert_eq!(con.get(vec!["key1", "key2"]), Ok((1, 2)));
+        assert!(con.mset(&[("key1", 1), ("key2", 2)]).is_ok());
+        assert_eq!(con.mget_ints(&["key1", "key2"]), Ok(vec!(Some(1), Some(2))));
+        assert_eq!(
+            con.mget_ints(vec!["key1", "key2"]),
+            Ok(vec!(Some(1), Some(2)))
+        );
+        assert_eq!(
+            con.mget_ints(vec!["key1", "key2"]),
+            Ok(vec!(Some(1), Some(2)))
+        );
     }
 
     #[test]
@@ -1993,21 +2039,21 @@ mod basic {
             Ok(())
         );
 
-        let hm: HashMap<String, isize> = con.hgetall("my_hash").unwrap();
+        let hm: HashMap<String, isize> = redis::Commands::hgetall(&mut con, "my_hash").unwrap();
         assert_eq!(hm.get("f1"), Some(&1));
         assert_eq!(hm.get("f2"), Some(&2));
         assert_eq!(hm.get("f3"), Some(&4));
         assert_eq!(hm.get("f4"), Some(&8));
         assert_eq!(hm.len(), 4);
 
-        let hm: BTreeMap<String, isize> = con.hgetall("my_hash").unwrap();
+        let hm: BTreeMap<String, isize> = redis::Commands::hgetall(&mut con, "my_hash").unwrap();
         assert_eq!(hm.get("f1"), Some(&1));
         assert_eq!(hm.get("f2"), Some(&2));
         assert_eq!(hm.get("f3"), Some(&4));
         assert_eq!(hm.get("f4"), Some(&8));
         assert_eq!(hm.len(), 4);
 
-        let v: Vec<(String, isize)> = con.hgetall("my_hash").unwrap();
+        let v: Vec<(String, isize)> = redis::Commands::hgetall(&mut con, "my_hash").unwrap();
         assert_eq!(
             v,
             vec![
@@ -2018,11 +2064,14 @@ mod basic {
             ]
         );
 
-        assert_eq!(con.hget("my_hash", &["f2", "f4"]), Ok((2, 8)));
-        assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2));
-        assert_eq!(con.hincr("my_hash", "f2", 1.5f32), Ok(3.5f32));
+        assert_eq!(
+            redis::Commands::hget(&mut con, "my_hash", &["f2", "f4"]),
+            Ok((2, 8))
+        );
+        assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2.0));
+        assert_eq!(con.hincr("my_hash", "f2", 1.5), Ok(3.5));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
-        assert_eq!(con.hdel("my_hash", &["f1", "f2"]), Ok(()));
+        assert!(con.hdel("my_hash", &["f1", "f2"]).is_ok());
         assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
@@ -2052,15 +2101,22 @@ mod basic {
         assert_eq!(con.lpop("my_list", Default::default()), Ok(1));
         assert_eq!(con.llen("my_list"), Ok(7));
 
-        assert_eq!(con.lrange("my_list", 0, 2), Ok((2, 3, 4)));
+        assert_eq!(
+            redis::Commands::lrange(&mut con, "my_list", 0, 2),
+            Ok((2, 3, 4))
+        );
 
-        assert_eq!(con.lset("my_list", 0, 4), Ok(true));
-        assert_eq!(con.lrange("my_list", 0, 2), Ok((4, 3, 4)));
+        assert!(con.lset("my_list", 0, 4).is_ok());
+        assert_eq!(
+            redis::Commands::lrange(&mut con, "my_list", 0, 2),
+            Ok((4, 3, 4))
+        );
 
         #[cfg(not(windows))]
         //Windows version of redis is limited to v3.x
         {
-            let my_list: Vec<u8> = con.lrange("my_list", 0, 10).expect("To get range");
+            let my_list: Vec<u8> =
+                redis::Commands::lrange(&mut con, "my_list", 0, 10).expect("To get range");
             assert_eq!(
                 con.lpop("my_list", core::num::NonZeroUsize::new(10)),
                 Ok(my_list)
@@ -2073,16 +2129,16 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert_eq!(con.del("my_zset"), Ok(()));
+        assert!(con.del("my_zset").is_ok());
         assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
         assert_eq!(con.zadd("my_zset", "two", 2), Ok(1));
 
-        let vec: Vec<(String, u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
+        let vec = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
         assert_eq!(vec.len(), 2);
 
         assert_eq!(con.del("my_zset"), Ok(1));
 
-        let vec: Vec<(String, u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
+        let vec = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
         assert_eq!(vec.len(), 0);
     }
 
@@ -2152,11 +2208,9 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con
-            .zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
             .unwrap();
-        let _: () = con
-            .zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
+        con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
             .unwrap();
 
         // zinterstore_weights
@@ -2167,10 +2221,7 @@ mod basic {
 
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
-            Ok(vec![
-                ("one".to_string(), "5".to_string()),
-                ("two".to_string(), "10".to_string())
-            ])
+            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 10.0)])
         );
 
         // zinterstore_min_weights
@@ -2181,10 +2232,7 @@ mod basic {
 
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
-            Ok(vec![
-                ("one".to_string(), "2".to_string()),
-                ("two".to_string(), "4".to_string()),
-            ])
+            Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0),])
         );
 
         // zinterstore_max_weights
@@ -2195,10 +2243,7 @@ mod basic {
 
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
-            Ok(vec![
-                ("one".to_string(), "3".to_string()),
-                ("two".to_string(), "6".to_string()),
-            ])
+            Ok(vec![("one".to_string(), 3.0), ("two".to_string(), 6.0),])
         );
     }
 
@@ -2207,11 +2252,9 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con
-            .zadd_multiple("zset1", &[(1, "one"), (2, "two")])
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two")])
             .unwrap();
-        let _: () = con
-            .zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
+        con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
             .unwrap();
 
         // zunionstore_weights
@@ -2223,9 +2266,9 @@ mod basic {
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), "5".to_string()),
-                ("three".to_string(), "9".to_string()),
-                ("two".to_string(), "10".to_string())
+                ("one".to_string(), 5.0),
+                ("three".to_string(), 9.0),
+                ("two".to_string(), 10.0)
             ])
         );
         // test converting to double
@@ -2247,9 +2290,9 @@ mod basic {
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), "2".to_string()),
-                ("two".to_string(), "4".to_string()),
-                ("three".to_string(), "9".to_string())
+                ("one".to_string(), 2.0),
+                ("two".to_string(), 4.0),
+                ("three".to_string(), 9.0)
             ])
         );
 
@@ -2262,9 +2305,9 @@ mod basic {
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), "3".to_string()),
-                ("two".to_string(), "6".to_string()),
-                ("three".to_string(), "9".to_string())
+                ("one".to_string(), 3.0),
+                ("two".to_string(), 6.0),
+                ("three".to_string(), 9.0)
             ])
         );
     }
@@ -2291,7 +2334,7 @@ mod basic {
         );
 
         // Will remove "banana", "carrot", "durian" and "eggplant"
-        let num_removed: u32 = con.zrembylex(setname, "[banana", "[eggplant").unwrap();
+        let num_removed = con.zrembylex(setname, "[banana", "[eggplant").unwrap();
         assert_eq!(4, num_removed);
 
         let remaining: Vec<String> = con.zrange(setname, 0, -1).unwrap();
@@ -2309,7 +2352,7 @@ mod basic {
         let mut con = ctx.connection();
 
         let setname = "myzrandset";
-        let () = con.zadd(setname, "one", 1).unwrap();
+        con.zadd(setname, "one", 1).unwrap();
 
         let result: String = con.zrandmember(setname, None).unwrap();
         assert_eq!(result, "one".to_string());
@@ -2385,21 +2428,21 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con.set("object_key_str", "object_value_str").unwrap();
-        let _: () = con.set("object_key_int", 42).unwrap();
+        con.set("object_key_str", "object_value_str").unwrap();
+        con.set("object_key_int", 42).unwrap();
 
         assert_eq!(
-            con.object_encoding::<_, String>("object_key_str").unwrap(),
+            con.object_encoding("object_key_str").unwrap().unwrap(),
             "embstr"
         );
 
         assert_eq!(
-            con.object_encoding::<_, String>("object_key_int").unwrap(),
+            con.object_encoding("object_key_int").unwrap().unwrap(),
             "int"
         );
 
-        assert!(con.object_idletime::<_, i32>("object_key_str").unwrap() <= 1);
-        assert_eq!(con.object_refcount::<_, i32>("object_key_str").unwrap(), 1);
+        assert!(con.object_idletime("object_key_str").unwrap().unwrap() <= 1);
+        assert_eq!(con.object_refcount("object_key_str").unwrap().unwrap(), 1);
 
         // Needed for OBJECT FREQ and can't be set before object_idletime
         // since that will break getting the idletime before idletime adjuts
@@ -2410,10 +2453,10 @@ mod basic {
             .exec(&mut con)
             .unwrap();
 
-        let _: () = con.get("object_key_str").unwrap();
+        con.get("object_key_str").unwrap();
         // since maxmemory-policy changed, freq should reset to 1 since we only called
         // get after that
-        assert_eq!(con.object_freq::<_, i32>("object_key_str").unwrap(), 1);
+        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 1);
     }
 
     #[test]
@@ -2421,12 +2464,22 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con.set(1, "1").unwrap();
-        let data: Vec<String> = con.mget(&[1]).unwrap();
+        con.set(1, "1").unwrap();
+        let data: Vec<String> = con
+            .mget(&[1])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
         assert_eq!(data, vec!["1"]);
 
-        let _: () = con.set(2, "2").unwrap();
-        let data: Vec<String> = con.mget(&[1, 2]).unwrap();
+        con.set(2, "2").unwrap();
+        let data: Vec<String> = con
+            .mget(&[1, 2])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
         assert_eq!(data, vec!["1", "2"]);
 
         let data: Vec<Option<String>> = con.mget(&[4]).unwrap();
@@ -2441,10 +2494,10 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con.set(1, "1").unwrap();
+        con.set(1, "1").unwrap();
         let keys = vec![1];
         assert_eq!(keys.len(), 1);
-        let data: Vec<String> = con.get(&keys).unwrap();
+        let data: Vec<String> = redis::Commands::get(&mut con, &keys).unwrap();
         assert_eq!(data, vec!["1"]);
     }
 
@@ -2455,7 +2508,7 @@ mod basic {
 
         assert_eq!(con.sadd(b"set1", vec![5, 42]), Ok(2));
         assert_eq!(con.sadd(999_i64, vec![42, 123]), Ok(2));
-        let _: () = con.rename(999_i64, b"set2").unwrap();
+        con.rename(999_i64, b"set2").unwrap();
         assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
     }
 
@@ -2522,25 +2575,29 @@ mod basic {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        let _: () = con
-            .set_options(
-                "foo",
-                "bar",
-                SetOptions::default().with_expiration(SetExpiry::EXAT(now + 10)),
-            )
-            .unwrap();
-        let expire_time_seconds: u64 = con.expire_time("foo").unwrap();
+            .as_secs() as usize;
+        con.set_options(
+            "foo",
+            "bar",
+            SetOptions::default().with_expiration(SetExpiry::EXAT(now as u64 + 10)),
+        )
+        .unwrap();
+        let expire_time_seconds = match con.expire_time("foo").unwrap() {
+            IntegerReply(expire_time) => expire_time,
+            _ => panic!("Expected a value"),
+        };
         assert_eq!(expire_time_seconds, now + 10);
 
-        let _: () = con
-            .set_options(
-                "foo",
-                "bar",
-                SetOptions::default().with_expiration(SetExpiry::PXAT(now * 1000 + 12_000)),
-            )
-            .unwrap();
-        let expire_time_milliseconds: u64 = con.pexpire_time("foo").unwrap();
+        con.set_options(
+            "foo",
+            "bar",
+            SetOptions::default().with_expiration(SetExpiry::PXAT(now as u64 * 1000 + 12_000)),
+        )
+        .unwrap();
+        let expire_time_milliseconds = match con.pexpire_time("foo").unwrap() {
+            IntegerReply(expire_time) => expire_time,
+            _ => panic!("Expected a value"),
+        };
         assert_eq!(expire_time_milliseconds, now * 1000 + 12_000);
     }
 
@@ -2549,14 +2606,14 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        () = con.set("key", "value").unwrap();
+        con.set("key", "value").unwrap();
 
         con.set_read_timeout(Some(Duration::from_millis(1)))
             .unwrap();
 
         // send multiple requests that timeout.
         for _ in 0..3 {
-            let res = con.blpop::<_, Value>("foo", 0.03);
+            let res = con.blpop("foo", 0.03);
             assert!(res.unwrap_err().is_timeout());
             assert!(con.is_open());
         }
@@ -2571,7 +2628,7 @@ mod basic {
             sleep(Duration::from_millis(1));
         }
 
-        let res: String = con.get("key").unwrap();
+        let res = con.get("key").unwrap().unwrap();
         assert_eq!(res, "value");
     }
 
@@ -2633,13 +2690,13 @@ mod basic {
         con.set_read_timeout(Some(Duration::from_millis(10)))
             .unwrap();
 
-        let res = con.get::<_, Value>("key1");
+        let res = con.get("key1");
         assert!(res.unwrap_err().is_timeout());
         assert!(con.is_open());
 
         sleep(Duration::from_millis(100));
 
-        let value = con.get::<_, String>("key2").unwrap();
+        let value = con.get("key2").unwrap().unwrap();
         assert_eq!(value, "key2");
     }
 
@@ -2655,47 +2712,33 @@ mod basic {
         let redis_version = ctx.get_version();
         assert!(redis_version.0 >= 5);
 
-        assert_eq!(con.zadd("a", "1a", 1), Ok(()));
-        assert_eq!(con.zadd("b", "2b", 2), Ok(()));
-        assert_eq!(con.zadd("c", "3c", 3), Ok(()));
-        assert_eq!(con.zadd("d", "4d", 4), Ok(()));
-        assert_eq!(con.zadd("a", "5a", 5), Ok(()));
-        assert_eq!(con.zadd("b", "6b", 6), Ok(()));
-        assert_eq!(con.zadd("c", "7c", 7), Ok(()));
-        assert_eq!(con.zadd("d", "8d", 8), Ok(()));
+        assert!(con.zadd("a", "1a", 1).is_ok());
+        assert!(con.zadd("b", "2b", 2).is_ok());
+        assert!(con.zadd("c", "3c", 3).is_ok());
+        assert!(con.zadd("d", "4d", 4).is_ok());
+        assert!(con.zadd("a", "5a", 5).is_ok());
+        assert!(con.zadd("b", "6b", 6).is_ok());
+        assert!(con.zadd("c", "7c", 7).is_ok());
+        assert!(con.zadd("d", "8d", 8).is_ok());
 
-        let min = con.bzpopmin::<&str, (String, String, String)>("b", 0.0);
-        let max = con.bzpopmax::<&str, (String, String, String)>("b", 0.0);
+        let min = con.bzpopmin("b", 0.0);
+        let max = con.bzpopmax("b", 0.0);
 
         assert_eq!(
-            min.unwrap(),
-            (String::from("b"), String::from("2b"), String::from("2"))
+            min.unwrap().unwrap(),
+            (String::from("b"), String::from("2b"), 2.0)
         );
         assert_eq!(
-            max.unwrap(),
-            (String::from("b"), String::from("6b"), String::from("6"))
+            max.unwrap().unwrap(),
+            (String::from("b"), String::from("6b"), 6.0)
         );
 
         if redis_version.0 >= 7 {
-            let min = con.bzmpop_min::<&[&str], (String, Vec<Vec<(String, String)>>)>(
-                0.0,
-                vec!["a", "b", "c", "d"].as_slice(),
-                1,
-            );
-            let max = con.bzmpop_max::<&[&str], (String, Vec<Vec<(String, String)>>)>(
-                0.0,
-                vec!["a", "b", "c", "d"].as_slice(),
-                1,
-            );
+            let min = con.bzmpop_min(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
+            let max = con.bzmpop_max(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
 
-            assert_eq!(
-                min.unwrap().1[0][0],
-                (String::from("1a"), String::from("1"))
-            );
-            assert_eq!(
-                max.unwrap().1[0][0],
-                (String::from("5a"), String::from("5"))
-            );
+            assert_eq!(min.unwrap().unwrap().1[0], (String::from("1a"), 1.0));
+            assert_eq!(max.unwrap().unwrap().1[0], (String::from("5a"), 5.0));
         }
     }
 
@@ -2717,7 +2760,7 @@ mod basic {
         let pipe = build_simple_pipeline_for_invalidation();
         for _ in 0..10 {
             let _: RedisResult<()> = pipe.query(&mut con);
-            let _: i32 = con.get("key_1").unwrap();
+            con.get_int("key_1").unwrap();
             let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
                 (
@@ -2733,7 +2776,7 @@ mod basic {
         con.set_push_sender(new_tx.clone());
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
-        let _: i32 = con.get("key_1").unwrap();
+        con.get_int("key_1").unwrap();
         let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
             (
@@ -2749,8 +2792,8 @@ mod basic {
             drop(new_rx);
             for _ in 0..10 {
                 let _: RedisResult<()> = pipe.query(&mut con);
-                let v: i32 = con.get("key_1").unwrap();
-                assert_eq!(v, 42);
+                let v = con.get_int("key_1").unwrap();
+                assert_eq!(v, Some(42));
             }
         }
     }
@@ -2868,7 +2911,7 @@ mod basic {
             .arg("connection-name")
             .exec(&mut con)
             .unwrap();
-        let res: String = con.client_getname().unwrap();
+        let res: String = con.client_getname().unwrap().unwrap();
         assert_eq!(res, "connection-name");
     }
 
@@ -2876,7 +2919,7 @@ mod basic {
     fn test_client_id() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
-        let _num: i64 = con.client_id().unwrap();
+        let _num = con.client_id().unwrap();
     }
 
     #[test]

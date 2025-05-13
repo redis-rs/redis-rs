@@ -3011,13 +3011,25 @@ impl FromRedisValue for ValueType {
 }
 
 /// Returned by typed commands which either return a positive integer or some negative integer indicating some kind of no-op.
+#[derive(Debug, PartialEq, Clone)]
 pub enum IntegerReplyOrNoOp {
     /// A positive integer reply indicating success of some kind.
-    IntegerReply(u64),
+    IntegerReply(usize),
     /// The field/key you are trying to operate on does not exist.
     NotExists,
     /// The field/key you are trying to operate on exists but is not of the correct type or does not have some property you are trying to affect.
     ExistsButNotRelevant,
+}
+
+impl IntegerReplyOrNoOp {
+    /// Returns the integer value of the reply.
+    pub fn raw(&self) -> isize {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize,
+            IntegerReplyOrNoOp::NotExists => -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => -1,
+        }
+    }
 }
 
 impl FromRedisValue for IntegerReplyOrNoOp {
@@ -3026,7 +3038,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
             Value::Int(s) => match s {
                 -2 => Ok(IntegerReplyOrNoOp::NotExists),
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-                _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as u64)),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as usize)),
             },
             _ => invalid_type_error!(v, "Value should be an integer"),
         }
@@ -3037,9 +3049,47 @@ impl FromRedisValue for IntegerReplyOrNoOp {
             Value::Int(s) => match s {
                 -2 => Ok(IntegerReplyOrNoOp::NotExists),
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-                _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as u64)),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as usize)),
             },
             _ => invalid_type_error!(v, "Value should be an integer"),
+        }
+    }
+}
+
+impl PartialEq<isize> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &isize) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize == *other,
+            IntegerReplyOrNoOp::NotExists => *other == -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+        }
+    }
+}
+
+impl PartialEq<usize> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &usize) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s == *other,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<i32> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &i32) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as i32 == *other,
+            IntegerReplyOrNoOp::NotExists => *other == -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+        }
+    }
+}
+
+impl PartialEq<u32> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &u32) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
+            _ => false,
         }
     }
 }
