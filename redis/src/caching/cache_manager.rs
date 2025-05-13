@@ -151,9 +151,8 @@ impl CacheManager {
         let mut arguments = self.extract_simple_arguments(cmd);
         let json_path_key = is_json_command
             .then(|| {
-                arguments.pop().map(|k| {
+                arguments.pop().inspect(|k| {
                     tail_args.push(k);
-                    k
                 })
             })
             .flatten();
