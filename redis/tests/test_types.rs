@@ -21,10 +21,7 @@ mod types {
 
     #[test]
     fn test_redis_error_source_presence_for_io_wrapped_errors() {
-        let io_error = RedisError::from(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "I/O failure",
-        ));
+        let io_error = RedisError::from(std::io::Error::other("I/O failure"));
         let source = io_error.source();
         assert_eq!(io_error.kind(), redis::ErrorKind::IoError);
 
