@@ -4,7 +4,7 @@ use crate::{
     from_redis_value, types::HashMap, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
 };
 
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -815,19 +815,11 @@ impl FromRedisValue for StreamPendingReply {
         } else {
             let mut result = StreamPendingData::default();
 
-            let start_id = start.ok_or_else(|| {
-                Error::new(
-                    ErrorKind::Other,
-                    "IllegalState: Non-zero pending expects start id",
-                )
-            })?;
+            let start_id = start
+                .ok_or_else(|| Error::other("IllegalState: Non-zero pending expects start id"))?;
 
-            let end_id = end.ok_or_else(|| {
-                Error::new(
-                    ErrorKind::Other,
-                    "IllegalState: Non-zero pending expects end id",
-                )
-            })?;
+            let end_id =
+                end.ok_or_else(|| Error::other("IllegalState: Non-zero pending expects end id"))?;
 
             result.count = count;
             result.start_id = start_id;
