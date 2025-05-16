@@ -5,9 +5,12 @@ use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
-    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
+    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, VectorAddInput,
+    VectorQuantization, VectorSimilaritySearchInput,
 };
 use std::collections::HashSet;
+
+use serde::ser::Serialize;
 
 #[macro_use]
 mod macros;
@@ -1255,6 +1258,123 @@ implement_commands! {
     fn zunionstore_max_weights<D: ToRedisArgs, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
+    }
+
+    /// vector set commands
+
+    /// Add a new element into the vector set specified by key.
+    /// [Redis Docs](https://redis.io/commands/VADD)
+    fn vadd<K: ToRedisArgs, V: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a, V>, element: E) -> (bool) {
+        cmd("VADD").arg(key).arg(input).arg(element)
+    }
+
+    /// Add a new element into the vector set specified by key with optional parameters for fine-tuning the insertion process.
+    /// [Redis Docs](https://redis.io/commands/VADD)
+    fn vadd_extended<K: ToRedisArgs, V: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a, V>, element: E, options: &'a VAddOptions) -> (bool) {
+        cmd("VADD").arg(key).arg(options.reduction_dimension.map(|_| "REDUCE")).arg(options.reduction_dimension).arg(input).arg(element).arg(options)
+    }
+
+    /// Get the number of members in a vector set.
+    /// [Redis Docs](https://redis.io/commands/VCARD)
+    fn vcard<K: ToRedisArgs>(key: K) -> (usize) {
+        cmd("VCARD").arg(key)
+    }
+
+    /// Return the number of dimensions of the vectors in the specified vector set.
+    /// [Redis Docs](https://redis.io/commands/VDIM)
+    fn vdim<K: ToRedisArgs>(key: K) -> (usize) {
+        cmd("VDIM").arg(key)
+    }
+
+    /// Return the approximate vector associated with a given element in the vector set.
+    /// [Redis Docs](https://redis.io/commands/VEMB)
+    fn vemb<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
+        cmd("VEMB").arg(key).arg(element)
+    }
+
+    /// Return the raw internal representation of the approximate vector associated with a given element in the vector set.
+    /// Vector sets normalize and may quantize vectors on insertion.
+    /// VEMB reverses this process to approximate the original vector by de-normalizing and de-quantizing it.
+    /// [Redis Docs](https://redis.io/commands/VEMB)
+    fn vemb_raw<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
+        cmd("VEMB").arg(key).arg(element).arg("RAW")
+    }
+
+    /// Remove an element from a vector set.
+    /// [Redis Docs](https://redis.io/commands/VREM)
+    fn vrem<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
+        cmd("VREM").arg(key).arg(element)
+    }
+
+    /// Associate a JSON object with an element in a vector set.
+    /// Use this command to store attributes that can be used in filtered similarity searches with VSIM.
+    /// [Redis Docs](https://redis.io/commands/VSETATTR)
+    fn vsetattr<K: ToRedisArgs, E: ToRedisArgs, J: Serialize>(key: K, element: E, json_object: &'a J) -> (bool) {
+        let attributes_json = match serde_json::to_value(json_object) {
+            Ok(serde_json::Value::String(s)) if s.is_empty() => "".to_string(),
+            _ => serde_json::to_string(json_object).unwrap(),
+        };
+
+        cmd("VSETATTR").arg(key).arg(element).arg(attributes_json)
+    }
+
+    /// Delete the JSON attributes associated with an element in a vector set.
+    /// This is an utility function that uses VSETATTR with an empty string.
+    /// [Redis Docs](https://redis.io/commands/VSETATTR)
+    fn vdelattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
+        cmd("VSETATTR").arg(key).arg(element).arg("")
+    }
+
+    /// Return the JSON attributes associated with an element in a vector set.
+    /// [Redis Docs](https://redis.io/commands/VGETATTR)
+    fn vgetattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (Option<String>) {
+        cmd("VGETATTR").arg(key).arg(element)
+    }
+
+    /// Return metadata and internal details about a vector set, including
+    /// size, dimensions, quantization type, and graph structure.
+    /// [Redis Docs](https://redis.io/commands/VINFO)
+    fn vinfo<K: ToRedisArgs>(key: K) -> Generic {
+        cmd("VINFO").arg(key)
+    }
+
+    /// Return the neighbors of a specified element in a vector set.
+    /// The command shows the connections for each layer of the HNSW graph.
+    /// [Redis Docs](https://redis.io/commands/VLINKS)
+    fn vlinks<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
+        cmd("VLINKS").arg(key).arg(element)
+    }
+
+    /// Return the neighbors of a specified element in a vector set.
+    /// The command shows the connections for each layer of the HNSW graph
+    /// and includes similarity scores for each neighbor.
+    /// [Redis Docs](https://redis.io/commands/VLINKS)]
+    fn vlinks_with_scores<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
+        cmd("VLINKS").arg(key).arg(element).arg("WITHSCORES")
+    }
+
+    /// Return one random elements from a vector set.
+    /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
+    fn vrandmember<K: ToRedisArgs>(key: K) -> (Option<Vec<String>>) {
+        cmd("VRANDMEMBER").arg(key)
+    }
+
+    /// Return multiple random elements from a vector set.
+    /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
+    fn vrandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> (Option<Vec<String>>) {
+        cmd("VRANDMEMBER").arg(key).arg(count)
+    }
+
+    /// Perform vector similarity search.
+    /// [Redis Docs](https://redis.io/commands/VSIM)
+    fn vsim<K: ToRedisArgs, V: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a, V>) -> Generic {
+        cmd("VSIM").arg(key).arg(input)
+    }
+
+    /// Performs a vector similarity search with optional parameters for customization.
+    /// [Redis Docs](https://redis.io/commands/VSIM)
+    fn vsim_extended<K: ToRedisArgs, V: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a, V>, options: &'a VSimOptions) -> Generic {
+        cmd("VSIM").arg(key).arg(input).arg(options)
     }
 
     // hyperloglog commands
@@ -3251,6 +3371,245 @@ impl ToRedisArgs for SortedSetAddOptions {
         }
         if self.increment {
             out.write_arg(b"INCR")
+        }
+    }
+}
+
+/// Options for the VADD command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, VAddOptions, VectorQuantization};
+/// fn add_vector(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     vector: &[f64],
+///     element: &str,
+/// ) -> RedisResult<bool> {
+///     let opts = VAddOptions::default()
+///         .set_reduction_dimension(5)
+///         .set_check_and_set_style(true)
+///         .set_quantization(VectorQuantization::Q8)
+///         .set_build_exploration_factor(300)
+///         .set_attributes(serde_json::json!({"name": "Vector attribute name", "description": "Vector attribute description"}))
+///         .set_max_number_of_links(16);
+///     con.vadd_extended(key, redis::VectorAddInput::Values(vector), element, &opts)
+/// }
+/// ```
+#[derive(Clone, Default)]
+pub struct VAddOptions {
+    /// Implements random projection to reduce the dimensionality of the vector.
+    /// The projection matrix is saved and reloaded along with the vector set.
+    reduction_dimension: Option<usize>,
+    /// Performs the operation partially using threads, in a check-and-set style.
+    /// The neighbor candidates collection, which is slow, is performed in the background, while the command is executed in the main thread.
+    enable_check_and_set_style: bool,
+    /// The quantization to be used. If no quantization is provided, the default value, Q8 (signed 8-bit), will be used.
+    vector_quantization: Option<VectorQuantization>,
+    /// Plays a role in the effort made to find good candidates when connecting the new node to the existing Hierarchical Navigable Small World (HNSW) graph.
+    /// The default is 200. Using a larger value may help in achieving a better recall.
+    build_exploration_factor: Option<usize>,
+    /// Assigns attributes from a JavaScript object to a newly created entry or updates existing attributes.
+    attributes: Option<serde_json::Value>,
+    /// The maximum number of connections that each node of the graph will have with other nodes.
+    /// The default is 16. More connections means more memory, but provides for more efficient graph exploration.
+    max_number_of_links: Option<usize>,
+}
+
+impl VAddOptions {
+    /// Set reduction dimension value
+    pub fn set_reduction_dimension(mut self, dimension: usize) -> Self {
+        self.reduction_dimension = Some(dimension);
+        self
+    }
+
+    /// Set the CAS (check-and-set) style flag
+    pub fn set_check_and_set_style(mut self, cas_enabled: bool) -> Self {
+        self.enable_check_and_set_style = cas_enabled;
+        self
+    }
+
+    /// Set the quantization mode
+    pub fn set_quantization(mut self, vector_quantization: VectorQuantization) -> Self {
+        self.vector_quantization = Some(vector_quantization);
+        self
+    }
+
+    /// Set the build exploration factor
+    pub fn set_build_exploration_factor(mut self, build_exploration_factor: usize) -> Self {
+        self.build_exploration_factor = Some(build_exploration_factor);
+        self
+    }
+
+    /// Set attributes as JSON string
+    pub fn set_attributes(mut self, attributes: serde_json::Value) -> Self {
+        self.attributes = Some(attributes);
+        self
+    }
+
+    /// Set the maximum number of links
+    pub fn set_max_number_of_links(mut self, max_number_of_links: usize) -> Self {
+        self.max_number_of_links = Some(max_number_of_links);
+        self
+    }
+}
+
+impl ToRedisArgs for VAddOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.enable_check_and_set_style {
+            out.write_arg(b"CAS");
+        }
+
+        if let Some(ref quantization) = self.vector_quantization {
+            match quantization {
+                VectorQuantization::NoQuant => out.write_arg(b"NOQUANT"),
+                VectorQuantization::Q8 => out.write_arg(b"Q8"),
+                VectorQuantization::Bin => out.write_arg(b"BIN"),
+            }
+        }
+
+        if let Some(exploration_factor) = self.build_exploration_factor {
+            out.write_arg(b"EF");
+            out.write_arg_fmt(exploration_factor);
+        }
+
+        if let Some(ref attrs) = self.attributes {
+            out.write_arg(b"SETATTR");
+            out.write_arg(&serde_json::to_vec(&attrs).unwrap());
+        }
+
+        if let Some(max_links) = self.max_number_of_links {
+            out.write_arg(b"M");
+            out.write_arg_fmt(max_links);
+        }
+    }
+}
+
+/// Options for the VSIM command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, VSimOptions};
+/// fn search_similar_vectors(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     element: &str,
+/// ) -> RedisResult<redis::Value> {
+///     let opts = VSimOptions::default()
+///         .set_with_scores(true)
+///         .set_count(10)
+///         .set_search_exploration_factor(100)
+///         .set_filter_expression(".size == \"large\"")
+///         .set_max_filtering_effort(10)
+///         .set_truth(true)
+///         .set_no_thread(true);
+///     con.vsim_extended(key, redis::VectorSimilaritySearchInput::<&str>::Element(element), &opts)
+/// }
+/// ```
+#[derive(Clone, Default)]
+pub struct VSimOptions {
+    /// Include similarity scores in the results
+    with_scores: bool,
+    /// Limit the number of results returned
+    count: Option<usize>,
+    /// Controls the search effort. Higher values explore more nodes, improving recall at the cost of speed.
+    /// Typical values range from 50 to 1000.
+    search_exploration_factor: Option<usize>,
+    /// JSON filter expression to apply to the results
+    filter: Option<String>,
+    /// Limits the number of filtering attempts for the FILTER expression.
+    /// The accuracy improves the with higher values, but the search may take longer.
+    filter_max_effort: Option<usize>,
+    /// Forces an exact linear scan of all elements, bypassing the HNSW graph.
+    /// Use for benchmarking or to calculate recall. This is significantly slower (O(N)).
+    truth: bool,
+    /// Executes the search in the main thread instead of a background thread.
+    /// Useful for small vector sets or benchmarks. This may block the server during execution!
+    no_thread: bool,
+}
+
+impl VSimOptions {
+    /// Include similarity scores in the results
+    pub fn set_with_scores(mut self, enabled: bool) -> Self {
+        self.with_scores = enabled;
+        self
+    }
+
+    /// Limit the number of results returned
+    pub fn set_count(mut self, count: usize) -> Self {
+        self.count = Some(count);
+        self
+    }
+
+    /// Set the search exploration factor
+    pub fn set_search_exploration_factor(mut self, factor: usize) -> Self {
+        self.search_exploration_factor = Some(factor);
+        self
+    }
+
+    /// Set a JSON filter expression
+    pub fn set_filter_expression<S: Into<String>>(mut self, expression: S) -> Self {
+        self.filter = Some(expression.into());
+        self
+    }
+
+    /// Set the maximum filtering effort
+    pub fn set_max_filtering_effort(mut self, effort: usize) -> Self {
+        self.filter_max_effort = Some(effort);
+        self
+    }
+
+    /// Enable/disable exact linear scan of all elements
+    pub fn set_truth(mut self, enabled: bool) -> Self {
+        self.truth = enabled;
+        self
+    }
+
+    /// Enable/disable multi-threading
+    pub fn set_no_thread(mut self, enabled: bool) -> Self {
+        self.no_thread = enabled;
+        self
+    }
+}
+
+impl ToRedisArgs for VSimOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.with_scores {
+            out.write_arg(b"WITHSCORES");
+        }
+
+        if let Some(count) = self.count {
+            out.write_arg(b"COUNT");
+            out.write_arg_fmt(count);
+        }
+
+        if let Some(ef) = self.search_exploration_factor {
+            out.write_arg(b"EF");
+            out.write_arg_fmt(ef);
+        }
+
+        if let Some(ref filter) = self.filter {
+            out.write_arg(b"FILTER");
+            out.write_arg(filter.as_bytes());
+        }
+
+        if let Some(filter_ef) = self.filter_max_effort {
+            out.write_arg(b"FILTER-EF");
+            out.write_arg_fmt(filter_ef);
+        }
+
+        if self.truth {
+            out.write_arg(b"TRUTH");
+        }
+
+        if self.no_thread {
+            out.write_arg(b"NOTHREAD");
         }
     }
 }

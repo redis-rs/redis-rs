@@ -77,6 +77,19 @@ pub enum FieldExistenceCheck {
     FXX,
 }
 
+/// Quantization options for vector storage
+#[derive(Clone, Copy)]
+pub enum VectorQuantization {
+    /// In the first VADD call for a given key, NOQUANT forces the vector to be created without int8 quantization, which is otherwise the default.
+    NoQuant,
+    /// Forces the vector to use signed 8-bit quantization.
+    /// This is the default, and the option only exists to make sure to check at insertion time that the vector set is of the same format.
+    Q8,
+    /// Forces the vector to use binary quantization instead of int8.
+    /// This is much faster and uses less memory, but impacts the recall quality.
+    Bin,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -2905,6 +2918,80 @@ impl ToRedisArgs for ExpireOption {
             ExpireOption::GT => out.write_arg(b"GT"),
             ExpireOption::LT => out.write_arg(b"LT"),
             _ => {}
+        }
+    }
+}
+
+/// Represents different ways to input data for vector add commands
+#[derive(Clone)]
+pub enum VectorAddInput<'a, V: ToRedisArgs> {
+    /// Binary representation of 32-bit floating point values
+    Fp32(&'a [f32]),
+    /// List of values that implement ToRedisArgs
+    Values(&'a [V]),
+}
+
+impl<'a, V: ToRedisArgs> ToRedisArgs for VectorAddInput<'a, V> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            VectorAddInput::Fp32(vector) => {
+                use std::io::Write;
+                out.write_arg(b"FP32");
+                let mut writer = out.writer_for_next_arg();
+                for &f in *vector {
+                    writer.write_all(&f.to_le_bytes()).unwrap();
+                }
+            }
+            VectorAddInput::Values(vector) => {
+                out.write_arg(b"VALUES");
+                out.write_arg_fmt(vector.len());
+                for v in *vector {
+                    v.write_redis_args(out);
+                }
+            }
+        }
+    }
+}
+
+/// Represents different ways to input query data for vector similarity search commands
+#[derive(Clone)]
+pub enum VectorSimilaritySearchInput<'a, V: ToRedisArgs> {
+    /// Binary representation of 32-bit floating point values
+    Fp32(&'a [f32]),
+    /// List of values that implement ToRedisArgs
+    Values(&'a [V]),
+    /// Element to use as a reference
+    Element(&'a str),
+}
+
+impl<'a, V: ToRedisArgs> ToRedisArgs for VectorSimilaritySearchInput<'a, V> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            VectorSimilaritySearchInput::Fp32(vector) => {
+                use std::io::Write;
+                out.write_arg(b"FP32");
+                let mut writer = out.writer_for_next_arg();
+                for &f in *vector {
+                    writer.write_all(&f.to_le_bytes()).unwrap();
+                }
+            }
+            VectorSimilaritySearchInput::Values(vector) => {
+                out.write_arg(b"VALUES");
+                out.write_arg_fmt(vector.len());
+                for v in *vector {
+                    v.write_redis_args(out);
+                }
+            }
+            VectorSimilaritySearchInput::Element(element) => {
+                out.write_arg(b"ELE");
+                element.write_redis_args(out);
+            }
         }
     }
 }
