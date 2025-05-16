@@ -8,11 +8,11 @@ use futures_util::{
 use std::pin::Pin;
 #[cfg(feature = "cache-aio")]
 use std::time::Duration;
-use std::{fmt, io, marker::PhantomData};
+use std::{fmt, io};
 
+use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
-use crate::{connection::ConnectionLike, Value};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -140,11 +140,10 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
 
 /// Represents a safe(r) redis iterator.
 struct CheckedIter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<Value>,
+    batch: std::vec::IntoIter<RedisResult<T>>,
     cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
-    _phantom: PhantomData<T>,
 }
 
 impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
@@ -157,25 +156,26 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.next() {
-                return Some(T::from_owned_redis_value(v));
+            if let Some(value) = self.batch.next() {
+                return Some(value);
             };
+
             if self.cursor == 0 {
                 return None;
             }
 
             let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-            let rv = match self.con.req_packed_command(&pcmd) {
-                Ok(v) => v,
+
+            let (cursor, batch) = match self
+                .con
+                .req_packed_command(&pcmd)
+                .and_then(from_owned_redis_value::<(u64, _)>)
+            {
+                Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
                 Err(e) => return Some(Err(e)),
             };
 
-            let (cur, batch): (u64, Vec<Value>) = match from_owned_redis_value(rv) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-
-            self.cursor = cur;
+            self.cursor = cursor;
             self.batch = batch.into_iter();
         }
     }
@@ -688,31 +688,25 @@ impl Cmd {
     /// tuple of cursor and list).
     #[inline]
     pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
-        Ok(Iter {
-            iter: self.checked_iter(con)?,
-        })
-    }
-
-    /// Similar to `iter()` but does not silently fail and return None if a value can't be parsed
-    /// (i.e. allows iterating to next possible value)
-    fn checked_iter<T: FromRedisValue>(
-        self,
-        con: &mut dyn ConnectionLike,
-    ) -> RedisResult<CheckedIter<'_, T>> {
         let rv = con.req_command(&self)?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<Value>)>(rv)?
+            let (cursor, values) = from_owned_redis_value::<(u64, _)>(rv)?;
+            (cursor, T::from_each_owned_redis_values(values))
         } else {
-            (0, from_owned_redis_value(rv)?)
+            (
+                0,
+                T::from_each_owned_redis_values(from_owned_redis_value(rv)?),
+            )
         };
 
-        Ok(CheckedIter {
-            batch: batch.into_iter(),
-            cursor,
-            con,
-            cmd: self,
-            _phantom: PhantomData,
+        Ok(Iter {
+            iter: CheckedIter {
+                batch: batch.into_iter(),
+                cursor,
+                con,
+                cmd: self,
+            },
         })
     }
 
