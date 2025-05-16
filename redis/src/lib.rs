@@ -580,7 +580,7 @@ pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
-    SortedSetAddOptions, TypedCommands, UpdateCheck,
+    SortedSetAddOptions, TypedCommands, UpdateCheck, VAddOptions, VSimOptions, 
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -620,6 +620,9 @@ pub use crate::types::{
     ReplicaInfo,
     IntegerReplyOrNoOp,
 	ValueType,
+    VectorAddInput,
+    VectorSimilaritySearchInput,
+    VectorQuantization,
 
     // error and result types
     RedisError,
