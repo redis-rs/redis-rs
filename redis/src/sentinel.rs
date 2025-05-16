@@ -1058,7 +1058,8 @@ impl SentinelClient {
         })
     }
 
-    fn get_client(&mut self) -> RedisResult<Client> {
+    /// Returns a `redis::Client` considering the server type.
+    pub fn get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => self
                 .sentinel
@@ -1067,6 +1068,20 @@ impl SentinelClient {
                 .sentinel
                 .replica_for(self.service_name.as_str(), Some(&self.node_connection_info)),
         }
+    }
+
+    /// Returns a `redis::Client` pointing to a Sentinel instance
+    pub async fn get_sentinel_client(&self) -> RedisResult<Client> {
+        for connection_info in &self.sentinel.sentinels_connection_info {
+            if let Ok(client) = Client::open(connection_info.clone()) {
+                return Ok(client);
+            }
+        }
+
+        Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Couldn't open connection to sentinel.",
+        )))
     }
 
     /// Creates a new connection to the desired type of server (based on the
@@ -1083,7 +1098,8 @@ impl SentinelClient {
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl SentinelClient {
-    async fn async_get_client(&mut self) -> RedisResult<Client> {
+    /// Returns a `redis::Client` considering the server type.
+    pub async fn async_get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => {
                 self.sentinel
