@@ -25,7 +25,7 @@ mod basic {
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
+        cmd, Client, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
         ValueType,
     };
     use redis::{
