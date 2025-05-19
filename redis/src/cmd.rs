@@ -107,24 +107,9 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
-        // we need to do this in a loop until we produce at least one item
-        // or we find the actual end of the iteration.  This is necessary
-        // because with filtering an iterator it is possible that a whole
-        // chunk is not matching the pattern and thus yielding empty results.
-        loop {
-            // iterate over the CheckedIter, but keep existing behavior, i.e.
-            // if there is an error, just silently return `None`
-            if let Some(v) = self.iter.next() {
-                if let Ok(v) = v {
-                    return Some(v);
-                }
-
-                return None;
-            };
-
-            // nothing left in the checked_iter
-            return None;
-        }
+        // use the checked iterator, but keep the behavior of the deprecated
+        // iterator.  This will return silently `None` if an error occurs.
+        self.iter.next()?.ok()
     }
 }
 
