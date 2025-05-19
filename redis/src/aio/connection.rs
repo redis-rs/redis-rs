@@ -66,6 +66,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "cluster-async")]
     use crate::cluster_async;
 
     use super::super::*;
