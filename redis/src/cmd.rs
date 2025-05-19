@@ -172,7 +172,7 @@ use crate::aio::ConnectionLike as AsyncConnection;
 /// The inner future of AsyncIter
 #[cfg(feature = "aio")]
 struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
-    batch: std::vec::IntoIter<T>,
+    batch: std::vec::IntoIter<RedisResult<T>>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -181,20 +181,28 @@ struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
 #[cfg(feature = "aio")]
 enum IterOrFuture<'a, T: FromRedisValue + 'a> {
     Iter(AsyncIterInner<'a, T>),
-    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<T>)>),
+    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<RedisResult<T>>)>),
     Empty,
 }
 
 /// Represents a redis iterator that can be used with async connections.
-#[cfg(feature = "aio")]
+#[cfg(all(feature = "aio", not(feature = "safe_iterators")))]
+#[deprecated(
+    note = "Possibility of losing values. Enable the feature `safe_iterators` for a safe version."
+)]
+pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
+    inner: IterOrFuture<'a, T>,
+}
+
+/// Represents a redis iterator that can be used with async connections.
+#[cfg(all(feature = "aio", feature = "safe_iterators"))]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
-    #[inline]
-    pub async fn next_item(&mut self) -> Option<T> {
+    async fn next_item(&mut self) -> Option<RedisResult<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
@@ -208,10 +216,17 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 return None;
             }
 
-            let rv = self.con.req_packed_command(&self.cmd).await.ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
+            let (cursor, batch) = match self
+                .con
+                .req_packed_command(&self.cmd)
+                .await
+                .and_then(from_owned_redis_value::<(u64, _)>)
+            {
+                Ok((cursor, items)) => (cursor, T::from_each_owned_redis_values(items)),
+                Err(e) => return Some(Err(e)),
+            };
 
-            self.cmd.cursor = Some(cur);
+            self.cmd.cursor = Some(cursor);
             self.batch = batch.into_iter();
         }
     }
@@ -228,22 +243,44 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// let _: () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
+    ///     let element = element?;
     ///     assert!(element == 42 || element == 43);
     /// }
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "safe_iterators")]
+    #[inline]
+    pub async fn next_item(&mut self) -> Option<RedisResult<T>> {
+        StreamExt::next(self).await
+    }
+
+    /// ```rust,no_run
+    /// # use redis::AsyncCommands;
+    /// # async fn scan_set() -> redis::RedisResult<()> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_multiplexed_async_connection().await?;
+    /// let _: () = con.sadd("my_set", 42i32).await?;
+    /// let _: () = con.sadd("my_set", 43i32).await?;
+    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
+    /// while let Some(element) = iter.next_item().await {
+    ///     assert!(element == 42 || element == 43);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(feature = "safe_iterators"))]
     #[inline]
     pub async fn next_item(&mut self) -> Option<T> {
-        StreamExt::next(self).await
+        StreamExt::next(self).await?.ok()
     }
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
-    type Item = T;
+    type Item = RedisResult<T>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         let inner = std::mem::replace(&mut this.inner, IterOrFuture::Empty);
         match inner {
@@ -716,15 +753,16 @@ impl Cmd {
         let rv = con.req_packed_command(&self).await?;
 
         let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
+            let (cursor, items) = from_owned_redis_value::<(u64, _)>(rv)?;
+            (cursor, T::from_each_owned_redis_values(items))
         } else {
-            (0, from_owned_redis_value(rv)?)
+            (
+                0,
+                T::from_each_owned_redis_values(from_owned_redis_value(rv)?),
+            )
         };
-        if cursor == 0 {
-            self.cursor = None;
-        } else {
-            self.cursor = Some(cursor);
-        }
+
+        self.cursor = Some(cursor);
 
         Ok(AsyncIter {
             inner: IterOrFuture::Iter(AsyncIterInner {

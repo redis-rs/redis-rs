@@ -586,6 +586,9 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(x) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let x = x?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&x));
                 }
@@ -631,6 +634,9 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(item) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let item = item?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&item));
                 }
@@ -664,7 +670,7 @@ mod basic_async {
                     unseen.insert(key_name.clone());
                 }
 
-                let iter = redis::cmd("SCAN")
+                let mut iter = redis::cmd("SCAN")
                     .cursor_arg(0)
                     .arg("MATCH")
                     .arg("key*")
@@ -675,8 +681,10 @@ mod basic_async {
                     .await
                     .unwrap();
 
-                let collection: Vec<String> = iter.collect().await;
-                for item in collection {
+                while let Some(item) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let item = item?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&item));
                 }
@@ -931,7 +939,8 @@ mod basic_async {
                 }
 
                 let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
-                let mut keys_from_redis: Vec<_> = iter.collect().await;
+                let mut keys_from_redis: Vec<_> =
+                    iter.map(std::result::Result::unwrap).collect().await;
                 keys_from_redis.sort();
                 assert_eq!(keys, keys_from_redis);
                 assert_eq!(keys.len(), 100);

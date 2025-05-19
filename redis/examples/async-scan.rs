@@ -10,7 +10,7 @@ async fn main() -> redis::RedisResult<()> {
     let _: () = con.set("async-key2", b"foo").await?;
 
     let iter: AsyncIter<String> = con.scan().await?;
-    let mut keys: Vec<_> = iter.collect().await;
+    let mut keys: Vec<_> = iter.map(std::result::Result::unwrap).collect().await;
 
     keys.sort();
 
