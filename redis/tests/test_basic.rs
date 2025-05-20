@@ -2082,6 +2082,41 @@ mod basic {
     }
 
     #[test]
+    fn test_tuple_decoding_from_iter() {
+        const KEY: &str = "my_iter_tuple";
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
+
+        // Insert all pairs as entries of the hash `KEY`
+        assert_eq!(con.del(KEY), Ok(()));
+        for kv in map.iter() {
+            assert_eq!(con.hset(KEY, kv.0, kv.1), Ok(1));
+        }
+
+        let iter = con.hscan::<_, (String, u32)>(KEY).unwrap();
+
+        let mut counter = 0;
+        for kv in iter {
+            #[cfg(feature = "safe_iterators")]
+            let kv = kv.unwrap();
+
+            let (key, num) = kv;
+
+            // Check if queried tuple is in the original map
+            assert_eq!(map.get(key.as_str()).unwrap(), &num);
+            counter += 1;
+        }
+
+        assert_eq!(con.del(KEY), Ok(1));
+
+        // Check that original map has the same number of entries as hscan
+        // returned
+        assert_eq!(map.len(), counter);
+    }
+
+    #[test]
     fn test_bit_operations() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
