@@ -22,7 +22,7 @@ use crate::{from_owned_redis_value, ProtocolVersion};
 use std::os::unix::net::UnixStream;
 
 use crate::commands::resp3_hello;
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(native_tls_without_rustls)]
 use native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "tls-rustls")]
@@ -50,7 +50,7 @@ pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     pub(crate) danger_accept_invalid_hostnames: bool,
 }
 
@@ -184,7 +184,7 @@ impl ConnectionAddr {
     /// verification is not used, any valid certificate for any site will be
     /// trusted for use from any other. This introduces a significant
     /// vulnerability to man-in-the-middle attacks.
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[cfg(insecure_or_native_tls)]
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let ConnectionAddr::TcpTls { tls_params, .. } = self {
             if let Some(ref mut params) = tls_params {
@@ -363,7 +363,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
     let addr = if url.scheme() == "rediss" || url.scheme() == "valkeys" {
-        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[cfg(sync_tls)]
         {
             match url.fragment() {
                 Some("insecure") => ConnectionAddr::TcpTls {
@@ -477,7 +477,7 @@ struct TcpConnection {
     open: bool,
 }
 
-#[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+#[cfg(native_tls_without_rustls)]
 struct TcpNativeTlsConnection {
     reader: TlsStream<TcpStream>,
     open: bool,
@@ -497,7 +497,7 @@ struct UnixConnection {
 
 enum ActualConnection {
     Tcp(TcpConnection),
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+    #[cfg(native_tls_without_rustls)]
     TcpNativeTls(Box<TcpNativeTlsConnection>),
     #[cfg(feature = "tls-rustls")]
     TcpRustls(Box<TcpRustlsConnection>),
@@ -708,7 +708,7 @@ impl ActualConnection {
                     open: true,
                 })
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ConnectionAddr::TcpTls {
                 ref host,
                 port,
@@ -858,7 +858,7 @@ impl ActualConnection {
                     Ok(_) => Ok(Value::Okay),
                 }
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ActualConnection::TcpNativeTls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
@@ -905,7 +905,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_write_timeout(dur)?;
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
@@ -928,7 +928,7 @@ impl ActualConnection {
             ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_read_timeout(dur)?;
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
@@ -949,7 +949,7 @@ impl ActualConnection {
     pub fn is_open(&self) -> bool {
         match *self {
             ActualConnection::Tcp(TcpConnection { open, .. }) => open,
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(feature = "tls-rustls")]
             ActualConnection::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
@@ -1011,7 +1011,7 @@ pub(crate) fn create_rustls_config(
         // The strange cfg here is to handle a specific unusual combination of features: if
         // `tls-native-tls` and `tls-rustls` are enabled, but `tls-rustls-insecure` is not, and the
         // application tries to use the danger flag.
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        #[cfg(insecure_or_native_tls)]
         let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
             #[cfg(not(feature = "tls-rustls-insecure"))]
             {
@@ -1629,7 +1629,7 @@ impl Connection {
                 let _ = connection.reader.shutdown(net::Shutdown::Both);
                 connection.open = false;
             }
-            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            #[cfg(native_tls_without_rustls)]
             ActualConnection::TcpNativeTls(ref mut connection) => {
                 let _ = connection.reader.shutdown();
                 connection.open = false;
@@ -1655,7 +1655,7 @@ impl Connection {
                 ActualConnection::Tcp(TcpConnection { ref mut reader, .. }) => {
                     self.parser.parse_value(reader)
                 }
-                #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+                #[cfg(native_tls_without_rustls)]
                 ActualConnection::TcpNativeTls(ref mut boxed_tls_connection) => {
                     let reader = &mut boxed_tls_connection.reader;
                     self.parser.parse_value(reader)
