@@ -8,12 +8,12 @@ test:
 	@RUSTFLAGS="-D warnings" cargo build --locked -p redis -p redis-test --all-features
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP without safe_iterators"
+	@echo "Testing Connection Type TCP without any features. Deprecated allowed due to unsafe iterators"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings -A deprecated" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -E 'not test(test_module)'
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP without features"
+	@echo "Testing Connection Type TCP without features except safe_iterators"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F safe_iterators -E 'not test(test_module)'
 
