@@ -88,7 +88,7 @@ pub struct Cmd {
 
 #[cfg(not(feature = "safe_iterators"))]
 #[deprecated(
-    note = "Possibility of losing values. Enable the feature `safe_iterators` for a safe version."
+    note = "Deprecated due to the fact that this implementation silently discards values that can't be converted to T. Enable the the feature `safe_iterators` for a safe version."
 )]
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
