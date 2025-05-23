@@ -1027,6 +1027,7 @@ mod basic_async {
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
             const PREFIX: &str = "async-key";
+            const VALUE: &str = "bar";
             const NUM_KEYS: usize = 100;
 
             /// Container that is constructed from a string that has [`PREFIX`] as prefix
@@ -1055,28 +1056,36 @@ mod basic_async {
                         .collect();
 
                     for key in &keys {
-                        let _: () = con.set(key, b"bar").await.unwrap();
+                        let _: () = con.set(key, VALUE.as_bytes()).await.unwrap();
                     }
 
                     // Query all keys
-                    let iter: redis::AsyncIter<Container> = con.scan().await.unwrap();
+                    let mut iter: redis::AsyncIter<Container> = con.scan().await.unwrap();
 
-                    // Filter results that are an error and extract the inner value
-                    let keys_from_redis = iter
-                        .filter_map(|result| async { result.ok().map(|container| container.0) })
-                        .collect::<Vec<_>>()
-                        .await;
+                    let mut error = None;
+                    let mut count = 0;
 
-                    // Assert that all original keys but the one with the
-                    // incorrect prefix are in the queried list
-                    assert!(keys
-                        .iter()
-                        .filter(|key| key.starts_with(PREFIX))
-                        .all(|key| keys_from_redis.contains(key)));
+                    while let Some(key) = iter.next_item().await {
+                        match key {
+                            Ok(key) => {
+                                assert_eq!(key.0, VALUE);
+                                count += 1;
+                            }
+                            Err(_) if error.is_some() => {
+                                    panic!("Encountered multiple errors");
+                                
+                            }
+                            Err(e) => error = Some(e.kind())
+                        };
+                    }
 
-                    // Length should be the original number of keys minus the
-                    // one invalid key
-                    assert_eq!(keys_from_redis.len(), NUM_KEYS - 1);
+                    // Assert that the number of visited keys is all keys minus
+                    // the one invalid key
+                    assert_eq!(count, NUM_KEYS - 1);
+
+                    // Assert that the encountered error is a type error
+                    assert!(matches!(error, Some(ErrorKind::TypeError)));
+
                     Ok(())
                 },
                 runtime,
