@@ -1145,11 +1145,13 @@ mod basic {
     #[cfg(feature = "safe_iterators")]
     #[test]
     fn test_checked_scanning_error() {
+        const KEY_COUNT: u32 = 1000;
+
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
         // Insert a bunch of keys with legit UTF-8 first
-        for x in 0..1000 {
+        for x in 0..KEY_COUNT {
             redis::cmd("SET")
                 .arg(format!("foo{}", x))
                 .arg(x)
@@ -1170,14 +1172,17 @@ mod basic {
             .scan_options::<String>(ScanOptions::default().with_count(1))
             .unwrap();
 
-        let mut err_flag = false;
+        let mut error_kind = None;
         let mut count = 0;
 
         // iterate over the entire keyspace till we reach the end
         for x in iter {
-            if x.is_err() {
+            if let Err(current_error) = x {
+                if error_kind.is_some() {
+                    panic!("Encountered multiple errors");
+                }
                 // we found the error case
-                err_flag = true;
+                error_kind = Some(current_error.kind());
             } else {
                 count += 1;
             }
@@ -1185,10 +1190,10 @@ mod basic {
 
         // we should have been able to iterate over the entire keyspace EXCEPT the
         // key which failed to parse, so count should be 1000 (1000 valid keys)
-        assert_eq!(count, 1000);
+        assert_eq!(count, KEY_COUNT);
 
         // make sure we encountered the error (i.e. instead of silent failure)
-        assert!(err_flag);
+        assert!(matches!(error_kind, Some(ErrorKind::TypeError)));
     }
 
     #[test]
