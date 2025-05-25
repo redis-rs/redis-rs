@@ -1,5 +1,7 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
+#[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+use crate::caching::{CacheConfig, CacheManager};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 #[cfg(feature = "cluster-async")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
@@ -41,6 +43,8 @@ struct BuilderParams {
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
+    #[cfg(feature = "cache-aio")]
+    cache_config: Option<CacheConfig>,
 }
 
 #[derive(Clone)]
@@ -101,6 +105,8 @@ pub(crate) struct ClusterParams {
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
+    #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+    pub(crate) cache_manager: Option<CacheManager>,
 }
 
 impl ClusterParams {
@@ -130,6 +136,12 @@ impl ClusterParams {
             tls_params
         };
 
+        #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+        let cache_manager = value
+            .cache_config
+            .as_ref()
+            .map(|cache_config| CacheManager::new(*cache_config));
+
         Ok(Self {
             password: value.password,
             username: value.username,
@@ -146,6 +158,8 @@ impl ClusterParams {
             tcp_settings: value.tcp_settings,
             #[cfg(feature = "cluster-async")]
             async_dns_resolver: value.async_dns_resolver,
+            #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+            cache_manager,
         })
     }
 
@@ -471,6 +485,13 @@ impl ClusterClientBuilder {
     #[cfg(feature = "cluster-async")]
     pub fn async_dns_resolver(mut self, resolver: impl AsyncDNSResolver) -> ClusterClientBuilder {
         self.builder_params.async_dns_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// Sets cache config for [`crate::cluster_async::ClusterConnection`], check CacheConfig for more details.
+    #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+    pub fn cache_config(mut self, cache_config: CacheConfig) -> Self {
+        self.builder_params.cache_config = Some(cache_config);
         self
     }
 }

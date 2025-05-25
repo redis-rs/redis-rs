@@ -83,13 +83,16 @@ impl CacheableCommand<'_> {
         match self {
             CacheableCommand::Single(cached_command) => {
                 if let (Some(pttl), Some(reply)) = (replies.next(), replies.next()) {
-                    cache_manager.insert(
-                        cached_command.redis_key,
-                        cached_command.cmd_key,
-                        reply.clone(),
-                        cached_command.client_side_expire,
-                        &pttl,
-                    );
+                    if !matches!(&reply, &Value::ServerError(_)) {
+                        cache_manager.insert(
+                            cached_command.redis_key,
+                            cached_command.cmd_key,
+                            reply.clone(),
+                            cached_command.client_side_expire,
+                            &pttl,
+                        );
+                    }
+
                     Ok(reply)
                 } else {
                     Err(RedisError::from((
@@ -109,13 +112,15 @@ impl CacheableCommand<'_> {
                     for ((key_value, pttl_value), (key_index, cached_command)) in
                         zip(zip(mget_values, replies), commands)
                     {
-                        cache_manager.insert(
-                            cached_command.redis_key,
-                            &cached_command.cmd_key,
-                            key_value.clone(),
-                            client_side_expire,
-                            &pttl_value,
-                        );
+                        if !matches!(&key_value, &Value::ServerError(_)) {
+                            cache_manager.insert(
+                                cached_command.redis_key,
+                                &cached_command.cmd_key,
+                                key_value.clone(),
+                                client_side_expire,
+                                &pttl_value,
+                            );
+                        }
                         cached_response[key_index] = key_value;
                     }
                 } else {

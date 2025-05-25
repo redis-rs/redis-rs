@@ -503,7 +503,7 @@ impl MultiplexedConnection {
         #[cfg(feature = "cache-aio")]
         let cache_config = config.cache.as_ref().map(|cache| match cache {
             crate::client::Cache::Config(cache_config) => *cache_config,
-            #[cfg(feature = "connection-manager")]
+            #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
             crate::client::Cache::Manager(cache_manager) => cache_manager.cache_config,
         });
         #[cfg(feature = "cache-aio")]
@@ -518,7 +518,7 @@ impl MultiplexedConnection {
                     crate::client::Cache::Config(cache_config) => {
                         Ok(CacheManager::new(cache_config))
                     }
-                    #[cfg(feature = "connection-manager")]
+                    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
                     crate::client::Cache::Manager(cache_manager) => Ok(cache_manager),
                 }
             })

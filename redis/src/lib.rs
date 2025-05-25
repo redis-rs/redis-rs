@@ -108,7 +108,7 @@
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
-//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection (optional)
+//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
 //! * `disable-client-setinfo`: disables the `CLIENT SETINFO` handshake during connection initialization
 //!
 //! ## Connection Parameters
