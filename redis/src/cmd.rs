@@ -182,16 +182,13 @@ enum IterOrFuture<'a, T: FromRedisValue + 'a> {
 }
 
 /// Represents a redis iterator that can be used with async connections.
-#[cfg(all(feature = "aio", not(feature = "safe_iterators")))]
-#[deprecated(
-    note = "Deprecated due to the fact that this implementation silently discards values that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
+#[cfg(feature = "aio")]
+#[cfg_attr(
+    all(feature = "aio", not(feature = "safe_iterators")),
+    deprecated(
+        note = "Deprecated due to the fact that this implementation silently discards values that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
+    )
 )]
-pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
-    inner: IterOrFuture<'a, T>,
-}
-
-/// Represents a redis iterator that can be used with async connections.
-#[cfg(all(feature = "aio", feature = "safe_iterators"))]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
