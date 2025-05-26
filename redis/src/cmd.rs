@@ -671,7 +671,6 @@ impl Cmd {
 
     /// Sets the cursor and converts the passed value to a batch used by the
     /// iterators.
-    #[inline]
     fn set_cursor_and_get_batch<T: FromRedisValue>(
         &mut self,
         value: crate::Value,
