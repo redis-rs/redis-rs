@@ -1027,7 +1027,6 @@ mod basic_async {
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
             const PREFIX: &str = "async-key";
-            const VALUE: &str = "bar";
             const NUM_KEYS: usize = 100;
 
             /// Container that is constructed from a string that has [`PREFIX`] as prefix
@@ -1056,7 +1055,7 @@ mod basic_async {
                         .collect();
 
                     for key in &keys {
-                        let _: () = con.set(key, VALUE.as_bytes()).await.unwrap();
+                        let _: () = con.set(key, "bar".as_bytes()).await.unwrap();
                     }
 
                     // Query all keys
@@ -1068,7 +1067,7 @@ mod basic_async {
                     while let Some(key) = iter.next_item().await {
                         match key {
                             Ok(key) => {
-                                assert_eq!(key.0, VALUE);
+                                assert!(key.0.starts_with(PREFIX));
                                 count += 1;
                             }
                             Err(_) if error.is_some() => {
