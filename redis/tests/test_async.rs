@@ -1072,10 +1072,9 @@ mod basic_async {
                                 count += 1;
                             }
                             Err(_) if error.is_some() => {
-                                    panic!("Encountered multiple errors");
-                                
+                                panic!("Encountered multiple errors");
                             }
-                            Err(e) => error = Some(e.kind())
+                            Err(e) => error = Some(e.kind()),
                         };
                     }
 
