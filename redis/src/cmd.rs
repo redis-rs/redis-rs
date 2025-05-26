@@ -122,7 +122,6 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
 /// Represents a safe(r) redis iterator.
 struct CheckedIter<'a, T: FromRedisValue> {
     batch: std::vec::IntoIter<RedisResult<T>>,
-    cursor: u64,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
 }
@@ -141,22 +140,20 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
                 return Some(value);
             };
 
-            if self.cursor == 0 {
+            if self.cmd.cursor? == 0 {
                 return None;
             }
 
-            let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-
             let (cursor, batch) = match self
                 .con
-                .req_packed_command(&pcmd)
+                .req_packed_command(&self.cmd.get_packed_command())
                 .and_then(from_owned_redis_value::<(u64, _)>)
             {
                 Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
                 Err(e) => return Some(Err(e)),
             };
 
-            self.cursor = cursor;
+            self.cmd.cursor = Some(cursor);
             self.batch = batch.into_iter();
         }
     }
@@ -644,18 +641,6 @@ impl Cmd {
         write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
     }
 
-    /// Like `get_packed_command` but replaces the cursor with the
-    /// provided value.  If the command is not in scan mode, `None`
-    /// is returned.
-    #[inline]
-    fn get_packed_command_with_cursor(&self, cursor: u64) -> Option<Vec<u8>> {
-        if !self.in_scan_mode() {
-            None
-        } else {
-            Some(encode_command(self.args_iter(), cursor))
-        }
-    }
-
     /// Returns true if the command is in scan mode.
     #[inline]
     pub fn in_scan_mode(&self) -> bool {
@@ -684,6 +669,25 @@ impl Cmd {
         from_owned_redis_value(val.extract_error()?)
     }
 
+    /// Sets the cursor and converts the passed value to a batch used by the
+    /// iterators.
+    #[inline]
+    fn set_cursor_and_get_batch<T: FromRedisValue>(
+        &mut self,
+        value: crate::Value,
+    ) -> RedisResult<Vec<RedisResult<T>>> {
+        let (cursor, values) = if value.looks_like_cursor() {
+            let (cursor, values) = from_owned_redis_value::<(u64, _)>(value)?;
+            (cursor, values)
+        } else {
+            (0, from_owned_redis_value(value)?)
+        };
+
+        self.cursor = Some(cursor);
+
+        Ok(T::from_each_owned_redis_values(values))
+    }
+
     /// Similar to `query()` but returns an iterator over the items of the
     /// bulk result or iterator.  In normal mode this is not in any way more
     /// efficient than just querying into a `Vec<T>` as it's internally
@@ -699,23 +703,17 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
+    pub fn iter<T: FromRedisValue>(
+        mut self,
+        con: &mut dyn ConnectionLike,
+    ) -> RedisResult<Iter<'_, T>> {
         let rv = con.req_command(&self)?;
 
-        let (cursor, batch) = if rv.looks_like_cursor() {
-            let (cursor, values) = from_owned_redis_value::<(u64, _)>(rv)?;
-            (cursor, T::from_each_owned_redis_values(values))
-        } else {
-            (
-                0,
-                T::from_each_owned_redis_values(from_owned_redis_value(rv)?),
-            )
-        };
+        let batch = self.set_cursor_and_get_batch(rv)?;
 
         Ok(Iter {
             iter: CheckedIter {
                 batch: batch.into_iter(),
-                cursor,
                 con,
                 cmd: self,
             },
@@ -745,17 +743,7 @@ impl Cmd {
     ) -> RedisResult<AsyncIter<'a, T>> {
         let rv = con.req_packed_command(&self).await?;
 
-        let (cursor, batch) = if rv.looks_like_cursor() {
-            let (cursor, items) = from_owned_redis_value::<(u64, _)>(rv)?;
-            (cursor, T::from_each_owned_redis_values(items))
-        } else {
-            (
-                0,
-                T::from_each_owned_redis_values(from_owned_redis_value(rv)?),
-            )
-        };
-
-        self.cursor = Some(cursor);
+        let batch = self.set_cursor_and_get_batch(rv)?;
 
         Ok(AsyncIter {
             inner: IterOrFuture::Iter(AsyncIterInner {
