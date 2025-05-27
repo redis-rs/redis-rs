@@ -1131,13 +1131,69 @@ mod basic {
             .iter(&mut con)
             .unwrap();
 
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
+
         for x in iter {
-            // type inference limitations
             let x: usize = x;
             unseen.remove(&x);
         }
 
         assert_eq!(unseen.len(), 0);
+    }
+
+    #[cfg(feature = "safe_iterators")]
+    #[test]
+    fn test_checked_scanning_error() {
+        const KEY_COUNT: u32 = 1000;
+
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Insert a bunch of keys with legit UTF-8 first
+        for x in 0..KEY_COUNT {
+            redis::cmd("SET")
+                .arg(format!("foo{}", x))
+                .arg(x)
+                .exec(&mut con)
+                .unwrap();
+        }
+
+        // This key is raw bytes, invalid UTF-8
+        redis::cmd("SET")
+            .arg(b"\xc3\x28")
+            .arg("invalid")
+            .exec(&mut con)
+            .unwrap();
+
+        // get an iterator for SCAN over all redis keys
+        // Specify count=1 so we don't get the invalid UTF-8 scenario in the first scan
+        let iter = con
+            .scan_options::<String>(ScanOptions::default().with_count(1))
+            .unwrap();
+
+        let mut error_kind = None;
+        let mut count = 0;
+
+        // iterate over the entire keyspace till we reach the end
+        for x in iter {
+            if let Err(current_error) = x {
+                if error_kind.is_some() {
+                    panic!("Encountered multiple errors");
+                }
+                // we found the error case
+                error_kind = Some(current_error.kind());
+            } else {
+                count += 1;
+            }
+        }
+
+        // we should have been able to iterate over the entire keyspace EXCEPT the
+        // key which failed to parse, so count should be 1000 (1000 valid keys)
+        assert_eq!(count, KEY_COUNT);
+
+        // make sure we encountered the error (i.e. instead of silent failure)
+        assert!(matches!(error_kind, Some(ErrorKind::TypeError)));
     }
 
     #[test]
@@ -1158,6 +1214,9 @@ mod basic {
         let iter = con
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
+
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
 
         for (_field, value) in iter {
             unseen.remove(&value);
@@ -1968,6 +2027,10 @@ mod basic {
 
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
+
+        #[cfg(feature = "safe_iterators")]
+        let iter = iter.map(std::result::Result::unwrap);
+
         for item in iter {
             found.insert(item);
         }
@@ -2021,6 +2084,41 @@ mod basic {
 
         let vec: Vec<(String, u32)> = con.zrangebyscore_withscores("my_zset", 0, 10).unwrap();
         assert_eq!(vec.len(), 0);
+    }
+
+    #[test]
+    fn test_tuple_decoding_from_iter() {
+        const KEY: &str = "my_iter_tuple";
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
+
+        // Insert all pairs as entries of the hash `KEY`
+        assert_eq!(con.del(KEY), Ok(()));
+        for kv in map.iter() {
+            assert_eq!(con.hset(KEY, kv.0, kv.1), Ok(1));
+        }
+
+        let iter = con.hscan::<_, (String, u32)>(KEY).unwrap();
+
+        let mut counter = 0;
+        for kv in iter {
+            #[cfg(feature = "safe_iterators")]
+            let kv = kv.unwrap();
+
+            let (key, num) = kv;
+
+            // Check if queried tuple is in the original map
+            assert_eq!(map.get(key.as_str()).unwrap(), &num);
+            counter += 1;
+        }
+
+        assert_eq!(con.del(KEY), Ok(1));
+
+        // Check that original map has the same number of entries as hscan
+        // returned
+        assert_eq!(map.len(), counter);
     }
 
     #[test]

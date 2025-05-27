@@ -2104,6 +2104,15 @@ pub trait FromRedisValue: Sized {
             .collect()
     }
 
+    /// The same as `from_owned_redis_values`, but returns a result for each
+    /// conversion to make handling them case-by-case possible.
+    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<RedisResult<Self>> {
+        items
+            .into_iter()
+            .map(FromRedisValue::from_owned_redis_value)
+            .collect()
+    }
+
     /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
         Self::from_owned_redis_value(Value::BulkString(_vec.into()))
@@ -2694,6 +2703,53 @@ macro_rules! from_redis_value_for_tuple {
                     }
                 }
                 Ok(rv)
+            }
+
+            #[allow(non_snake_case, unused_variables)]
+            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<RedisResult<($($name,)*)>> {
+
+                #[allow(unused_parens)]
+                let extract = |val: ($(RedisResult<$name>),*)| -> RedisResult<($($name,)*)> {
+                    let ($($name),*) = val;
+                    Ok(($($name?),*,))
+                };
+
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+
+                let mut rv = vec![];
+                if items.len() == 0 {
+                    return rv
+                }
+                //It's uglier then before!
+                for item in items.iter_mut() {
+                    match item {
+                        Value::Array(ref mut ch) => {
+                            if let [$($name),*] = &mut ch[..] {
+                                rv.push(extract(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))),*)));
+                            };
+                        },
+                        _ => {},
+                    }
+                }
+                if !rv.is_empty(){
+                    return rv;
+                }
+
+                let mut rv = Vec::with_capacity(items.len() / n);
+
+                for chunk in items.chunks_mut(n) {
+                    match chunk {
+                        // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
+                        // in its place. This allows each `Value` to be parsed without being copied.
+                        // Since `items` is consumed by this function and not used later, this replacement
+                        // is not observable to the rest of the code.
+                        [$($name),*] => rv.push(extract(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))),*))),
+                         _ => unreachable!(),
+                    }
+                }
+                rv
             }
 
             #[allow(non_snake_case, unused_variables)]

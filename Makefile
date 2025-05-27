@@ -1,5 +1,5 @@
 build:
-	@RUSTFLAGS="-D warnings" cargo build --locked -p redis
+	@RUSTFLAGS="-D warnings" cargo build -F safe_iterators --locked -p redis
 
 test:
 	@echo "===================================================================="
@@ -8,9 +8,9 @@ test:
 	@RUSTFLAGS="-D warnings" cargo build --locked -p redis -p redis-test --all-features
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP without features"
+	@echo "Testing Connection Type TCP without features except safe_iterators"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features  -E 'not test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F safe_iterators -E 'not test(test_module)'
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP2"
@@ -20,7 +20,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP3"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run --locked -p redis --all-features  -E 'not test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run --locked -p redis --all-features -E 'not test(test_module)'
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and Rustls support"
@@ -30,7 +30,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with native-TLS support"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,async-std-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async -E 'not test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,async-std-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async,safe_iterators -E 'not test(test_module)'
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX"

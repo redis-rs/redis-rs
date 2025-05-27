@@ -586,6 +586,9 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(x) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let x = x?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&x));
                 }
@@ -631,6 +634,9 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(item) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let item = item?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&item));
                 }
@@ -664,7 +670,7 @@ mod basic_async {
                     unseen.insert(key_name.clone());
                 }
 
-                let iter = redis::cmd("SCAN")
+                let mut iter = redis::cmd("SCAN")
                     .cursor_arg(0)
                     .arg("MATCH")
                     .arg("key*")
@@ -675,8 +681,10 @@ mod basic_async {
                     .await
                     .unwrap();
 
-                let collection: Vec<String> = iter.collect().await;
-                for item in collection {
+                while let Some(item) = iter.next_item().await {
+                    #[cfg(feature = "safe_iterators")]
+                    let item = item?;
+
                     // if this assertion fails, too many items were returned by the iterator.
                     assert!(unseen.remove(&item));
                 }
@@ -931,7 +939,8 @@ mod basic_async {
                 }
 
                 let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
-                let mut keys_from_redis: Vec<_> = iter.collect().await;
+                let mut keys_from_redis: Vec<_> =
+                    iter.map(std::result::Result::unwrap).collect().await;
                 keys_from_redis.sort();
                 assert_eq!(keys, keys_from_redis);
                 assert_eq!(keys.len(), 100);
@@ -1007,6 +1016,78 @@ mod basic_async {
                 runtime,
             )
             .unwrap();
+        }
+
+        #[cfg(feature = "safe_iterators")]
+        #[rstest]
+        // Test issue of AsyncCommands::scan not returning keys because wrong assumptions about the key type were made
+        // https://github.com/redis-rs/redis-rs/issues/1309
+        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+        fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
+            const PREFIX: &str = "async-key";
+            const NUM_KEYS: usize = 100;
+
+            /// Container that is constructed from a string that has [`PREFIX`] as prefix
+            struct Container(String);
+
+            impl redis::FromRedisValue for Container {
+                fn from_redis_value(v: &Value) -> RedisResult<Self> {
+                    let text = String::from_redis_value(v)?;
+
+                    // If container does not start with [`PREFIX`], return error
+                    if !text.starts_with(PREFIX) {
+                        return Err(
+                            (ErrorKind::TypeError, "Does not start with correct prefix").into()
+                        );
+                    }
+
+                    Ok(Container(text))
+                }
+            }
+
+            test_with_all_connection_types(
+                |mut con| async move {
+                    // Insert 100 keys but one with an incorrect prefix
+                    let keys: Vec<String> = (0..NUM_KEYS)
+                        .map(|i| format!("{}{i}", if i == 50 { "NOPE" } else { PREFIX }))
+                        .collect();
+
+                    for key in &keys {
+                        let _: () = con.set(key, "bar".as_bytes()).await.unwrap();
+                    }
+
+                    // Query all keys
+                    let mut iter: redis::AsyncIter<Container> = con.scan().await.unwrap();
+
+                    let mut error = None;
+                    let mut count = 0;
+
+                    while let Some(key) = iter.next_item().await {
+                        match key {
+                            Ok(key) => {
+                                assert!(key.0.starts_with(PREFIX));
+                                count += 1;
+                            }
+                            Err(_) if error.is_some() => {
+                                panic!("Encountered multiple errors");
+                            }
+                            Err(e) => error = Some(e.kind()),
+                        };
+                    }
+
+                    // Assert that the number of visited keys is all keys minus
+                    // the one invalid key
+                    assert_eq!(count, NUM_KEYS - 1);
+
+                    // Assert that the encountered error is a type error
+                    assert!(matches!(error, Some(ErrorKind::TypeError)));
+
+                    Ok(())
+                },
+                runtime,
+            );
         }
 
         #[rstest]
