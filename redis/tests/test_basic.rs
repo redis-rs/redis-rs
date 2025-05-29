@@ -2151,7 +2151,7 @@ mod basic {
         let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
 
         // Insert all pairs as entries of the hash `KEY`
-        assert_eq!(con.del(KEY), Ok(()));
+        assert!(con.del(KEY).is_ok());
         for kv in map.iter() {
             assert_eq!(con.hset(KEY, kv.0, kv.1), Ok(1));
         }

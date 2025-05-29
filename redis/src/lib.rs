@@ -234,8 +234,8 @@
 //!     let mut con = client.get_connection()?;
 //!     // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
 //!     con.set("my_key", 42)?;
-//!     // `get_int` returns Option<isize>, as the key may not be found.
-//!     con.get_int("my_key").unwrap()
+//!     // `get_int` returns Result<Option<isize>>, as the key may not be found, or some error may occur.
+//!     Ok(con.get_int("my_key").unwrap().unwrap())
 //! }
 //! ```
 //!
