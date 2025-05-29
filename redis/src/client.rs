@@ -16,7 +16,10 @@ use crate::tls::{inner_build_with_tls, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
-#[cfg(all(feature = "cache-aio", feature = "connection-manager"))]
+#[cfg(all(
+    feature = "cache-aio",
+    any(feature = "connection-manager", feature = "cluster-async")
+))]
 use crate::caching::CacheManager;
 
 /// The client type.
@@ -167,7 +170,7 @@ impl Client {
 #[derive(Clone)]
 pub(crate) enum Cache {
     Config(CacheConfig),
-    #[cfg(feature = "connection-manager")]
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
     Manager(CacheManager),
 }
 
@@ -249,7 +252,10 @@ impl AsyncConnectionConfig {
         self
     }
 
-    #[cfg(all(feature = "cache-aio", feature = "connection-manager"))]
+    #[cfg(all(
+        feature = "cache-aio",
+        any(feature = "connection-manager", feature = "cluster-async")
+    ))]
     pub(crate) fn set_cache_manager(mut self, cache_manager: CacheManager) -> Self {
         self.cache = Some(Cache::Manager(cache_manager));
         self

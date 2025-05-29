@@ -2,14 +2,17 @@
 
 use crate::support::*;
 use futures_time::task::sleep;
+#[cfg(feature = "cluster-async")]
+use redis::cluster_routing::*;
 use redis::CommandCacheConfig;
 use redis::{caching::CacheConfig, AsyncCommands, ProtocolVersion, RedisError};
+#[cfg(feature = "json")]
 use redis_test::server::Module;
 use rstest::rstest;
+#[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Duration;
-
 mod support;
 
 macro_rules! assert_hit {
@@ -695,6 +698,114 @@ fn test_connection_manager_maintains_statistics_after_crashes(
     .unwrap();
 }
 
+#[rstest]
+#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg(feature = "cluster-async")]
+fn test_cache_async_cluster_reconnect_all_nodes(#[case] runtime: RuntimeType) {
+    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+        builder.cache_config(CacheConfig::default())
+    });
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    block_on_all(
+        async move {
+            let mut con = ctx.async_connection().await;
+            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_eq!(val, None);
+            assert_hit!(&con, 0);
+            assert_miss!(&con, 1);
+
+            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_eq!(val, None);
+            // key_1's value should be returned from cache even if it doesn't exist in server yet.
+            assert_hit!(&con, 1);
+            assert_miss!(&con, 1);
+            // disconnect from all nodes
+            let _ = con
+                .route_command(
+                    &redis::cmd("QUIT"),
+                    redis::cluster_routing::RoutingInfo::MultiNode((
+                        redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
+                        None,
+                    )),
+                )
+                .await?;
+            // send ping so connections knows they have been disconnected
+            let _ = con
+                .route_command(
+                    &redis::cmd("PING"),
+                    redis::cluster_routing::RoutingInfo::MultiNode((
+                        redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
+                        None,
+                    )),
+                )
+                .await;
+
+            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_eq!(val, None);
+            // key_1 must be invalidated because a disconnection happened in cluster connection.
+            assert_hit!(&con, 1);
+            assert_miss!(&con, 2);
+            assert_invalidate!(&con, 1);
+            Ok::<_, RedisError>(())
+        },
+        runtime,
+    )
+    .unwrap();
+}
+
+#[rstest]
+#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg(feature = "cluster-async")]
+fn test_cache_async_cluster_mget(#[case] runtime: RuntimeType) {
+    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+        builder.cache_config(CacheConfig::default())
+    });
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    block_on_all(
+        async move {
+            let mut con = ctx.async_connection().await;
+
+            let _: redis::Value = con.set("key_1", 41).await?;
+            let _: redis::Value = con.set("key_3", 43).await?;
+
+            let res1: Vec<Option<String>> = redis::cmd("MGET")
+                .arg("key_1")
+                .arg("key_2")
+                .query_async(&mut con)
+                .await?;
+            assert_hit!(&con, 0);
+            assert_miss!(&con, 2);
+            assert_eq!(res1, vec![Some("41".to_string()), None]);
+
+            let res2: Vec<Option<String>> = redis::cmd("MGET")
+                .arg("key_1")
+                .arg("key_3")
+                .arg("key_2")
+                .query_async(&mut con)
+                .await?;
+            assert_hit!(&con, 2);
+            assert_miss!(&con, 3);
+            assert_eq!(
+                res2,
+                vec![Some("41".to_string()), Some("43".to_string()), None]
+            );
+
+            let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_hit!(&con, 3);
+            assert_miss!(&con, 3);
+            Ok::<_, RedisError>(())
+        },
+        runtime,
+    )
+    .unwrap();
+}
+
 // Support function for testing pipelines
 fn get_pipe(atomic: bool) -> redis::Pipeline {
     if atomic {
@@ -704,6 +815,176 @@ fn get_pipe(atomic: bool) -> redis::Pipeline {
     } else {
         redis::pipe()
     }
+}
+
+#[rstest]
+#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg(feature = "cluster-async")]
+fn test_cache_async_cluster_slot_change(
+    #[case] runtime: RuntimeType,
+    #[values(true, false)] migrate: bool,
+) {
+    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+        builder.cache_config(CacheConfig::default())
+    });
+    if ctx.protocol == ProtocolVersion::RESP2 {
+        return;
+    }
+    if !migrate && TestContext::new().get_version().0 == 6 {
+        // Redis 6.x won't invalidate data when migrate doesn't happen.
+        // This case can be removed when support for 6.x is dropped.
+        return;
+    }
+    block_on_all(
+        async move {
+            struct NodeData {
+                id: String,
+                host: String,
+                port: u16,
+                range: std::ops::Range<u16>,
+            }
+            impl NodeData {
+                fn get_singe_route(&self) -> RoutingInfo {
+                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                        host: self.host.clone(),
+                        port: self.port,
+                    })
+                }
+            }
+            let key_slot = redis::cluster_routing::get_slot("key_1".as_bytes());
+
+            let mut con = ctx.async_connection().await;
+            let _: redis::Value = redis::cmd("SET")
+                .arg("key_1")
+                .arg(77)
+                .query_async(&mut con)
+                .await?;
+
+            let val: usize = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_eq!(val, 77);
+            assert_hit!(&con, 0);
+            assert_miss!(&con, 1);
+            assert_invalidate!(&con, 0);
+
+            let val: usize = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            assert_eq!(val, 77);
+            assert_hit!(&con, 1);
+            assert_miss!(&con, 1);
+
+            let nodes_str: String = redis::cmd("CLUSTER")
+                .arg("NODES")
+                .query_async(&mut con)
+                .await?;
+
+            let node_slot_data: Vec<_> = nodes_str
+                .split("\n")
+                .filter(|node_str| !node_str.is_empty())
+                .map(|node_str| {
+                    let node_sep: Vec<&str> = node_str.split(" ").collect();
+                    let node_id = node_sep[0];
+                    let (node_addr, _cport) = node_sep[1].split_once("@").unwrap();
+                    let (node_host, node_port) = node_addr.split_once(":").unwrap();
+                    let (slot_start, slot_end) = node_sep[8].split_once("-").unwrap();
+                    let range = std::ops::Range {
+                        start: slot_start.parse().unwrap(),
+                        end: slot_end.parse::<u16>().unwrap() + 1,
+                    };
+                    NodeData {
+                        id: node_id.to_string(),
+                        host: node_host.to_string(),
+                        port: node_port.parse::<u16>().unwrap(),
+                        range,
+                    }
+                })
+                .collect();
+            let old_slot_owner = node_slot_data
+                .iter()
+                .find(|node_data| node_data.range.contains(&key_slot))
+                .unwrap();
+            let new_slot_owner = node_slot_data
+                .iter()
+                .find(|node_data| !node_data.range.contains(&key_slot))
+                .unwrap();
+
+            con.route_command(
+                redis::cmd("CLUSTER")
+                    .arg("SETSLOT")
+                    .arg(key_slot)
+                    .arg("IMPORTING")
+                    .arg(&old_slot_owner.id),
+                new_slot_owner.get_singe_route(),
+            )
+            .await?;
+
+            con.route_command(
+                redis::cmd("CLUSTER")
+                    .arg("SETSLOT")
+                    .arg(key_slot)
+                    .arg("MIGRATING")
+                    .arg(&new_slot_owner.id),
+                old_slot_owner.get_singe_route(),
+            )
+            .await?;
+
+            if migrate {
+                con.route_command(
+                    redis::cmd("MIGRATE")
+                        .arg(&new_slot_owner.host)
+                        .arg(new_slot_owner.port)
+                        .arg("key_1")
+                        .arg(0)
+                        .arg(5000),
+                    old_slot_owner.get_singe_route(),
+                )
+                .await?;
+                sleep(Duration::from_millis(50).into()).await;
+                // Migrating should invalidate
+                assert_invalidate!(&con, 1);
+            } else {
+                assert_invalidate!(&con, 0);
+                // Without migration invalidation will happen when receiving `MOVED` from server,
+                // which triggers a topology change.
+            }
+
+            con.route_command(
+                redis::cmd("CLUSTER")
+                    .arg("SETSLOT")
+                    .arg(key_slot)
+                    .arg("NODE")
+                    .arg(&new_slot_owner.id),
+                new_slot_owner.get_singe_route(),
+            )
+            .await?;
+
+            con.route_command(
+                redis::cmd("CLUSTER")
+                    .arg("SETSLOT")
+                    .arg(key_slot)
+                    .arg("NODE")
+                    .arg(&new_slot_owner.id),
+                old_slot_owner.get_singe_route(),
+            )
+            .await?;
+
+            assert_miss!(&con, 1);
+            let val: Option<usize> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+            // Without migration, key itself won't be copied over
+            if migrate {
+                assert_eq!(val, Some(77))
+            } else {
+                assert_eq!(val, None);
+            };
+            assert_hit!(&con, 1);
+            // It will miss twice because there will be retry after receiving
+            // `MOVED` error from server
+            assert_miss!(&con, 3);
+            assert_invalidate!(&con, 1);
+            Ok::<_, RedisError>(())
+        },
+        runtime,
+    )
+    .unwrap();
 }
 
 // Support function for testing cases where CacheMode::All == CacheMode::OptIn

@@ -37,7 +37,7 @@ impl CacheManager {
     // Clone the CacheManager and increase epoch from LRU,
     // this will eventually remove all keys created with previous
     // CacheManager's epoch.
-    #[cfg(feature = "connection-manager")]
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
     pub(crate) fn clone_and_increase_epoch(&self) -> CacheManager {
         CacheManager {
             lru: self.lru.clone(),
