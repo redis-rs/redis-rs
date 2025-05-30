@@ -13,6 +13,11 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F safe_iterators -E 'not test(test_module)'
 
 	@echo "===================================================================="
+	@echo "Testing Connection Type TCP without safe_iterators, but with async"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings -A deprecated" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F tokio-comp -E 'not test(test_module)'
+
+	@echo "===================================================================="
 	@echo "Testing Connection Type TCP with all features and RESP2"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features -E 'not test(test_module)'
