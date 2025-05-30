@@ -25,8 +25,8 @@ mod basic {
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Client, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
-        ValueType,
+        cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
+        ScanOptions, ValueType,
     };
     use redis::{
         ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
@@ -2560,6 +2560,44 @@ mod basic {
         let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
 
         assert_args!(&opts, "EX", "1000");
+    }
+
+    #[test]
+    fn test_copy_options() {
+        let empty = CopyOptions::default();
+        assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+
+        let opts = CopyOptions::default().db(123).replace(true);
+
+        assert_args!(&opts, "DB", "123", "REPLACE");
+    }
+
+    #[test]
+    fn test_copy() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let opts = CopyOptions::default();
+        con.set("key1", "value1").unwrap();
+        let did_copy = con.copy("key1", "key2", opts).unwrap();
+        // destination was free; should copy
+        assert!(did_copy);
+        assert_eq!(con.get("key2").unwrap(), Some("value1".to_string()));
+
+        let did_copy2 = con.copy("notakey", "key3", opts).unwrap();
+        // source does not exist; should not copy
+        assert!(!did_copy2);
+        assert_eq!(con.get("key3").unwrap(), None);
+
+        con.set("key4", "value4").unwrap();
+        let did_copy3 = con.copy("key1", "key4", opts).unwrap();
+        // destination already exists; should not copy
+        assert!(!did_copy3);
+        assert_eq!(con.get("key4").unwrap(), Some("value4".to_string()));
+
+        let did_copy4 = con.copy("key1", "key4", opts.replace(true)).unwrap();
+        assert!(did_copy4);
+        assert_eq!(con.get("key4").unwrap(), Some("value1".to_string()));
     }
 
     #[test]
