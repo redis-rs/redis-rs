@@ -939,6 +939,9 @@ mod basic_async {
                 }
 
                 let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
+                #[cfg(not(feature = "safe_iterators"))]
+                let mut keys_from_redis: Vec<String> = iter.collect().await;
+                #[cfg(feature = "safe_iterators")]
                 let mut keys_from_redis: Vec<_> =
                     iter.map(std::result::Result::unwrap).collect().await;
                 keys_from_redis.sort();

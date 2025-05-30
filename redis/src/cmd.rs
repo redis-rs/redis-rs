@@ -262,13 +262,16 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     #[cfg(not(feature = "safe_iterators"))]
     #[inline]
     pub async fn next_item(&mut self) -> Option<T> {
-        StreamExt::next(self).await?.ok()
+        StreamExt::next(self).await
     }
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
+    #[cfg(feature = "safe_iterators")]
     type Item = RedisResult<T>;
+    #[cfg(not(feature = "safe_iterators"))]
+    type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -289,7 +292,11 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
                 }
                 Poll::Ready((iter, value)) => {
                     this.inner = IterOrFuture::Iter(iter);
-                    Poll::Ready(value)
+
+                    #[cfg(feature = "safe_iterators")]
+                    return Poll::Ready(value);
+                    #[cfg(not(feature = "safe_iterators"))]
+                    Poll::Ready(value.map(|res| res.ok()).flatten())
                 }
             },
             IterOrFuture::Empty => unreachable!(),
