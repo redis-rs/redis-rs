@@ -2868,7 +2868,7 @@ impl ToRedisArgs for Direction {
 ///
 /// # Example
 /// ```rust,no_run
-/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// use redis::{Commands, RedisResult, CopyOptions, SetExpiry, ExistenceCheck};
 /// fn copy_value(
 ///     con: &mut redis::Connection,
 ///     old: &str,
@@ -2877,7 +2877,7 @@ impl ToRedisArgs for Direction {
 ///     let opts = CopyOptions::default()
 ///         .db("my_other_db")
 ///         .replace(true);
-///     con.copy(key, value, opts)
+///     con.copy(old, new, opts)
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
