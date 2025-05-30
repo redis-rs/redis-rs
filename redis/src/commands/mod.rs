@@ -323,6 +323,16 @@ implement_commands! {
     fn get_del<K: ToRedisArgs>(key: K) -> (Option<String>) {
         cmd("GETDEL").arg(key)
     }
+    
+    /// Copy the value from one key to another, returning whether the copy was successful.
+    /// [Redis Docs](https://redis.io/commands/COPY)
+    fn copy<KSrc: ToRedisArgs, KDst: ToRedisArgs, Db: ToString>(
+        source: KSrc,
+        destination: KDst,
+        options: CopyOptions<Db>
+    ) -> (bool) {
+        cmd("COPY").arg(source).arg(destination).arg(options)
+    }
 
     /// Rename a key.
     /// Errors if key does not exist.
@@ -2851,6 +2861,68 @@ impl ToRedisArgs for Direction {
             Direction::Right => b"RIGHT",
         };
         out.write_arg(s);
+    }
+}
+
+/// Options for the [COPY](https://redis.io/commands/copy) command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// fn copy_value(
+///     con: &mut redis::Connection,
+///     old: &str,
+///     new: &str,
+/// ) -> RedisResult<Vec<usize>> {
+///     let opts = CopyOptions::default()
+///         .db("my_other_db")
+///         .replace(true);
+///     con.copy(key, value, opts)
+/// }
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct CopyOptions<Db: ToString> {
+    db: Option<Db>,
+    replace: bool,
+}
+
+impl Default for CopyOptions<&'static str> {
+    fn default() -> Self {
+        CopyOptions {
+            db: None,
+            replace: false,
+        }
+    }
+}
+
+impl<Db: ToString> CopyOptions<Db> {
+    /// Set the target database for the copy operation
+    pub fn db<Db2: ToString>(self, db: Db2) -> CopyOptions<Db2> {
+        CopyOptions {
+            db: Some(db),
+            replace: self.replace,
+        }
+    }
+
+    /// Set the replace option for the copy operation
+    pub fn replace(mut self, replace: bool) -> Self {
+        self.replace = replace;
+        self
+    }
+}
+
+impl<Db: ToString> ToRedisArgs for CopyOptions<Db> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(db) = &self.db {
+            out.write_arg(b"DB");
+            out.write_arg(db.to_string().as_bytes());
+        }
+        if self.replace {
+            out.write_arg(b"REPLACE");
+        }
     }
 }
 
